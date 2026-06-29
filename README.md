@@ -35,3 +35,10 @@ Cache backend:
 - For local Azure auth without a connection string, run with `AZURE_CONFIG_DIR=C:\Users\bxu\.azure2` so Azure SDK credentials can reuse the `az2` login profile.
 
 The Azure backend uses Storage Queue for cache signals, Table Storage for cache/job state, private Blob Storage for cached payloads, and short-lived SAS URLs for playback.
+
+Notion access:
+
+- Use `NOTION_READ_ONLY_TOKEN` only.
+- The Notion integration should be read-only and scoped only to the source pages/databases needed for playback.
+- Do not use a write-capable Notion token in this project, especially before adding browser or AI-assisted resolvers.
+- For Azure deployment, store the value in Key Vault and inject it into the API/worker environment under the same name.
