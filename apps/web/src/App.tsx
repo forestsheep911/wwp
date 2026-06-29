@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   CacheAsset,
   CacheJob,
+  MediaVariant,
   PlaybackResponse,
   SearchResult
 } from "@wwpdw/shared";
@@ -176,9 +177,26 @@ export default function App() {
   const [error, setError] = useState("");
 
   const readyCount = useMemo(
-    () => results.filter((item) => item.cache?.status === "ready").length,
+    () =>
+      results.reduce((count, item) => {
+        const resultReady = item.cache?.status === "ready" ? 1 : 0;
+        const variantReady = item.variants?.filter((variant) => variant.cache?.status === "ready").length ?? 0;
+        return count + resultReady + variantReady;
+      }, 0),
     [results]
   );
+
+  function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
+    return {
+      assetKey: variant.assetKey,
+      title: `${result.title} / ${variant.label}`,
+      source: result.source,
+      sourceUrl: variant.sourceUrl,
+      durationLabel: result.durationLabel,
+      updatedAt: result.updatedAt,
+      summary: variant.summary
+    };
+  }
 
   async function runSearch(event?: FormEvent) {
     event?.preventDefault();
@@ -194,12 +212,13 @@ export default function App() {
     }
   }
 
-  async function selectResult(result: ResultWithCache) {
+  async function selectResult(result: ResultWithCache, variant?: MediaVariant) {
     setLoading(true);
     setError("");
     setPlayback(undefined);
     try {
-      const response = await ensureCache(result);
+      const target = variant ? variantToResult(result, variant) : result;
+      const response = await ensureCache(target);
       setJob(response.job);
       setAsset(response.asset);
       if (response.asset.status === "ready") {
@@ -291,20 +310,40 @@ export default function App() {
           {error ? <p className="error">{error}</p> : null}
 
           <div className="results-list">
-            {results.map((result) => (
-              <article className="result-row" key={result.assetKey}>
-                <button type="button" onClick={() => void selectResult(result)}>
-                  <span className="result-title">{result.title}</span>
-                  <span className="result-meta">
-                    {result.source} / {result.durationLabel} / {formatDate(result.updatedAt)}
-                  </span>
-                  <span className="result-summary">{result.summary}</span>
-                </button>
-                <span className={`pill pill-${cacheLabel(result.cache).replace(" ", "-")}`}>
-                  {cacheLabel(result.cache)}
-                </span>
-              </article>
-            ))}
+            {results.map((result) => {
+              const variants = result.variants ?? [];
+              return (
+                <article className="result-row" key={result.assetKey}>
+                  <div className="result-content">
+                    <span className="result-title">{result.title}</span>
+                    <span className="result-meta">
+                      {result.source} / {result.durationLabel} / {formatDate(result.updatedAt)}
+                    </span>
+                    <span className="result-summary">{result.summary}</span>
+                  </div>
+                  <div className="variant-actions">
+                    {variants.length > 0 ? (
+                      variants.map((variant) => (
+                        <button
+                          className="variant-button"
+                          key={variant.assetKey}
+                          type="button"
+                          onClick={() => void selectResult(result, variant)}
+                          disabled={loading}
+                        >
+                          <span>{variant.label}</span>
+                          <strong className={`state-${cacheLabel(variant.cache).replace(" ", "-")}`}>
+                            {cacheLabel(variant.cache)}
+                          </strong>
+                        </button>
+                      ))
+                    ) : (
+                      <span className="empty-specs">No specs</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </div>
 

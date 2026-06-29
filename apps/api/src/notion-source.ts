@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { Client } from "@notionhq/client";
-import type { SearchResult } from "@wwpdw/shared";
+import type { MediaVariant, SearchResult } from "@wwpdw/shared";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -7,7 +8,18 @@ interface MediaCandidate {
   url: string;
   label: string;
   score: number;
-  kind: "file" | "video" | "embed" | "url" | "text";
+  kind: MediaVariant["kind"];
+}
+
+interface LibraryMetadata {
+  dataSourceId: string;
+  titleProperty?: string;
+  databaseTitle?: string;
+}
+
+interface ChildPageCandidate {
+  id: string;
+  title: string;
 }
 
 interface ParseOptions {
@@ -17,6 +29,8 @@ interface ParseOptions {
   blockLimit: number;
   titleScanLimit: number;
   titleMatchLimit: number;
+  libraryQueryLimit: number;
+  variantLimit: number;
 }
 
 const defaultOptions: ParseOptions = {
@@ -25,7 +39,9 @@ const defaultOptions: ParseOptions = {
   blockDepth: Number(process.env.NOTION_PARSE_BLOCK_DEPTH ?? 2),
   blockLimit: Number(process.env.NOTION_PARSE_BLOCK_LIMIT ?? 120),
   titleScanLimit: Number(process.env.NOTION_TITLE_SCAN_LIMIT ?? 120),
-  titleMatchLimit: Number(process.env.NOTION_TITLE_MATCH_LIMIT ?? 6)
+  titleMatchLimit: Number(process.env.NOTION_TITLE_MATCH_LIMIT ?? 6),
+  libraryQueryLimit: Number(process.env.NOTION_LIBRARY_QUERY_LIMIT ?? 300),
+  variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 8)
 };
 
 const urlPattern = /https?:\/\/[^\s<>"']+/gi;
@@ -33,6 +49,11 @@ const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
 const cjkPattern = /[\u3400-\u9fff]/;
+const specTitlePattern =
+  /\d+(?:\.\d+)?\s*(?:GB|MB)|\b(?:4k|2160p|1080p|720p|480p)\b|\u56fd\u914d|\u666e\u901a\u8bdd|\u7e41\u82f1|\u4e2d\u5b57|\u5b57\u5e55|\u539f\u76d8|\u84dd\u5149|BD|BluRay|WEB[- ]?DL|HDRip/i;
+const metadataLabelPattern =
+  /\u6d77\u62a5|poster|\u57fa\u672c\u4fe1\u606f|\u7b80\u4ecb|imdb|\u8c46\u74e3|douban|rotten|metascore/i;
+const imageFilePattern = /\.(webp|png|jpe?g|gif|avif)(?:[?#].*)?$/i;
 
 function asRecord(value: unknown): JsonRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -62,6 +83,14 @@ function mediaScore(url: string, base: number) {
   return looksDirect(url) ? base + 40 : base;
 }
 
+function cleanLabel(label: string) {
+  return label
+    .replace(/^property:/, "")
+    .replace(/^block:/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function pushCandidate(
   candidates: MediaCandidate[],
   url: string | undefined,
@@ -80,7 +109,7 @@ function pushCandidate(
 
   candidates.push({
     url: normalizedUrl,
-    label,
+    label: cleanLabel(label) || kind,
     score: mediaScore(normalizedUrl, baseScore),
     kind
   });
@@ -134,10 +163,11 @@ function mediaUrlFromObject(value: unknown) {
   return asString(record.url);
 }
 
-function collectPropertyCandidates(
-  properties: JsonRecord,
-  candidates: MediaCandidate[]
-) {
+function fileNameFromObject(value: unknown) {
+  return asString(asRecord(value)?.name);
+}
+
+function collectPropertyCandidates(properties: JsonRecord, candidates: MediaCandidate[]) {
   for (const [name, rawProperty] of Object.entries(properties)) {
     const property = asRecord(rawProperty);
     if (!property) {
@@ -146,27 +176,97 @@ function collectPropertyCandidates(
 
     const type = asString(property.type);
     if (type === "url") {
-      pushCandidate(candidates, asString(property.url), `property:${name}`, 42, "url");
+      pushCandidate(candidates, asString(property.url), name, 42, "url");
     }
 
     if (type === "files") {
       for (const file of asArray(property.files)) {
-        pushCandidate(candidates, mediaUrlFromObject(file), `property:${name}`, 72, "file");
+        const fileName = fileNameFromObject(file);
+        pushCandidate(
+          candidates,
+          mediaUrlFromObject(file),
+          fileName ? `${name}: ${fileName}` : name,
+          72,
+          "file"
+        );
       }
     }
 
     if (type === "title" || type === "rich_text") {
-      urlsFromRichText(property[type], `property:${name}`, candidates, 32);
+      urlsFromRichText(property[type], name, candidates, 32);
     }
 
     if (type === "formula") {
       const formula = asRecord(property.formula);
       const stringValue = asString(formula?.string);
       for (const url of stringValue.match(urlPattern) ?? []) {
-        pushCandidate(candidates, url, `property:${name} formula`, 30, "text");
+        pushCandidate(candidates, url, `${name} formula`, 30, "text");
       }
     }
   }
+}
+
+function propertyText(value: unknown) {
+  const property = asRecord(value);
+  if (!property) {
+    return "";
+  }
+
+  const type = asString(property.type);
+  if (type === "title" || type === "rich_text") {
+    return plainTextFromRichText(property[type]);
+  }
+
+  if (type === "url") {
+    return asString(property.url);
+  }
+
+  if (type === "files") {
+    return asArray(property.files)
+      .map((file) => [fileNameFromObject(file), mediaUrlFromObject(file)].filter(Boolean).join(" "))
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  if (type === "select" || type === "status") {
+    return asString(asRecord(property[type])?.name);
+  }
+
+  if (type === "multi_select") {
+    return asArray(property.multi_select)
+      .map((item) => asString(asRecord(item)?.name))
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  if (type === "number" && typeof property.number === "number") {
+    return `${property.number}`;
+  }
+
+  if (type === "date") {
+    const date = asRecord(property.date);
+    return [date?.start, date?.end].map(asString).filter(Boolean).join(" ");
+  }
+
+  if (type === "formula") {
+    const formula = asRecord(property.formula);
+    return [
+      formula?.string,
+      formula?.number,
+      formula?.boolean,
+      asRecord(formula?.date)?.start,
+      asRecord(formula?.date)?.end
+    ].map((item) => `${item ?? ""}`).filter(Boolean).join(" ");
+  }
+
+  return "";
+}
+
+function propertiesSearchText(properties: JsonRecord) {
+  return Object.values(properties)
+    .map(propertyText)
+    .filter(Boolean)
+    .join(" ");
 }
 
 function titleFromProperties(properties: JsonRecord) {
@@ -218,29 +318,29 @@ function collectBlockCandidates(block: JsonRecord, candidates: MediaCandidate[])
   }
 
   if (type === "video") {
-    pushCandidate(candidates, mediaUrlFromObject(payload.video ?? payload), "block:video", 90, "video");
+    pushCandidate(candidates, mediaUrlFromObject(payload.video ?? payload), "video", 90, "video");
   }
 
   if (type === "file" || type === "audio" || type === "pdf") {
-    pushCandidate(candidates, mediaUrlFromObject(payload), `block:${type}`, 76, "file");
+    pushCandidate(candidates, mediaUrlFromObject(payload), type, 76, "file");
   }
 
   if (type === "embed" || type === "bookmark" || type === "link_preview") {
-    pushCandidate(candidates, asString(payload.url), `block:${type}`, 52, "embed");
+    pushCandidate(candidates, asString(payload.url), type, 52, "embed");
   }
 
   if ("rich_text" in payload) {
-    urlsFromRichText(payload.rich_text, `block:${type}`, candidates, 34);
+    urlsFromRichText(payload.rich_text, type, candidates, 34);
   }
 
   if (type === "table_row") {
     for (const cell of asArray(payload.cells)) {
-      urlsFromRichText(cell, "block:table_row", candidates, 28);
+      urlsFromRichText(cell, "table row", candidates, 28);
     }
   }
 }
 
-function chooseBestCandidate(candidates: MediaCandidate[]) {
+function uniqueCandidates(candidates: MediaCandidate[]) {
   const seen = new Set<string>();
   return candidates
     .filter((candidate) => {
@@ -250,7 +350,76 @@ function chooseBestCandidate(candidates: MediaCandidate[]) {
       seen.add(candidate.url);
       return true;
     })
-    .sort((left, right) => right.score - left.score)[0];
+    .sort((left, right) => right.score - left.score);
+}
+
+function chooseBestCandidate(candidates: MediaCandidate[]) {
+  return uniqueCandidates(candidates)[0];
+}
+
+function stableUrlForKey(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url.split(/[?#]/)[0];
+  }
+}
+
+function variantAssetKey(pageId: string, candidate: MediaCandidate, index: number) {
+  const hash = createHash("sha1")
+    .update(`${pageId}\n${candidate.label}\n${stableUrlForKey(candidate.url)}`)
+    .digest("hex")
+    .slice(0, 12);
+  return `notion-page-${pageId}-variant-${index + 1}-${hash}`;
+}
+
+function candidateSummary(candidate: MediaCandidate) {
+  return `${looksDirect(candidate.url) ? "Direct media candidate" : "Intermediate link candidate"} from ${candidate.label}.`;
+}
+
+function isLikelyPlayableCandidate(candidate: MediaCandidate) {
+  if (metadataLabelPattern.test(candidate.label) || imageFilePattern.test(candidate.url)) {
+    return false;
+  }
+
+  return candidate.kind === "video" ||
+    looksDirect(candidate.url) ||
+    specTitlePattern.test(candidate.label);
+}
+
+function primaryCjkTitle(title: string) {
+  return title.match(/[\u3400-\u9fff]{2,}/)?.[0] ?? "";
+}
+
+function isLikelySpecPage(title: string, movieTitle: string) {
+  if (specTitlePattern.test(title)) {
+    return true;
+  }
+
+  const cjkTitle = primaryCjkTitle(movieTitle);
+  return Boolean(cjkTitle && title.includes(cjkTitle));
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function compactSearchText(value: string) {
+  return normalizeSearchText(value).replace(/\s+/g, "");
+}
+
+function textMatches(text: string, query: string) {
+  const normalizedText = normalizeSearchText(text);
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return normalizedText.includes(normalizedQuery) ||
+    compactSearchText(normalizedText).includes(compactSearchText(normalizedQuery));
 }
 
 function isPageResult(value: unknown): value is JsonRecord {
@@ -258,18 +427,233 @@ function isPageResult(value: unknown): value is JsonRecord {
   return record?.object === "page" && typeof record.id === "string";
 }
 
+function isChildDatabaseBlock(value: unknown): value is JsonRecord {
+  const record = asRecord(value);
+  return record?.object === "block" && record.type === "child_database" && typeof record.id === "string";
+}
+
 export class NotionSearchSource {
-  readonly description = "notion read-only search";
+  readonly description: string;
   private readonly notion = new Client({
     auth: process.env.NOTION_READ_ONLY_TOKEN
   });
+  private readonly libraryRootPageId = process.env.NOTION_LIBRARY_ROOT_PAGE_ID ?? process.env.PAGE_ID;
+  private readonly configuredLibraryDataSourceId =
+    process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? process.env.NOTION_DATA_SOURCE_ID;
+  private readonly configuredLibraryDatabaseId =
+    process.env.NOTION_LIBRARY_DATABASE_ID ?? process.env.NOTION_MEDIA_DATABASE_ID;
+  private libraryMetadata?: Promise<LibraryMetadata | undefined>;
 
-  constructor(private readonly options = defaultOptions) {}
+  constructor(private readonly options = defaultOptions) {
+    this.description = this.hasLibraryConfig()
+      ? "notion library database search"
+      : "notion read-only search";
+  }
 
   async search(query: string): Promise<SearchResult[]> {
     const normalizedQuery = query.trim();
+    const library = await this.getLibraryMetadata();
+    if (library) {
+      return this.searchLibrary(library, normalizedQuery);
+    }
+
+    return this.searchGlobal(normalizedQuery);
+  }
+
+  private hasLibraryConfig() {
+    return Boolean(
+      this.libraryRootPageId ||
+      this.configuredLibraryDataSourceId ||
+      this.configuredLibraryDatabaseId
+    );
+  }
+
+  private async getLibraryMetadata() {
+    this.libraryMetadata ??= this.loadLibraryMetadata();
+    return this.libraryMetadata;
+  }
+
+  private async loadLibraryMetadata(): Promise<LibraryMetadata | undefined> {
+    if (this.configuredLibraryDataSourceId) {
+      return this.loadDataSourceMetadata(this.configuredLibraryDataSourceId);
+    }
+
+    if (this.configuredLibraryDatabaseId) {
+      return this.loadDatabaseMetadata(this.configuredLibraryDatabaseId);
+    }
+
+    if (!this.libraryRootPageId) {
+      return undefined;
+    }
+
+    const response = await this.notion.blocks.children.list({
+      block_id: this.libraryRootPageId,
+      page_size: 100
+    });
+    const databases = response.results.filter(isChildDatabaseBlock);
+
+    if (databases.length === 0) {
+      throw new Error("Library root page is set, but no direct child database was found.");
+    }
+
+    if (databases.length > 1) {
+      throw new Error("Library root page has more than one direct child database; configure NOTION_LIBRARY_DATABASE_ID.");
+    }
+
+    const databaseBlock = asRecord(databases[0]) ?? {};
+    const databaseTitle = asString(asRecord(databaseBlock.child_database)?.title);
+    return this.loadDatabaseMetadata(asString(databaseBlock.id), databaseTitle);
+  }
+
+  private async loadDatabaseMetadata(databaseId: string, databaseTitle?: string): Promise<LibraryMetadata> {
+    const database = await this.notion.databases.retrieve({ database_id: databaseId });
+    const dataSources = asArray(asRecord(database)?.data_sources);
+    const dataSourceId = asString(asRecord(dataSources[0])?.id) || databaseId;
+    return this.loadDataSourceMetadata(dataSourceId, databaseTitle);
+  }
+
+  private async loadDataSourceMetadata(dataSourceId: string, databaseTitle?: string): Promise<LibraryMetadata> {
+    try {
+      const dataSource = await this.notion.dataSources.retrieve({ data_source_id: dataSourceId });
+      const properties = asRecord(asRecord(dataSource)?.properties) ?? {};
+      return {
+        dataSourceId,
+        titleProperty: this.findTitleProperty(properties),
+        databaseTitle
+      };
+    } catch {
+      return {
+        dataSourceId,
+        databaseTitle
+      };
+    }
+  }
+
+  private findTitleProperty(properties: JsonRecord) {
+    for (const [name, property] of Object.entries(properties)) {
+      if (asRecord(property)?.type === "title") {
+        return name;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async searchLibrary(library: LibraryMetadata, query: string): Promise<SearchResult[]> {
+    const pagesById = new Map<string, JsonRecord>();
+
+    if (query && library.titleProperty) {
+      const exactMatches = await this.queryDataSourcePages(library, {
+        limit: Math.max(this.options.searchPageSize, this.options.titleMatchLimit),
+        titleContains: query
+      });
+      exactMatches.forEach((page) => pagesById.set(asString(page.id), page));
+
+      const fallbackTerms = exactMatches.length === 0 ? this.querySegments(query) : [];
+      for (const term of fallbackTerms) {
+        const matches = await this.queryDataSourcePages(library, {
+          limit: Math.max(this.options.searchPageSize, this.options.titleMatchLimit),
+          titleContains: term
+        });
+        matches.forEach((page) => pagesById.set(asString(page.id), page));
+      }
+    }
+
+    const scanLimit = query ? this.options.libraryQueryLimit : this.options.searchPageSize;
+    const scannedPages = await this.queryDataSourcePages(library, { limit: scanLimit });
+    for (const page of scannedPages) {
+      if (!query || this.pageMatches(page, query)) {
+        pagesById.set(asString(page.id), page);
+      }
+    }
+
+    const pages = this.rankPages([...pagesById.values()], query).slice(0, this.options.searchPageSize);
+    const results: SearchResult[] = [];
+    for (const page of pages) {
+      results.push(await this.pageToSearchResult(page, { libraryMode: true }));
+    }
+
+    return results;
+  }
+
+  private async queryDataSourcePages(
+    library: LibraryMetadata,
+    options: { limit: number; titleContains?: string }
+  ) {
+    const pages: JsonRecord[] = [];
+    let startCursor: string | undefined;
+
+    do {
+      const request: JsonRecord = {
+        data_source_id: library.dataSourceId,
+        page_size: Math.min(100, Math.max(1, options.limit - pages.length)),
+        start_cursor: startCursor,
+        result_type: "page",
+        sorts: [
+          {
+            timestamp: "last_edited_time",
+            direction: "descending"
+          }
+        ]
+      };
+
+      if (options.titleContains && library.titleProperty) {
+        request.filter = {
+          property: library.titleProperty,
+          title: {
+            contains: options.titleContains
+          }
+        };
+      }
+
+      const response = await this.notion.dataSources.query(request as never);
+      for (const page of response.results.filter(isPageResult)) {
+        pages.push(page);
+      }
+
+      startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+    } while (startCursor && pages.length < options.limit);
+
+    return pages.slice(0, options.limit);
+  }
+
+  private pageMatches(page: JsonRecord, query: string) {
+    const properties = asRecord(page.properties) ?? {};
+    return textMatches(titleFromProperties(properties), query) ||
+      textMatches(propertiesSearchText(properties), query);
+  }
+
+  private rankPages(pages: JsonRecord[], query: string) {
+    if (!query) {
+      return pages;
+    }
+
+    return pages
+      .map((page) => {
+        const properties = asRecord(page.properties) ?? {};
+        const title = titleFromProperties(properties);
+        const text = propertiesSearchText(properties);
+        let score = 0;
+        if (textMatches(title, query)) {
+          score += 100;
+        }
+        if (textMatches(text, query)) {
+          score += 20;
+        }
+        for (const segment of this.querySegments(query)) {
+          if (textMatches(title, segment)) {
+            score += 8;
+          }
+        }
+        return { page, score };
+      })
+      .sort((left, right) => right.score - left.score)
+      .map((entry) => entry.page);
+  }
+
+  private async searchGlobal(query: string): Promise<SearchResult[]> {
     const response = await this.notion.search({
-      query: normalizedQuery || undefined,
+      query: query || undefined,
       filter: {
         property: "object",
         value: "page"
@@ -285,9 +669,9 @@ export class NotionSearchSource {
       .filter(isPageResult)
       .slice(0, this.options.parseMaxPages);
 
-    if (normalizedQuery) {
-      pages.push(...await this.findSegmentMatches(normalizedQuery, pages));
-      pages.push(...await this.findTitleMatches(normalizedQuery, pages));
+    if (query) {
+      pages.push(...await this.findSegmentMatches(query, pages));
+      pages.push(...await this.findTitleMatches(query, pages));
     }
 
     const results: SearchResult[] = [];
@@ -295,7 +679,7 @@ export class NotionSearchSource {
       results.push(await this.pageToSearchResult(page));
     }
 
-    return this.rankResults(results, normalizedQuery);
+    return this.rankResults(results, query);
   }
 
   private querySegments(query: string) {
@@ -350,7 +734,6 @@ export class NotionSearchSource {
       return [];
     }
 
-    const normalizedQuery = query.toLowerCase();
     const seenIds = new Set(existingPages.map((page) => asString(page.id)));
     const matches: JsonRecord[] = [];
     let scanned = 0;
@@ -379,8 +762,8 @@ export class NotionSearchSource {
         }
 
         const properties = asRecord(page.properties) ?? {};
-        const title = titleFromProperties(properties).toLowerCase();
-        if (title.includes(normalizedQuery)) {
+        const title = titleFromProperties(properties);
+        if (textMatches(title, query)) {
           matches.push(page);
           seenIds.add(pageId);
         }
@@ -405,21 +788,34 @@ export class NotionSearchSource {
       return results;
     }
 
-    const normalizedQuery = query.toLowerCase();
     return results.sort((left, right) => {
-      const leftExact = left.title.toLowerCase().includes(normalizedQuery) ? 1 : 0;
-      const rightExact = right.title.toLowerCase().includes(normalizedQuery) ? 1 : 0;
+      const leftExact = textMatches(left.title, query) ? 1 : 0;
+      const rightExact = textMatches(right.title, query) ? 1 : 0;
       return rightExact - leftExact;
     });
   }
 
-  private async pageToSearchResult(page: JsonRecord): Promise<SearchResult> {
+  private async pageToSearchResult(
+    page: JsonRecord,
+    context: { libraryMode?: boolean } = {}
+  ): Promise<SearchResult> {
     const properties = asRecord(page.properties) ?? {};
     const candidates: MediaCandidate[] = [];
+    const childPages: ChildPageCandidate[] = [];
     collectPropertyCandidates(properties, candidates);
 
     try {
-      await this.collectBlockTree(asString(page.id), 0, { count: 0 }, candidates);
+      const maxDepth = context.libraryMode
+        ? Math.min(this.options.blockDepth, 1)
+        : this.options.blockDepth;
+      await this.collectBlockTree(
+        asString(page.id),
+        0,
+        { count: 0 },
+        candidates,
+        maxDepth,
+        context.libraryMode ? childPages : undefined
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "block parse failed";
       candidates.push({
@@ -430,32 +826,126 @@ export class NotionSearchSource {
       });
     }
 
-    const best = chooseBestCandidate(candidates);
+    const unique = uniqueCandidates(candidates);
+    const best = unique[0];
     const title = titleFromProperties(properties);
     const pageUrl = asString(page.url);
-    const sourceUrl = best?.url || pageUrl;
-    const summary = best
-      ? `Parsed ${best.label}; ${looksDirect(best.url) ? "direct media candidate" : "intermediate link candidate"}.`
-      : "No media URL found by the rule parser yet; cache will need browser or AI resolution.";
+    const variants = context.libraryMode
+      ? await this.libraryVariants(asString(page.id), title, unique, childPages)
+      : this.candidatesToVariants(asString(page.id), unique);
+    const sourceUrl = variants[0]?.sourceUrl || best?.url || pageUrl;
+    const summary = context.libraryMode
+      ? this.librarySummary(variants)
+      : this.globalSummary(best);
 
     return {
       assetKey: `notion-page-${asString(page.id)}`,
       title,
-      source: "Notion",
+      source: context.libraryMode ? "Notion library" : "Notion",
       sourceUrl,
       durationLabel: durationFromProperties(properties),
       updatedAt: asString(page.last_edited_time) || new Date().toISOString(),
-      summary
+      summary,
+      variants
     };
+  }
+
+  private async libraryVariants(
+    pageId: string,
+    title: string,
+    directCandidates: MediaCandidate[],
+    childPages: ChildPageCandidate[]
+  ) {
+    const variants: MediaVariant[] = [];
+    const seenUrls = new Set<string>();
+
+    for (const childPage of childPages.filter((item) => isLikelySpecPage(item.title, title))) {
+      const candidates: MediaCandidate[] = [];
+      await this.collectBlockTree(
+        childPage.id,
+        0,
+        { count: 0 },
+        candidates,
+        Math.min(this.options.blockDepth, 1)
+      );
+      const best = uniqueCandidates(candidates).find(isLikelyPlayableCandidate);
+      if (!best || seenUrls.has(best.url)) {
+        continue;
+      }
+
+      seenUrls.add(best.url);
+      variants.push(this.candidateToVariant(childPage.id, best, variants.length, childPage.title));
+      if (variants.length >= this.options.variantLimit) {
+        return variants;
+      }
+    }
+
+    const directVariants = this.candidatesToVariants(
+      pageId,
+      directCandidates.filter(isLikelyPlayableCandidate),
+      variants.length
+    ).filter((variant) => {
+      if (seenUrls.has(variant.sourceUrl)) {
+        return false;
+      }
+      seenUrls.add(variant.sourceUrl);
+      return true;
+    });
+
+    return [...variants, ...directVariants].slice(0, this.options.variantLimit);
+  }
+
+  private candidatesToVariants(
+    pageId: string,
+    candidates: MediaCandidate[],
+    indexOffset = 0
+  ): MediaVariant[] {
+    return candidates
+      .filter((candidate) => candidate.score >= 20)
+      .slice(0, Math.max(0, this.options.variantLimit - indexOffset))
+      .map((candidate, index) => this.candidateToVariant(pageId, candidate, index + indexOffset));
+  }
+
+  private candidateToVariant(
+    pageId: string,
+    candidate: MediaCandidate,
+    index: number,
+    label?: string
+  ): MediaVariant {
+    return {
+      assetKey: variantAssetKey(pageId, candidate, index),
+      label: label || candidate.label || `Option ${index + 1}`,
+      sourceUrl: candidate.url,
+      kind: candidate.kind,
+      summary: candidateSummary(candidate)
+    };
+  }
+
+  private librarySummary(variants: MediaVariant[]) {
+    if (variants.length === 0) {
+      return "No playable specs were found in this movie entry.";
+    }
+
+    return `${variants.length} playable spec${variants.length === 1 ? "" : "s"} found in this movie entry.`;
+  }
+
+  private globalSummary(best?: MediaCandidate) {
+    if (!best) {
+      return "No media URL found by the rule parser yet; cache will need browser or AI resolution.";
+    }
+
+    return `Parsed ${best.label}; ${looksDirect(best.url) ? "direct media candidate" : "intermediate link candidate"}.`;
   }
 
   private async collectBlockTree(
     blockId: string,
     depth: number,
     counter: { count: number },
-    candidates: MediaCandidate[]
+    candidates: MediaCandidate[],
+    maxDepth: number,
+    childPages?: ChildPageCandidate[]
   ) {
-    if (!blockId || depth > this.options.blockDepth || counter.count >= this.options.blockLimit) {
+    if (!blockId || depth > maxDepth || counter.count >= this.options.blockLimit) {
       return;
     }
 
@@ -480,8 +970,24 @@ export class NotionSearchSource {
         counter.count += 1;
         collectBlockCandidates(record, candidates);
 
-        if (record.has_children === true && depth < this.options.blockDepth) {
-          await this.collectBlockTree(asString(record.id), depth + 1, counter, candidates);
+        const type = asString(record.type);
+        if (type === "child_page") {
+          childPages?.push({
+            id: asString(record.id),
+            title: asString(asRecord(record.child_page)?.title)
+          });
+        }
+
+        const isNestedPage = type === "child_page" || type === "child_database";
+        if (record.has_children === true && depth < maxDepth && !isNestedPage) {
+          await this.collectBlockTree(
+            asString(record.id),
+            depth + 1,
+            counter,
+            candidates,
+            maxDepth,
+            childPages
+          );
         }
       }
 

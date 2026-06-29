@@ -36,6 +36,16 @@ export interface SearchResult {
   durationLabel: string;
   updatedAt: string;
   summary: string;
+  variants?: MediaVariant[];
+}
+
+export interface MediaVariant {
+  assetKey: string;
+  label: string;
+  sourceUrl: string;
+  kind: "file" | "video" | "embed" | "url" | "text";
+  summary: string;
+  cache?: CacheAsset;
 }
 
 export interface CacheAsset {
@@ -105,7 +115,16 @@ export const mockSearchResults: SearchResult[] = [
     sourceUrl: "https://example.local/notion/files/moonlit-archive-test.mp4?download=1",
     durationLabel: "08:12",
     updatedAt: "2026-06-21",
-    summary: "A representative item for testing cache hit, cache miss, and playback-ready states."
+    summary: "A representative item for testing cache hit, cache miss, and playback-ready states.",
+    variants: [
+      {
+        assetKey: "notion-page-ww-001-block-video-a-720p",
+        label: "720p sample",
+        sourceUrl: "https://example.local/notion/files/moonlit-archive-test.mp4?download=1",
+        kind: "file",
+        summary: "Mock direct file variant."
+      }
+    ]
   },
   {
     assetKey: "notion-page-ww-002-block-video-c",
@@ -114,7 +133,16 @@ export const mockSearchResults: SearchResult[] = [
     sourceUrl: "https://example.local/notion/files/family-room-recording.mp4?download=1",
     durationLabel: "03:44",
     updatedAt: "2026-06-18",
-    summary: "Used to exercise the shared cache pool when the same result is requested twice."
+    summary: "Used to exercise the shared cache pool when the same result is requested twice.",
+    variants: [
+      {
+        assetKey: "notion-page-ww-002-block-video-c-1080p",
+        label: "1080p sample",
+        sourceUrl: "https://example.local/notion/files/family-room-recording.mp4?download=1",
+        kind: "file",
+        summary: "Mock direct file variant."
+      }
+    ]
   },
   {
     assetKey: "notion-page-ww-003-block-video-b",
@@ -123,7 +151,16 @@ export const mockSearchResults: SearchResult[] = [
     sourceUrl: "https://example.local/notion/preview/travel-notes-reel",
     durationLabel: "11:05",
     updatedAt: "2026-06-09",
-    summary: "A longer mock result that makes the status page feel closer to the real flow."
+    summary: "A longer mock result that makes the status page feel closer to the real flow.",
+    variants: [
+      {
+        assetKey: "notion-page-ww-003-block-video-b-web",
+        label: "Web preview",
+        sourceUrl: "https://example.local/notion/preview/travel-notes-reel",
+        kind: "embed",
+        summary: "Mock intermediate preview link."
+      }
+    ]
   }
 ];
 

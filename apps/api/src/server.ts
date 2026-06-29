@@ -1,7 +1,7 @@
 import "./env.js";
 import http from "node:http";
 import { URL } from "node:url";
-import { type EnsureCacheRequest, type SearchResult } from "@wwpdw/shared";
+import { type EnsureCacheRequest, type MediaVariant, type SearchResult } from "@wwpdw/shared";
 import { createCacheStore } from "@wwpdw/cache-store";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
@@ -34,7 +34,12 @@ async function readBody<T>(request: http.IncomingMessage): Promise<T> {
 }
 
 function rememberResults(results: SearchResult[]) {
-  results.forEach((item) => recentResults.set(item.assetKey, item));
+  results.forEach((item) => {
+    recentResults.set(item.assetKey, item);
+    item.variants?.forEach((variant) =>
+      recentResults.set(variant.assetKey, variantToSearchResult(item, variant))
+    );
+  });
 
   while (recentResults.size > recentResultLimit) {
     const firstKey = recentResults.keys().next().value;
@@ -45,14 +50,34 @@ function rememberResults(results: SearchResult[]) {
   }
 }
 
+function variantToSearchResult(result: SearchResult, variant: MediaVariant): SearchResult {
+  return {
+    assetKey: variant.assetKey,
+    title: `${result.title} / ${variant.label}`,
+    source: result.source,
+    sourceUrl: variant.sourceUrl,
+    durationLabel: result.durationLabel,
+    updatedAt: result.updatedAt,
+    summary: variant.summary
+  };
+}
+
 async function handleSearch(url: URL, response: http.ServerResponse) {
   const query = url.searchParams.get("q")?.trim() ?? "";
   const searchResults = await searchSource.search(query);
   rememberResults(searchResults);
-  const assets = await store.listAssets(searchResults.map((item) => item.assetKey));
+  const assetKeys = searchResults.flatMap((item) => [
+    item.assetKey,
+    ...(item.variants?.map((variant) => variant.assetKey) ?? [])
+  ]);
+  const assets = await store.listAssets(assetKeys);
   const results = searchResults.map((item) => ({
     ...item,
-    cache: assets[item.assetKey]
+    cache: assets[item.assetKey],
+    variants: item.variants?.map((variant) => ({
+      ...variant,
+      cache: assets[variant.assetKey]
+    }))
   }));
 
   sendJson(response, 200, { results });

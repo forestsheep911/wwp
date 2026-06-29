@@ -10,6 +10,9 @@ param(
     [string]$KeyVaultName = "kv-wwcache-e9219db7",
     [string]$NotionKeyVaultSecretName = "NOTION-READ-ONLY-TOKEN",
     [string]$NotionContainerSecretName = "notion-token",
+    [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
+    [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
+    [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
@@ -18,6 +21,32 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-DotEnvValue {
+    param(
+        [string[]]$Names
+    )
+
+    $envPath = Join-Path (Get-Location) ".env"
+    if (-not (Test-Path $envPath)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content $envPath) {
+        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
+            continue
+        }
+
+        $name = $matches[1]
+        if ($Names -notcontains $name) {
+            continue
+        }
+
+        return $matches[2].Trim().Trim('"').Trim("'")
+    }
+
+    return $null
+}
 
 $subscriptionId = az2 account show --query id --output tsv
 $loginServer = az2 acr show `
@@ -30,6 +59,22 @@ $identity = az2 identity show `
     --name $IdentityName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
+
+if (-not $NotionLibraryRootPageId -and $env:PAGE_ID) {
+    $NotionLibraryRootPageId = $env:PAGE_ID
+}
+
+if (-not $NotionLibraryRootPageId) {
+    $NotionLibraryRootPageId = Get-DotEnvValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
+}
+
+if (-not $NotionLibraryDatabaseId) {
+    $NotionLibraryDatabaseId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
+}
+
+if (-not $NotionLibraryDataSourceId) {
+    $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
+}
 
 $workerJob = az2 containerapp job show `
     --name $WorkerJobName `
@@ -64,6 +109,8 @@ $envVars = @(
     "NOTION_PARSE_BLOCK_LIMIT=120",
     "NOTION_TITLE_SCAN_LIMIT=120",
     "NOTION_TITLE_MATCH_LIMIT=6",
+    "NOTION_LIBRARY_QUERY_LIMIT=300",
+    "NOTION_VARIANT_LIMIT=8",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
@@ -76,6 +123,18 @@ $envVars = @(
     "AZURE_CONTAINER_APP_JOB_NAME=$WorkerJobName",
     "AZURE_CONTAINER_APP_JOB_API_VERSION=2024-03-01"
 )
+
+if ($NotionLibraryRootPageId) {
+    $envVars += "NOTION_LIBRARY_ROOT_PAGE_ID=$NotionLibraryRootPageId"
+}
+
+if ($NotionLibraryDatabaseId) {
+    $envVars += "NOTION_LIBRARY_DATABASE_ID=$NotionLibraryDatabaseId"
+}
+
+if ($NotionLibraryDataSourceId) {
+    $envVars += "NOTION_LIBRARY_DATA_SOURCE_ID=$NotionLibraryDataSourceId"
+}
 
 $existingAppName = az2 containerapp list `
     --resource-group $ResourceGroup `

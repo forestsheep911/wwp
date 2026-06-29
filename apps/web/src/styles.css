@@ -191,30 +191,19 @@ input:focus {
 
 .result-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 280px);
+  align-items: start;
   gap: 14px;
-  min-height: 92px;
   border: 1px solid #dce3dd;
   border-radius: 8px;
   background: #ffffff;
+  padding: 14px;
 }
 
-.result-row > button {
+.result-content {
   display: grid;
   gap: 5px;
   min-width: 0;
-  min-height: 90px;
-  border: 0;
-  padding: 14px 16px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-}
-
-.result-row > button:focus-visible {
-  outline: 3px solid rgb(47 118 104 / 18%);
-  outline-offset: -3px;
 }
 
 .result-title {
@@ -234,6 +223,80 @@ input:focus {
 
 .result-summary {
   overflow-wrap: anywhere;
+}
+
+.variant-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.variant-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #bdc8c2;
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: #fbfcfa;
+  color: #24312d;
+  text-align: left;
+}
+
+.variant-button:focus-visible {
+  outline: 3px solid rgb(47 118 104 / 18%);
+  outline-offset: 2px;
+}
+
+.variant-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.variant-button span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.variant-button strong {
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #ece7d7;
+  color: #26332f;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.variant-button .state-fetching,
+.variant-button .state-downloading,
+.variant-button .state-processing,
+.variant-button .state-uploading {
+  background: #d8e6f3;
+}
+
+.variant-button .state-ready {
+  background: #dff0e0;
+  color: #225a30;
+}
+
+.variant-button .state-failed {
+  background: #f2dddd;
+  color: #8f2d2d;
+}
+
+.empty-specs {
+  align-self: start;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #f2dddd;
+  color: #8f2d2d;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
 }
 
 .pill {
