@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Client } from "@notionhq/client";
-import type { MediaVariant, SearchResult } from "@wwpdw/shared";
+import type { MediaVariant, MovieMetadata, RatingValue, SearchResult } from "@wwpdw/shared";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -48,6 +48,16 @@ const urlPattern = /https?:\/\/[^\s<>"']+/gi;
 const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
+const posterPropertyPattern = /\u6d77\u62a5|poster|cover|image|\u56fe\u7247/i;
+const descriptionPropertyPattern = /\u7b80\u4ecb|summary|description|synopsis|plot/i;
+const infoPropertyPattern = /\u57fa\u672c\u4fe1\u606f|info|metadata/i;
+const releaseDatePropertyPattern = /\u4e0a\u6620|release|premiere|date/i;
+const genrePropertyPattern = /\u65e8\u8da3|\u7c7b\u578b|genre|tag/i;
+const peoplePropertyPattern = /\u95fb\u8fbe|\u4e3b\u6f14|\bcast\b|\bactors?\b|\bdirectors?\b|\bpeople\b/i;
+const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
+const typePropertyPattern = /\u5f71\u522b|type|kind/i;
+const imdbPropertyPattern = /^imdb$/i;
+const ratingPropertyPattern = /\u8c46\u74e3\u8bc4\u5206|imdb\u8bc4\u5206|metascore|\u70c2\u756a\u8304|rating|score/i;
 const cjkPattern = /[\u3400-\u9fff]/;
 const specTitlePattern =
   /\d+(?:\.\d+)?\s*(?:GB|MB)|\b(?:4k|2160p|1080p|720p|480p)\b|\u56fd\u914d|\u666e\u901a\u8bdd|\u7e41\u82f1|\u4e2d\u5b57|\u5b57\u5e55|\u539f\u76d8|\u84dd\u5149|BD|BluRay|WEB[- ]?DL|HDRip/i;
@@ -260,6 +270,226 @@ function propertyText(value: unknown) {
   }
 
   return "";
+}
+
+function cleanText(value: string) {
+  return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function clipText(value: string, limit: number) {
+  const cleaned = cleanText(value);
+  if (cleaned.length <= limit) {
+    return cleaned;
+  }
+
+  return `${cleaned.slice(0, Math.max(0, limit - 1)).trim()}…`;
+}
+
+function namesFromProperty(value: unknown) {
+  const property = asRecord(value);
+  if (!property) {
+    return [];
+  }
+
+  const type = asString(property.type);
+  if (type === "select" || type === "status") {
+    return [asString(asRecord(property[type])?.name)].filter(Boolean);
+  }
+
+  if (type === "multi_select") {
+    return asArray(property.multi_select)
+      .map((item) => asString(asRecord(item)?.name))
+      .filter(Boolean);
+  }
+
+  const text = propertyText(property);
+  return text ? [text] : [];
+}
+
+function dateStartFromProperty(value: unknown) {
+  const property = asRecord(value);
+  if (!property || property.type !== "date") {
+    return "";
+  }
+
+  return asString(asRecord(property.date)?.start);
+}
+
+function numberFromProperty(value: unknown) {
+  const property = asRecord(value);
+  if (!property) {
+    return undefined;
+  }
+
+  if (property.type === "number" && typeof property.number === "number") {
+    return property.number;
+  }
+
+  const formula = asRecord(property.formula);
+  return typeof formula?.number === "number" ? formula.number : undefined;
+}
+
+function textFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: number) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const text = propertyText(rawProperty);
+    if (text) {
+      return clipText(text, limit);
+    }
+  }
+
+  return undefined;
+}
+
+function listFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: number) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const names = namesFromProperty(rawProperty).map(cleanText).filter(Boolean);
+    if (names.length > 0) {
+      return names.slice(0, limit);
+    }
+  }
+
+  return undefined;
+}
+
+function dateFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const date = dateStartFromProperty(rawProperty) || propertyText(rawProperty);
+    if (date) {
+      return cleanText(date);
+    }
+  }
+
+  return undefined;
+}
+
+function ratingLabel(name: string) {
+  if (/\u8c46\u74e3/i.test(name)) {
+    return "Douban";
+  }
+
+  if (/imdb/i.test(name)) {
+    return "IMDb";
+  }
+
+  if (/metascore/i.test(name)) {
+    return "Meta";
+  }
+
+  if (/\u70c2\u756a\u8304|rotten/i.test(name)) {
+    return "RT";
+  }
+
+  return name;
+}
+
+function ratingsFromProperties(properties: JsonRecord) {
+  const ratings: RatingValue[] = [];
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!ratingPropertyPattern.test(name)) {
+      continue;
+    }
+
+    const number = numberFromProperty(rawProperty);
+    const text = number === undefined ? propertyText(rawProperty) : `${number}`;
+    if (!text) {
+      continue;
+    }
+
+    ratings.push({
+      label: ratingLabel(name),
+      value: cleanText(text)
+    });
+  }
+
+  return ratings.slice(0, 4);
+}
+
+function yearFromTitleOrDate(title: string, releaseDate?: string) {
+  const titleYear = title.match(/\((\d{4})\)/)?.[1] ?? title.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+  if (titleYear) {
+    return titleYear;
+  }
+
+  return releaseDate?.match(/^\d{4}/)?.[0];
+}
+
+function posterUrlFromProperties(page: JsonRecord, properties: JsonRecord) {
+  const coverUrl = mediaUrlFromObject(page.cover);
+  if (coverUrl) {
+    return coverUrl;
+  }
+
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!posterPropertyPattern.test(name)) {
+      continue;
+    }
+
+    const property = asRecord(rawProperty);
+    if (!property) {
+      continue;
+    }
+
+    const type = asString(property.type);
+    if (type === "files") {
+      for (const file of asArray(property.files)) {
+        const url = mediaUrlFromObject(file);
+        if (url) {
+          return url;
+        }
+      }
+    }
+
+    if (type === "url" && asString(property.url)) {
+      return asString(property.url);
+    }
+
+    if (type === "rich_text") {
+      const url = plainTextFromRichText(property.rich_text).match(urlPattern)?.[0];
+      if (url) {
+        return normalizeUrl(url);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: string): MovieMetadata {
+  const releaseDate = dateFromNamedProperty(properties, releaseDatePropertyPattern);
+  const metadata: MovieMetadata = {
+    posterUrl: posterUrlFromProperties(page, properties),
+    type: listFromNamedProperty(properties, typePropertyPattern, 1)?.[0],
+    releaseDate,
+    year: yearFromTitleOrDate(title, releaseDate),
+    genres: listFromNamedProperty(properties, genrePropertyPattern, 4),
+    people: listFromNamedProperty(properties, peoplePropertyPattern, 4),
+    ratings: ratingsFromProperties(properties),
+    ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
+    info: textFromNamedProperty(properties, infoPropertyPattern, 180),
+    description: textFromNamedProperty(properties, descriptionPropertyPattern, 360),
+    imdbId: textFromNamedProperty(properties, imdbPropertyPattern, 40)
+  };
+
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== "";
+    })
+  ) as MovieMetadata;
 }
 
 function propertiesSearchText(properties: JsonRecord) {
@@ -829,6 +1059,7 @@ export class NotionSearchSource {
     const unique = uniqueCandidates(candidates);
     const best = unique[0];
     const title = titleFromProperties(properties);
+    const metadata = movieMetadataFromPage(page, properties, title);
     const pageUrl = asString(page.url);
     const variants = context.libraryMode
       ? await this.libraryVariants(asString(page.id), title, unique, childPages)
@@ -846,6 +1077,7 @@ export class NotionSearchSource {
       durationLabel: durationFromProperties(properties),
       updatedAt: asString(page.last_edited_time) || new Date().toISOString(),
       summary,
+      metadata,
       variants
     };
   }

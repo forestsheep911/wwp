@@ -133,6 +133,64 @@ function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
   );
 }
 
+function titleInitial(title: string) {
+  return title.match(/[\u3400-\u9fff]/)?.[0] ?? title.trim().charAt(0).toUpperCase() ?? "W";
+}
+
+function shortDate(value?: string) {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  }).format(parsed);
+}
+
+function metadataLine(result: SearchResult) {
+  const metadata = result.metadata;
+  const parts = [
+    metadata?.year,
+    metadata?.type,
+    metadata?.ratingLevel?.[0],
+    shortDate(metadata?.releaseDate)
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" / ") : `${result.source} / ${formatDate(result.updatedAt)}`;
+}
+
+function bestSummary(result: SearchResult) {
+  return result.metadata?.description ?? result.metadata?.info ?? result.summary;
+}
+
+function MoviePoster({ result }: { result: SearchResult }) {
+  return (
+    <div className="poster-frame">
+      <div className="poster-fallback">
+        <span>{titleInitial(result.title)}</span>
+      </div>
+      {result.metadata?.posterUrl ? (
+        <img
+          alt={result.title}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          src={result.metadata.posterUrl}
+          onError={(event) => {
+            event.currentTarget.hidden = true;
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function AccessGate({ onUnlock }: { onUnlock: () => void }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
@@ -302,7 +360,8 @@ export default function App() {
       sourceUrl: variant.sourceUrl,
       durationLabel: result.durationLabel,
       updatedAt: result.updatedAt,
-      summary: variant.summary
+      summary: variant.summary,
+      metadata: result.metadata
     };
   }
 
@@ -432,17 +491,40 @@ export default function App() {
 
           {error ? <p className="error">{error}</p> : null}
 
-          <div className="results-list">
+          <div className="results-gallery">
             {results.map((result) => {
               const variants = result.variants ?? [];
               return (
-                <article className="result-row" key={result.assetKey}>
-                  <div className="result-content">
-                    <span className="result-title">{result.title}</span>
-                    <span className="result-meta">
-                      {result.source} / {result.durationLabel} / {formatDate(result.updatedAt)}
-                    </span>
-                    <span className="result-summary">{result.summary}</span>
+                <article className="movie-card" key={result.assetKey}>
+                  <MoviePoster result={result} />
+                  <div className="movie-content">
+                    <div className="movie-title-row">
+                      <h2 className="movie-title">{result.title}</h2>
+                      <span className="movie-spec-count">
+                        {variants.length} {variants.length === 1 ? "spec" : "specs"}
+                      </span>
+                    </div>
+                    <span className="movie-meta">{metadataLine(result)}</span>
+                    {result.metadata?.ratings?.length ? (
+                      <div className="rating-strip">
+                        {result.metadata.ratings.map((rating) => (
+                          <span key={`${rating.label}-${rating.value}`}>
+                            {rating.label} <strong>{rating.value}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {result.metadata?.genres?.length || result.metadata?.people?.length ? (
+                      <div className="tag-strip">
+                        {result.metadata.genres?.slice(0, 4).map((tag) => (
+                          <span key={`genre-${tag}`}>{tag}</span>
+                        ))}
+                        {result.metadata.people?.slice(0, 3).map((tag) => (
+                          <span key={`people-${tag}`}>{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <p className="movie-summary">{bestSummary(result)}</p>
                   </div>
                   <div className="variant-actions">
                     {variants.length > 0 ? (

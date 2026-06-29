@@ -28,6 +28,25 @@ export interface ResolveResult {
   notes?: string;
 }
 
+export interface RatingValue {
+  label: string;
+  value: string;
+}
+
+export interface MovieMetadata {
+  posterUrl?: string;
+  type?: string;
+  releaseDate?: string;
+  year?: string;
+  genres?: string[];
+  people?: string[];
+  ratings?: RatingValue[];
+  ratingLevel?: string[];
+  info?: string;
+  description?: string;
+  imdbId?: string;
+}
+
 export interface SearchResult {
   assetKey: string;
   title: string;
@@ -36,6 +55,7 @@ export interface SearchResult {
   durationLabel: string;
   updatedAt: string;
   summary: string;
+  metadata?: MovieMetadata;
   variants?: MediaVariant[];
 }
 
@@ -140,6 +160,14 @@ export const mockSearchResults: SearchResult[] = [
     durationLabel: "08:12",
     updatedAt: "2026-06-21",
     summary: "A representative item for testing cache hit, cache miss, and playback-ready states.",
+    metadata: {
+      posterUrl: "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=500&q=80",
+      type: "Movie",
+      year: "2026",
+      genres: ["Archive", "Sample"],
+      ratings: [{ label: "Demo", value: "8.2" }],
+      description: "A representative item for testing cache hit, cache miss, and playback-ready states."
+    },
     variants: [
       {
         assetKey: "notion-page-ww-001-block-video-a-720p",
@@ -158,6 +186,14 @@ export const mockSearchResults: SearchResult[] = [
     durationLabel: "03:44",
     updatedAt: "2026-06-18",
     summary: "Used to exercise the shared cache pool when the same result is requested twice.",
+    metadata: {
+      posterUrl: "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=500&q=80",
+      type: "Movie",
+      year: "2026",
+      genres: ["Family", "Recording"],
+      ratings: [{ label: "Demo", value: "7.8" }],
+      description: "Used to exercise the shared cache pool when the same result is requested twice."
+    },
     variants: [
       {
         assetKey: "notion-page-ww-002-block-video-c-1080p",
@@ -176,6 +212,14 @@ export const mockSearchResults: SearchResult[] = [
     durationLabel: "11:05",
     updatedAt: "2026-06-09",
     summary: "A longer mock result that makes the status page feel closer to the real flow.",
+    metadata: {
+      posterUrl: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=500&q=80",
+      type: "Movie",
+      year: "2026",
+      genres: ["Travel", "Preview"],
+      ratings: [{ label: "Demo", value: "7.4" }],
+      description: "A longer mock result that makes the status page feel closer to the real flow."
+    },
     variants: [
       {
         assetKey: "notion-page-ww-003-block-video-b-web",
