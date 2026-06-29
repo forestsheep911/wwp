@@ -71,11 +71,6 @@ async function getOrCreateAsset(job: CacheJob): Promise<CacheAsset> {
 }
 
 async function syncAsset(job: CacheJob) {
-  if (job.status === "ready") {
-    await store.finalizeReadyAsset(job);
-    return;
-  }
-
   const asset = await getOrCreateAsset(job);
   asset.status = job.status;
   asset.jobId = job.id;
@@ -91,6 +86,41 @@ async function syncAsset(job: CacheJob) {
 async function persistJob(job: CacheJob) {
   await store.saveJob(job);
   await syncAsset(job);
+}
+
+async function completeReadyJob(job: CacheJob, now: Date) {
+  job.progress = Math.max(job.progress, 92);
+  job.message = "Uploading the resolved media into Blob cache.";
+  job.updatedAt = now.toISOString();
+  await persistJob(job);
+
+  try {
+    await store.finalizeReadyAsset(job);
+
+    const completedAt = new Date().toISOString();
+    job.status = "ready";
+    job.progress = 100;
+    job.message = "Ready for playback.";
+    job.updatedAt = completedAt;
+    job.completedAt = completedAt;
+    job.error = undefined;
+    await store.saveJob(job);
+
+    console.log(`[worker] ${job.id} -> ready (100%)`);
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    job.status = "failed";
+    job.progress = Math.max(job.progress, 92);
+    job.message = error instanceof Error ? error.message : "Failed to cache the resolved media.";
+    job.error = job.message;
+    job.updatedAt = failedAt;
+    job.completedAt = failedAt;
+    await persistJob(job);
+
+    console.log(`[worker] ${job.id} -> failed (${job.message})`);
+  }
+
+  return true;
 }
 
 async function resolveJob(job: CacheJob, now: Date) {
@@ -133,14 +163,14 @@ async function advanceJob(job: CacheJob, now: Date) {
     return resolveJob(job, now);
   }
 
+  if (stage.to === "ready") {
+    return completeReadyJob(job, now);
+  }
+
   job.status = stage.to;
   job.progress = stage.progress;
   job.message = stage.message;
   job.updatedAt = now.toISOString();
-
-  if (job.status === "ready") {
-    job.completedAt = job.updatedAt;
-  }
 
   await persistJob(job);
 

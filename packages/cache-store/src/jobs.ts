@@ -26,8 +26,13 @@ export function createJob(input: {
 export function isFreshReady(asset?: {
   status: string;
   expiresAt?: string;
+  playbackUrl?: string;
 }) {
   if (!asset || asset.status !== "ready" || !asset.expiresAt) {
+    return false;
+  }
+
+  if (asset.playbackUrl?.endsWith("/mock-cache.txt")) {
     return false;
   }
 

@@ -2,7 +2,7 @@ import "./env.js";
 import http from "node:http";
 import { URL } from "node:url";
 import { type EnsureCacheRequest, type MediaVariant, type SearchResult } from "@wwpdw/shared";
-import { createCacheStore } from "@wwpdw/cache-store";
+import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
@@ -62,6 +62,16 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
   };
 }
 
+function visibleCacheAsset<T extends { status: string; expiresAt?: string; playbackUrl?: string }>(
+  asset: T | undefined
+) {
+  if (asset?.status === "ready" && !isFreshReady(asset)) {
+    return undefined;
+  }
+
+  return asset;
+}
+
 async function handleSearch(url: URL, response: http.ServerResponse) {
   const query = url.searchParams.get("q")?.trim() ?? "";
   const searchResults = await searchSource.search(query);
@@ -73,10 +83,10 @@ async function handleSearch(url: URL, response: http.ServerResponse) {
   const assets = await store.listAssets(assetKeys);
   const results = searchResults.map((item) => ({
     ...item,
-    cache: assets[item.assetKey],
+    cache: visibleCacheAsset(assets[item.assetKey]),
     variants: item.variants?.map((variant) => ({
       ...variant,
-      cache: assets[variant.assetKey]
+      cache: visibleCacheAsset(assets[variant.assetKey])
     }))
   }));
 

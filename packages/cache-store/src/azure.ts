@@ -5,6 +5,8 @@ import {
   StorageSharedKeyCredential,
   generateBlobSASQueryParameters
 } from "@azure/storage-blob";
+import { Readable } from "node:stream";
+import type { ReadableStream } from "node:stream/web";
 import type { ContainerClient, UserDelegationKey } from "@azure/storage-blob";
 import { QueueClient, QueueServiceClient } from "@azure/storage-queue";
 import { TableClient } from "@azure/data-tables";
@@ -103,8 +105,41 @@ function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
   return JSON.parse(entity.payload) as T;
 }
 
-function blobNameForAsset(assetKey: string) {
-  return `assets/${encodeRowKey(assetKey)}/mock-cache.txt`;
+function mediaExtension(sourceUrl?: string) {
+  const fallback = ".mp4";
+  if (!sourceUrl) {
+    return fallback;
+  }
+
+  try {
+    const parsed = new URL(sourceUrl);
+    const match = parsed.pathname.match(/\.(mp4|m4v|mov|webm)$/i);
+    return match ? `.${match[1].toLowerCase()}` : fallback;
+  } catch {
+    const match = sourceUrl.match(/\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i);
+    return match ? `.${match[1].toLowerCase()}` : fallback;
+  }
+}
+
+function contentTypeFor(sourceUrl?: string, responseContentType?: string | null) {
+  if (responseContentType?.startsWith("video/")) {
+    return responseContentType;
+  }
+
+  const extension = mediaExtension(sourceUrl);
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+
+  return "video/mp4";
+}
+
+function blobNameForAsset(assetKey: string, sourceUrl?: string) {
+  return `assets/${encodeRowKey(assetKey)}/cached${mediaExtension(sourceUrl)}`;
 }
 
 export class AzureCacheStore implements CacheStore {
@@ -232,7 +267,7 @@ export class AzureCacheStore implements CacheStore {
       return { asset: existingAsset, job: existingJob };
     }
 
-    if (existingAsset && existingJob && existingJob.status !== "failed") {
+    if (existingAsset && existingJob && !terminalStatuses.includes(existingJob.status)) {
       existingAsset.lastRequestedAt = new Date().toISOString();
       await this.saveAsset(existingAsset);
       return { asset: existingAsset, job: existingJob };
@@ -333,22 +368,34 @@ export class AzureCacheStore implements CacheStore {
 
   async finalizeReadyAsset(job: CacheJob) {
     await this.ensureReady();
-    const blobName = blobNameForAsset(job.assetKey);
-    const blockBlob = this.containerClient.getBlockBlobClient(blobName);
-    const body = [
-      "WWPDW mock cached asset",
-      `assetKey=${job.assetKey}`,
-      `jobId=${job.id}`,
-      `createdAt=${new Date().toISOString()}`
-    ].join("\n");
+    const sourceUrl = job.resolve?.url ?? job.sourceUrl;
+    if (!sourceUrl) {
+      throw new Error("Resolved media URL is missing.");
+    }
 
-    await blockBlob.upload(body, Buffer.byteLength(body), {
+    const blobName = blobNameForAsset(job.assetKey, sourceUrl);
+    const blockBlob = this.containerClient.getBlockBlobClient(blobName);
+
+    const sourceResponse = await fetch(sourceUrl, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "wwpdw-cache-worker/0.1"
+      }
+    });
+
+    if (!sourceResponse.ok || !sourceResponse.body) {
+      throw new Error(`Source download failed with HTTP ${sourceResponse.status}.`);
+    }
+
+    const stream = Readable.fromWeb(sourceResponse.body as ReadableStream<Uint8Array>);
+    await blockBlob.uploadStream(stream, 8 * 1024 * 1024, 4, {
       blobHTTPHeaders: {
-        blobContentType: "text/plain; charset=utf-8"
+        blobContentType: contentTypeFor(sourceUrl, sourceResponse.headers.get("content-type"))
       },
       metadata: {
         assetkey: encodeRowKey(job.assetKey),
-        jobid: job.id
+        jobid: job.id,
+        resolver: job.resolve?.layer ?? "unknown"
       }
     });
 

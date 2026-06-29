@@ -57,7 +57,7 @@ export class LocalCacheStore implements CacheStore {
         return { asset: existingAsset, job: existingJob };
       }
 
-      if (existingAsset && existingJob && existingJob.status !== "failed") {
+      if (existingAsset && existingJob && !terminalStatuses.includes(existingJob.status)) {
         existingAsset.lastRequestedAt = new Date().toISOString();
         return { asset: existingAsset, job: existingJob };
       }
