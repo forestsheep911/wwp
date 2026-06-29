@@ -1,4 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
+  durationMs,
+  errorLogFields,
+  logError,
+  logInfo,
   type CacheAsset,
   type CacheJob,
   type CacheStatus
@@ -11,6 +16,7 @@ const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
 const workerMode = process.env.WORKER_MODE ?? "daemon";
 const oneShotMaxTicks = Number(process.env.WORKER_ONESHOT_MAX_TICKS ?? 30);
 const store = createCacheStore();
+const workerRunId = randomUUID();
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 
@@ -89,10 +95,21 @@ async function persistJob(job: CacheJob) {
 }
 
 async function completeReadyJob(job: CacheJob, now: Date) {
+  const startedAt = Date.now();
   job.progress = Math.max(job.progress, 92);
   job.message = "Uploading the resolved media into Blob cache.";
   job.updatedAt = now.toISOString();
   await persistJob(job);
+
+  logInfo("worker.job.upload_start", {
+    workerRunId,
+    jobId: job.id,
+    assetKey: job.assetKey,
+    status: job.status,
+    progress: job.progress,
+    resolverLayer: job.resolve?.layer,
+    resolveKind: job.resolve?.kind
+  });
 
   try {
     await store.finalizeReadyAsset(job);
@@ -106,7 +123,14 @@ async function completeReadyJob(job: CacheJob, now: Date) {
     job.error = undefined;
     await store.saveJob(job);
 
-    console.log(`[worker] ${job.id} -> ready (100%)`);
+    logInfo("worker.job.ready", {
+      workerRunId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      status: job.status,
+      progress: job.progress,
+      durationMs: durationMs(startedAt)
+    });
   } catch (error) {
     const failedAt = new Date().toISOString();
     job.status = "failed";
@@ -117,13 +141,22 @@ async function completeReadyJob(job: CacheJob, now: Date) {
     job.completedAt = failedAt;
     await persistJob(job);
 
-    console.log(`[worker] ${job.id} -> failed (${job.message})`);
+    logError("worker.job.failed", {
+      workerRunId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      status: job.status,
+      progress: job.progress,
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
   }
 
   return true;
 }
 
 async function resolveJob(job: CacheJob, now: Date) {
+  const startedAt = Date.now();
   const resolve = await resolveJobSource({
     assetKey: job.assetKey,
     sourceUrl: job.sourceUrl
@@ -144,7 +177,18 @@ async function resolveJob(job: CacheJob, now: Date) {
   }
 
   await persistJob(job);
-  console.log(`[worker] ${job.id} -> ${job.status} (${job.resolve.kind})`);
+  logInfo("worker.job.resolve", {
+    workerRunId,
+    jobId: job.id,
+    assetKey: job.assetKey,
+    status: job.status,
+    progress: job.progress,
+    resolverLayer: resolve.layer,
+    resolveKind: resolve.kind,
+    confidence: resolve.confidence,
+    reason: resolve.reason,
+    durationMs: durationMs(startedAt)
+  });
   return true;
 }
 
@@ -174,7 +218,13 @@ async function advanceJob(job: CacheJob, now: Date) {
 
   await persistJob(job);
 
-  console.log(`[worker] ${job.id} -> ${job.status} (${job.progress}%)`);
+  logInfo("worker.job.stage", {
+    workerRunId,
+    jobId: job.id,
+    assetKey: job.assetKey,
+    status: job.status,
+    progress: job.progress
+  });
   return true;
 }
 
@@ -203,56 +253,105 @@ function sleep(ms: number) {
 }
 
 async function runOneShot() {
-  console.log(`Worker mode: oneshot (${oneShotMaxTicks} ticks max)`);
+  logInfo("worker.oneshot.start", {
+    workerRunId,
+    oneShotMaxTicks
+  });
 
   for (let tickIndex = 0; tickIndex < oneShotMaxTicks; tickIndex += 1) {
     const result = await tick();
+    if (result.activeCount > 0 || result.changed) {
+      logInfo("worker.tick", {
+        workerRunId,
+        tickIndex,
+        activeCount: result.activeCount,
+        changed: result.changed
+      });
+    }
     if (result.activeCount === 0) {
-      console.log("[worker] no active jobs; exiting");
+      logInfo("worker.oneshot.idle_exit", {
+        workerRunId,
+        tickIndex
+      });
       return;
     }
     await sleep(pollMs);
   }
 
-  console.log("[worker] tick limit reached; exiting");
+  logInfo("worker.oneshot.tick_limit_exit", {
+    workerRunId,
+    oneShotMaxTicks
+  });
 }
 
 async function runDaemon() {
-  console.log("Worker mode: daemon");
+  logInfo("worker.daemon.start", {
+    workerRunId
+  });
 
   tick().catch((error) => {
-    console.error("[worker] initial tick failed", error);
+    logError("worker.tick.failed", {
+      workerRunId,
+      phase: "initial",
+      ...errorLogFields(error)
+    });
   });
 
   setInterval(() => {
     tick().catch((error) => {
-      console.error("[worker] tick failed", error);
+      logError("worker.tick.failed", {
+        workerRunId,
+        phase: "interval",
+        ...errorLogFields(error)
+      });
     });
   }, pollMs);
 }
 
 async function runCleanup() {
-  console.log("Worker mode: cleanup");
+  const startedAt = Date.now();
+  logInfo("worker.cleanup.start", {
+    workerRunId
+  });
   const result = await store.cleanupExpired();
-  console.log(`[cleanup] scanned=${result.scannedAssets} expired=${result.expiredAssets} deletedAssets=${result.deletedAssets} deletedBlobs=${result.deletedBlobs} deletedJobs=${result.deletedJobs}`);
+  logInfo("worker.cleanup.summary", {
+    workerRunId,
+    scannedAssets: result.scannedAssets,
+    expiredAssets: result.expiredAssets,
+    deletedAssets: result.deletedAssets,
+    deletedBlobs: result.deletedBlobs,
+    deletedJobs: result.deletedJobs,
+    errorCount: result.errors.length,
+    durationMs: durationMs(startedAt)
+  });
 
   if (result.errors.length > 0) {
     for (const error of result.errors) {
-      console.error(`[cleanup] ${error}`);
+      logError("worker.cleanup.error", {
+        workerRunId,
+        errorMessage: error
+      });
     }
     throw new Error(`Cleanup completed with ${result.errors.length} error(s).`);
   }
 }
 
-console.log(`WWPDW worker using ${store.description}`);
-console.log(`Worker concurrency: ${maxConcurrent}`);
+logInfo("worker.start", {
+  workerRunId,
+  mode: workerMode,
+  store: store.description,
+  maxConcurrent
+});
 
 if (workerMode === "cleanup") {
   try {
     await runCleanup();
     process.exit(0);
   } catch (error) {
-    console.error("[worker] cleanup failed", error);
+    logError("worker.cleanup.failed", {
+      workerRunId,
+      ...errorLogFields(error)
+    });
     process.exit(1);
   }
 } else if (workerMode === "oneshot") {
@@ -260,7 +359,10 @@ if (workerMode === "cleanup") {
     await runOneShot();
     process.exit(0);
   } catch (error) {
-    console.error("[worker] oneshot failed", error);
+    logError("worker.oneshot.failed", {
+      workerRunId,
+      ...errorLogFields(error)
+    });
     process.exit(1);
   }
 } else {

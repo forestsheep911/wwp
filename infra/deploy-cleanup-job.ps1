@@ -77,7 +77,6 @@ if (-not $exists) {
     az2 containerapp job update `
         --name $JobName `
         --resource-group $ResourceGroup `
-        --trigger-type Schedule `
         --cron-expression $CronExpression `
         --image $image `
         --cpu 0.5 `

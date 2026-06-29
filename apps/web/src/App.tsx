@@ -10,6 +10,7 @@ import {
   checkAccess,
   clearAccessKey,
   ensureCache,
+  errorMessage,
   getCacheStatus,
   getAccessKey,
   getPlayback,
@@ -65,7 +66,7 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
       return;
     } catch (accessError) {
       clearAccessKey();
-      setError(accessError instanceof Error ? accessError.message : "Access key did not match.");
+      setError(errorMessage(accessError, "Access key did not match."));
     } finally {
       setLoading(false);
     }
@@ -224,7 +225,7 @@ export default function App() {
       return;
     }
 
-    setError(error instanceof Error ? error.message : fallback);
+    setError(errorMessage(error, fallback));
   }
 
   async function runSearch(event?: FormEvent) {

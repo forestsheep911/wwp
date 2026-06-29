@@ -11,6 +11,12 @@ import type { ContainerClient, UserDelegationKey } from "@azure/storage-blob";
 import { QueueClient, QueueServiceClient } from "@azure/storage-queue";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
+import {
+  durationMs,
+  errorLogFields,
+  logError,
+  logInfo
+} from "@wwpdw/shared";
 import type {
   CacheAsset,
   CacheJob,
@@ -374,6 +380,7 @@ export class AzureCacheStore implements CacheStore {
 
   async finalizeReadyAsset(job: CacheJob) {
     await this.ensureReady();
+    const startedAt = Date.now();
     const sourceUrl = job.resolve?.url ?? job.sourceUrl;
     if (!sourceUrl) {
       throw new Error("Resolved media URL is missing.");
@@ -382,28 +389,58 @@ export class AzureCacheStore implements CacheStore {
     const blobName = blobNameForAsset(job.assetKey, sourceUrl);
     const blockBlob = this.containerClient.getBlockBlobClient(blobName);
 
-    const sourceResponse = await fetch(sourceUrl, {
-      redirect: "follow",
-      headers: {
-        "User-Agent": "wwpdw-cache-worker/0.1"
-      }
+    logInfo("cache.blob.upload_start", {
+      jobId: job.id,
+      assetKey: job.assetKey,
+      blobName,
+      resolverLayer: job.resolve?.layer,
+      resolveKind: job.resolve?.kind
     });
 
-    if (!sourceResponse.ok || !sourceResponse.body) {
-      throw new Error(`Source download failed with HTTP ${sourceResponse.status}.`);
+    try {
+      const sourceResponse = await fetch(sourceUrl, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "wwpdw-cache-worker/0.1"
+        }
+      });
+
+      if (!sourceResponse.ok || !sourceResponse.body) {
+        throw new Error(`Source download failed with HTTP ${sourceResponse.status}.`);
+      }
+
+      const contentType = contentTypeFor(sourceUrl, sourceResponse.headers.get("content-type"));
+      const sourceContentLength = sourceResponse.headers.get("content-length");
+      const stream = Readable.fromWeb(sourceResponse.body as ReadableStream<Uint8Array>);
+      await blockBlob.uploadStream(stream, 8 * 1024 * 1024, 4, {
+        blobHTTPHeaders: {
+          blobContentType: contentType
+        },
+        metadata: {
+          assetkey: encodeRowKey(job.assetKey),
+          jobid: job.id,
+          resolver: job.resolve?.layer ?? "unknown"
+        }
+      });
+
+      logInfo("cache.blob.upload_complete", {
+        jobId: job.id,
+        assetKey: job.assetKey,
+        blobName,
+        contentType,
+        sourceContentLength,
+        durationMs: durationMs(startedAt)
+      });
+    } catch (error) {
+      logError("cache.blob.upload_failed", {
+        jobId: job.id,
+        assetKey: job.assetKey,
+        blobName,
+        durationMs: durationMs(startedAt),
+        ...errorLogFields(error)
+      });
+      throw error;
     }
-
-    const stream = Readable.fromWeb(sourceResponse.body as ReadableStream<Uint8Array>);
-    await blockBlob.uploadStream(stream, 8 * 1024 * 1024, 4, {
-      blobHTTPHeaders: {
-        blobContentType: contentTypeFor(sourceUrl, sourceResponse.headers.get("content-type"))
-      },
-      metadata: {
-        assetkey: encodeRowKey(job.assetKey),
-        jobid: job.id,
-        resolver: job.resolve?.layer ?? "unknown"
-      }
-    });
 
     const asset: CacheAsset = {
       assetKey: job.assetKey,
@@ -472,6 +509,11 @@ export class AzureCacheStore implements CacheStore {
       }
 
       result.expiredAssets += 1;
+      logInfo("cache.cleanup.expired_asset", {
+        assetKey: asset.assetKey,
+        jobId: asset.jobId,
+        expiresAt: asset.expiresAt
+      });
       await this.deleteExpiredAsset(asset, entity.rowKey, result);
     }
 
@@ -520,14 +562,19 @@ export class AzureCacheStore implements CacheStore {
     if (blobName) {
       blobDeleted = false;
       try {
-        await this.containerClient.deleteBlob(blobName, {
-          deleteSnapshots: "include"
-        });
-        result.deletedBlobs += 1;
+      await this.containerClient.deleteBlob(blobName, {
+        deleteSnapshots: "include"
+      });
+      result.deletedBlobs += 1;
+      blobDeleted = true;
+      logInfo("cache.cleanup.blob_deleted", {
+        assetKey: asset.assetKey,
+        jobId: asset.jobId,
+        blobName
+      });
+    } catch (error) {
+      if (isNotFound(error)) {
         blobDeleted = true;
-      } catch (error) {
-        if (isNotFound(error)) {
-          blobDeleted = true;
         } else {
           result.errors.push(`Could not delete blob for ${asset.assetKey}: ${error instanceof Error ? error.message : "unknown error"}`);
         }
@@ -541,6 +588,10 @@ export class AzureCacheStore implements CacheStore {
     try {
       await this.assetTable.deleteEntity("asset", rowKey);
       result.deletedAssets += 1;
+      logInfo("cache.cleanup.asset_deleted", {
+        assetKey: asset.assetKey,
+        jobId: asset.jobId
+      });
     } catch (error) {
       if (!isNotFound(error)) {
         result.errors.push(`Could not delete asset ${asset.assetKey}: ${error instanceof Error ? error.message : "unknown error"}`);
@@ -554,6 +605,10 @@ export class AzureCacheStore implements CacheStore {
     try {
       await this.jobTable.deleteEntity("job", asset.jobId);
       result.deletedJobs += 1;
+      logInfo("cache.cleanup.job_deleted", {
+        assetKey: asset.assetKey,
+        jobId: asset.jobId
+      });
     } catch (error) {
       if (!isNotFound(error)) {
         result.errors.push(`Could not delete job ${asset.jobId}: ${error instanceof Error ? error.message : "unknown error"}`);

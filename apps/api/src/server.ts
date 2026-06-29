@@ -1,8 +1,17 @@
 import "./env.js";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import { URL } from "node:url";
-import { type EnsureCacheRequest, type MediaVariant, type SearchResult } from "@wwpdw/shared";
+import {
+  durationMs,
+  errorLogFields,
+  logError,
+  logInfo,
+  logWarn,
+  type EnsureCacheRequest,
+  type MediaVariant,
+  type SearchResult
+} from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
@@ -14,13 +23,22 @@ const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
 const accessHeaderName = "x-wwpdw-access-key";
+const requestIdHeaderName = "x-request-id";
 const accessKey = process.env.WWPDW_ACCESS_KEY ?? process.env.ACCESS_KEY ?? process.env.VITE_ACCESS_CODE;
+
+interface RequestContext {
+  requestId: string;
+  method: string;
+  path: string;
+  startedAt: number;
+}
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": `content-type,${accessHeaderName}`,
+    "Access-Control-Allow-Headers": `content-type,${accessHeaderName},${requestIdHeaderName}`,
+    "Access-Control-Expose-Headers": requestIdHeaderName,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
   });
   response.end(JSON.stringify(payload));
@@ -49,13 +67,30 @@ function isAuthorized(request: http.IncomingMessage) {
   return Boolean(suppliedKey && safeEqual(suppliedKey, accessKey));
 }
 
-function requireAccess(request: http.IncomingMessage, response: http.ServerResponse) {
+function requestIdFromHeader(request: http.IncomingMessage) {
+  const suppliedRequestId = headerValue(request.headers[requestIdHeaderName]);
+  return suppliedRequestId && suppliedRequestId.length <= 128 ? suppliedRequestId : randomUUID();
+}
+
+function requireAccess(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
   if (!accessKey) {
+    logError("api.auth.missing_config", {
+      requestId: context.requestId,
+      path: context.path
+    });
     sendJson(response, 503, { error: "Access key is not configured." });
     return false;
   }
 
   if (!isAuthorized(request)) {
+    logWarn("api.auth.denied", {
+      requestId: context.requestId,
+      path: context.path
+    });
     sendJson(response, 401, { error: "Access key did not match." });
     return false;
   }
@@ -112,7 +147,8 @@ function visibleCacheAsset<T extends { status: string; expiresAt?: string; playb
   return asset;
 }
 
-async function handleSearch(url: URL, response: http.ServerResponse) {
+async function handleSearch(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
   const query = url.searchParams.get("q")?.trim() ?? "";
   const searchResults = await searchSource.search(query);
   rememberResults(searchResults);
@@ -130,22 +166,52 @@ async function handleSearch(url: URL, response: http.ServerResponse) {
     }))
   }));
 
+  logInfo("api.search", {
+    requestId: context.requestId,
+    query,
+    resultCount: results.length,
+    variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
+    durationMs: durationMs(startedAt)
+  });
+
   sendJson(response, 200, { results });
 }
 
-async function handleEnsureCache(request: http.IncomingMessage, response: http.ServerResponse) {
+async function handleEnsureCache(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
   const body = await readBody<EnsureCacheRequest>(request);
   const result = body.result?.assetKey === body.assetKey
     ? body.result
     : recentResults.get(body.assetKey);
 
   if (!result) {
+    logWarn("api.cache.asset_not_found", {
+      requestId: context.requestId,
+      assetKey: body.assetKey,
+      durationMs: durationMs(startedAt)
+    });
     sendJson(response, 404, { error: "Asset was not found." });
     return;
   }
 
+  const existingAsset = await store.getAsset(result.assetKey);
   const output = await store.ensureCache(result);
   const trigger = await workerTrigger.start(output.job);
+
+  logInfo("api.cache.ensure", {
+    requestId: context.requestId,
+    assetKey: result.assetKey,
+    jobId: output.job.id,
+    assetStatus: output.asset.status,
+    jobStatus: output.job.status,
+    readyHit: isFreshReady(existingAsset),
+    triggerStatus: trigger.status,
+    durationMs: durationMs(startedAt)
+  });
 
   sendJson(response, 200, {
     ...output,
@@ -153,13 +219,28 @@ async function handleEnsureCache(request: http.IncomingMessage, response: http.S
   });
 }
 
-async function handleStatus(jobId: string, response: http.ServerResponse) {
+async function handleStatus(jobId: string, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
   const job = await store.getJob(jobId);
 
   if (!job) {
+    logWarn("api.cache.status_not_found", {
+      requestId: context.requestId,
+      jobId,
+      durationMs: durationMs(startedAt)
+    });
     sendJson(response, 404, { error: "Job was not found." });
     return;
   }
+
+  logInfo("api.cache.status", {
+    requestId: context.requestId,
+    jobId,
+    assetKey: job.assetKey,
+    jobStatus: job.status,
+    progress: job.progress,
+    durationMs: durationMs(startedAt)
+  });
 
   sendJson(response, 200, {
     job,
@@ -167,27 +248,53 @@ async function handleStatus(jobId: string, response: http.ServerResponse) {
   });
 }
 
-async function handlePlayback(assetKey: string, response: http.ServerResponse) {
+async function handlePlayback(
+  assetKey: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
   const playback = await store.getPlayback(assetKey);
 
   if (!playback) {
+    logWarn("api.playback.not_ready", {
+      requestId: context.requestId,
+      assetKey,
+      durationMs: durationMs(startedAt)
+    });
     sendJson(response, 409, { error: "Asset is not ready for playback." });
     return;
   }
+
+  logInfo("api.playback.ready", {
+    requestId: context.requestId,
+    assetKey,
+    signedUrlExpiresAt: playback.expiresAt,
+    durationMs: durationMs(startedAt)
+  });
 
   sendJson(response, 200, playback);
 }
 
 async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
-  if (request.method === "OPTIONS") {
-    sendJson(response, 204, {});
-    return;
-  }
-
+  const startedAt = Date.now();
+  const requestId = requestIdFromHeader(request);
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const pathname = url.pathname;
+  const context: RequestContext = {
+    requestId,
+    method: request.method ?? "UNKNOWN",
+    path: pathname,
+    startedAt
+  };
+  response.setHeader(requestIdHeaderName, requestId);
 
   try {
+    if (request.method === "OPTIONS") {
+      sendJson(response, 204, {});
+      return;
+    }
+
     if (request.method === "GET" && pathname === "/health") {
       sendJson(response, 200, {
         ok: true,
@@ -198,47 +305,67 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
-    if (pathname.startsWith("/api/") && !requireAccess(request, response)) {
+    if (pathname.startsWith("/api/") && !requireAccess(request, response, context)) {
       return;
     }
 
     if (request.method === "GET" && pathname === "/api/auth/check") {
+      logInfo("api.auth.check", {
+        requestId
+      });
       sendJson(response, 200, { ok: true });
       return;
     }
 
     if (request.method === "GET" && pathname === "/api/search") {
-      await handleSearch(url, response);
+      await handleSearch(url, response, context);
       return;
     }
 
     if (request.method === "POST" && pathname === "/api/cache") {
-      await handleEnsureCache(request, response);
+      await handleEnsureCache(request, response, context);
       return;
     }
 
     const statusMatch = pathname.match(/^\/api\/cache\/([^/]+)$/);
     if (request.method === "GET" && statusMatch) {
-      await handleStatus(decodeURIComponent(statusMatch[1]), response);
+      await handleStatus(decodeURIComponent(statusMatch[1]), response, context);
       return;
     }
 
     const playbackMatch = pathname.match(/^\/api\/playback\/([^/]+)$/);
     if (request.method === "GET" && playbackMatch) {
-      await handlePlayback(decodeURIComponent(playbackMatch[1]), response);
+      await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context);
       return;
     }
 
     sendJson(response, 404, { error: "Route was not found." });
   } catch (error) {
+    logError("api.request.error", {
+      requestId,
+      method: context.method,
+      path: context.path,
+      ...errorLogFields(error)
+    });
     sendJson(response, 500, {
       error: error instanceof Error ? error.message : "Unexpected server error."
+    });
+  } finally {
+    logInfo("api.request", {
+      requestId,
+      method: context.method,
+      path: context.path,
+      statusCode: response.statusCode,
+      durationMs: durationMs(context.startedAt)
     });
   }
 }
 
 http.createServer(handleRequest).listen(port, () => {
-  console.log(`WWPDW API listening on http://localhost:${port}`);
-  console.log(`Cache store: ${store.description}`);
-  console.log(`Search source: ${searchSource.description}`);
+  logInfo("api.start", {
+    port,
+    store: store.description,
+    search: searchSource.description,
+    accessConfigured: Boolean(accessKey)
+  });
 });
