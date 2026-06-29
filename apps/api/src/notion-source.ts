@@ -15,19 +15,24 @@ interface ParseOptions {
   parseMaxPages: number;
   blockDepth: number;
   blockLimit: number;
+  titleScanLimit: number;
+  titleMatchLimit: number;
 }
 
 const defaultOptions: ParseOptions = {
   searchPageSize: Number(process.env.NOTION_SEARCH_PAGE_SIZE ?? 8),
   parseMaxPages: Number(process.env.NOTION_PARSE_MAX_PAGES ?? 6),
   blockDepth: Number(process.env.NOTION_PARSE_BLOCK_DEPTH ?? 2),
-  blockLimit: Number(process.env.NOTION_PARSE_BLOCK_LIMIT ?? 120)
+  blockLimit: Number(process.env.NOTION_PARSE_BLOCK_LIMIT ?? 120),
+  titleScanLimit: Number(process.env.NOTION_TITLE_SCAN_LIMIT ?? 120),
+  titleMatchLimit: Number(process.env.NOTION_TITLE_MATCH_LIMIT ?? 6)
 };
 
 const urlPattern = /https?:\/\/[^\s<>"']+/gi;
 const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
+const cjkPattern = /[\u3400-\u9fff]/;
 
 function asRecord(value: unknown): JsonRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -262,8 +267,9 @@ export class NotionSearchSource {
   constructor(private readonly options = defaultOptions) {}
 
   async search(query: string): Promise<SearchResult[]> {
+    const normalizedQuery = query.trim();
     const response = await this.notion.search({
-      query: query.trim() || undefined,
+      query: normalizedQuery || undefined,
       filter: {
         property: "object",
         value: "page"
@@ -275,16 +281,136 @@ export class NotionSearchSource {
       page_size: this.options.searchPageSize
     });
 
-    const pages = response.results
+    const pages: JsonRecord[] = response.results
       .filter(isPageResult)
       .slice(0, this.options.parseMaxPages);
+
+    if (normalizedQuery) {
+      pages.push(...await this.findSegmentMatches(normalizedQuery, pages));
+      pages.push(...await this.findTitleMatches(normalizedQuery, pages));
+    }
 
     const results: SearchResult[] = [];
     for (const page of pages) {
       results.push(await this.pageToSearchResult(page));
     }
 
-    return results;
+    return this.rankResults(results, normalizedQuery);
+  }
+
+  private querySegments(query: string) {
+    if (!cjkPattern.test(query) || Array.from(query).length < 3) {
+      return [];
+    }
+
+    const chars = Array.from(query);
+    return [...new Set([
+      chars.slice(0, 2).join(""),
+      chars.slice(-2).join("")
+    ].filter((segment) => segment && segment !== query))];
+  }
+
+  private async findSegmentMatches(query: string, existingPages: JsonRecord[]) {
+    const seenIds = new Set(existingPages.map((page) => asString(page.id)));
+    const matches: JsonRecord[] = [];
+
+    for (const segment of this.querySegments(query)) {
+      const response = await this.notion.search({
+        query: segment,
+        filter: {
+          property: "object",
+          value: "page"
+        },
+        sort: {
+          direction: "descending",
+          timestamp: "last_edited_time"
+        },
+        page_size: this.options.searchPageSize
+      });
+
+      for (const page of response.results.filter(isPageResult) as JsonRecord[]) {
+        const pageId = asString(page.id);
+        if (seenIds.has(pageId)) {
+          continue;
+        }
+
+        matches.push(page);
+        seenIds.add(pageId);
+        if (matches.length >= this.options.titleMatchLimit) {
+          return matches;
+        }
+      }
+    }
+
+    return matches;
+  }
+
+  private async findTitleMatches(query: string, existingPages: JsonRecord[]) {
+    if (this.options.titleScanLimit <= 0 || this.options.titleMatchLimit <= 0) {
+      return [];
+    }
+
+    const normalizedQuery = query.toLowerCase();
+    const seenIds = new Set(existingPages.map((page) => asString(page.id)));
+    const matches: JsonRecord[] = [];
+    let scanned = 0;
+    let startCursor: string | undefined;
+
+    do {
+      const response = await this.notion.search({
+        filter: {
+          property: "object",
+          value: "page"
+        },
+        sort: {
+          direction: "descending",
+          timestamp: "last_edited_time"
+        },
+        page_size: Math.min(100, this.options.titleScanLimit - scanned),
+        start_cursor: startCursor
+      });
+
+      const pageResults: JsonRecord[] = response.results.filter(isPageResult);
+      for (const page of pageResults) {
+        scanned += 1;
+        const pageId = asString(page.id);
+        if (seenIds.has(pageId)) {
+          continue;
+        }
+
+        const properties = asRecord(page.properties) ?? {};
+        const title = titleFromProperties(properties).toLowerCase();
+        if (title.includes(normalizedQuery)) {
+          matches.push(page);
+          seenIds.add(pageId);
+        }
+
+        if (matches.length >= this.options.titleMatchLimit || scanned >= this.options.titleScanLimit) {
+          break;
+        }
+      }
+
+      startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+    } while (
+      startCursor &&
+      scanned < this.options.titleScanLimit &&
+      matches.length < this.options.titleMatchLimit
+    );
+
+    return matches;
+  }
+
+  private rankResults(results: SearchResult[], query: string) {
+    if (!query) {
+      return results;
+    }
+
+    const normalizedQuery = query.toLowerCase();
+    return results.sort((left, right) => {
+      const leftExact = left.title.toLowerCase().includes(normalizedQuery) ? 1 : 0;
+      const rightExact = right.title.toLowerCase().includes(normalizedQuery) ? 1 : 0;
+      return rightExact - leftExact;
+    });
   }
 
   private async pageToSearchResult(page: JsonRecord): Promise<SearchResult> {
