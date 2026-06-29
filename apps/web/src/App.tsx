@@ -200,10 +200,18 @@ export default function App() {
 
   async function runSearch(event?: FormEvent) {
     event?.preventDefault();
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      setResults([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
-      const response = await searchAssets(query);
+      const response = await searchAssets(normalizedQuery);
       setResults(response.results);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Search failed.");
@@ -244,12 +252,6 @@ export default function App() {
       setError(playbackError instanceof Error ? playbackError.message : "Playback is not ready.");
     }
   }
-
-  useEffect(() => {
-    if (unlocked) {
-      void runSearch();
-    }
-  }, [unlocked]);
 
   useEffect(() => {
     if (!job || job.status === "ready" || job.status === "failed") {
