@@ -1,6 +1,7 @@
 import type {
   EnsureCacheResponse,
   PlaybackResponse,
+  SearchResult,
   SearchResponse
 } from "@wwpdw/shared";
 
@@ -32,10 +33,13 @@ export function searchAssets(query: string) {
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
-export function ensureCache(assetKey: string) {
+export function ensureCache(result: SearchResult) {
   return request<EnsureCacheResponse>(apiUrl("/api/cache"), {
     method: "POST",
-    body: JSON.stringify({ assetKey })
+    body: JSON.stringify({
+      assetKey: result.assetKey,
+      result
+    })
   });
 }
 

@@ -45,6 +45,8 @@ Notion access:
 - The Notion integration should be read-only and scoped only to the source pages/databases needed for playback.
 - Do not use a write-capable Notion token in this project, especially before adding browser or AI-assisted resolvers.
 - For Azure deployment, store the value in Key Vault and inject it into the API/worker environment under the same name.
+- `WWPDW_SEARCH_SOURCE=auto` uses Notion search when `NOTION_READ_ONLY_TOKEN` exists; otherwise it keeps using the mock catalog.
+- The first parser is rule-based: it checks page properties, video/file/embed/bookmark blocks, rich-text links, and shallow child blocks. Direct file URLs can enter the cache path; page/player URLs are marked for a future browser or AI resolver.
 
 Cloud worker:
 

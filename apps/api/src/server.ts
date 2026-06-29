@@ -1,15 +1,17 @@
+import "./env.js";
 import http from "node:http";
 import { URL } from "node:url";
-import {
-  type EnsureCacheRequest,
-  mockSearchResults
-} from "@wwpdw/shared";
+import { type EnsureCacheRequest, type SearchResult } from "@wwpdw/shared";
 import { createCacheStore } from "@wwpdw/cache-store";
 import { CacheWorkerTrigger } from "./job-trigger.js";
+import { createSearchSource } from "./search-source.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const workerTrigger = new CacheWorkerTrigger();
+const searchSource = createSearchSource();
+const recentResults = new Map<string, SearchResult>();
+const recentResultLimit = 200;
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
@@ -31,21 +33,24 @@ async function readBody<T>(request: http.IncomingMessage): Promise<T> {
   return raw ? (JSON.parse(raw) as T) : ({} as T);
 }
 
+function rememberResults(results: SearchResult[]) {
+  results.forEach((item) => recentResults.set(item.assetKey, item));
+
+  while (recentResults.size > recentResultLimit) {
+    const firstKey = recentResults.keys().next().value;
+    if (!firstKey) {
+      break;
+    }
+    recentResults.delete(firstKey);
+  }
+}
+
 async function handleSearch(url: URL, response: http.ServerResponse) {
-  const query = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
-  const filteredResults = mockSearchResults
-    .filter((item) => {
-      if (!query) {
-        return true;
-      }
-      return [item.title, item.source, item.summary, item.assetKey]
-        .concat(item.sourceUrl)
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    });
-  const assets = await store.listAssets(filteredResults.map((item) => item.assetKey));
-  const results = filteredResults.map((item) => ({
+  const query = url.searchParams.get("q")?.trim() ?? "";
+  const searchResults = await searchSource.search(query);
+  rememberResults(searchResults);
+  const assets = await store.listAssets(searchResults.map((item) => item.assetKey));
+  const results = searchResults.map((item) => ({
     ...item,
     cache: assets[item.assetKey]
   }));
@@ -55,7 +60,9 @@ async function handleSearch(url: URL, response: http.ServerResponse) {
 
 async function handleEnsureCache(request: http.IncomingMessage, response: http.ServerResponse) {
   const body = await readBody<EnsureCacheRequest>(request);
-  const result = mockSearchResults.find((item) => item.assetKey === body.assetKey);
+  const result = body.result?.assetKey === body.assetKey
+    ? body.result
+    : recentResults.get(body.assetKey);
 
   if (!result) {
     sendJson(response, 404, { error: "Asset was not found." });
@@ -107,7 +114,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
   try {
     if (request.method === "GET" && pathname === "/health") {
-      sendJson(response, 200, { ok: true, store: await store.getHealth() });
+      sendJson(response, 200, {
+        ok: true,
+        store: await store.getHealth(),
+        search: searchSource.description
+      });
       return;
     }
 
@@ -144,4 +155,5 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 http.createServer(handleRequest).listen(port, () => {
   console.log(`WWPDW API listening on http://localhost:${port}`);
   console.log(`Cache store: ${store.description}`);
+  console.log(`Search source: ${searchSource.description}`);
 });

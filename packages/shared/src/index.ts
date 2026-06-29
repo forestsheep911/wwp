@@ -54,6 +54,7 @@ export interface CacheJob {
   assetKey: string;
   title: string;
   source: string;
+  sourceUrl?: string;
   status: CacheStatus;
   progress: number;
   message: string;
@@ -75,6 +76,7 @@ export interface SearchResponse {
 
 export interface EnsureCacheRequest {
   assetKey: string;
+  result?: SearchResult;
 }
 
 export interface CacheTriggerStatus {

@@ -199,7 +199,7 @@ export default function App() {
     setError("");
     setPlayback(undefined);
     try {
-      const response = await ensureCache(result.assetKey);
+      const response = await ensureCache(result);
       setJob(response.job);
       setAsset(response.asset);
       if (response.asset.status === "ready") {

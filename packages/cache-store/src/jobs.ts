@@ -4,6 +4,7 @@ export function createJob(input: {
   assetKey: string;
   title: string;
   source: string;
+  sourceUrl?: string;
 }): CacheJob {
   const now = new Date().toISOString();
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -13,6 +14,7 @@ export function createJob(input: {
     assetKey: input.assetKey,
     title: input.title,
     source: input.source,
+    sourceUrl: input.sourceUrl,
     status: "queued",
     progress: 0,
     message: "Waiting for a cache worker.",

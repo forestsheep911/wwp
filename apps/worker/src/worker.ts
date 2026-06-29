@@ -4,7 +4,7 @@ import {
   type CacheStatus
 } from "@wwpdw/shared";
 import { createCacheStore } from "@wwpdw/cache-store";
-import { resolveAssetSource } from "./resolver.js";
+import { resolveJobSource } from "./resolver.js";
 
 const pollMs = Number(process.env.WORKER_POLL_MS ?? 900);
 const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
@@ -94,7 +94,10 @@ async function persistJob(job: CacheJob) {
 }
 
 async function resolveJob(job: CacheJob, now: Date) {
-  const resolve = await resolveAssetSource(job.assetKey);
+  const resolve = await resolveJobSource({
+    assetKey: job.assetKey,
+    sourceUrl: job.sourceUrl
+  });
   job.resolve = resolve;
   job.updatedAt = now.toISOString();
 

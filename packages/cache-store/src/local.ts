@@ -65,7 +65,8 @@ export class LocalCacheStore implements CacheStore {
       const job = createJob({
         assetKey: result.assetKey,
         title: result.title,
-        source: result.source
+        source: result.source,
+        sourceUrl: result.sourceUrl
       });
 
       const asset: CacheAsset = {
