@@ -42,3 +42,10 @@ Notion access:
 - The Notion integration should be read-only and scoped only to the source pages/databases needed for playback.
 - Do not use a write-capable Notion token in this project, especially before adding browser or AI-assisted resolvers.
 - For Azure deployment, store the value in Key Vault and inject it into the API/worker environment under the same name.
+
+Cloud worker:
+
+- Build and push the worker image: `.\infra\build-worker-image.ps1`
+- Create or update the Container Apps Job: `.\infra\deploy-worker-job.ps1`
+- Manually trigger one execution: `.\infra\start-worker-job.ps1`
+- The current job is manual trigger, runs `WORKER_MODE=oneshot`, uses the user-assigned managed identity, and reads/writes Azure Storage without a connection string.

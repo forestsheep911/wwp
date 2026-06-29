@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+.local-data
+downloads
+cache
+tmp
+temp
+artifacts
+node_modules
+apps/*/dist
+dist
+build
+*.log
+*.tmp

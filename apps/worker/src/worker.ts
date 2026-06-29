@@ -8,6 +8,8 @@ import { resolveAssetSource } from "./resolver.js";
 
 const pollMs = Number(process.env.WORKER_POLL_MS ?? 900);
 const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
+const workerMode = process.env.WORKER_MODE ?? "daemon";
+const oneShotMaxTicks = Number(process.env.WORKER_ONESHOT_MAX_TICKS ?? 30);
 const store = createCacheStore();
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
@@ -155,18 +157,58 @@ async function tick() {
     }
   }
 
-  return changed;
+  return {
+    activeCount: activeJobs.length,
+    changed
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runOneShot() {
+  console.log(`Worker mode: oneshot (${oneShotMaxTicks} ticks max)`);
+
+  for (let tickIndex = 0; tickIndex < oneShotMaxTicks; tickIndex += 1) {
+    const result = await tick();
+    if (result.activeCount === 0) {
+      console.log("[worker] no active jobs; exiting");
+      return;
+    }
+    await sleep(pollMs);
+  }
+
+  console.log("[worker] tick limit reached; exiting");
+}
+
+async function runDaemon() {
+  console.log("Worker mode: daemon");
+
+  tick().catch((error) => {
+    console.error("[worker] initial tick failed", error);
+  });
+
+  setInterval(() => {
+    tick().catch((error) => {
+      console.error("[worker] tick failed", error);
+    });
+  }, pollMs);
 }
 
 console.log(`WWPDW worker using ${store.description}`);
 console.log(`Worker concurrency: ${maxConcurrent}`);
 
-tick().catch((error) => {
-  console.error("[worker] initial tick failed", error);
-});
-
-setInterval(() => {
-  tick().catch((error) => {
-    console.error("[worker] tick failed", error);
-  });
-}, pollMs);
+if (workerMode === "oneshot") {
+  try {
+    await runOneShot();
+    process.exit(0);
+  } catch (error) {
+    console.error("[worker] oneshot failed", error);
+    process.exit(1);
+  }
+} else {
+  void runDaemon();
+}

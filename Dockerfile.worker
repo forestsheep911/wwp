@@ -1,0 +1,26 @@
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/worker/package.json ./apps/worker/package.json
+COPY packages/cache-store/package.json ./packages/cache-store/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+RUN npm ci
+
+FROM node:24-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV CACHE_BACKEND=azure
+ENV WORKER_MODE=oneshot
+ENV WORKER_POLL_MS=900
+ENV WORKER_MAX_CONCURRENT=2
+ENV WORKER_ONESHOT_MAX_TICKS=30
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY apps/worker ./apps/worker
+COPY packages/cache-store ./packages/cache-store
+COPY packages/shared ./packages/shared
+
+CMD ["node", "--import", "tsx", "apps/worker/src/worker.ts"]
