@@ -5,13 +5,14 @@ import {
   type LocalCacheState
 } from "@wwpdw/shared";
 import { getStatePath, readState, writeState } from "./localState.js";
+import { resolveAssetSource } from "./resolver.js";
 
 const pollMs = Number(process.env.WORKER_POLL_MS ?? 900);
 const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 
-const stages: Array<{
+const timedStages: Array<{
   from: CacheStatus;
   to: CacheStatus;
   delayMs: number;
@@ -27,17 +28,17 @@ const stages: Array<{
   },
   {
     from: "fetching",
-    to: "downloading",
-    delayMs: 1400,
-    progress: 30,
-    message: "Copying the source video into the cache lane."
+    to: "fetching",
+    delayMs: 900,
+    progress: 18,
+    message: "Resolving the media source."
   },
   {
     from: "downloading",
     to: "processing",
     delayMs: 2400,
     progress: 62,
-    message: "Preparing the playable rendition."
+    message: "Copying the resolved media into the cache lane."
   },
   {
     from: "processing",
@@ -83,10 +84,38 @@ function syncAsset(asset: CacheAsset, job: CacheJob) {
     asset.playbackUrl = `mock://cached-videos/${encodeURIComponent(job.assetKey)}`;
     asset.expiresAt = addDays(now, 30).toISOString();
   }
+
+  if (job.status === "failed") {
+    asset.playbackUrl = undefined;
+    asset.expiresAt = undefined;
+  }
 }
 
-function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
-  const stage = stages.find((item) => item.from === job.status);
+async function resolveJob(state: LocalCacheState, job: CacheJob, now: Date) {
+  const resolve = await resolveAssetSource(job.assetKey);
+  job.resolve = resolve;
+  job.updatedAt = now.toISOString();
+
+  if (resolve.kind === "direct_file" && resolve.url) {
+    job.status = "downloading";
+    job.progress = 30;
+    job.message = `Resolved by ${resolve.layer} resolver.`;
+  } else {
+    job.status = "failed";
+    job.progress = Math.max(job.progress, 18);
+    job.error = resolve.reason ?? "The source could not be resolved into a media file.";
+    job.message = job.error;
+    job.completedAt = job.updatedAt;
+  }
+
+  const asset = ensureAsset(state, job);
+  syncAsset(asset, job);
+  console.log(`[worker] ${job.id} -> ${job.status} (${job.resolve.kind})`);
+  return true;
+}
+
+async function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
+  const stage = timedStages.find((item) => item.from === job.status);
   if (!stage) {
     return false;
   }
@@ -94,6 +123,10 @@ function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
   const elapsed = now.getTime() - new Date(job.updatedAt).getTime();
   if (elapsed < stage.delayMs) {
     return false;
+  }
+
+  if (job.status === "fetching") {
+    return resolveJob(state, job, now);
   }
 
   job.status = stage.to;
@@ -122,7 +155,7 @@ async function tick() {
 
   let changed = false;
   for (const job of activeJobs) {
-    changed = advanceJob(state, job, now) || changed;
+    changed = (await advanceJob(state, job, now)) || changed;
   }
 
   if (changed) {

@@ -265,6 +265,11 @@ input:focus {
   color: #225a30;
 }
 
+.pill-failed {
+  background: #f2dddd;
+  color: #8f2d2d;
+}
+
 .status-panel {
   position: sticky;
   top: 24px;

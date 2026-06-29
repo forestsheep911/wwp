@@ -22,3 +22,8 @@ npm run dev:web
 The thin version uses `.local-data/` for local state. It does not connect to Notion or Azure Storage yet.
 The default local access key is `family`; set `VITE_ACCESS_CODE` before starting the web app to change it.
 This access gate is a local placeholder, not the production security boundary.
+
+The worker has a resolver boundary already:
+
+- Direct mock media URLs resolve through the rule resolver and continue to cache.
+- Intermediate preview URLs return `needs_browser` and fail clearly until a browser resolver is added.

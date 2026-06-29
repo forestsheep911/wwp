@@ -114,6 +114,12 @@ function StatusPanel({
         <strong>{job.progress}%</strong>
       </div>
       <p className="message">{job.message}</p>
+      {job.resolve ? (
+        <p className="message">
+          Resolver: {job.resolve.layer} / {job.resolve.kind}
+        </p>
+      ) : null}
+      {job.error ? <p className="error">{job.error}</p> : null}
       {asset.expiresAt ? (
         <p className="expiry">Expires {formatDate(asset.expiresAt)}</p>
       ) : null}
@@ -236,7 +242,7 @@ export default function App() {
         const response = await getCacheStatus(job.id);
         setJob(response.job);
         setAsset(response.asset);
-        if (response.job.status === "ready") {
+        if (response.job.status === "ready" || response.job.status === "failed") {
           window.clearInterval(timer);
           await runSearch();
         }

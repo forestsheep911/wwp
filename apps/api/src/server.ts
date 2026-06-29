@@ -46,6 +46,7 @@ async function handleSearch(url: URL, response: http.ServerResponse) {
         return true;
       }
       return [item.title, item.source, item.summary, item.assetKey]
+        .concat(item.sourceUrl)
         .join(" ")
         .toLowerCase()
         .includes(query);

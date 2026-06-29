@@ -7,10 +7,32 @@ export type CacheStatus =
   | "ready"
   | "failed";
 
+export type ResolverLayer = "official_api" | "rule" | "browser" | "ai";
+
+export type ResolveKind =
+  | "direct_file"
+  | "embedded_player"
+  | "needs_browser"
+  | "needs_ai"
+  | "failed";
+
+export interface ResolveResult {
+  kind: ResolveKind;
+  layer: ResolverLayer;
+  confidence: number;
+  observedAt: string;
+  url?: string;
+  iframeUrl?: string;
+  snapshotId?: string;
+  reason?: string;
+  notes?: string;
+}
+
 export interface SearchResult {
   assetKey: string;
   title: string;
   source: string;
+  sourceUrl: string;
   durationLabel: string;
   updatedAt: string;
   summary: string;
@@ -37,6 +59,7 @@ export interface CacheJob {
   message: string;
   createdAt: string;
   updatedAt: string;
+  resolve?: ResolveResult;
   completedAt?: string;
   error?: string;
 }
@@ -71,6 +94,7 @@ export const mockSearchResults: SearchResult[] = [
     assetKey: "notion-page-ww-001-block-video-a",
     title: "Moonlit archive test clip",
     source: "Notion collection",
+    sourceUrl: "https://example.local/notion/files/moonlit-archive-test.mp4?download=1",
     durationLabel: "08:12",
     updatedAt: "2026-06-21",
     summary: "A representative item for testing cache hit, cache miss, and playback-ready states."
@@ -79,6 +103,7 @@ export const mockSearchResults: SearchResult[] = [
     assetKey: "notion-page-ww-002-block-video-c",
     title: "Family room recording sample",
     source: "Notion collection",
+    sourceUrl: "https://example.local/notion/files/family-room-recording.mp4?download=1",
     durationLabel: "03:44",
     updatedAt: "2026-06-18",
     summary: "Used to exercise the shared cache pool when the same result is requested twice."
@@ -87,6 +112,7 @@ export const mockSearchResults: SearchResult[] = [
     assetKey: "notion-page-ww-003-block-video-b",
     title: "Travel notes reel placeholder",
     source: "Notion collection",
+    sourceUrl: "https://example.local/notion/preview/travel-notes-reel",
     durationLabel: "11:05",
     updatedAt: "2026-06-09",
     summary: "A longer mock result that makes the status page feel closer to the real flow."
