@@ -393,6 +393,31 @@ async function handleRevokeMemberCode(
   sendJson(response, 200, { code });
 }
 
+async function handleDeleteMemberCode(
+  codeId: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const deleted = await accessStore.deleteMemberCode(codeId);
+  if (!deleted) {
+    logWarn("api.admin.member_codes.delete_not_found", {
+      requestId: context.requestId,
+      memberCodeId: codeId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member code was not found." });
+    return;
+  }
+
+  logInfo("api.admin.member_codes.delete", {
+    requestId: context.requestId,
+    memberCodeId: codeId,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { ok: true });
+}
+
 async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
   const startedAt = Date.now();
   const requestId = requestIdFromHeader(request);
@@ -462,6 +487,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && revokeMemberCodeMatch) {
       await handleRevokeMemberCode(decodeURIComponent(revokeMemberCodeMatch[1]), response, context);
+      return;
+    }
+
+    const deleteMemberCodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/delete$/);
+    if (deleteMemberCodeMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && deleteMemberCodeMatch) {
+      await handleDeleteMemberCode(decodeURIComponent(deleteMemberCodeMatch[1]), response, context);
       return;
     }
 

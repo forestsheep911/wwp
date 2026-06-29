@@ -127,3 +127,12 @@ export function revokeMemberAccessCode(id: string) {
     }
   );
 }
+
+export function deleteMemberAccessCode(id: string) {
+  return request<{ ok: true }>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/delete`),
+    {
+      method: "POST"
+    }
+  );
+}

@@ -31,6 +31,7 @@ import {
   checkAccess,
   clearAccessKey,
   createMemberAccessCode,
+  deleteMemberAccessCode,
   ensureCache,
   errorMessage,
   getAccessKey,
@@ -595,6 +596,7 @@ function AdminPanel({
   onUnlock,
   onGenerate,
   onCopy,
+  onDelete,
   onRevoke
 }: {
   adminUnlocked: boolean;
@@ -610,6 +612,7 @@ function AdminPanel({
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
+  onDelete: (id: string) => void;
   onRevoke: (id: string) => void;
 }) {
   if (!adminUnlocked) {
@@ -732,6 +735,17 @@ function AdminPanel({
                       disabled={adminLoading}
                     >
                       Revoke
+                    </Button>
+                  ) : null}
+                  {code.status !== "active" ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onDelete(code.id)}
+                      disabled={adminLoading}
+                    >
+                      Delete
                     </Button>
                   ) : null}
                 </div>
@@ -968,7 +982,10 @@ export default function App() {
         name: memberName.trim() || "Family member",
         days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30
       });
-      setMemberCodes([response.code, ...memberCodes.filter((code) => code.id !== response.code.id)]);
+      setMemberCodes((currentCodes) => [
+        response.code,
+        ...currentCodes.filter((code) => code.id !== response.code.id)
+      ]);
       setMemberName("");
       setMemberDays(30);
     } catch (generateError) {
@@ -990,6 +1007,19 @@ export default function App() {
       )));
     } catch (revokeError) {
       setAdminError(errorMessage(revokeError, "Could not revoke member code."));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function deleteMemberCode(id: string) {
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      await deleteMemberAccessCode(id);
+      setMemberCodes((currentCodes) => currentCodes.filter((code) => code.id !== id));
+    } catch (deleteError) {
+      setAdminError(errorMessage(deleteError, "Could not delete member code."));
     } finally {
       setAdminLoading(false);
     }
@@ -1170,6 +1200,7 @@ export default function App() {
                   onUnlock={unlockAdmin}
                   onGenerate={generateMemberCode}
                   onCopy={(code) => void copyMemberCode(code)}
+                  onDelete={deleteMemberCode}
                   onRevoke={revokeMemberCode}
                 />
               </TabsContent>

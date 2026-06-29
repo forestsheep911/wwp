@@ -129,6 +129,7 @@ export interface AccessStore {
   createMemberCode(input: CreateMemberCodeRequest): Promise<GeneratedMemberAccessCode>;
   listMemberCodes(): Promise<MemberAccessCode[]>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
+  deleteMemberCode(id: string): Promise<boolean>;
   findMemberByCode(code: string): Promise<AccessIdentity | undefined>;
   getHealth(): Promise<Record<string, unknown>>;
 }
@@ -188,6 +189,17 @@ class LocalAccessStore implements AccessStore {
 
       code.revokedAt = new Date().toISOString();
       return publicCode(code);
+    });
+  }
+
+  async deleteMemberCode(id: string) {
+    return this.updateState((state) => {
+      if (!state.codes[id]) {
+        return false;
+      }
+
+      delete state.codes[id];
+      return true;
     });
   }
 
@@ -305,6 +317,19 @@ class AzureAccessStore implements AccessStore {
     stored.revokedAt = new Date().toISOString();
     await this.save(stored);
     return publicCode(stored);
+  }
+
+  async deleteMemberCode(id: string) {
+    await this.ensureReady();
+    try {
+      await this.table.deleteEntity("member", id);
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async findMemberByCode(code: string) {
