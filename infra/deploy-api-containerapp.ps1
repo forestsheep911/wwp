@@ -7,6 +7,9 @@ param(
     [string]$ImageTag = "latest",
     [string]$IdentityName = "id-ww-player-cache-dev",
     [string]$WorkerJobName = "job-ww-cache-worker",
+    [string]$KeyVaultName = "kv-wwcache-e9219db7",
+    [string]$NotionKeyVaultSecretName = "NOTION-READ-ONLY-TOKEN",
+    [string]$NotionContainerSecretName = "notion-token",
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
@@ -134,3 +137,28 @@ az2 containerapp show `
     --resource-group $ResourceGroup `
     --query "{name:name,provisioningState:properties.provisioningState,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image,identityType:identity.type}" `
     --output json
+
+$notionSecretId = az2 keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $NotionKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+
+if ($notionSecretId) {
+    $notionSecretUri = $notionSecretId -replace "/[0-9a-fA-F]{32}$", ""
+    Write-Host "Attaching Notion read-only token secret reference."
+
+    az2 containerapp secret set `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --secrets "$NotionContainerSecretName=keyvaultref:$notionSecretUri,identityref:$($identity.id)" `
+        --output none
+
+    az2 containerapp update `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --set-env-vars "NOTION_READ_ONLY_TOKEN=secretref:$NotionContainerSecretName" `
+        --output none
+} else {
+    Write-Host "Notion Key Vault secret was not found; API will use mock search unless NOTION_READ_ONLY_TOKEN is set another way."
+}
