@@ -1,0 +1,17 @@
+{
+  "name": "wwpdw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @wwpdw/web",
+    "dev:api": "npm run dev --workspace @wwpdw/api",
+    "dev:worker": "npm run dev --workspace @wwpdw/worker",
+    "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",
+    "typecheck": "npm run typecheck --workspace @wwpdw/web && npm run typecheck --workspace @wwpdw/api && npm run typecheck --workspace @wwpdw/worker"
+  }
+}

@@ -7,12 +7,14 @@ cache/
 tmp/
 temp/
 artifacts/
+.local-data/
 
 node_modules/
 dist/
 build/
 .next/
 .svelte-kit/
+.vite/
 
 .venv/
 venv/
