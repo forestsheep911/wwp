@@ -17,8 +17,8 @@ import type {
   CacheStatus,
   SearchResult
 } from "@wwpdw/shared";
-import { addDays, createJob, isFreshReady } from "./jobs.js";
-import type { CacheStore } from "./types.js";
+import { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
+import type { CacheStore, CleanupExpiredResult } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 const defaultAccountName = "stwwcachee9219db7";
@@ -140,6 +140,12 @@ function contentTypeFor(sourceUrl?: string, responseContentType?: string | null)
 
 function blobNameForAsset(assetKey: string, sourceUrl?: string) {
   return `assets/${encodeRowKey(assetKey)}/cached${mediaExtension(sourceUrl)}`;
+}
+
+function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
+  return asset.status === "ready" &&
+    Boolean(asset.expiresAt) &&
+    new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
 }
 
 export class AzureCacheStore implements CacheStore {
@@ -406,7 +412,7 @@ export class AzureCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `azure://${this.config.containerName}/${blobName}`,
-      expiresAt: addDays(new Date(), 30).toISOString(),
+      expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
       lastRequestedAt: job.createdAt
     };
 
@@ -433,6 +439,43 @@ export class AzureCacheStore implements CacheStore {
       playbackUrl: await this.createBlobReadUrl(blobName, expiresOn),
       expiresAt: expiresOn.toISOString()
     };
+  }
+
+  async cleanupExpired(now = new Date()): Promise<CleanupExpiredResult> {
+    await this.ensureReady();
+    const result: CleanupExpiredResult = {
+      scannedAssets: 0,
+      expiredAssets: 0,
+      deletedAssets: 0,
+      deletedJobs: 0,
+      deletedBlobs: 0,
+      errors: []
+    };
+    const entities = this.assetTable.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'asset'"
+      }
+    });
+
+    for await (const entity of entities) {
+      result.scannedAssets += 1;
+      let asset: CacheAsset;
+      try {
+        asset = deserialize<CacheAsset>(entity);
+      } catch (error) {
+        result.errors.push(`Could not parse asset ${entity.rowKey}: ${error instanceof Error ? error.message : "unknown error"}`);
+        continue;
+      }
+
+      if (!isExpiredReadyAsset(asset, now)) {
+        continue;
+      }
+
+      result.expiredAssets += 1;
+      await this.deleteExpiredAsset(asset, entity.rowKey, result);
+    }
+
+    return result;
   }
 
   private async ensureReady() {
@@ -464,6 +507,58 @@ export class AzureCacheStore implements CacheStore {
     }
 
     return playbackUrl.slice(prefix.length);
+  }
+
+  private async deleteExpiredAsset(
+    asset: CacheAsset,
+    rowKey: string,
+    result: CleanupExpiredResult
+  ) {
+    const blobName = asset.playbackUrl ? this.blobNameFromPlaybackUrl(asset.playbackUrl) : undefined;
+    let blobDeleted = true;
+
+    if (blobName) {
+      blobDeleted = false;
+      try {
+        await this.containerClient.deleteBlob(blobName, {
+          deleteSnapshots: "include"
+        });
+        result.deletedBlobs += 1;
+        blobDeleted = true;
+      } catch (error) {
+        if (isNotFound(error)) {
+          blobDeleted = true;
+        } else {
+          result.errors.push(`Could not delete blob for ${asset.assetKey}: ${error instanceof Error ? error.message : "unknown error"}`);
+        }
+      }
+    }
+
+    if (!blobDeleted) {
+      return;
+    }
+
+    try {
+      await this.assetTable.deleteEntity("asset", rowKey);
+      result.deletedAssets += 1;
+    } catch (error) {
+      if (!isNotFound(error)) {
+        result.errors.push(`Could not delete asset ${asset.assetKey}: ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+    }
+
+    if (!asset.jobId) {
+      return;
+    }
+
+    try {
+      await this.jobTable.deleteEntity("job", asset.jobId);
+      result.deletedJobs += 1;
+    } catch (error) {
+      if (!isNotFound(error)) {
+        result.errors.push(`Could not delete job ${asset.jobId}: ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+    }
   }
 
   private async createBlobReadUrl(blobName: string, expiresOn: Date) {

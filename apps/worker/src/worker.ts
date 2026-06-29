@@ -231,10 +231,31 @@ async function runDaemon() {
   }, pollMs);
 }
 
+async function runCleanup() {
+  console.log("Worker mode: cleanup");
+  const result = await store.cleanupExpired();
+  console.log(`[cleanup] scanned=${result.scannedAssets} expired=${result.expiredAssets} deletedAssets=${result.deletedAssets} deletedBlobs=${result.deletedBlobs} deletedJobs=${result.deletedJobs}`);
+
+  if (result.errors.length > 0) {
+    for (const error of result.errors) {
+      console.error(`[cleanup] ${error}`);
+    }
+    throw new Error(`Cleanup completed with ${result.errors.length} error(s).`);
+  }
+}
+
 console.log(`WWPDW worker using ${store.description}`);
 console.log(`Worker concurrency: ${maxConcurrent}`);
 
-if (workerMode === "oneshot") {
+if (workerMode === "cleanup") {
+  try {
+    await runCleanup();
+    process.exit(0);
+  } catch (error) {
+    console.error("[worker] cleanup failed", error);
+    process.exit(1);
+  }
+} else if (workerMode === "oneshot") {
   try {
     await runOneShot();
     process.exit(0);

@@ -1,16 +1,18 @@
 param(
     [string]$ResourceGroup = "rg-ww-player-cache-dev",
-    [string]$JobName = "job-ww-cache-worker",
+    [string]$JobName = "job-ww-cache-cleanup",
     [string]$ContainerEnv = "cae-ww-player-cache-dev",
     [string]$RegistryName = "acrwwcachee9219db7",
     [string]$ImageName = "wwpdw/worker",
     [string]$ImageTag = "latest",
     [string]$IdentityName = "id-ww-player-cache-dev",
+    [string]$CronExpression = "0 19 * * *",
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
-    [string]$JobTable = "cachejobs"
+    [string]$JobTable = "cachejobs",
+    [int]$CacheAssetTtlDays = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,11 +31,8 @@ $identity = az2 identity show `
 $image = "$loginServer/$ImageName`:$ImageTag"
 $envVars = @(
     "CACHE_BACKEND=azure",
-    "WORKER_MODE=oneshot",
-    "WORKER_POLL_MS=900",
-    "WORKER_MAX_CONCURRENT=2",
-    "WORKER_ONESHOT_MAX_TICKS=30",
-    "CACHE_ASSET_TTL_DAYS=30",
+    "WORKER_MODE=cleanup",
+    "CACHE_ASSET_TTL_DAYS=$CacheAssetTtlDays",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
@@ -53,12 +52,13 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 if (-not $exists) {
-    Write-Host "Creating Container Apps Job: $JobName"
+    Write-Host "Creating cleanup Container Apps Job: $JobName"
     az2 containerapp job create `
         --name $JobName `
         --resource-group $ResourceGroup `
         --environment $ContainerEnv `
-        --trigger-type Manual `
+        --trigger-type Schedule `
+        --cron-expression $CronExpression `
         --replica-timeout 900 `
         --replica-retry-limit 1 `
         --replica-completion-count 1 `
@@ -70,13 +70,15 @@ if (-not $exists) {
         --cpu 0.5 `
         --memory 1.0Gi `
         --env-vars $envVars `
-        --tags project=ww-player-cache env=dev managedBy=infra-script `
+        --tags project=ww-player-cache env=dev managedBy=infra-script component=cleanup `
         --output none
 } else {
-    Write-Host "Updating Container Apps Job: $JobName"
+    Write-Host "Updating cleanup Container Apps Job: $JobName"
     az2 containerapp job update `
         --name $JobName `
         --resource-group $ResourceGroup `
+        --trigger-type Schedule `
+        --cron-expression $CronExpression `
         --image $image `
         --cpu 0.5 `
         --memory 1.0Gi `
@@ -87,11 +89,11 @@ if (-not $exists) {
 }
 
 if ($LASTEXITCODE -ne 0) {
-    throw "Container Apps Job deployment failed."
+    throw "Cleanup Container Apps Job deployment failed."
 }
 
 az2 containerapp job show `
     --name $JobName `
     --resource-group $ResourceGroup `
-    --query "{name:name,provisioningState:properties.provisioningState,triggerType:properties.configuration.triggerType,image:properties.template.containers[0].image,identityType:identity.type}" `
+    --query "{name:name,provisioningState:properties.provisioningState,triggerType:properties.configuration.triggerType,cronExpression:properties.configuration.scheduleTriggerConfig.cronExpression,image:properties.template.containers[0].image,identityType:identity.type}" `
     --output json

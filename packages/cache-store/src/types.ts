@@ -8,6 +8,15 @@ import type {
 
 export type CacheBackend = "local" | "azure";
 
+export interface CleanupExpiredResult {
+  scannedAssets: number;
+  expiredAssets: number;
+  deletedAssets: number;
+  deletedJobs: number;
+  deletedBlobs: number;
+  errors: string[];
+}
+
 export interface CacheStore {
   readonly backend: CacheBackend;
   readonly description: string;
@@ -22,4 +31,5 @@ export interface CacheStore {
   saveAsset(asset: CacheAsset): Promise<void>;
   finalizeReadyAsset(job: CacheJob): Promise<CacheAsset>;
   getPlayback(assetKey: string): Promise<PlaybackResponse | undefined>;
+  cleanupExpired(now?: Date): Promise<CleanupExpiredResult>;
 }

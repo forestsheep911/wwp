@@ -8,10 +8,16 @@ import {
   type SearchResult,
   emptyCacheState
 } from "@wwpdw/shared";
-import { addDays, createJob, isFreshReady } from "./jobs.js";
-import type { CacheStore } from "./types.js";
+import { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
+import type { CacheStore, CleanupExpiredResult } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
+
+function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
+  return asset.status === "ready" &&
+    Boolean(asset.expiresAt) &&
+    new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
+}
 
 export class LocalCacheStore implements CacheStore {
   readonly backend = "local" as const;
@@ -117,7 +123,7 @@ export class LocalCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `mock://cached-videos/${encodeURIComponent(job.assetKey)}`,
-      expiresAt: addDays(new Date(), 30).toISOString(),
+      expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
       lastRequestedAt: job.createdAt
     };
 
@@ -137,6 +143,37 @@ export class LocalCacheStore implements CacheStore {
       playbackUrl: asset.playbackUrl,
       expiresAt: asset.expiresAt
     };
+  }
+
+  async cleanupExpired(now = new Date()): Promise<CleanupExpiredResult> {
+    return this.updateState((state) => {
+      const result: CleanupExpiredResult = {
+        scannedAssets: 0,
+        expiredAssets: 0,
+        deletedAssets: 0,
+        deletedJobs: 0,
+        deletedBlobs: 0,
+        errors: []
+      };
+
+      for (const [assetKey, asset] of Object.entries(state.assets)) {
+        result.scannedAssets += 1;
+        if (!isExpiredReadyAsset(asset, now)) {
+          continue;
+        }
+
+        result.expiredAssets += 1;
+        delete state.assets[assetKey];
+        result.deletedAssets += 1;
+
+        if (asset.jobId && state.jobs[asset.jobId]) {
+          delete state.jobs[asset.jobId];
+          result.deletedJobs += 1;
+        }
+      }
+
+      return result;
+    });
   }
 
   private async readState(): Promise<LocalCacheState> {

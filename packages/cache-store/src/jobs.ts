@@ -44,3 +44,8 @@ export function addDays(date: Date, days: number) {
   next.setDate(next.getDate() + days);
   return next;
 }
+
+export function cacheAssetTtlDays() {
+  const value = Number(process.env.CACHE_ASSET_TTL_DAYS ?? 30);
+  return Number.isFinite(value) && value > 0 ? value : 30;
+}

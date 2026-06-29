@@ -5,7 +5,7 @@ import { LocalCacheStore } from "./local.js";
 import type { CacheBackend, CacheStore } from "./types.js";
 
 export type { CacheBackend, CacheStore } from "./types.js";
-export { addDays, createJob, isFreshReady } from "./jobs.js";
+export { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
 export { AzureCacheStore } from "./azure.js";
 export { LocalCacheStore } from "./local.js";
 
