@@ -20,7 +20,8 @@ param(
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
-    [string]$JobTable = "cachejobs"
+    [string]$JobTable = "cachejobs",
+    [string]$MemberTable = "membercodes"
 )
 
 $ErrorActionPreference = "Stop"
@@ -124,6 +125,7 @@ $envVars = @(
     "AZURE_STORAGE_QUEUE_NAME=$QueueName",
     "AZURE_STORAGE_ASSET_TABLE=$AssetTable",
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
+    "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=60",
     "AZURE_SUBSCRIPTION_ID=$subscriptionId",
     "AZURE_RESOURCE_GROUP=$ResourceGroup",

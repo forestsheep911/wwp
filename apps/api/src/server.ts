@@ -8,23 +8,32 @@ import {
   logError,
   logInfo,
   logWarn,
+  type AccessRole,
+  type AuthCheckResponse,
+  type CreateMemberCodeRequest,
   type EnsureCacheRequest,
   type MediaVariant,
   type SearchResult
 } from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
+import { createAccessStore, type AccessIdentity } from "./access-store.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
+const accessStore = createAccessStore();
 const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
-const accessKey = process.env.WWPDW_ACCESS_KEY ?? process.env.ACCESS_KEY ?? process.env.VITE_ACCESS_CODE;
+const adminKey =
+  process.env.WWPDW_ADMIN_KEY ??
+  process.env.WWPDW_ACCESS_KEY ??
+  process.env.ACCESS_KEY ??
+  process.env.VITE_ACCESS_CODE;
 
 interface RequestContext {
   requestId: string;
@@ -58,13 +67,12 @@ function safeEqual(left: string, right: string) {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function isAuthorized(request: http.IncomingMessage) {
-  if (!accessKey) {
+function isAdminKey(value: string | undefined) {
+  if (!adminKey || !value) {
     return false;
   }
 
-  const suppliedKey = headerValue(request.headers[accessHeaderName]);
-  return Boolean(suppliedKey && safeEqual(suppliedKey, accessKey));
+  return safeEqual(value, adminKey);
 }
 
 function requestIdFromHeader(request: http.IncomingMessage) {
@@ -72,30 +80,75 @@ function requestIdFromHeader(request: http.IncomingMessage) {
   return suppliedRequestId && suppliedRequestId.length <= 128 ? suppliedRequestId : randomUUID();
 }
 
-function requireAccess(
+async function resolveAccess(request: http.IncomingMessage): Promise<AccessIdentity | undefined> {
+  const suppliedKey = headerValue(request.headers[accessHeaderName]);
+  if (!suppliedKey) {
+    return undefined;
+  }
+
+  if (isAdminKey(suppliedKey)) {
+    return { role: "admin" };
+  }
+
+  return accessStore.findMemberByCode(suppliedKey);
+}
+
+async function requireAccess(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   context: RequestContext
-) {
-  if (!accessKey) {
+): Promise<AccessIdentity | undefined> {
+  if (!adminKey) {
     logError("api.auth.missing_config", {
       requestId: context.requestId,
       path: context.path
     });
     sendJson(response, 503, { error: "Access key is not configured." });
-    return false;
+    return undefined;
   }
 
-  if (!isAuthorized(request)) {
+  const identity = await resolveAccess(request);
+  if (!identity) {
     logWarn("api.auth.denied", {
       requestId: context.requestId,
       path: context.path
     });
     sendJson(response, 401, { error: "Access key did not match." });
-    return false;
+    return undefined;
   }
 
-  return true;
+  return identity;
+}
+
+function requireAdmin(
+  identity: AccessIdentity | undefined,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  if (identity?.role === "admin") {
+    return true;
+  }
+
+  logWarn("api.auth.admin_denied", {
+    requestId: context.requestId,
+    path: context.path,
+    role: identity?.role
+  });
+  sendJson(response, 403, { error: "Administrator access is required." });
+  return false;
+}
+
+function authPayload(identity: AccessIdentity): AuthCheckResponse {
+  return {
+    ok: true,
+    role: identity.role as AccessRole,
+    member: identity.role === "member" && identity.memberId && identity.memberName
+      ? {
+        id: identity.memberId,
+        name: identity.memberName
+      }
+      : undefined
+  };
 }
 
 async function readBody<T>(request: http.IncomingMessage): Promise<T> {
@@ -133,7 +186,8 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     sourceUrl: variant.sourceUrl,
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
-    summary: variant.summary
+    summary: variant.summary,
+    metadata: result.metadata
   };
 }
 
@@ -281,6 +335,64 @@ async function handlePlayback(
   sendJson(response, 200, playback);
 }
 
+async function handleListMemberCodes(response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const codes = await accessStore.listMemberCodes();
+  logInfo("api.admin.member_codes.list", {
+    requestId: context.requestId,
+    count: codes.length,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { codes });
+}
+
+async function handleCreateMemberCode(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<CreateMemberCodeRequest>(request);
+  const code = await accessStore.createMemberCode({
+    name: body.name,
+    days: body.days
+  });
+  logInfo("api.admin.member_codes.create", {
+    requestId: context.requestId,
+    memberCodeId: code.id,
+    name: code.name,
+    expiresAt: code.expiresAt,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, { code });
+}
+
+async function handleRevokeMemberCode(
+  codeId: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const code = await accessStore.revokeMemberCode(codeId);
+  if (!code) {
+    logWarn("api.admin.member_codes.not_found", {
+      requestId: context.requestId,
+      memberCodeId: codeId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member code was not found." });
+    return;
+  }
+
+  logInfo("api.admin.member_codes.revoke", {
+    requestId: context.requestId,
+    memberCodeId: code.id,
+    name: code.name,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { code });
+}
+
 async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
   const startedAt = Date.now();
   const requestId = requestIdFromHeader(request);
@@ -303,22 +415,53 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     if (request.method === "GET" && pathname === "/health") {
       sendJson(response, 200, {
         ok: true,
-        access: Boolean(accessKey),
+        access: Boolean(adminKey),
         store: await store.getHealth(),
+        accessStore: await accessStore.getHealth(),
         search: searchSource.description
       });
       return;
     }
 
-    if (pathname.startsWith("/api/") && !requireAccess(request, response, context)) {
-      return;
+    let identity: AccessIdentity | undefined;
+    if (pathname.startsWith("/api/")) {
+      identity = await requireAccess(request, response, context);
+      if (!identity) {
+        return;
+      }
     }
 
     if (request.method === "GET" && pathname === "/api/auth/check") {
       logInfo("api.auth.check", {
-        requestId
+        requestId,
+        role: identity?.role,
+        memberId: identity?.memberId
       });
-      sendJson(response, 200, { ok: true });
+      sendJson(response, 200, authPayload(identity!));
+      return;
+    }
+
+    if (pathname === "/api/admin/member-codes" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/member-codes") {
+      await handleListMemberCodes(response, context);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/member-codes") {
+      await handleCreateMemberCode(request, response, context);
+      return;
+    }
+
+    const revokeMemberCodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/revoke$/);
+    if (revokeMemberCodeMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && revokeMemberCodeMatch) {
+      await handleRevokeMemberCode(decodeURIComponent(revokeMemberCodeMatch[1]), response, context);
       return;
     }
 
@@ -370,7 +513,8 @@ http.createServer(handleRequest).listen(port, () => {
   logInfo("api.start", {
     port,
     store: store.description,
+    accessStore: accessStore.description,
     search: searchSource.description,
-    accessConfigured: Boolean(accessKey)
+    accessConfigured: Boolean(adminKey)
   });
 });

@@ -1,5 +1,9 @@
 import type {
+  AuthCheckResponse,
+  CreateMemberCodeRequest,
+  CreateMemberCodeResponse,
   EnsureCacheResponse,
+  MemberCodeListResponse,
   PlaybackResponse,
   SearchResult,
   SearchResponse
@@ -78,7 +82,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function checkAccess() {
-  return request<{ ok: true }>(apiUrl("/api/auth/check"));
+  return request<AuthCheckResponse>(apiUrl("/api/auth/check"));
 }
 
 export function searchAssets(query: string) {
@@ -102,4 +106,24 @@ export function getCacheStatus(jobId: string) {
 
 export function getPlayback(assetKey: string) {
   return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}`));
+}
+
+export function listMemberCodes() {
+  return request<MemberCodeListResponse>(apiUrl("/api/admin/member-codes"));
+}
+
+export function createMemberAccessCode(input: CreateMemberCodeRequest) {
+  return request<CreateMemberCodeResponse>(apiUrl("/api/admin/member-codes"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function revokeMemberAccessCode(id: string) {
+  return request<{ code: MemberCodeListResponse["codes"][number] }>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/revoke`),
+    {
+      method: "POST"
+    }
+  );
 }

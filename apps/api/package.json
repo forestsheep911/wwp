@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.13.1",
     "@notionhq/client": "^5.22.0",
     "@wwpdw/cache-store": "file:../../packages/cache-store",

@@ -16,22 +16,29 @@ import {
   Users
 } from "lucide-react";
 import type {
+  AccessRole,
+  AuthCheckResponse,
   CacheAsset,
   CacheJob,
+  GeneratedMemberAccessCode,
   MediaDiagnostics,
   MediaVariant,
+  MemberAccessCode,
   PlaybackResponse,
   SearchResult
 } from "@wwpdw/shared";
 import {
   checkAccess,
   clearAccessKey,
+  createMemberAccessCode,
   ensureCache,
   errorMessage,
   getAccessKey,
   getCacheStatus,
   getPlayback,
   isUnauthorizedError,
+  listMemberCodes,
+  revokeMemberAccessCode,
   searchAssets,
   setAccessKey
 } from "./api";
@@ -54,18 +61,9 @@ interface PlaybackHistoryEntry {
   contentLength?: number;
 }
 
-interface MemberCode {
-  id: string;
-  name: string;
-  code: string;
-  createdAt: string;
-  expiresAt: string;
-  status: "active" | "revoked";
-}
+type ManagedMemberCode = MemberAccessCode & { code?: string };
 
 const historyStorageKey = "wwpdw-playback-history";
-const adminSessionKey = "wwpdw-admin-unlocked";
-const memberCodesStorageKey = "wwpdw-member-codes";
 
 function readJsonStorage<T>(key: string, fallback: T): T {
   try {
@@ -216,19 +214,6 @@ function mediaQuality(media?: MediaDiagnostics) {
   return "Playback checked";
 }
 
-function futureDate(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString();
-}
-
-function createMemberCode() {
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(6)))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-  return `fam-${token.slice(0, 4)}-${token.slice(4, 8)}-${token.slice(8, 12)}`;
-}
-
 function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
   if (!media) {
     return null;
@@ -266,7 +251,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function AccessGate({ onUnlock }: { onUnlock: () => void }) {
+function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) => void }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -283,8 +268,8 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
     setError("");
     setAccessKey(candidate);
     try {
-      await checkAccess();
-      onUnlock();
+      const auth = await checkAccess();
+      onUnlock(auth);
     } catch (accessError) {
       clearAccessKey();
       setError(errorMessage(accessError, "Access key did not match."));
@@ -598,6 +583,8 @@ function HistoryPanel({
 
 function AdminPanel({
   adminUnlocked,
+  adminError,
+  adminLoading,
   adminKeyInput,
   memberName,
   memberDays,
@@ -611,10 +598,12 @@ function AdminPanel({
   onRevoke
 }: {
   adminUnlocked: boolean;
+  adminError: string;
+  adminLoading: boolean;
   adminKeyInput: string;
   memberName: string;
   memberDays: number;
-  memberCodes: MemberCode[];
+  memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
   setMemberDays: (value: number) => void;
@@ -631,7 +620,7 @@ function AdminPanel({
             <ShieldCheck className="h-5 w-5 text-emerald-300" />
             Administrator
           </CardTitle>
-          <CardDescription>Household access console</CardDescription>
+          <CardDescription>Enter the administrator key to manage household member codes.</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -648,8 +637,9 @@ function AdminPanel({
               onChange={(event) => setAdminKeyInput(event.target.value)}
               type="password"
             />
-            <Button type="submit">
-              <KeyRound className="h-4 w-4" />
+            {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
+            <Button type="submit" disabled={adminLoading}>
+              {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
               Unlock
             </Button>
           </form>
@@ -691,8 +681,9 @@ function AdminPanel({
                 onChange={(event) => setMemberDays(Number(event.target.value))}
               />
             </div>
-            <Button type="submit">
-              <KeyRound className="h-4 w-4" />
+            {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
+            <Button type="submit" disabled={adminLoading}>
+              {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
               Generate
             </Button>
           </form>
@@ -711,16 +702,35 @@ function AdminPanel({
                     <p className="font-semibold text-slate-50">{code.name}</p>
                     <Badge variant={code.status === "active" ? "default" : "danger"}>{code.status}</Badge>
                   </div>
-                  <p className="mt-1 font-mono text-sm text-slate-300">{code.code}</p>
+                  <p className="mt-1 font-mono text-sm text-slate-300">
+                    {code.code ?? code.codePreview}
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">Expires {formatLongDate(code.expiresAt)}</p>
+                  {!code.code ? (
+                    <p className="mt-1 text-xs text-amber-200">
+                      Full code is shown only when generated.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" size="icon" onClick={() => onCopy(code.code)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => code.code && onCopy(code.code)}
+                    disabled={!code.code || adminLoading}
+                  >
                     <Copy className="h-4 w-4" />
                     <span className="sr-only">Copy</span>
                   </Button>
                   {code.status === "active" ? (
-                    <Button type="button" variant="destructive" size="sm" onClick={() => onRevoke(code.id)}>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onRevoke(code.id)}
+                      disabled={adminLoading}
+                    >
                       Revoke
                     </Button>
                   ) : null}
@@ -749,6 +759,7 @@ function EmptyState({ icon, title }: { icon: React.ReactNode; title: string }) {
 
 export default function App() {
   const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
+  const [role, setRole] = useState<AccessRole | undefined>();
   const [activeTab, setActiveTab] = useState<AppTab>("library");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ResultWithCache[]>([]);
@@ -758,11 +769,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<PlaybackHistoryEntry[]>(() => readJsonStorage(historyStorageKey, []));
-  const [adminUnlocked, setAdminUnlocked] = useState(() => sessionStorage.getItem(adminSessionKey) === "1");
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminLoading, setAdminLoading] = useState(false);
   const [adminKeyInput, setAdminKeyInput] = useState("");
   const [memberName, setMemberName] = useState("");
   const [memberDays, setMemberDays] = useState(30);
-  const [memberCodes, setMemberCodes] = useState<MemberCode[]>(() => readJsonStorage(memberCodesStorageKey, []));
+  const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
 
   const readyCount = useMemo(
     () =>
@@ -809,6 +822,8 @@ export default function App() {
     if (isUnauthorizedError(error)) {
       clearAccessKey();
       setUnlocked(false);
+      setRole(undefined);
+      setAdminUnlocked(false);
       setPlayback(undefined);
       setJob(undefined);
       setAsset(undefined);
@@ -895,38 +910,89 @@ export default function App() {
     writeJsonStorage(historyStorageKey, []);
   }
 
-  function unlockAdmin() {
-    if (!adminKeyInput.trim()) {
+  function applyAuth(auth: AuthCheckResponse) {
+    setRole(auth.role);
+    setAdminUnlocked(auth.role === "admin");
+  }
+
+  async function refreshMemberCodes() {
+    if (!adminUnlocked) {
       return;
     }
-    sessionStorage.setItem(adminSessionKey, "1");
-    setAdminUnlocked(true);
-    setAdminKeyInput("");
+
+    try {
+      const response = await listMemberCodes();
+      setMemberCodes(response.codes);
+      setAdminError("");
+    } catch (adminListError) {
+      setAdminError(errorMessage(adminListError, "Could not load member codes."));
+    }
   }
 
-  function saveMemberCodes(next: MemberCode[]) {
-    setMemberCodes(next);
-    writeJsonStorage(memberCodesStorageKey, next);
+  async function unlockAdmin() {
+    const candidate = adminKeyInput.trim();
+    if (!candidate) {
+      setAdminError("Enter an administrator key.");
+      return;
+    }
+
+    const previousKey = getAccessKey();
+    setAdminLoading(true);
+    setAdminError("");
+    setAccessKey(candidate);
+    try {
+      const auth = await checkAccess();
+      if (auth.role !== "admin") {
+        setAccessKey(previousKey);
+        setAdminError("This key is valid, but it is not an administrator key.");
+        return;
+      }
+
+      applyAuth(auth);
+      setAdminKeyInput("");
+      const response = await listMemberCodes();
+      setMemberCodes(response.codes);
+    } catch (adminAccessError) {
+      setAccessKey(previousKey);
+      setAdminError(errorMessage(adminAccessError, "Admin key did not match."));
+    } finally {
+      setAdminLoading(false);
+    }
   }
 
-  function generateMemberCode() {
-    const name = memberName.trim() || "Family member";
-    const days = Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30;
-    const next: MemberCode = {
-      id: crypto.randomUUID(),
-      name,
-      code: createMemberCode(),
-      createdAt: new Date().toISOString(),
-      expiresAt: futureDate(days),
-      status: "active"
-    };
-    saveMemberCodes([next, ...memberCodes]);
-    setMemberName("");
-    setMemberDays(30);
+  async function generateMemberCode() {
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await createMemberAccessCode({
+        name: memberName.trim() || "Family member",
+        days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30
+      });
+      setMemberCodes([response.code, ...memberCodes.filter((code) => code.id !== response.code.id)]);
+      setMemberName("");
+      setMemberDays(30);
+    } catch (generateError) {
+      setAdminError(errorMessage(generateError, "Could not generate member code."));
+    } finally {
+      setAdminLoading(false);
+    }
   }
 
-  function revokeMemberCode(id: string) {
-    saveMemberCodes(memberCodes.map((code) => (code.id === id ? { ...code, status: "revoked" } : code)));
+  async function revokeMemberCode(id: string) {
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await revokeMemberAccessCode(id);
+      setMemberCodes(memberCodes.map((code) => (
+        code.id === id
+          ? { ...response.code, code: code.code }
+          : code
+      )));
+    } catch (revokeError) {
+      setAdminError(errorMessage(revokeError, "Could not revoke member code."));
+    } finally {
+      setAdminLoading(false);
+    }
   }
 
   async function copyMemberCode(code: string) {
@@ -955,8 +1021,31 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [job?.id, job?.status]);
 
+  useEffect(() => {
+    if (!unlocked || role) {
+      return;
+    }
+
+    checkAccess()
+      .then((auth) => {
+        applyAuth(auth);
+      })
+      .catch((authError) => {
+        handleRequestError(authError, "Access key did not match.");
+      });
+  }, [unlocked, role]);
+
+  useEffect(() => {
+    if (activeTab === "admin" && adminUnlocked) {
+      void refreshMemberCodes();
+    }
+  }, [activeTab, adminUnlocked]);
+
   if (!unlocked) {
-    return <AccessGate onUnlock={() => setUnlocked(true)} />;
+    return <AccessGate onUnlock={(auth) => {
+      setUnlocked(true);
+      applyAuth(auth);
+    }} />;
   }
 
   if (playback) {
@@ -984,6 +1073,9 @@ export default function App() {
               onClick={() => {
                 clearAccessKey();
                 setUnlocked(false);
+                setRole(undefined);
+                setAdminUnlocked(false);
+                setMemberCodes([]);
               }}
             >
               Lock
@@ -1066,6 +1158,8 @@ export default function App() {
               <TabsContent value="admin">
                 <AdminPanel
                   adminUnlocked={adminUnlocked}
+                  adminError={adminError}
+                  adminLoading={adminLoading}
                   adminKeyInput={adminKeyInput}
                   memberName={memberName}
                   memberDays={memberDays}

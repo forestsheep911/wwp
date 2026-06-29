@@ -151,6 +151,44 @@ export interface PlaybackResponse {
   media?: MediaDiagnostics;
 }
 
+export type AccessRole = "admin" | "member";
+
+export interface AuthCheckResponse {
+  ok: true;
+  role: AccessRole;
+  member?: {
+    id: string;
+    name: string;
+  };
+}
+
+export interface MemberAccessCode {
+  id: string;
+  name: string;
+  codePreview: string;
+  createdAt: string;
+  expiresAt: string;
+  status: "active" | "revoked" | "expired";
+  lastUsedAt?: string;
+}
+
+export interface GeneratedMemberAccessCode extends MemberAccessCode {
+  code: string;
+}
+
+export interface MemberCodeListResponse {
+  codes: MemberAccessCode[];
+}
+
+export interface CreateMemberCodeRequest {
+  name: string;
+  days: number;
+}
+
+export interface CreateMemberCodeResponse {
+  code: GeneratedMemberAccessCode;
+}
+
 export const mockSearchResults: SearchResult[] = [
   {
     assetKey: "notion-page-ww-001-block-video-a",
