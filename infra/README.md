@@ -18,4 +18,14 @@ Run from this repository root:
 .\infra\provision.ps1
 ```
 
-The worker Container Apps Job and Static Web App are intentionally left for the application phase, after the worker image and web app exist.
+Application deployment:
+
+```powershell
+.\infra\build-worker-image.ps1
+.\infra\deploy-worker-job.ps1
+.\infra\build-api-image.ps1
+.\infra\deploy-api-containerapp.ps1
+.\infra\deploy-web-staticapp.ps1
+```
+
+The API Container App scales to zero and starts the worker Container Apps Job after it queues an Azure cache request. The Static Web App is deployed from the local `apps/web/dist` build by the Azure Static Web Apps CLI.

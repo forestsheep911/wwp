@@ -4,6 +4,12 @@ import type {
   SearchResponse
 } from "@wwpdw/shared";
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function apiUrl(path: string) {
+  return `${apiBaseUrl}${path}`;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -23,20 +29,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function searchAssets(query: string) {
   const params = new URLSearchParams({ q: query });
-  return request<SearchResponse>(`/api/search?${params.toString()}`);
+  return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
 export function ensureCache(assetKey: string) {
-  return request<EnsureCacheResponse>("/api/cache", {
+  return request<EnsureCacheResponse>(apiUrl("/api/cache"), {
     method: "POST",
     body: JSON.stringify({ assetKey })
   });
 }
 
 export function getCacheStatus(jobId: string) {
-  return request<EnsureCacheResponse>(`/api/cache/${encodeURIComponent(jobId)}`);
+  return request<EnsureCacheResponse>(apiUrl(`/api/cache/${encodeURIComponent(jobId)}`));
 }
 
 export function getPlayback(assetKey: string) {
-  return request<PlaybackResponse>(`/api/playback/${encodeURIComponent(assetKey)}`);
+  return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}`));
 }

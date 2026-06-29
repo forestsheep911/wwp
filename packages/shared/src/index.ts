@@ -77,9 +77,15 @@ export interface EnsureCacheRequest {
   assetKey: string;
 }
 
+export interface CacheTriggerStatus {
+  status: "disabled" | "skipped" | "started" | "failed";
+  message: string;
+}
+
 export interface EnsureCacheResponse {
   asset: CacheAsset;
   job: CacheJob;
+  trigger?: CacheTriggerStatus;
 }
 
 export interface PlaybackResponse {

@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
     "@wwpdw/cache-store": "file:../../packages/cache-store",
     "@wwpdw/shared": "file:../../packages/shared"
   },

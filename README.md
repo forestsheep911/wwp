@@ -10,6 +10,8 @@ Current web-cache MVP shape:
 - `packages/shared`: shared types and mock search data
 - `infra`: Azure resource provisioning scripts
 
+Architecture diagram: `docs/ww-cache-cloud-architecture.png`
+
 Local development:
 
 ```powershell
@@ -22,6 +24,7 @@ npm run dev:web
 The thin version uses `.local-data/` for local state. It does not connect to Notion or Azure Storage yet.
 The default local access key is `family`; set `VITE_ACCESS_CODE` before starting the web app to change it.
 This access gate is a local placeholder, not the production security boundary.
+Set `VITE_API_BASE_URL` when building the web app against a remote API; leave it empty for local `/api`.
 
 The worker has a resolver boundary already:
 
@@ -48,4 +51,14 @@ Cloud worker:
 - Build and push the worker image: `.\infra\build-worker-image.ps1`
 - Create or update the Container Apps Job: `.\infra\deploy-worker-job.ps1`
 - Manually trigger one execution: `.\infra\start-worker-job.ps1`
-- The current job is manual trigger, runs `WORKER_MODE=oneshot`, uses the user-assigned managed identity, and reads/writes Azure Storage without a connection string.
+- The job is manual trigger, runs `WORKER_MODE=oneshot`, uses the user-assigned managed identity, and reads/writes Azure Storage without a connection string.
+
+Cloud web experiment:
+
+```powershell
+.\infra\build-api-image.ps1
+.\infra\deploy-api-containerapp.ps1
+.\infra\deploy-web-staticapp.ps1
+```
+
+The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes the queue/table state and starts the cache worker job through Azure Resource Manager using managed identity. The Static Web App is built with `VITE_API_BASE_URL` pointing at the API Container App.

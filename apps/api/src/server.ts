@@ -5,9 +5,11 @@ import {
   mockSearchResults
 } from "@wwpdw/shared";
 import { createCacheStore } from "@wwpdw/cache-store";
+import { CacheWorkerTrigger } from "./job-trigger.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
+const workerTrigger = new CacheWorkerTrigger();
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
@@ -61,8 +63,12 @@ async function handleEnsureCache(request: http.IncomingMessage, response: http.S
   }
 
   const output = await store.ensureCache(result);
+  const trigger = await workerTrigger.start(output.job);
 
-  sendJson(response, 200, output);
+  sendJson(response, 200, {
+    ...output,
+    trigger
+  });
 }
 
 async function handleStatus(jobId: string, response: http.ServerResponse) {
