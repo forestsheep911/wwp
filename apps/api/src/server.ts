@@ -1,4 +1,5 @@
 import "./env.js";
+import { timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import { URL } from "node:url";
 import { type EnsureCacheRequest, type MediaVariant, type SearchResult } from "@wwpdw/shared";
@@ -12,15 +13,54 @@ const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
+const accessHeaderName = "x-wwpdw-access-key";
+const accessKey = process.env.WWPDW_ACCESS_KEY ?? process.env.ACCESS_KEY ?? process.env.VITE_ACCESS_CODE;
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Allow-Headers": `content-type,${accessHeaderName}`,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
   });
   response.end(JSON.stringify(payload));
+}
+
+function headerValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function safeEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isAuthorized(request: http.IncomingMessage) {
+  if (!accessKey) {
+    return false;
+  }
+
+  const suppliedKey = headerValue(request.headers[accessHeaderName]);
+  return Boolean(suppliedKey && safeEqual(suppliedKey, accessKey));
+}
+
+function requireAccess(request: http.IncomingMessage, response: http.ServerResponse) {
+  if (!accessKey) {
+    sendJson(response, 503, { error: "Access key is not configured." });
+    return false;
+  }
+
+  if (!isAuthorized(request)) {
+    sendJson(response, 401, { error: "Access key did not match." });
+    return false;
+  }
+
+  return true;
 }
 
 async function readBody<T>(request: http.IncomingMessage): Promise<T> {
@@ -151,9 +191,19 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     if (request.method === "GET" && pathname === "/health") {
       sendJson(response, 200, {
         ok: true,
+        access: Boolean(accessKey),
         store: await store.getHealth(),
         search: searchSource.description
       });
+      return;
+    }
+
+    if (pathname.startsWith("/api/") && !requireAccess(request, response)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/auth/check") {
+      sendJson(response, 200, { ok: true });
       return;
     }
 

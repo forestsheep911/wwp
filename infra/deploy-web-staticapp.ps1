@@ -3,8 +3,7 @@ param(
     [string]$StaticAppName = "stapp-ww-player-dev",
     [string]$Location = "eastasia",
     [string]$ApiAppName = "ca-ww-player-api",
-    [string]$ApiBaseUrl = "",
-    [string]$AccessCode = $env:VITE_ACCESS_CODE
+    [string]$ApiBaseUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,13 +45,9 @@ if (-not $exists) {
 }
 
 $previousApiBaseUrl = $env:VITE_API_BASE_URL
-$previousAccessCode = $env:VITE_ACCESS_CODE
 
 try {
     $env:VITE_API_BASE_URL = $ApiBaseUrl
-    if ($AccessCode) {
-        $env:VITE_ACCESS_CODE = $AccessCode
-    }
 
     Push-Location $repoRoot
     try {
@@ -62,7 +57,6 @@ try {
     }
 } finally {
     $env:VITE_API_BASE_URL = $previousApiBaseUrl
-    $env:VITE_ACCESS_CODE = $previousAccessCode
 }
 
 $deploymentToken = az2 staticwebapp secrets list `

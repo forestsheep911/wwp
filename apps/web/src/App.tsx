@@ -7,16 +7,18 @@ import type {
   SearchResult
 } from "@wwpdw/shared";
 import {
+  checkAccess,
+  clearAccessKey,
   ensureCache,
   getCacheStatus,
+  getAccessKey,
   getPlayback,
-  searchAssets
+  isUnauthorizedError,
+  searchAssets,
+  setAccessKey
 } from "./api";
 
 type ResultWithCache = SearchResult & { cache?: CacheAsset };
-
-const accessCode = import.meta.env.VITE_ACCESS_CODE ?? "family";
-const sessionKey = "wwpdw-access-ok";
 
 function formatDate(value?: string) {
   if (!value) {
@@ -44,15 +46,29 @@ function cacheLabel(asset?: CacheAsset) {
 function AccessGate({ onUnlock }: { onUnlock: () => void }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    if (value.trim() === accessCode) {
-      sessionStorage.setItem(sessionKey, "1");
-      onUnlock();
+    const candidate = value.trim();
+    if (!candidate) {
+      setError("Enter an access key.");
       return;
     }
-    setError("Access key did not match.");
+
+    setLoading(true);
+    setError("");
+    setAccessKey(candidate);
+    try {
+      await checkAccess();
+      onUnlock();
+      return;
+    } catch (accessError) {
+      clearAccessKey();
+      setError(accessError instanceof Error ? accessError.message : "Access key did not match.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -75,7 +91,7 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
           />
         </label>
         {error ? <p className="error">{error}</p> : null}
-        <button className="primary" type="submit">
+        <button className="primary" type="submit" disabled={loading}>
           Enter
         </button>
       </form>
@@ -167,7 +183,7 @@ function Player({
 }
 
 export default function App() {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(sessionKey) === "1");
+  const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [job, setJob] = useState<CacheJob | undefined>();
@@ -198,6 +214,19 @@ export default function App() {
     };
   }
 
+  function handleRequestError(error: unknown, fallback: string) {
+    if (isUnauthorizedError(error)) {
+      clearAccessKey();
+      setUnlocked(false);
+      setPlayback(undefined);
+      setJob(undefined);
+      setAsset(undefined);
+      return;
+    }
+
+    setError(error instanceof Error ? error.message : fallback);
+  }
+
   async function runSearch(event?: FormEvent) {
     event?.preventDefault();
     const normalizedQuery = query.trim();
@@ -214,7 +243,7 @@ export default function App() {
       const response = await searchAssets(normalizedQuery);
       setResults(response.results);
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "Search failed.");
+      handleRequestError(searchError, "Search failed.");
     } finally {
       setLoading(false);
     }
@@ -234,7 +263,7 @@ export default function App() {
       }
       await runSearch();
     } catch (cacheError) {
-      setError(cacheError instanceof Error ? cacheError.message : "Cache request failed.");
+      handleRequestError(cacheError, "Cache request failed.");
     } finally {
       setLoading(false);
     }
@@ -249,7 +278,7 @@ export default function App() {
       const response = await getPlayback(assetKey);
       setPlayback(response);
     } catch (playbackError) {
-      setError(playbackError instanceof Error ? playbackError.message : "Playback is not ready.");
+      handleRequestError(playbackError, "Playback is not ready.");
     }
   }
 
@@ -268,7 +297,7 @@ export default function App() {
           await runSearch();
         }
       } catch (statusError) {
-        setError(statusError instanceof Error ? statusError.message : "Status refresh failed.");
+        handleRequestError(statusError, "Status refresh failed.");
       }
     }, 1200);
 
