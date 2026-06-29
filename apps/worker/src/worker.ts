@@ -1,14 +1,14 @@
 import {
   type CacheAsset,
   type CacheJob,
-  type CacheStatus,
-  type LocalCacheState
+  type CacheStatus
 } from "@wwpdw/shared";
-import { getStatePath, readState, writeState } from "./localState.js";
+import { createCacheStore } from "@wwpdw/cache-store";
 import { resolveAssetSource } from "./resolver.js";
 
 const pollMs = Number(process.env.WORKER_POLL_MS ?? 900);
 const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
+const store = createCacheStore();
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 
@@ -56,14 +56,9 @@ const timedStages: Array<{
   }
 ];
 
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function ensureAsset(state: LocalCacheState, job: CacheJob): CacheAsset {
-  state.assets[job.assetKey] ??= {
+async function getOrCreateAsset(job: CacheJob): Promise<CacheAsset> {
+  const existing = await store.getAsset(job.assetKey);
+  return existing ?? {
     assetKey: job.assetKey,
     title: job.title,
     source: job.source,
@@ -71,27 +66,32 @@ function ensureAsset(state: LocalCacheState, job: CacheJob): CacheAsset {
     jobId: job.id,
     lastRequestedAt: job.createdAt
   };
-
-  return state.assets[job.assetKey];
 }
 
-function syncAsset(asset: CacheAsset, job: CacheJob) {
+async function syncAsset(job: CacheJob) {
+  if (job.status === "ready") {
+    await store.finalizeReadyAsset(job);
+    return;
+  }
+
+  const asset = await getOrCreateAsset(job);
   asset.status = job.status;
   asset.jobId = job.id;
-
-  if (job.status === "ready") {
-    const now = new Date();
-    asset.playbackUrl = `mock://cached-videos/${encodeURIComponent(job.assetKey)}`;
-    asset.expiresAt = addDays(now, 30).toISOString();
-  }
 
   if (job.status === "failed") {
     asset.playbackUrl = undefined;
     asset.expiresAt = undefined;
   }
+
+  await store.saveAsset(asset);
 }
 
-async function resolveJob(state: LocalCacheState, job: CacheJob, now: Date) {
+async function persistJob(job: CacheJob) {
+  await store.saveJob(job);
+  await syncAsset(job);
+}
+
+async function resolveJob(job: CacheJob, now: Date) {
   const resolve = await resolveAssetSource(job.assetKey);
   job.resolve = resolve;
   job.updatedAt = now.toISOString();
@@ -108,13 +108,12 @@ async function resolveJob(state: LocalCacheState, job: CacheJob, now: Date) {
     job.completedAt = job.updatedAt;
   }
 
-  const asset = ensureAsset(state, job);
-  syncAsset(asset, job);
+  await persistJob(job);
   console.log(`[worker] ${job.id} -> ${job.status} (${job.resolve.kind})`);
   return true;
 }
 
-async function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
+async function advanceJob(job: CacheJob, now: Date) {
   const stage = timedStages.find((item) => item.from === job.status);
   if (!stage) {
     return false;
@@ -126,7 +125,7 @@ async function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
   }
 
   if (job.status === "fetching") {
-    return resolveJob(state, job, now);
+    return resolveJob(job, now);
   }
 
   job.status = stage.to;
@@ -138,32 +137,28 @@ async function advanceJob(state: LocalCacheState, job: CacheJob, now: Date) {
     job.completedAt = job.updatedAt;
   }
 
-  const asset = ensureAsset(state, job);
-  syncAsset(asset, job);
+  await persistJob(job);
 
   console.log(`[worker] ${job.id} -> ${job.status} (${job.progress}%)`);
   return true;
 }
 
 async function tick() {
-  const state = await readState();
   const now = new Date();
-  const activeJobs = Object.values(state.jobs)
-    .filter((job) => !terminalStatuses.includes(job.status))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .slice(0, maxConcurrent);
+  await store.syncQueue(maxConcurrent);
+  const activeJobs = await store.listActiveJobs(maxConcurrent);
 
   let changed = false;
   for (const job of activeJobs) {
-    changed = (await advanceJob(state, job, now)) || changed;
+    if (!terminalStatuses.includes(job.status)) {
+      changed = (await advanceJob(job, now)) || changed;
+    }
   }
 
-  if (changed) {
-    await writeState(state);
-  }
+  return changed;
 }
 
-console.log(`WWPDW worker watching ${getStatePath()}`);
+console.log(`WWPDW worker using ${store.description}`);
 console.log(`Worker concurrency: ${maxConcurrent}`);
 
 tick().catch((error) => {

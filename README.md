@@ -27,3 +27,11 @@ The worker has a resolver boundary already:
 
 - Direct mock media URLs resolve through the rule resolver and continue to cache.
 - Intermediate preview URLs return `needs_browser` and fail clearly until a browser resolver is added.
+
+Cache backend:
+
+- Default: `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
+- Azure: set `CACHE_BACKEND=azure` and the `AZURE_STORAGE_*` values from `.env.example`.
+- For local Azure auth without a connection string, run with `AZURE_CONFIG_DIR=C:\Users\bxu\.azure2` so Azure SDK credentials can reuse the `az2` login profile.
+
+The Azure backend uses Storage Queue for cache signals, Table Storage for cache/job state, private Blob Storage for cached payloads, and short-lived SAS URLs for playback.

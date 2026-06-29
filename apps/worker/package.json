@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@wwpdw/cache-store": "file:../../packages/cache-store",
     "@wwpdw/shared": "file:../../packages/shared"
   },
   "devDependencies": {

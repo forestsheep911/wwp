@@ -1,0 +1,20 @@
+{
+  "name": "@wwpdw/cache-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.1",
+    "@azure/identity": "^4.10.2",
+    "@azure/storage-blob": "^12.27.0",
+    "@azure/storage-queue": "^12.26.0",
+    "@wwpdw/shared": "file:../shared"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.4",
+    "typescript": "^5.8.3"
+  }
+}

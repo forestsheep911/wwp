@@ -1,13 +1,13 @@
 import http from "node:http";
 import { URL } from "node:url";
 import {
-  type CacheAsset,
   type EnsureCacheRequest,
   mockSearchResults
 } from "@wwpdw/shared";
-import { createJob, getStatePath, readState, updateState } from "./state.js";
+import { createCacheStore } from "@wwpdw/cache-store";
 
 const port = Number(process.env.API_PORT ?? 8787);
+const store = createCacheStore();
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
@@ -29,18 +29,9 @@ async function readBody<T>(request: http.IncomingMessage): Promise<T> {
   return raw ? (JSON.parse(raw) as T) : ({} as T);
 }
 
-function isFreshReady(asset?: CacheAsset) {
-  if (!asset || asset.status !== "ready" || !asset.expiresAt) {
-    return false;
-  }
-
-  return new Date(asset.expiresAt).getTime() > Date.now();
-}
-
 async function handleSearch(url: URL, response: http.ServerResponse) {
   const query = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
-  const state = await readState();
-  const results = mockSearchResults
+  const filteredResults = mockSearchResults
     .filter((item) => {
       if (!query) {
         return true;
@@ -50,11 +41,12 @@ async function handleSearch(url: URL, response: http.ServerResponse) {
         .join(" ")
         .toLowerCase()
         .includes(query);
-    })
-    .map((item) => ({
-      ...item,
-      cache: state.assets[item.assetKey]
-    }));
+    });
+  const assets = await store.listAssets(filteredResults.map((item) => item.assetKey));
+  const results = filteredResults.map((item) => ({
+    ...item,
+    cache: assets[item.assetKey]
+  }));
 
   sendJson(response, 200, { results });
 }
@@ -68,48 +60,13 @@ async function handleEnsureCache(request: http.IncomingMessage, response: http.S
     return;
   }
 
-  const output = await updateState((state) => {
-    const existingAsset = state.assets[result.assetKey];
-    const existingJob = existingAsset?.jobId ? state.jobs[existingAsset.jobId] : undefined;
-
-    if (isFreshReady(existingAsset) && existingJob) {
-      existingAsset.lastRequestedAt = new Date().toISOString();
-      return { asset: existingAsset, job: existingJob };
-    }
-
-    if (existingAsset && existingJob && existingJob.status !== "failed") {
-      existingAsset.lastRequestedAt = new Date().toISOString();
-      return { asset: existingAsset, job: existingJob };
-    }
-
-    const job = createJob({
-      assetKey: result.assetKey,
-      title: result.title,
-      source: result.source
-    });
-
-    state.jobs[job.id] = job;
-    state.assets[result.assetKey] = {
-      assetKey: result.assetKey,
-      title: result.title,
-      source: result.source,
-      status: "queued",
-      jobId: job.id,
-      lastRequestedAt: job.createdAt
-    };
-
-    return {
-      asset: state.assets[result.assetKey],
-      job
-    };
-  });
+  const output = await store.ensureCache(result);
 
   sendJson(response, 200, output);
 }
 
 async function handleStatus(jobId: string, response: http.ServerResponse) {
-  const state = await readState();
-  const job = state.jobs[jobId];
+  const job = await store.getJob(jobId);
 
   if (!job) {
     sendJson(response, 404, { error: "Job was not found." });
@@ -118,25 +75,19 @@ async function handleStatus(jobId: string, response: http.ServerResponse) {
 
   sendJson(response, 200, {
     job,
-    asset: state.assets[job.assetKey]
+    asset: await store.getAsset(job.assetKey)
   });
 }
 
 async function handlePlayback(assetKey: string, response: http.ServerResponse) {
-  const state = await readState();
-  const asset = state.assets[assetKey];
+  const playback = await store.getPlayback(assetKey);
 
-  if (!isFreshReady(asset) || !asset?.playbackUrl || !asset.expiresAt) {
+  if (!playback) {
     sendJson(response, 409, { error: "Asset is not ready for playback." });
     return;
   }
 
-  sendJson(response, 200, {
-    assetKey: asset.assetKey,
-    title: asset.title,
-    playbackUrl: asset.playbackUrl,
-    expiresAt: asset.expiresAt
-  });
+  sendJson(response, 200, playback);
 }
 
 async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
@@ -150,7 +101,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
   try {
     if (request.method === "GET" && pathname === "/health") {
-      sendJson(response, 200, { ok: true, statePath: getStatePath() });
+      sendJson(response, 200, { ok: true, store: await store.getHealth() });
       return;
     }
 
@@ -186,5 +137,5 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
 http.createServer(handleRequest).listen(port, () => {
   console.log(`WWPDW API listening on http://localhost:${port}`);
-  console.log(`Local cache state: ${getStatePath()}`);
+  console.log(`Cache store: ${store.description}`);
 });
