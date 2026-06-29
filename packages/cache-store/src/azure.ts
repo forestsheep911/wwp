@@ -7,7 +7,7 @@ import {
 } from "@azure/storage-blob";
 import { Readable } from "node:stream";
 import type { ReadableStream } from "node:stream/web";
-import type { ContainerClient, UserDelegationKey } from "@azure/storage-blob";
+import type { BlockBlobClient, ContainerClient, UserDelegationKey } from "@azure/storage-blob";
 import { QueueClient, QueueServiceClient } from "@azure/storage-queue";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
@@ -15,12 +15,15 @@ import {
   durationMs,
   errorLogFields,
   logError,
-  logInfo
+  logInfo,
+  logWarn
 } from "@wwpdw/shared";
 import type {
   CacheAsset,
   CacheJob,
   CacheStatus,
+  MediaDiagnostics,
+  Mp4Diagnostics,
   SearchResult
 } from "@wwpdw/shared";
 import { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
@@ -32,6 +35,7 @@ const defaultContainerName = "cached-videos";
 const defaultQueueName = "cache-jobs";
 const defaultAssetTableName = "cacheindex";
 const defaultJobTableName = "cachejobs";
+const defaultMp4ProbeBytes = 4 * 1024 * 1024;
 
 interface AzureStoreConfig {
   accountName: string;
@@ -146,6 +150,163 @@ function contentTypeFor(sourceUrl?: string, responseContentType?: string | null)
 
 function blobNameForAsset(assetKey: string, sourceUrl?: string) {
   return `assets/${encodeRowKey(assetKey)}/cached${mediaExtension(sourceUrl)}`;
+}
+
+function parseHeaderNumber(value: string | null) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function mp4ProbeBytes() {
+  const configured = Number(process.env.CACHE_MP4_PROBE_BYTES ?? defaultMp4ProbeBytes);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return defaultMp4ProbeBytes;
+  }
+
+  return Math.min(Math.max(Math.floor(configured), 64 * 1024), 16 * 1024 * 1024);
+}
+
+function isMp4Like(contentType?: string, blobName?: string) {
+  const normalizedType = contentType?.toLowerCase() ?? "";
+  return normalizedType.includes("mp4") ||
+    normalizedType.includes("quicktime") ||
+    /\.(mp4|m4v|mov)$/i.test(blobName ?? "");
+}
+
+function isPlausibleBoxType(type: string) {
+  return /^[a-zA-Z0-9 ]{4}$/.test(type);
+}
+
+function readLargeBoxSize(buffer: Buffer, offset: number) {
+  const value = buffer.readBigUInt64BE(offset);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return undefined;
+  }
+
+  return Number(value);
+}
+
+function inspectMp4Probe(input: {
+  buffer: Buffer;
+  contentType?: string;
+  blobName?: string;
+}): Mp4Diagnostics {
+  const { buffer, contentType, blobName } = input;
+  const inspectedBytes = buffer.length;
+  let offset = 0;
+  let moovOffset: number | undefined;
+  let mdatOffset: number | undefined;
+  let sawMp4Box = false;
+
+  while (offset + 8 <= buffer.length) {
+    const size32 = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+
+    if (!isPlausibleBoxType(type)) {
+      break;
+    }
+
+    let headerSize = 8;
+    let boxSize = size32;
+    if (size32 === 1) {
+      if (offset + 16 > buffer.length) {
+        break;
+      }
+      const largeSize = readLargeBoxSize(buffer, offset + 8);
+      if (!largeSize) {
+        break;
+      }
+      headerSize = 16;
+      boxSize = largeSize;
+    } else if (size32 === 0) {
+      boxSize = buffer.length - offset;
+    }
+
+    if (boxSize < headerSize) {
+      break;
+    }
+
+    if (["ftyp", "moov", "mdat", "free", "wide", "uuid"].includes(type)) {
+      sawMp4Box = true;
+    }
+
+    if (type === "moov") {
+      moovOffset = offset;
+    }
+
+    if (type === "mdat") {
+      mdatOffset = offset;
+    }
+
+    if (moovOffset !== undefined && mdatOffset !== undefined) {
+      break;
+    }
+
+    if (offset + boxSize > buffer.length) {
+      break;
+    }
+
+    offset += boxSize;
+  }
+
+  const maybeMp4 = sawMp4Box || isMp4Like(contentType, blobName);
+  if (!maybeMp4) {
+    return {
+      status: "not_mp4",
+      inspectedBytes,
+      notes: "The cached blob does not look like an MP4/MOV container."
+    };
+  }
+
+  if (moovOffset !== undefined && mdatOffset !== undefined) {
+    return {
+      status: moovOffset < mdatOffset ? "faststart" : "late_moov",
+      inspectedBytes,
+      moovOffset,
+      mdatOffset
+    };
+  }
+
+  if (moovOffset !== undefined) {
+    return {
+      status: "faststart",
+      inspectedBytes,
+      moovOffset,
+      notes: "The moov box was found in the probe window before any mdat box."
+    };
+  }
+
+  if (mdatOffset !== undefined) {
+    return {
+      status: "late_moov",
+      inspectedBytes,
+      mdatOffset,
+      notes: "The mdat box was found before any moov box in the probe window."
+    };
+  }
+
+  return {
+    status: "unknown",
+    inspectedBytes,
+    notes: "No top-level moov/mdat boxes were found in the probe window."
+  };
+}
+
+async function streamToBuffer(stream: NodeJS.ReadableStream | undefined) {
+  if (!stream) {
+    return Buffer.alloc(0);
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
 }
 
 function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
@@ -388,6 +549,7 @@ export class AzureCacheStore implements CacheStore {
 
     const blobName = blobNameForAsset(job.assetKey, sourceUrl);
     const blockBlob = this.containerClient.getBlockBlobClient(blobName);
+    let media: MediaDiagnostics | undefined;
 
     logInfo("cache.blob.upload_start", {
       jobId: job.id,
@@ -409,8 +571,10 @@ export class AzureCacheStore implements CacheStore {
         throw new Error(`Source download failed with HTTP ${sourceResponse.status}.`);
       }
 
-      const contentType = contentTypeFor(sourceUrl, sourceResponse.headers.get("content-type"));
-      const sourceContentLength = sourceResponse.headers.get("content-length");
+      const sourceContentType = sourceResponse.headers.get("content-type");
+      const sourceContentLength = parseHeaderNumber(sourceResponse.headers.get("content-length"));
+      const sourceAcceptRanges = sourceResponse.headers.get("accept-ranges") ?? undefined;
+      const contentType = contentTypeFor(sourceUrl, sourceContentType);
       const stream = Readable.fromWeb(sourceResponse.body as ReadableStream<Uint8Array>);
       await blockBlob.uploadStream(stream, 8 * 1024 * 1024, 4, {
         blobHTTPHeaders: {
@@ -423,12 +587,26 @@ export class AzureCacheStore implements CacheStore {
         }
       });
 
+      media = await this.inspectCachedBlob(blockBlob, {
+        job,
+        blobName,
+        contentType,
+        sourceContentType: sourceContentType ?? undefined,
+        sourceContentLength,
+        sourceAcceptRanges
+      });
+
       logInfo("cache.blob.upload_complete", {
         jobId: job.id,
         assetKey: job.assetKey,
         blobName,
-        contentType,
+        contentType: media?.contentType ?? contentType,
+        contentLength: media?.contentLength,
         sourceContentLength,
+        rangeSupported: media?.rangeSupported,
+        mp4Status: media?.mp4?.status,
+        moovOffset: media?.mp4?.moovOffset,
+        mdatOffset: media?.mp4?.mdatOffset,
         durationMs: durationMs(startedAt)
       });
     } catch (error) {
@@ -450,7 +628,8 @@ export class AzureCacheStore implements CacheStore {
       jobId: job.id,
       playbackUrl: `azure://${this.config.containerName}/${blobName}`,
       expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
-      lastRequestedAt: job.createdAt
+      lastRequestedAt: job.createdAt,
+      media
     };
 
     await this.saveAsset(asset);
@@ -474,7 +653,8 @@ export class AzureCacheStore implements CacheStore {
       assetKey: asset.assetKey,
       title: asset.title,
       playbackUrl: await this.createBlobReadUrl(blobName, expiresOn),
-      expiresAt: expiresOn.toISOString()
+      expiresAt: expiresOn.toISOString(),
+      media: asset.media
     };
   }
 
@@ -518,6 +698,87 @@ export class AzureCacheStore implements CacheStore {
     }
 
     return result;
+  }
+
+  private async inspectCachedBlob(
+    blockBlob: BlockBlobClient,
+    input: {
+      job: CacheJob;
+      blobName: string;
+      contentType?: string;
+      sourceContentType?: string;
+      sourceContentLength?: number;
+      sourceAcceptRanges?: string;
+    }
+  ): Promise<MediaDiagnostics> {
+    const base: MediaDiagnostics = {
+      checkedAt: new Date().toISOString(),
+      blobName: input.blobName,
+      contentType: input.contentType,
+      sourceContentType: input.sourceContentType,
+      sourceContentLength: input.sourceContentLength,
+      sourceAcceptRanges: input.sourceAcceptRanges
+    };
+
+    try {
+      const properties = await blockBlob.getProperties();
+      const contentType = properties.contentType ?? input.contentType;
+      const contentLength = properties.contentLength;
+      const diagnostics: MediaDiagnostics = {
+        ...base,
+        contentType,
+        contentLength
+      };
+
+      if (!contentLength || contentLength <= 0) {
+        diagnostics.rangeSupported = false;
+        diagnostics.mp4 = isMp4Like(contentType, input.blobName)
+          ? {
+            status: "unknown",
+            inspectedBytes: 0,
+            notes: "The cached blob is empty or did not report a content length."
+          }
+          : undefined;
+        return diagnostics;
+      }
+
+      try {
+        const probeLength = Math.min(mp4ProbeBytes(), contentLength);
+        const probe = await blockBlob.download(0, probeLength);
+        const buffer = await streamToBuffer(probe.readableStreamBody);
+        diagnostics.rangeSupported = buffer.length > 0;
+        diagnostics.mp4 = inspectMp4Probe({
+          buffer,
+          contentType,
+          blobName: input.blobName
+        });
+      } catch (error) {
+        diagnostics.rangeSupported = false;
+        diagnostics.mp4 = isMp4Like(contentType, input.blobName)
+          ? {
+            status: "unknown",
+            inspectedBytes: 0,
+            notes: "The range probe failed before MP4 boxes could be inspected."
+          }
+          : undefined;
+        logWarn("cache.blob.range_probe_failed", {
+          jobId: input.job.id,
+          assetKey: input.job.assetKey,
+          blobName: input.blobName,
+          ...errorLogFields(error)
+        });
+      }
+
+      return diagnostics;
+    } catch (error) {
+      logWarn("cache.blob.diagnostics_failed", {
+        jobId: input.job.id,
+        assetKey: input.job.assetKey,
+        blobName: input.blobName,
+        ...errorLogFields(error)
+      });
+      return base;
+    }
   }
 
   private async ensureReady() {

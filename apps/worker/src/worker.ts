@@ -84,6 +84,7 @@ async function syncAsset(job: CacheJob) {
   if (job.status === "failed") {
     asset.playbackUrl = undefined;
     asset.expiresAt = undefined;
+    asset.media = undefined;
   }
 
   await store.saveAsset(asset);
@@ -112,7 +113,7 @@ async function completeReadyJob(job: CacheJob, now: Date) {
   });
 
   try {
-    await store.finalizeReadyAsset(job);
+    const asset = await store.finalizeReadyAsset(job);
 
     const completedAt = new Date().toISOString();
     job.status = "ready";
@@ -129,6 +130,11 @@ async function completeReadyJob(job: CacheJob, now: Date) {
       assetKey: job.assetKey,
       status: job.status,
       progress: job.progress,
+      contentType: asset.media?.contentType,
+      contentLength: asset.media?.contentLength,
+      rangeSupported: asset.media?.rangeSupported,
+      mp4Status: asset.media?.mp4?.status,
+      moovOffset: asset.media?.mp4?.moovOffset,
       durationMs: durationMs(startedAt)
     });
   } catch (error) {

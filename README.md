@@ -1,18 +1,27 @@
 # WWPDW
 
-This repository keeps the skill direction and the web cache direction separate.
+This repository keeps two directions separate:
 
-Current web-cache MVP shape:
+- the original skill direction
+- the private web cache/player direction in this workspace
+
+Current web-cache MVP:
 
 - `apps/web`: thin React/Vite interface
-- `apps/api`: local Node API with mock cache endpoints
-- `apps/worker`: local queue worker simulator
-- `packages/shared`: shared types and mock search data
-- `infra`: Azure resource provisioning scripts
+- `apps/api`: Node HTTP API for search, cache requests, status, and playback SAS URLs
+- `apps/worker`: Container Apps Job worker for resolving and caching media
+- `packages/cache-store`: local and Azure cache backends
+- `packages/shared`: shared types, mock catalog, and structured logging helpers
+- `infra`: Azure provisioning and deployment scripts
 
 Architecture diagram: `docs/ww-cache-cloud-architecture.png`
 
-Local development:
+For handoff, operations, data flow, and troubleshooting, start with:
+
+- `docs/HANDOFF.md`
+- `infra/README.md`
+
+## Local Development
 
 ```powershell
 npm install
@@ -21,46 +30,66 @@ npm run dev:worker
 npm run dev:web
 ```
 
-The thin version uses `.local-data/` for local state. It does not connect to Notion or Azure Storage yet.
-The default local access key is `family`; set `VITE_ACCESS_CODE` before starting the web app to change it.
-This access gate is a local placeholder, not the production security boundary.
-Set `VITE_API_BASE_URL` when building the web app against a remote API; leave it empty for local `/api`.
+The local default cache backend is `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
 
-The worker has a resolver boundary already:
+The frontend does not contain a built-in access code. Users enter an access key in the UI, the web app stores it in `sessionStorage`, and every API request sends it through `x-wwpdw-access-key`. The API checks it against the server-side `WWPDW_ACCESS_KEY`.
 
-- Direct mock media URLs resolve through the rule resolver and continue to cache.
-- Intermediate preview URLs return `needs_browser` and fail clearly until a browser resolver is added.
+Set `VITE_API_BASE_URL` when building the web app against a remote API. Leave it empty for local `/api`.
 
-Cache backend:
+## Search Source
 
-- Default: `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
-- Azure: set `CACHE_BACKEND=azure` and the `AZURE_STORAGE_*` values from `.env.example`.
-- For local Azure auth without a connection string, run with `AZURE_CONFIG_DIR=C:\Users\bxu\.azure2` so Azure SDK credentials can reuse the `az2` login profile.
+`WWPDW_SEARCH_SOURCE=auto` uses Notion when `NOTION_READ_ONLY_TOKEN` exists; otherwise it uses the mock catalog.
 
-The Azure backend uses Storage Queue for cache signals, Table Storage for cache/job state, private Blob Storage for cached payloads, and short-lived SAS URLs for playback.
+Preferred Notion scope:
 
-Notion access:
+- `NOTION_LIBRARY_ROOT_PAGE_ID`: root page shared with the read-only integration
+- one direct child database under that root page
+- direct database entries are film entries
+- direct child pages under each film entry are media variants/specs
 
-- Use `NOTION_READ_ONLY_TOKEN` only.
-- The Notion integration should be read-only and scoped only to the source pages/databases needed for playback.
-- Do not use a write-capable Notion token in this project, especially before adding browser or AI-assisted resolvers.
-- For Azure deployment, store the value in Key Vault and inject it into the API/worker environment under the same name.
-- `WWPDW_SEARCH_SOURCE=auto` uses Notion search when `NOTION_READ_ONLY_TOKEN` exists; otherwise it keeps using the mock catalog.
-- The first parser is rule-based: it checks page properties, video/file/embed/bookmark blocks, rich-text links, and shallow child blocks. Direct file URLs can enter the cache path; page/player URLs are marked for a future browser or AI resolver.
+Use `NOTION_READ_ONLY_TOKEN` only. Do not use a write-capable Notion token in this project.
 
-Cloud worker:
+## Cache Backend
 
-- Build and push the worker image: `.\infra\build-worker-image.ps1`
-- Create or update the Container Apps Job: `.\infra\deploy-worker-job.ps1`
-- Manually trigger one execution: `.\infra\start-worker-job.ps1`
-- The job is manual trigger, runs `WORKER_MODE=oneshot`, uses the user-assigned managed identity, and reads/writes Azure Storage without a connection string.
+- Local: `CACHE_BACKEND=local`
+- Azure: `CACHE_BACKEND=azure` plus the `AZURE_STORAGE_*` values from `.env.example`
 
-Cloud web experiment:
+For local Azure auth without a connection string, run with `AZURE_CONFIG_DIR=C:\Users\bxu\.azure2` so Azure SDK credentials can reuse the `az2` login profile.
+
+The Azure backend uses:
+
+- Storage Queue for cache signals
+- Table Storage for cache/job state
+- private Blob Storage for cached video payloads
+- short-lived SAS URLs for playback
+- media diagnostics for ready assets, including content type, size, range probe, and MP4 `moov`/`mdat` position
+
+## Cloud Deployment
+
+Provision once:
 
 ```powershell
+.\infra\provision.ps1
+```
+
+Deploy/update:
+
+```powershell
+.\infra\build-worker-image.ps1
+.\infra\deploy-worker-job.ps1
+.\infra\deploy-cleanup-job.ps1
 .\infra\build-api-image.ps1
 .\infra\deploy-api-containerapp.ps1
 .\infra\deploy-web-staticapp.ps1
 ```
 
-The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes the queue/table state and starts the cache worker job through Azure Resource Manager using managed identity. The Static Web App is built with `VITE_API_BASE_URL` pointing at the API Container App.
+The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes queue/table state and starts the cache worker Container Apps Job through Azure Resource Manager using managed identity.
+
+The cleanup job removes expired cache assets on a daily schedule.
+
+## Verification
+
+```powershell
+npm run typecheck
+npm run build
+```

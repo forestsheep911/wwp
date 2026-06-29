@@ -269,6 +269,11 @@ async function handlePlayback(
   logInfo("api.playback.ready", {
     requestId: context.requestId,
     assetKey,
+    contentType: playback.media?.contentType,
+    contentLength: playback.media?.contentLength,
+    rangeSupported: playback.media?.rangeSupported,
+    mp4Status: playback.media?.mp4?.status,
+    moovOffset: playback.media?.mp4?.moovOffset,
     signedUrlExpiresAt: playback.expiresAt,
     durationMs: durationMs(startedAt)
   });

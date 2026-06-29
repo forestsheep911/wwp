@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   CacheAsset,
   CacheJob,
+  MediaDiagnostics,
   MediaVariant,
   PlaybackResponse,
   SearchResult
@@ -42,6 +43,94 @@ function cacheLabel(asset?: CacheAsset) {
   }
 
   return asset.status;
+}
+
+function formatBytes(value?: number) {
+  if (!Number.isFinite(value)) {
+    return "unknown";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value ?? 0;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function booleanLabel(value?: boolean) {
+  if (value === undefined) {
+    return "unknown";
+  }
+
+  return value ? "yes" : "no";
+}
+
+function mp4StatusLabel(media?: MediaDiagnostics) {
+  switch (media?.mp4?.status) {
+    case "faststart":
+      return "faststart";
+    case "late_moov":
+      return "late moov";
+    case "not_mp4":
+      return "not mp4";
+    case "unknown":
+      return "unknown";
+    default:
+      return "not checked";
+  }
+}
+
+function offsetLabel(value?: number) {
+  return value === undefined ? "unknown" : value.toLocaleString();
+}
+
+function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
+  if (!media) {
+    return null;
+  }
+
+  return (
+    <section className="diagnostics">
+      <p className="eyebrow">Media</p>
+      <dl className="diagnostics-grid">
+        <div>
+          <dt>Type</dt>
+          <dd>{media.contentType ?? "unknown"}</dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>{formatBytes(media.contentLength)}</dd>
+        </div>
+        <div>
+          <dt>Range</dt>
+          <dd>{booleanLabel(media.rangeSupported)}</dd>
+        </div>
+        <div>
+          <dt>MP4</dt>
+          <dd>{mp4StatusLabel(media)}</dd>
+        </div>
+        {media.mp4 ? (
+          <div>
+            <dt>Boxes</dt>
+            <dd>
+              moov {offsetLabel(media.mp4.moovOffset)} / mdat {offsetLabel(media.mp4.mdatOffset)}
+            </dd>
+          </div>
+        ) : null}
+        {media.blobName ? (
+          <div className="diagnostics-wide">
+            <dt>Blob</dt>
+            <dd className="mono">{media.blobName}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {media.mp4?.notes ? <p className="message">{media.mp4.notes}</p> : null}
+    </section>
+  );
 }
 
 function AccessGate({ onUnlock }: { onUnlock: () => void }) {
@@ -141,6 +230,7 @@ function StatusPanel({
       {asset.expiresAt ? (
         <p className="expiry">Expires {formatDate(asset.expiresAt)}</p>
       ) : null}
+      <MediaDiagnosticsView media={asset.media} />
       {asset.status === "ready" ? (
         <button className="primary" type="button" onClick={onOpenPlayer}>
           {playback ? "Open player" : "Prepare player"}
@@ -178,6 +268,7 @@ function Player({
       ) : (
         <video className="video-player" src={playback.playbackUrl} controls />
       )}
+      <MediaDiagnosticsView media={playback.media} />
       <p className="expiry">Signed URL expires {formatDate(playback.expiresAt)}</p>
     </section>
   );

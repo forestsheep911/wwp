@@ -124,7 +124,18 @@ export class LocalCacheStore implements CacheStore {
       jobId: job.id,
       playbackUrl: `mock://cached-videos/${encodeURIComponent(job.assetKey)}`,
       expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
-      lastRequestedAt: job.createdAt
+      lastRequestedAt: job.createdAt,
+      media: {
+        checkedAt: new Date().toISOString(),
+        contentType: "application/x-wwpdw-mock",
+        blobName: `mock://cached-videos/${encodeURIComponent(job.assetKey)}`,
+        rangeSupported: false,
+        mp4: {
+          status: "not_mp4",
+          inspectedBytes: 0,
+          notes: "Local mock playback does not create a real media blob."
+        }
+      }
     };
 
     await this.saveAsset(asset);
@@ -141,7 +152,8 @@ export class LocalCacheStore implements CacheStore {
       assetKey: asset.assetKey,
       title: asset.title,
       playbackUrl: asset.playbackUrl,
-      expiresAt: asset.expiresAt
+      expiresAt: asset.expiresAt,
+      media: asset.media
     };
   }
 

@@ -48,6 +48,28 @@ export interface MediaVariant {
   cache?: CacheAsset;
 }
 
+export type Mp4FastStartStatus = "faststart" | "late_moov" | "unknown" | "not_mp4";
+
+export interface Mp4Diagnostics {
+  status: Mp4FastStartStatus;
+  inspectedBytes: number;
+  moovOffset?: number;
+  mdatOffset?: number;
+  notes?: string;
+}
+
+export interface MediaDiagnostics {
+  checkedAt: string;
+  contentType?: string;
+  contentLength?: number;
+  blobName?: string;
+  rangeSupported?: boolean;
+  sourceContentType?: string;
+  sourceContentLength?: number;
+  sourceAcceptRanges?: string;
+  mp4?: Mp4Diagnostics;
+}
+
 export interface CacheAsset {
   assetKey: string;
   title: string;
@@ -57,6 +79,7 @@ export interface CacheAsset {
   playbackUrl?: string;
   expiresAt?: string;
   lastRequestedAt: string;
+  media?: MediaDiagnostics;
 }
 
 export interface CacheJob {
@@ -105,6 +128,7 @@ export interface PlaybackResponse {
   title: string;
   playbackUrl: string;
   expiresAt: string;
+  media?: MediaDiagnostics;
 }
 
 export const mockSearchResults: SearchResult[] = [

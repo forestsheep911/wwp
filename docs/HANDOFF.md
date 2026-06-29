@@ -1,0 +1,224 @@
+# WWPDW Web Cache Handoff
+
+This document captures the current web-cache MVP so a future maintainer does not need the chat history.
+
+## Current State
+
+The cloud path has been proven end to end:
+
+1. The Static Web App loads the thin web UI.
+2. The user enters the private access key.
+3. The API searches the scoped Notion library.
+4. The user chooses a media variant/spec under a film entry.
+5. The API queues a cache job and starts the Container Apps Job worker.
+6. The worker streams the resolved media URL into private Azure Blob Storage.
+7. The worker records media diagnostics for the ready asset.
+8. The API returns a short-lived SAS playback URL with diagnostics metadata.
+9. The browser plays the cached Blob video.
+
+Known successful playback example:
+
+- `Albert Nobbs (2011)` variant around 1.59 GB
+
+## Azure Resources
+
+Current development resource names:
+
+- Resource group: `rg-ww-player-cache-dev`
+- Static Web App: `stapp-ww-player-dev`
+- API Container App: `ca-ww-player-api`
+- Worker job: `job-ww-cache-worker`
+- Cleanup job: `job-ww-cache-cleanup`
+- Container Apps environment: `cae-ww-player-cache-dev`
+- Storage account: `stwwcachee9219db7`
+- Blob container: `cached-videos`
+- Storage queue: `cache-jobs`
+- Asset table: `cacheindex`
+- Job table: `cachejobs`
+- ACR: `acrwwcachee9219db7`
+- Key Vault: `kv-wwcache-e9219db7`
+- User-assigned managed identity: `id-ww-player-cache-dev`
+
+Current public entry points:
+
+- Web: `https://gentle-rock-049daed00.7.azurestaticapps.net`
+- API: `https://ca-ww-player-api.kindplant-e2681add.eastasia.azurecontainerapps.io`
+
+Do not store or print secrets in this repository. Runtime secrets live in Key Vault.
+
+## Secrets
+
+Expected Key Vault secrets:
+
+- `NOTION-READ-ONLY-TOKEN`: read-only Notion integration token
+- `WWPDW-ACCESS-KEY`: private family access key checked by the API
+
+Container environment variables:
+
+- API receives `NOTION_READ_ONLY_TOKEN` from `NOTION-READ-ONLY-TOKEN`
+- API receives `WWPDW_ACCESS_KEY` from `WWPDW-ACCESS-KEY`
+- API and worker use managed identity for Azure Storage and Azure Resource Manager
+
+The frontend only stores the user-entered access key in browser `sessionStorage`.
+
+## Data Flow
+
+Notion search is intentionally library-scoped:
+
+```text
+root Notion page
+  -> one direct child database
+    -> direct database entries are film entries
+      -> direct child pages are media variants/specs
+        -> file/url/embed/bookmark/rich-text links are candidate media URLs
+```
+
+This avoids broad Notion page search. If a film entry is not a direct database entry under the configured library database, the web app should treat it as missing for now.
+
+Cache flow:
+
+```text
+web search
+  -> API /api/search
+  -> user selects variant
+  -> API /api/cache
+  -> Azure Queue + Table state
+  -> Container Apps Job worker
+  -> Blob upload
+  -> Table ready state
+  -> API /api/playback/{assetKey}
+  -> SAS URL
+  -> browser video playback
+```
+
+## Deployment
+
+Provision foundation once:
+
+```powershell
+.\infra\provision.ps1
+```
+
+Build/deploy worker:
+
+```powershell
+.\infra\build-worker-image.ps1
+.\infra\deploy-worker-job.ps1
+.\infra\deploy-cleanup-job.ps1
+```
+
+Build/deploy API and web:
+
+```powershell
+.\infra\build-api-image.ps1
+.\infra\deploy-api-containerapp.ps1
+.\infra\deploy-web-staticapp.ps1
+```
+
+Manual worker run:
+
+```powershell
+.\infra\start-worker-job.ps1
+```
+
+## Operations
+
+API logs:
+
+```powershell
+az2 containerapp logs show `
+  --name ca-ww-player-api `
+  --resource-group rg-ww-player-cache-dev `
+  --container ca-ww-player-api `
+  --tail 100 `
+  --format text
+```
+
+Latest worker job logs:
+
+```powershell
+az2 containerapp job logs show `
+  --name job-ww-cache-worker `
+  --resource-group rg-ww-player-cache-dev `
+  --container job-ww-cache-worker `
+  --tail 100 `
+  --format text
+```
+
+Latest cleanup job logs:
+
+```powershell
+az2 containerapp job logs show `
+  --name job-ww-cache-cleanup `
+  --resource-group rg-ww-player-cache-dev `
+  --container job-ww-cache-cleanup `
+  --tail 100 `
+  --format text
+```
+
+List job executions:
+
+```powershell
+az2 containerapp job execution list `
+  --name job-ww-cache-worker `
+  --resource-group rg-ww-player-cache-dev `
+  --output table
+```
+
+The API and worker write structured JSON logs. The most useful fields are:
+
+- `event`
+- `level`
+- `requestId`
+- `assetKey`
+- `jobId`
+- `durationMs`
+- `statusCode`
+- `jobStatus`
+- `progress`
+
+The frontend includes the request id in most API error messages. Use that request id to find the matching API log line.
+
+## Common Failures
+
+Access key fails:
+
+- Check Key Vault secret `WWPDW-ACCESS-KEY`.
+- Check API logs for `api.auth.denied` or `api.auth.missing_config`.
+
+Search returns no results:
+
+- Confirm `NOTION_READ_ONLY_TOKEN` is attached to the API.
+- Confirm the Notion integration is shared with the root page.
+- Confirm the film is a direct database entry under the configured library database.
+
+Cache request fails:
+
+- Check API logs for `api.cache.ensure`.
+- Check worker job executions.
+- Check worker logs for `worker.job.failed` or `cache.blob.upload_failed`.
+
+Playback does not start:
+
+- Check `api.playback.ready` and whether the asset is still fresh.
+- Check the media diagnostics shown in the web UI and logged by `api.playback.ready`.
+- Check Blob properties: `Content-Type` should be video-like, content length should be nonzero, and range requests should work.
+- H.265 playback depends on the browser/device. The web player library cannot fix unsupported codecs by itself.
+- MP4 seeking depends on browser range support and whether the MP4 metadata is near the front of the file.
+
+## Design Decisions
+
+First version avoids NAS because Azure Blob + Container Apps Job is simpler to operate, easier to scale briefly, and has fewer home-network failure modes.
+
+Container Apps Job is used for caching because download duration can exceed a request/response API call. Jobs also let the API scale to zero while cache work runs separately.
+
+CDN is deferred. For small private family usage, direct Blob playback is cheaper and simpler. Mainland China playback may still be variable, but CDN/private-access tradeoffs should be evaluated only after real usage data.
+
+The Notion token is read-only because the app may later add AI-assisted parsing/resolution, and write-capable credentials would create unnecessary risk.
+
+## Near-Term Code Priorities
+
+1. Improve player error states: expired SAS, codec unsupported, network stall, and blob missing.
+2. Add a small admin/debug view for recent cache jobs and request ids.
+3. Add optional remux/faststart handling for MP4 files whose `moov` box is late.
+4. Later, migrate the thin UI to a shadcn/Vite style and consider ArtPlayer or Vidstack.
