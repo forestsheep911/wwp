@@ -68,7 +68,7 @@ export function CinemaLayout({
   return (
     <main className="min-h-screen">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
-        <header className="relative z-40 border-b border-slate-800 bg-slate-950/70 backdrop-blur">
+        <header className="relative z-[100] border-b border-slate-800 bg-slate-950/70 backdrop-blur">
           <div className="mx-auto grid max-w-7xl gap-3 px-5 py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
             <div className="flex min-w-0 items-center gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
@@ -128,27 +128,22 @@ export function CinemaLayout({
 
         <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 md:px-8">
           {status ? (
-            <div className="flex justify-end">
+            <div className={`flex justify-end ${statusCollapsed ? "" : "lg:hidden"}`}>
               <Button
-                className="w-full sm:w-auto lg:hidden"
+                className="w-full sm:w-auto"
                 type="button"
                 variant={activeTab === "tasks" ? "secondary" : "outline"}
                 size="sm"
-                onClick={() => onActiveTabChange("tasks")}
+                onClick={() => {
+                  if (statusCollapsed) {
+                    setStatusCollapsed(false);
+                    return;
+                  }
+                  onActiveTabChange("tasks");
+                }}
               >
-                <ListChecks className="h-4 w-4" />
-                Tasks
-                <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
-              </Button>
-              <Button
-                className="hidden shrink-0 lg:inline-flex"
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setStatusCollapsed((current) => !current)}
-              >
-                {statusCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                {statusCollapsed ? "Show tasks" : "Hide tasks"}
+                {statusCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ListChecks className="h-4 w-4" />}
+                {statusCollapsed ? "Show tasks" : "Tasks"}
                 <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
               </Button>
             </div>
@@ -163,7 +158,24 @@ export function CinemaLayout({
               {status ? <TabsContent className="mt-0 lg:hidden" value="tasks">{status}</TabsContent> : null}
             </div>
 
-            {showDesktopStatus ? <aside className="hidden min-w-0 lg:block">{status}</aside> : null}
+            {showDesktopStatus ? (
+              <aside className="hidden min-w-0 gap-5 lg:grid">
+                <div className="flex justify-end">
+                  <Button
+                    className="shrink-0"
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setStatusCollapsed(true)}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                    Hide tasks
+                    <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
+                  </Button>
+                </div>
+                <div className="min-w-0">{status}</div>
+              </aside>
+            ) : null}
           </section>
         </div>
       </Tabs>
@@ -246,7 +258,7 @@ function AccountMenu({
 
       {open ? (
         <div
-          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40"
+          className="absolute right-0 z-[110] mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40"
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         >
