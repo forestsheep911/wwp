@@ -35,13 +35,14 @@ import {
   type UpdateMovieRequestStatusRequest,
   validateMemberPasscode
 } from "@wwpdw/shared";
-import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
+import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
+const searchIndex = createSearchIndexStore();
 const accessStore = createAccessStore();
 const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
@@ -49,12 +50,30 @@ const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
 const searchResultCacheTtlMs = Math.max(0, Number(process.env.SEARCH_RESULT_CACHE_TTL_SECONDS ?? 600)) * 1000;
 const searchResultCacheLimit = Math.max(1, Number(process.env.SEARCH_RESULT_CACHE_LIMIT ?? 100));
+const searchIndexEnabled = (process.env.SEARCH_INDEX_ENABLED ?? "true").toLowerCase() !== "false";
+const searchIndexWriteThrough = (process.env.SEARCH_INDEX_WRITE_THROUGH ?? "true").toLowerCase() !== "false";
+const searchIndexRefreshOnCache = (process.env.SEARCH_INDEX_REFRESH_ON_CACHE ?? "true").toLowerCase() !== "false";
+const searchIndexResultLimit = Math.min(
+  100,
+  Math.max(1, Math.floor(Number(process.env.SEARCH_INDEX_RESULT_LIMIT ?? process.env.NOTION_SEARCH_PAGE_SIZE ?? 8)))
+);
 const searchResultCache = new Map<string, {
   expiresAt: number;
   lastUsedAt: number;
   results: SearchResult[];
 }>();
-const pendingSearches = new Map<string, Promise<SearchResult[]>>();
+type SearchLoadStatus =
+  | "disabled"
+  | "hit"
+  | "deduped"
+  | "live"
+  | "index_hit"
+  | "index_miss_live"
+  | "index_failed_live";
+const pendingSearches = new Map<string, Promise<{
+  results: SearchResult[];
+  cacheStatus: SearchLoadStatus;
+}>>();
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
@@ -474,13 +493,10 @@ function pruneSearchResultCache(now = Date.now()) {
 
 async function loadSearchResults(query: string): Promise<{
   results: SearchResult[];
-  cacheStatus: "disabled" | "hit" | "miss" | "deduped";
+  cacheStatus: SearchLoadStatus;
 }> {
   if (searchResultCacheTtlMs <= 0) {
-    return {
-      results: await searchSource.search(query),
-      cacheStatus: "disabled"
-    };
+    return loadSearchResultsFromPersistentSources(query, "disabled");
   }
 
   const key = searchCacheKey(query);
@@ -496,30 +512,91 @@ async function loadSearchResults(query: string): Promise<{
 
   const pending = pendingSearches.get(key);
   if (pending) {
+    const pendingLoad = await pending;
     return {
-      results: cloneSearchResults(await pending),
+      results: cloneSearchResults(pendingLoad.results),
       cacheStatus: "deduped"
     };
   }
 
-  const nextSearch = searchSource.search(query)
-    .then((results) => {
+  const nextSearch = loadSearchResultsFromPersistentSources(query)
+    .then((searchLoad) => {
       searchResultCache.set(key, {
         expiresAt: Date.now() + searchResultCacheTtlMs,
         lastUsedAt: Date.now(),
-        results: cloneSearchResults(results)
+        results: cloneSearchResults(searchLoad.results)
       });
       pruneSearchResultCache();
-      return results;
+      return searchLoad;
     })
     .finally(() => {
       pendingSearches.delete(key);
     });
 
   pendingSearches.set(key, nextSearch);
+  const searchLoad = await nextSearch;
   return {
-    results: cloneSearchResults(await nextSearch),
-    cacheStatus: "miss"
+    results: cloneSearchResults(searchLoad.results),
+    cacheStatus: searchLoad.cacheStatus
+  };
+}
+
+async function writeSearchResultsToIndex(results: SearchResult[], context: string) {
+  if (!searchIndexEnabled || !searchIndexWriteThrough || results.length === 0) {
+    return;
+  }
+
+  try {
+    await searchIndex.upsertResults(results);
+  } catch (error) {
+    logWarn("api.search.index_write_failed", {
+      context,
+      resultCount: results.length,
+      ...errorLogFields(error)
+    });
+  }
+}
+
+async function loadSearchResultsFromPersistentSources(
+  query: string,
+  disabledStatus: SearchLoadStatus = "live"
+): Promise<{
+  results: SearchResult[];
+  cacheStatus: SearchLoadStatus;
+}> {
+  if (searchIndexEnabled) {
+    try {
+      const indexedResults = await searchIndex.search(query, searchIndexResultLimit);
+      if (indexedResults.length > 0) {
+        return {
+          results: indexedResults,
+          cacheStatus: "index_hit"
+        };
+      }
+    } catch (error) {
+      logWarn("api.search.index_read_failed", {
+        query,
+        ...errorLogFields(error)
+      });
+      const liveResults = await searchSource.search(query);
+      void writeSearchResultsToIndex(liveResults, "index_read_failed_live");
+      return {
+        results: liveResults,
+        cacheStatus: "index_failed_live"
+      };
+    }
+
+    const liveResults = await searchSource.search(query);
+    void writeSearchResultsToIndex(liveResults, "index_miss_live");
+    return {
+      results: liveResults,
+      cacheStatus: "index_miss_live"
+    };
+  }
+
+  return {
+    results: await searchSource.search(query),
+    cacheStatus: disabledStatus
   };
 }
 
@@ -609,6 +686,54 @@ async function refreshRetrySource(job: CacheJob, context: RequestContext) {
   }
 }
 
+async function refreshResultBeforeCache(result: SearchResult, context: RequestContext) {
+  if (!searchIndexRefreshOnCache || !searchSource.refreshAsset || !result.sourcePageId) {
+    return result;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const refreshed = await searchSource.refreshAsset({
+      assetKey: result.assetKey,
+      sourcePageId: result.sourcePageId,
+      title: result.title,
+      sourceBreadcrumb: result.sourceBreadcrumb
+    });
+
+    if (!refreshed) {
+      logWarn("api.cache.source_refresh_miss", {
+        requestId: context.requestId,
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        durationMs: durationMs(startedAt)
+      });
+      return result;
+    }
+
+    recentResults.set(refreshed.assetKey, refreshed);
+    void writeSearchResultsToIndex([refreshed], "cache_source_refresh");
+    logInfo("api.cache.source_refresh_hit", {
+      requestId: context.requestId,
+      assetKey: result.assetKey,
+      refreshedAssetKey: refreshed.assetKey,
+      sourcePageId: refreshed.sourcePageId,
+      sourceUrlChanged: refreshed.sourceUrl !== result.sourceUrl,
+      durationMs: durationMs(startedAt)
+    });
+
+    return refreshed;
+  } catch (error) {
+    logWarn("api.cache.source_refresh_failed", {
+      requestId: context.requestId,
+      assetKey: result.assetKey,
+      sourcePageId: result.sourcePageId,
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
+    return result;
+  }
+}
+
 function visibleCacheAsset<T extends { status: string; expiresAt?: string; playbackUrl?: string }>(
   asset: T | undefined
 ) {
@@ -676,11 +801,11 @@ async function handleEnsureCache(
 ) {
   const startedAt = Date.now();
   const body = await readBody<EnsureCacheRequest>(request);
-  const result = body.result?.assetKey === body.assetKey
+  const candidate = body.result?.assetKey === body.assetKey
     ? body.result
     : recentResults.get(body.assetKey);
 
-  if (!result) {
+  if (!candidate) {
     logWarn("api.cache.asset_not_found", {
       requestId: context.requestId,
       assetKey: body.assetKey,
@@ -689,6 +814,8 @@ async function handleEnsureCache(
     sendJson(response, 404, { error: "Asset was not found." });
     return;
   }
+
+  const result = await refreshResultBeforeCache(candidate, context);
 
   const existingAsset = await store.getAsset(result.assetKey);
   const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
@@ -1397,6 +1524,22 @@ async function handleListCacheJobs(url: URL, response: http.ServerResponse, cont
   sendJson(response, 200, payload);
 }
 
+async function handleSearchIndexStats(response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const stats = await searchIndex.getStats();
+
+  logInfo("api.admin.search_index.stats", {
+    requestId: context.requestId,
+    entryCount: stats.entryCount,
+    latestIndexedAt: stats.latestIndexedAt,
+    latestSourceUpdatedAt: stats.latestSourceUpdatedAt,
+    lastFullSyncAt: stats.lastFullSyncAt,
+    lastIncrementalSyncAt: stats.lastIncrementalSyncAt,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { stats });
+}
+
 async function handleRetryCacheJob(jobId: string, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const job = await store.getJob(jobId);
@@ -1599,7 +1742,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         access: Boolean(adminKey),
         store: await store.getHealth(),
         accessStore: await accessStore.getHealth(),
-        search: searchSource.description
+        search: searchSource.description,
+        searchIndex: {
+          enabled: searchIndexEnabled,
+          ...(await searchIndex.getHealth())
+        }
       });
       return;
     }
@@ -1705,6 +1852,15 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/admin/cache-jobs") {
       await handleListCacheJobs(url, response, context);
+      return;
+    }
+
+    if (pathname === "/api/admin/search-index" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/search-index") {
+      await handleSearchIndexStats(response, context);
       return;
     }
 
@@ -1849,6 +2005,8 @@ http.createServer(handleRequest).listen(port, () => {
     store: store.description,
     accessStore: accessStore.description,
     search: searchSource.description,
+    searchIndex: searchIndex.description,
+    searchIndexEnabled,
     accessConfigured: Boolean(adminKey)
   });
 });

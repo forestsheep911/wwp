@@ -21,7 +21,8 @@ param(
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
-    [string]$MemberTable = "membercodes"
+    [string]$MemberTable = "membercodes",
+    [string]$SearchIndexTable = "movieindex"
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,6 +114,10 @@ $envVars = @(
     "WWPDW_SEARCH_SOURCE=auto",
     "SEARCH_RESULT_CACHE_TTL_SECONDS=600",
     "SEARCH_RESULT_CACHE_LIMIT=100",
+    "SEARCH_INDEX_ENABLED=true",
+    "SEARCH_INDEX_WRITE_THROUGH=true",
+    "SEARCH_INDEX_REFRESH_ON_CACHE=true",
+    "SEARCH_INDEX_RESULT_LIMIT=8",
     "MEMBER_DEFAULT_CREDITS=20",
     "MEMBER_CACHE_CREDIT_COST=1",
     "MEMBER_PLAYBACK_REPLAY_FREE_HOURS=24",
@@ -125,6 +130,8 @@ $envVars = @(
     "NOTION_TITLE_MATCH_LIMIT=6",
     "NOTION_LIBRARY_QUERY_LIMIT=300",
     "NOTION_VARIANT_LIMIT=8",
+    "NOTION_REQUEST_TIMEOUT_MS=30000",
+    "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=60000",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
@@ -132,6 +139,7 @@ $envVars = @(
     "AZURE_STORAGE_ASSET_TABLE=$AssetTable",
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
+    "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=60",
     "AZURE_SUBSCRIPTION_ID=$subscriptionId",
     "AZURE_RESOURCE_GROUP=$ResourceGroup",

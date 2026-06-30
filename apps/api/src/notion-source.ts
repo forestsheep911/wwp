@@ -31,6 +31,23 @@ interface ParseOptions {
   titleMatchLimit: number;
   libraryQueryLimit: number;
   variantLimit: number;
+  requestTimeoutMs: number;
+  scanPageParseTimeoutMs: number;
+}
+
+export interface NotionLibraryScanOptions {
+  since?: string;
+  limit?: number;
+  delayMs?: number;
+  pageSize?: number;
+}
+
+export interface NotionLibraryScanItem {
+  pageId: string;
+  title?: string;
+  lastEditedTime: string;
+  result?: SearchResult;
+  error?: string;
 }
 
 const defaultOptions: ParseOptions = {
@@ -41,7 +58,9 @@ const defaultOptions: ParseOptions = {
   titleScanLimit: Number(process.env.NOTION_TITLE_SCAN_LIMIT ?? 120),
   titleMatchLimit: Number(process.env.NOTION_TITLE_MATCH_LIMIT ?? 6),
   libraryQueryLimit: Number(process.env.NOTION_LIBRARY_QUERY_LIMIT ?? 300),
-  variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 8)
+  variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 8),
+  requestTimeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000),
+  scanPageParseTimeoutMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS ?? 60000)
 };
 
 const urlPattern = /https?:\/\/[^\s<>"']+/gi;
@@ -749,11 +768,33 @@ function isChildDatabaseBlock(value: unknown): value is JsonRecord {
   return record?.object === "block" && record.type === "child_database" && typeof record.id === "string";
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise
+      .then(resolve, reject)
+      .finally(() => {
+        clearTimeout(timer);
+      });
+  });
+}
+
 export class NotionSearchSource {
   readonly description: string;
-  private readonly notion = new Client({
-    auth: process.env.NOTION_READ_ONLY_TOKEN
-  });
+  private readonly notion: Client;
   private readonly libraryRootPageId = process.env.NOTION_LIBRARY_ROOT_PAGE_ID ?? process.env.PAGE_ID;
   private readonly configuredLibraryDataSourceId =
     process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? process.env.NOTION_DATA_SOURCE_ID;
@@ -762,6 +803,10 @@ export class NotionSearchSource {
   private libraryMetadata?: Promise<LibraryMetadata | undefined>;
 
   constructor(private readonly options = defaultOptions) {
+    this.notion = new Client({
+      auth: process.env.NOTION_READ_ONLY_TOKEN,
+      timeoutMs: this.options.requestTimeoutMs
+    });
     this.description = this.hasLibraryConfig()
       ? "notion library database search"
       : "notion read-only search";
@@ -775,6 +820,85 @@ export class NotionSearchSource {
     }
 
     return this.searchGlobal(normalizedQuery);
+  }
+
+  async *scanLibraryResults(options: NotionLibraryScanOptions = {}): AsyncGenerator<NotionLibraryScanItem> {
+    const library = await this.getLibraryMetadata();
+    if (!library) {
+      throw new Error("A Notion library database is required for metadata index sync.");
+    }
+
+    const limit = options.limit && options.limit > 0 ? Math.floor(options.limit) : Infinity;
+    const pageSize = Math.min(100, Math.max(1, Math.floor(options.pageSize ?? 25)));
+    const delayMs = Math.max(0, Math.floor(options.delayMs ?? 0));
+    const since = options.since ? new Date(options.since).toISOString() : undefined;
+    let yielded = 0;
+    let startCursor: string | undefined;
+    let shouldStop = false;
+
+    do {
+      const response = await this.notion.dataSources.query({
+        data_source_id: library.dataSourceId,
+        page_size: Number.isFinite(limit)
+          ? Math.min(pageSize, Math.max(1, limit - yielded))
+          : pageSize,
+        start_cursor: startCursor,
+        result_type: "page",
+        sorts: [
+          {
+            timestamp: "last_edited_time",
+            direction: "descending"
+          }
+        ]
+      } as never);
+
+      for (const rawPage of response.results.filter(isPageResult)) {
+        const page = rawPage as JsonRecord;
+        if (yielded >= limit) {
+          shouldStop = true;
+          break;
+        }
+
+        if (page.archived === true || page.in_trash === true) {
+          continue;
+        }
+
+        const lastEditedTime = asString(page.last_edited_time) || new Date().toISOString();
+        if (since && lastEditedTime <= since) {
+          shouldStop = true;
+          break;
+        }
+
+        const properties = asRecord(page.properties) ?? {};
+        const title = titleFromProperties(properties);
+        try {
+          yield {
+            pageId: asString(page.id),
+            title,
+            lastEditedTime,
+            result: await withTimeout(
+              this.pageToSearchResult(page, { libraryMode: true }),
+              this.options.scanPageParseTimeoutMs,
+              `Timed out while parsing Notion page ${asString(page.id)}.`
+            )
+          };
+        } catch (error) {
+          yield {
+            pageId: asString(page.id),
+            title,
+            lastEditedTime,
+            error: error instanceof Error ? error.message : "Could not parse Notion library page."
+          };
+        }
+
+        yielded += 1;
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
+      }
+
+      startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+    } while (!shouldStop && startCursor && yielded < limit);
   }
 
   async refreshAsset(input: {

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "sync:meta": "tsx src/meta-sync.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json"
   },

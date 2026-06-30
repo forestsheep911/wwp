@@ -49,6 +49,30 @@ Preferred Notion scope:
 
 Use `NOTION_READ_ONLY_TOKEN` only. Do not use a write-capable Notion token in this project.
 
+## Movie Metadata Index
+
+Search can use a persistent movie metadata index before falling back to Notion.
+This is enabled with `SEARCH_INDEX_ENABLED=true`.
+
+- Local development stores the index at `.local-data/search-index.json`.
+- Azure stores the index in the `AZURE_STORAGE_SEARCH_INDEX_TABLE` Table Storage table.
+- API search reads the index first and writes Notion fallback results back into the index.
+- Cache requests refresh the selected Notion source page before queueing, so cached metadata does not rely on expired Notion file URLs.
+
+Run a small local sync:
+
+```powershell
+node --import tsx apps/api/src/meta-sync.ts --mode=incremental --limit=10 --delay-ms=500
+```
+
+Cloud metadata sync jobs:
+
+```powershell
+.\infra\deploy-metadata-sync-job.ps1 -Mode full
+.\infra\deploy-metadata-sync-job.ps1 -Mode incremental
+.\infra\start-metadata-sync-job.ps1 -Mode full
+```
+
 ## Cache Backend
 
 - Local: `CACHE_BACKEND=local`
@@ -80,6 +104,8 @@ Deploy/update:
 .\infra\deploy-cleanup-job.ps1
 .\infra\build-api-image.ps1
 .\infra\deploy-api-containerapp.ps1
+.\infra\deploy-metadata-sync-job.ps1 -Mode full
+.\infra\deploy-metadata-sync-job.ps1 -Mode incremental
 .\infra\deploy-web-staticapp.ps1
 ```
 

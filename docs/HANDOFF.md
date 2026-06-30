@@ -31,6 +31,11 @@ Known successful playback example:
 
 - `Albert Nobbs (2011)` variant around 1.59 GB
 
+Search now has a persistent movie metadata index. The API checks this index
+before live Notion search, then falls back to Notion and writes fallback results
+back to the index. Cache requests still refresh the selected Notion page before
+queueing work, because Notion-hosted file URLs may be temporary.
+
 ## Azure Resources
 
 Current development resource names:
@@ -46,6 +51,7 @@ Current development resource names:
 - Storage queue: `cache-jobs`
 - Asset table: `cacheindex`
 - Job table: `cachejobs`
+- Movie metadata index table: `movieindex`
 - ACR: `acrwwcachee9219db7`
 - Key Vault: `kv-wwcache-e9219db7`
 - User-assigned managed identity: `id-ww-player-cache-dev`
@@ -143,13 +149,18 @@ This avoids broad Notion page search. If a film entry is not a direct database e
 
 Current search behavior:
 
+- First checks the persistent movie metadata index when
+  `SEARCH_INDEX_ENABLED=true`.
+- If the index has no match or cannot be read, falls back to live Notion.
+- Live Notion fallback results are written back into the index when
+  `SEARCH_INDEX_WRITE_THROUGH=true`.
 - First tries a Notion data-source title `contains` query when the title
   property is known.
 - If that has no result, tries short CJK title segments.
 - Then scans up to `NOTION_LIBRARY_QUERY_LIMIT` recent library rows and matches
   against the row title plus row properties/metadata.
-- It does not currently maintain a local metadata index, and it does not search
-  child-page block text until a matching library row is being parsed.
+- It does not search child-page block text until a matching library row is
+  being parsed or refreshed by the metadata sync job.
 
 TV-series parsing has an extra nested pass:
 
@@ -175,6 +186,26 @@ web search
   -> API /api/playback/{assetKey}
   -> SAS URL
   -> browser video playback
+```
+
+Metadata index flow:
+
+```text
+manual full metadata job
+  -> scan all library database rows slowly
+  -> parse each row with the same Notion parser used by live search
+  -> write SearchResult metadata into Azure Table Storage
+  -> delete index rows no longer seen by the full crawl
+
+scheduled incremental metadata job
+  -> read latest indexed Notion last_edited_time
+  -> scan recent library rows with a small overlap window
+  -> upsert changed rows into the same index
+
+web search
+  -> API /api/search
+  -> movie metadata index first
+  -> live Notion fallback only on miss/error
 ```
 
 Cache concurrency and visibility:
@@ -226,7 +257,15 @@ Build/deploy API and web:
 ```powershell
 .\infra\build-api-image.ps1
 .\infra\deploy-api-containerapp.ps1
+.\infra\deploy-metadata-sync-job.ps1 -Mode full
+.\infra\deploy-metadata-sync-job.ps1 -Mode incremental
 .\infra\deploy-web-staticapp.ps1
+```
+
+Run the initial full movie metadata crawl:
+
+```powershell
+.\infra\start-metadata-sync-job.ps1 -Mode full
 ```
 
 Manual worker run:
@@ -266,6 +305,17 @@ az2 containerapp job logs show `
   --name job-ww-cache-cleanup `
   --resource-group rg-ww-player-cache-dev `
   --container job-ww-cache-cleanup `
+  --tail 100 `
+  --format text
+```
+
+Latest metadata sync job logs:
+
+```powershell
+az2 containerapp job logs show `
+  --name job-ww-meta-index-full `
+  --resource-group rg-ww-player-cache-dev `
+  --container job-ww-meta-index-full `
   --tail 100 `
   --format text
 ```
@@ -311,6 +361,8 @@ Access key fails:
 
 Search returns no results:
 
+- Check `/api/admin/search-index` as admin to see whether the metadata index has
+  entries and recent sync runs.
 - Confirm `NOTION_READ_ONLY_TOKEN` is attached to the API.
 - Confirm the Notion integration is shared with the root page.
 - Confirm the film is a direct database entry under the configured library database.
