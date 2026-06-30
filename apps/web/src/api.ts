@@ -1,4 +1,6 @@
 import type {
+  AddMemberCreditsRequest,
+  AddMemberCreditsResponse,
   AdminCacheJobsResponse,
   AuthCheckResponse,
   CachedAssetsResponse,
@@ -145,6 +147,16 @@ export function deleteMemberAccessCode(id: string) {
     apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/delete`),
     {
       method: "POST"
+    }
+  );
+}
+
+export function addMemberCredits(id: string, input: AddMemberCreditsRequest) {
+  return request<AddMemberCreditsResponse>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/credits`),
+    {
+      method: "POST",
+      body: JSON.stringify(input)
     }
   );
 }

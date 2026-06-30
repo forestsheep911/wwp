@@ -10,6 +10,7 @@ import {
   logWarn,
   type AdminCacheJobsResponse,
   type AccessRole,
+  type AddMemberCreditsRequest,
   type AuthCheckResponse,
   type CacheStatus,
   type CacheAssetLookupResponse,
@@ -42,6 +43,7 @@ const pendingSearches = new Map<string, Promise<SearchResult[]>>();
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
+const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? 1)));
 const adminKey =
   process.env.WWPDW_ADMIN_KEY ??
   process.env.WWPDW_ACCESS_KEY ??
@@ -158,7 +160,8 @@ function authPayload(identity: AccessIdentity): AuthCheckResponse {
     member: identity.role === "member" && identity.memberId && identity.memberName
       ? {
         id: identity.memberId,
-        name: identity.memberName
+        name: identity.memberName,
+        credits: identity.credits
       }
       : undefined
   };
@@ -323,10 +326,23 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
   sendJson(response, 200, { results });
 }
 
+function creditLimitErrorMessage(reason: "total" | "five_hour" | "week") {
+  if (reason === "total") {
+    return "This Cinema Pass does not have enough 🍀 left.";
+  }
+
+  if (reason === "five_hour") {
+    return "This Cinema Pass has reached its 5-hour 🍀 limit.";
+  }
+
+  return "This Cinema Pass has reached its weekly 🍀 limit.";
+}
+
 async function handleEnsureCache(
   request: http.IncomingMessage,
   response: http.ServerResponse,
-  context: RequestContext
+  context: RequestContext,
+  identity: AccessIdentity
 ) {
   const startedAt = Date.now();
   const body = await readBody<EnsureCacheRequest>(request);
@@ -345,6 +361,48 @@ async function handleEnsureCache(
   }
 
   const existingAsset = await store.getAsset(result.assetKey);
+  const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
+  const readyHit = isFreshReady(existingAsset);
+  const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
+  const shouldChargeMember = identity.role === "member" && Boolean(identity.memberId) && !readyHit && !activeAssetJobHit;
+  const charge = shouldChargeMember
+    ? await accessStore.chargeMemberCredits(identity.memberId!, {
+      credits: cacheCreditCost,
+      assetKey: result.assetKey,
+      title: result.title,
+      requestId: context.requestId
+    })
+    : undefined;
+
+  if (shouldChargeMember && !charge) {
+    logWarn("api.cache.credit_member_not_found", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      assetKey: result.assetKey,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 403, { error: "This Cinema Pass is no longer available." });
+    return;
+  }
+
+  if (charge && !charge.ok) {
+    logWarn("api.cache.credit_denied", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      assetKey: result.assetKey,
+      reason: charge.reason,
+      retryAt: charge.retryAt,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 429, {
+      error: creditLimitErrorMessage(charge.reason),
+      reason: charge.reason,
+      retryAt: charge.retryAt,
+      credits: charge.code.credits
+    });
+    return;
+  }
+
   const activeJobsBefore = await store.listActiveJobs(1);
   const output = await store.ensureCache(result);
   const requestedAt = new Date().toISOString();
@@ -368,7 +426,9 @@ async function handleEnsureCache(
     jobId: output.job.id,
     assetStatus: output.asset.status,
     jobStatus: output.job.status,
-    readyHit: isFreshReady(existingAsset),
+    readyHit,
+    chargedCredits: charge?.ok ? charge.charge.credits : 0,
+    memberId: identity.memberId,
     activeJobsBefore: activeJobsBefore.length,
     triggerStatus: trigger.status,
     durationMs: durationMs(startedAt)
@@ -376,7 +436,9 @@ async function handleEnsureCache(
 
   sendJson(response, 200, {
     ...output,
-    trigger
+    trigger,
+    charge: charge?.ok ? charge.charge : undefined,
+    memberCredits: charge?.ok ? charge.code.credits : undefined
   });
 }
 
@@ -503,6 +565,44 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
   sendJson(response, 200, { codes });
 }
 
+async function handleAddMemberCredits(
+  codeId: string,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<AddMemberCreditsRequest>(request);
+  const credits = Math.max(0, Math.floor(Number(body.credits ?? 0)));
+  if (credits <= 0) {
+    sendJson(response, 400, { error: "Credits must be greater than zero." });
+    return;
+  }
+
+  const code = await accessStore.addMemberCredits(codeId, credits);
+  if (!code) {
+    logWarn("api.admin.member_codes.credits_not_found", {
+      requestId: context.requestId,
+      memberCodeId: codeId,
+      credits,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member code was not found." });
+    return;
+  }
+
+  logInfo("api.admin.member_codes.credits_add", {
+    requestId: context.requestId,
+    memberCodeId: code.id,
+    name: code.name,
+    credits,
+    totalCredits: code.credits.total,
+    remainingCredits: code.credits.remaining,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { code });
+}
+
 async function handleListCacheJobs(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 20, 100);
@@ -537,13 +637,19 @@ async function handleCreateMemberCode(
   const body = await readBody<CreateMemberCodeRequest>(request);
   const code = await accessStore.createMemberCode({
     name: body.name,
-    days: body.days
+    days: body.days,
+    credits: body.credits,
+    fiveHourLimit: body.fiveHourLimit,
+    weekLimit: body.weekLimit
   });
   logInfo("api.admin.member_codes.create", {
     requestId: context.requestId,
     memberCodeId: code.id,
     name: code.name,
     expiresAt: code.expiresAt,
+    totalCredits: code.credits.total,
+    fiveHourLimit: code.credits.fiveHour.limit,
+    weekLimit: code.credits.week.limit,
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 201, { code });
@@ -671,6 +777,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    const addMemberCreditsMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/credits$/);
+    if (addMemberCreditsMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && addMemberCreditsMatch) {
+      await handleAddMemberCredits(decodeURIComponent(addMemberCreditsMatch[1]), request, response, context);
+      return;
+    }
+
     const revokeMemberCodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/revoke$/);
     if (revokeMemberCodeMatch && !requireAdmin(identity, response, context)) {
       return;
@@ -702,7 +818,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "POST" && pathname === "/api/cache") {
-      await handleEnsureCache(request, response, context);
+      await handleEnsureCache(request, response, context, identity!);
       return;
     }
 

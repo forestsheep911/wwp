@@ -18,10 +18,12 @@ The cloud path has been proven end to end:
 8. The API returns a short-lived SAS playback URL with diagnostics metadata.
 9. The browser plays the cached Blob video.
 
-The Admin tab now includes household member-code management plus a recent cache
-jobs view. The cache job view shows worker status, progress, job id, asset key,
-latest request id, blob diagnostics, size, range support, and MP4 faststart
-status.
+The Admin tab now includes household Cinema Pass management plus a recent cache
+jobs view. Each pass is bound to a member name, but family members still sign in
+with only the pass string. Passes carry a 🍀 allowance with total, 5-hour, and
+weekly rolling limits. The cache job view shows worker status, progress, job id,
+asset key, latest request id, blob diagnostics, size, range support, and MP4
+faststart status.
 
 Known successful playback example:
 
@@ -67,6 +69,28 @@ Container environment variables:
 - API and worker use managed identity for Azure Storage and Azure Resource Manager
 
 The frontend only stores the user-entered access key in browser `sessionStorage`.
+
+## Member Allowances
+
+External UI copy should call user keys `Cinema Passes` rather than access keys.
+The API still uses `x-wwpdw-access-key` internally.
+
+Default pass allowance settings:
+
+- `MEMBER_DEFAULT_CREDITS=20`
+- `MEMBER_DEFAULT_FIVE_HOUR_LIMIT=5`
+- `MEMBER_DEFAULT_WEEK_LIMIT=20`
+- `MEMBER_CACHE_CREDIT_COST=1`
+
+Search, playback, cache hits, and joining an already-running cache job are free.
+Creating a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST`
+🍀. Admin keys bypass member allowance checks. A member request that exceeds the
+total allowance, 5-hour rolling limit, or weekly rolling limit returns HTTP 429
+before it creates a cache job.
+
+Current accounting is stored on the member pass row in the `membercodes` table.
+That is intentionally simple for a family-scale system. If usage grows, split
+credit events into a separate ledger table with optimistic concurrency.
 
 ## Cache Retention
 

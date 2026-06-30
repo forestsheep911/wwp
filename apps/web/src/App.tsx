@@ -35,6 +35,7 @@ import type {
   SearchResult
 } from "@wwpdw/shared";
 import {
+  addMemberCredits,
   checkAccess,
   clearAccessKey,
   createMemberAccessCode,
@@ -168,6 +169,14 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function creditsLabel(code: MemberAccessCode) {
+  return `${code.credits.unitSymbol} ${code.credits.remaining}/${code.credits.total}`;
+}
+
+function creditWindowLabel(used: number, limit: number) {
+  return `${used}/${limit}`;
 }
 
 function cacheLabel(asset?: CacheAsset) {
@@ -416,7 +425,7 @@ function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) => void 
     event.preventDefault();
     const candidate = value.trim();
     if (!candidate) {
-      setError("Enter an access key.");
+      setError("Enter a Cinema Pass.");
       return;
     }
 
@@ -428,7 +437,7 @@ function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) => void 
       onUnlock(auth);
     } catch (accessError) {
       clearAccessKey();
-      setError(errorMessage(accessError, "Access key did not match."));
+      setError(errorMessage(accessError, "Cinema Pass did not match."));
     } finally {
       setLoading(false);
     }
@@ -447,7 +456,7 @@ function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) => void 
         <CardContent>
           <form className="grid gap-4" onSubmit={submit}>
             <div className="grid gap-2">
-              <Label htmlFor="access-key">Access key</Label>
+              <Label htmlFor="access-key">Cinema Pass</Label>
               <Input
                 id="access-key"
                 autoFocus
@@ -1055,15 +1064,24 @@ function AdminPanel({
   adminKeyInput,
   memberName,
   memberDays,
+  memberCredits,
+  memberFiveHourLimit,
+  memberWeekLimit,
+  memberTopUps,
   memberCodes,
   setAdminKeyInput,
   setMemberName,
   setMemberDays,
+  setMemberCredits,
+  setMemberFiveHourLimit,
+  setMemberWeekLimit,
+  setMemberTopUp,
   onUnlock,
   onGenerate,
   onCopy,
   onDelete,
   onRefreshJobs,
+  onTopUp,
   onRevoke
 }: {
   adminUnlocked: boolean;
@@ -1074,15 +1092,24 @@ function AdminPanel({
   adminKeyInput: string;
   memberName: string;
   memberDays: number;
+  memberCredits: number;
+  memberFiveHourLimit: number;
+  memberWeekLimit: number;
+  memberTopUps: Record<string, number>;
   memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
   setMemberDays: (value: number) => void;
+  setMemberCredits: (value: number) => void;
+  setMemberFiveHourLimit: (value: number) => void;
+  setMemberWeekLimit: (value: number) => void;
+  setMemberTopUp: (id: string, value: number) => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
   onRefreshJobs: () => void;
+  onTopUp: (id: string) => void;
   onRevoke: (id: string) => void;
 }) {
   if (!adminUnlocked) {
@@ -1093,7 +1120,7 @@ function AdminPanel({
             <ShieldCheck className="h-5 w-5 text-emerald-300" />
             Administrator
           </CardTitle>
-          <CardDescription>Enter the administrator key to manage household member codes.</CardDescription>
+          <CardDescription>Enter the administrator key to manage household Cinema Passes.</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -1128,9 +1155,9 @@ function AdminPanel({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-emerald-300" />
-              New member code
+              New Cinema Pass
             </CardTitle>
-            <CardDescription>Generate a household viewing key</CardDescription>
+            <CardDescription>Generate a household pass with a personal 🍀 allowance</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -1155,6 +1182,41 @@ function AdminPanel({
                   onChange={(event) => setMemberDays(Number(event.target.value))}
                 />
               </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="member-credits">🍀 Total</Label>
+                  <Input
+                    id="member-credits"
+                    min={0}
+                    max={10000}
+                    type="number"
+                    value={memberCredits}
+                    onChange={(event) => setMemberCredits(Number(event.target.value))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="member-five-hour-limit">5h limit</Label>
+                  <Input
+                    id="member-five-hour-limit"
+                    min={0}
+                    max={10000}
+                    type="number"
+                    value={memberFiveHourLimit}
+                    onChange={(event) => setMemberFiveHourLimit(Number(event.target.value))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="member-week-limit">Week limit</Label>
+                  <Input
+                    id="member-week-limit"
+                    min={0}
+                    max={10000}
+                    type="number"
+                    value={memberWeekLimit}
+                    onChange={(event) => setMemberWeekLimit(Number(event.target.value))}
+                  />
+                </div>
+              </div>
               {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
               <Button type="submit" disabled={adminLoading}>
                 {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
@@ -1166,7 +1228,7 @@ function AdminPanel({
 
         <div className="grid gap-3">
           {memberCodes.length === 0 ? (
-            <EmptyState icon={<Users className="h-5 w-5" />} title="No member codes" />
+            <EmptyState icon={<Users className="h-5 w-5" />} title="No Cinema Passes" />
           ) : (
             memberCodes.map((code) => (
               <Card key={code.id}>
@@ -1180,13 +1242,50 @@ function AdminPanel({
                       {code.code ?? code.codePreview}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">Expires {formatLongDate(code.expiresAt)}</p>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
+                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                        <p className="text-slate-500">Allowance</p>
+                        <p className="mt-1 font-semibold text-emerald-200">{creditsLabel(code)}</p>
+                      </div>
+                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                        <p className="text-slate-500">5h limit</p>
+                        <p className="mt-1 font-semibold">
+                          {creditWindowLabel(code.credits.fiveHour.used, code.credits.fiveHour.limit)}
+                        </p>
+                      </div>
+                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                        <p className="text-slate-500">Week limit</p>
+                        <p className="mt-1 font-semibold">
+                          {creditWindowLabel(code.credits.week.used, code.credits.week.limit)}
+                        </p>
+                      </div>
+                    </div>
                     {!code.code ? (
                       <p className="mt-1 text-xs text-amber-200">
                         Full code is shown only when generated.
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex gap-2 sm:justify-end">
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="h-9 w-20"
+                        min={1}
+                        max={10000}
+                        type="number"
+                        value={memberTopUps[code.id] ?? 10}
+                        onChange={(event) => setMemberTopUp(code.id, Number(event.target.value))}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onTopUp(code.id)}
+                        disabled={adminLoading || code.status !== "active"}
+                      >
+                        +🍀
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
@@ -1270,6 +1369,10 @@ export default function App() {
   const [adminKeyInput, setAdminKeyInput] = useState("");
   const [memberName, setMemberName] = useState("");
   const [memberDays, setMemberDays] = useState(30);
+  const [memberCredits, setMemberCredits] = useState(20);
+  const [memberFiveHourLimit, setMemberFiveHourLimit] = useState(5);
+  const [memberWeekLimit, setMemberWeekLimit] = useState(20);
+  const [memberTopUps, setMemberTopUps] = useState<Record<string, number>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
 
@@ -1592,7 +1695,10 @@ export default function App() {
     try {
       const response = await createMemberAccessCode({
         name: memberName.trim() || "Family member",
-        days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30
+        days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30,
+        credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20,
+        fiveHourLimit: Number.isFinite(memberFiveHourLimit) && memberFiveHourLimit >= 0 ? memberFiveHourLimit : 5,
+        weekLimit: Number.isFinite(memberWeekLimit) && memberWeekLimit >= 0 ? memberWeekLimit : 20
       });
       setMemberCodes((currentCodes) => [
         response.code,
@@ -1600,8 +1706,42 @@ export default function App() {
       ]);
       setMemberName("");
       setMemberDays(30);
+      setMemberCredits(20);
+      setMemberFiveHourLimit(5);
+      setMemberWeekLimit(20);
     } catch (generateError) {
       setAdminError(errorMessage(generateError, "Could not generate member code."));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  function setMemberTopUp(id: string, value: number) {
+    setMemberTopUps((currentTopUps) => ({
+      ...currentTopUps,
+      [id]: value
+    }));
+  }
+
+  async function topUpMemberCredits(id: string) {
+    const credits = memberTopUps[id] ?? 10;
+    if (!Number.isFinite(credits) || credits <= 0) {
+      setAdminError("Top-up amount must be greater than zero.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await addMemberCredits(id, { credits });
+      setMemberCodes((currentCodes) => currentCodes.map((code) => (
+        code.id === id
+          ? { ...response.code, code: code.code }
+          : code
+      )));
+      setMemberTopUp(id, 10);
+    } catch (topUpError) {
+      setAdminError(errorMessage(topUpError, "Could not add credits."));
     } finally {
       setAdminLoading(false);
     }
@@ -1695,7 +1835,7 @@ export default function App() {
         applyAuth(auth);
       })
       .catch((authError) => {
-        handleRequestError(authError, "Access key did not match.");
+        handleRequestError(authError, "Cinema Pass did not match.");
       });
   }, [unlocked, role]);
 
@@ -1899,15 +2039,24 @@ export default function App() {
                   adminKeyInput={adminKeyInput}
                   memberName={memberName}
                   memberDays={memberDays}
+                  memberCredits={memberCredits}
+                  memberFiveHourLimit={memberFiveHourLimit}
+                  memberWeekLimit={memberWeekLimit}
+                  memberTopUps={memberTopUps}
                   memberCodes={memberCodes}
                   setAdminKeyInput={setAdminKeyInput}
                   setMemberName={setMemberName}
                   setMemberDays={setMemberDays}
+                  setMemberCredits={setMemberCredits}
+                  setMemberFiveHourLimit={setMemberFiveHourLimit}
+                  setMemberWeekLimit={setMemberWeekLimit}
+                  setMemberTopUp={setMemberTopUp}
                   onUnlock={unlockAdmin}
                   onGenerate={generateMemberCode}
                   onCopy={(code) => void copyMemberCode(code)}
                   onDelete={deleteMemberCode}
                   onRefreshJobs={() => void refreshCacheJobs()}
+                  onTopUp={topUpMemberCredits}
                   onRevoke={revokeMemberCode}
                 />
               </TabsContent>

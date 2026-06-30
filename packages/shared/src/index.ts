@@ -147,6 +147,8 @@ export interface EnsureCacheResponse {
   asset: CacheAsset;
   job: CacheJob;
   trigger?: CacheTriggerStatus;
+  charge?: MemberCreditCharge;
+  memberCredits?: MemberCreditSummary;
 }
 
 export interface PlaybackResponse {
@@ -155,6 +157,33 @@ export interface PlaybackResponse {
   playbackUrl: string;
   expiresAt: string;
   media?: MediaDiagnostics;
+}
+
+export type MemberCreditLimitReason = "total" | "five_hour" | "week";
+
+export interface MemberCreditWindow {
+  limit: number;
+  used: number;
+  remaining: number;
+  retryAt?: string;
+}
+
+export interface MemberCreditSummary {
+  unit: "clover";
+  unitSymbol: string;
+  total: number;
+  used: number;
+  remaining: number;
+  fiveHour: MemberCreditWindow;
+  week: MemberCreditWindow;
+}
+
+export interface MemberCreditCharge {
+  credits: number;
+  reason: "cache_reserved";
+  assetKey: string;
+  title: string;
+  chargedAt: string;
 }
 
 export interface CacheAssetLookupResponse {
@@ -178,6 +207,7 @@ export interface AuthCheckResponse {
   member?: {
     id: string;
     name: string;
+    credits?: MemberCreditSummary;
   };
 }
 
@@ -189,6 +219,7 @@ export interface MemberAccessCode {
   expiresAt: string;
   status: "active" | "revoked" | "expired";
   lastUsedAt?: string;
+  credits: MemberCreditSummary;
 }
 
 export interface GeneratedMemberAccessCode extends MemberAccessCode {
@@ -202,10 +233,21 @@ export interface MemberCodeListResponse {
 export interface CreateMemberCodeRequest {
   name: string;
   days: number;
+  credits?: number;
+  fiveHourLimit?: number;
+  weekLimit?: number;
 }
 
 export interface CreateMemberCodeResponse {
   code: GeneratedMemberAccessCode;
+}
+
+export interface AddMemberCreditsRequest {
+  credits: number;
+}
+
+export interface AddMemberCreditsResponse {
+  code: MemberAccessCode;
 }
 
 export interface AdminCacheJobEntry {
