@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Progress } from "../../components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import {
   booleanLabel,
   cacheErrorLabel,
@@ -136,148 +137,224 @@ export function AdminPanel({
         </div>
       ) : null}
 
-      <AdminCachedAssetsPanel
-        actionLoading={adminLoading}
-        assets={cachedAssets}
-        loading={cachedAssetsLoading}
-        onDelete={onDeleteCachedAsset}
-        onRefresh={onRefreshCachedAssets}
-      />
+      <Tabs defaultValue="cached">
+        <TabsList>
+          <TabsTrigger value="cached">
+            <Database className="h-4 w-4" />
+            Cached Videos
+            <Badge variant="secondary">{cachedAssets.length}</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="jobs">
+            <Activity className="h-4 w-4" />
+            Cache Jobs
+            <Badge variant={cacheJobs.some((item) => item.job.status === "failed") ? "danger" : "secondary"}>
+              {cacheJobs.length}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="passes">
+            <Users className="h-4 w-4" />
+            Cinema Passes
+            <Badge variant="secondary">{memberCodes.length}</Badge>
+          </TabsTrigger>
+        </TabsList>
 
-      <AdminCacheJobsPanel
-        actionLoading={adminLoading}
-        jobs={cacheJobs}
-        loading={cacheJobsLoading}
-        onDelete={onDeleteCacheJob}
-        onRefresh={onRefreshJobs}
-        onRetry={onRetryCacheJob}
-      />
+        <TabsContent value="cached">
+          <AdminCachedAssetsPanel
+            actionLoading={adminLoading}
+            assets={cachedAssets}
+            loading={cachedAssetsLoading}
+            onDelete={onDeleteCachedAsset}
+            onRefresh={onRefreshCachedAssets}
+          />
+        </TabsContent>
 
-      <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5 text-emerald-300" />
-              New Cinema Pass
-            </CardTitle>
-            <CardDescription>Generate a household pass with a starting 🍀 balance.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onGenerate();
-              }}
-            >
-              <div className="grid gap-2">
-                <Label htmlFor="member-name">Member name</Label>
-                <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="member-credits">🍀 Balance</Label>
-                <Input
-                  id="member-credits"
-                  min={0}
-                  max={10000}
-                  type="number"
-                  value={memberCredits}
-                  onChange={(event) => setMemberCredits(Number(event.target.value))}
-                />
-              </div>
-              <Button type="submit" disabled={adminLoading}>
-                {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                Generate
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        <TabsContent value="jobs">
+          <AdminCacheJobsPanel
+            actionLoading={adminLoading}
+            jobs={cacheJobs}
+            loading={cacheJobsLoading}
+            onDelete={onDeleteCacheJob}
+            onRefresh={onRefreshJobs}
+            onRetry={onRetryCacheJob}
+          />
+        </TabsContent>
 
-        <div className="grid gap-3">
-          {memberCodes.length === 0 ? (
-            <EmptyState icon={<Users className="h-5 w-5" />} title="No Cinema Passes" />
-          ) : (
-            memberCodes.map((code) => (
-              <Card key={code.id}>
-                <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold text-slate-50">{code.name}</p>
-                      <Badge variant={code.status === "active" ? "default" : "danger"}>{code.status}</Badge>
-                    </div>
-                    <p className="mt-1 truncate font-mono text-sm text-slate-300">
-                      {code.code ?? code.codePreview}
-                    </p>
-                    <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-[minmax(0,180px)]">
-                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                        <p className="text-slate-500">Balance</p>
-                        <p className="mt-1 font-semibold text-emerald-200">{creditsLabel(code)}</p>
-                      </div>
-                    </div>
-                    {!code.code ? (
-                      <p className="mt-1 text-xs text-amber-200">
-                        Full code is shown only when generated.
-                      </p>
-                    ) : null}
+        <TabsContent value="passes">
+          <AdminPassesPanel
+            adminLoading={adminLoading}
+            memberCodes={memberCodes}
+            memberCreditEdits={memberCreditEdits}
+            memberCredits={memberCredits}
+            memberName={memberName}
+            onCopy={onCopy}
+            onDelete={onDelete}
+            onGenerate={onGenerate}
+            onRevoke={onRevoke}
+            onUpdateCredits={onUpdateCredits}
+            setMemberCreditEdit={setMemberCreditEdit}
+            setMemberCredits={setMemberCredits}
+            setMemberName={setMemberName}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function AdminPassesPanel({
+  adminLoading,
+  memberCodes,
+  memberCreditEdits,
+  memberCredits,
+  memberName,
+  onCopy,
+  onDelete,
+  onGenerate,
+  onRevoke,
+  onUpdateCredits,
+  setMemberCreditEdit,
+  setMemberCredits,
+  setMemberName
+}: {
+  adminLoading: boolean;
+  memberCodes: ManagedMemberCode[];
+  memberCreditEdits: Record<string, number>;
+  memberCredits: number;
+  memberName: string;
+  onCopy: (code: string) => void;
+  onDelete: (id: string) => void;
+  onGenerate: () => void;
+  onRevoke: (id: string) => void;
+  onUpdateCredits: (id: string) => void;
+  setMemberCreditEdit: (id: string, value: number) => void;
+  setMemberCredits: (value: number) => void;
+  setMemberName: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserPlus className="h-5 w-5 text-emerald-300" />
+            New Cinema Pass
+          </CardTitle>
+          <CardDescription>Generate a household pass with a starting 🍀 balance.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onGenerate();
+            }}
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="member-name">Member name</Label>
+              <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="member-credits">🍀 Balance</Label>
+              <Input
+                id="member-credits"
+                min={0}
+                max={10000}
+                type="number"
+                value={memberCredits}
+                onChange={(event) => setMemberCredits(Number(event.target.value))}
+              />
+            </div>
+            <Button type="submit" disabled={adminLoading}>
+              {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              Generate
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3">
+        {memberCodes.length === 0 ? (
+          <EmptyState icon={<Users className="h-5 w-5" />} title="No Cinema Passes" />
+        ) : (
+          memberCodes.map((code) => (
+            <Card key={code.id}>
+              <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-slate-50">{code.name}</p>
+                    <Badge variant={code.status === "active" ? "default" : "danger"}>{code.status}</Badge>
                   </div>
-                  <div className="flex flex-wrap gap-2 sm:justify-end">
-                    <div className="flex items-center gap-2">
-                      <Input
-                        className="h-9 w-20"
-                        min={0}
-                        max={10000}
-                        type="number"
-                        value={memberCreditEdits[code.id] ?? code.credits.remaining}
-                        onChange={(event) => setMemberCreditEdit(code.id, Number(event.target.value))}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onUpdateCredits(code.id)}
-                        disabled={adminLoading || code.status !== "active"}
-                      >
-                        Set 🍀
-                      </Button>
+                  <p className="mt-1 truncate font-mono text-sm text-slate-300">
+                    {code.code ?? code.codePreview}
+                  </p>
+                  <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-[minmax(0,180px)]">
+                    <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                      <p className="text-slate-500">Balance</p>
+                      <p className="mt-1 font-semibold text-emerald-200">{creditsLabel(code)}</p>
                     </div>
+                  </div>
+                  {!code.code ? (
+                    <p className="mt-1 text-xs text-amber-200">
+                      Full code is shown only when generated.
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="h-9 w-20"
+                      min={0}
+                      max={10000}
+                      type="number"
+                      value={memberCreditEdits[code.id] ?? code.credits.remaining}
+                      onChange={(event) => setMemberCreditEdit(code.id, Number(event.target.value))}
+                    />
                     <Button
                       type="button"
                       variant="outline"
-                      size="icon"
-                      onClick={() => code.code && onCopy(code.code)}
-                      disabled={!code.code || adminLoading}
+                      size="sm"
+                      onClick={() => onUpdateCredits(code.id)}
+                      disabled={adminLoading || code.status !== "active"}
                     >
-                      <Copy className="h-4 w-4" />
-                      <span className="sr-only">Copy</span>
+                      Set 🍀
                     </Button>
-                    {code.status === "active" ? (
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => onRevoke(code.id)}
-                        disabled={adminLoading}
-                      >
-                        Revoke
-                      </Button>
-                    ) : null}
-                    {code.status !== "active" ? (
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => onDelete(code.id)}
-                        disabled={adminLoading}
-                      >
-                        Delete
-                      </Button>
-                    ) : null}
                   </div>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => code.code && onCopy(code.code)}
+                    disabled={!code.code || adminLoading}
+                  >
+                    <Copy className="h-4 w-4" />
+                    <span className="sr-only">Copy</span>
+                  </Button>
+                  {code.status === "active" ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onRevoke(code.id)}
+                      disabled={adminLoading}
+                    >
+                      Revoke
+                    </Button>
+                  ) : null}
+                  {code.status !== "active" ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onDelete(code.id)}
+                      disabled={adminLoading}
+                    >
+                      Delete
+                    </Button>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
       </div>
     </div>
   );
