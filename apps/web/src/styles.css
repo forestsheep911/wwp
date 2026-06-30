@@ -54,3 +54,23 @@ video {
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+.gallery-results {
+  container-type: inline-size;
+}
+
+.gallery-results-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container (min-width: 760px) {
+  .gallery-results-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 1180px) {
+  .gallery-results-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

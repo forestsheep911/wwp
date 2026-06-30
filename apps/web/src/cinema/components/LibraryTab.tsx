@@ -106,22 +106,24 @@ export function LibraryTab({
           </div>
 
           {viewMode === "gallery" ? (
-            <div className="grid gap-4 xl:grid-cols-2">
-              {results.length === 0 ? (
-                <div className="xl:col-span-2">
-                  <EmptyState icon={<Film className="h-5 w-5" />} title="No titles found" />
-                </div>
-              ) : (
-                results.map((result) => (
-                  <MovieCard
-                    key={result.assetKey}
-                    result={result}
-                    pendingAssetKeys={pendingAssetKeys}
-                    trackedByAssetKey={trackedByAssetKey}
-                    onSelect={onSelect}
-                  />
-                ))
-              )}
+            <div className="gallery-results">
+              <div className="gallery-results-grid grid gap-4">
+                {results.length === 0 ? (
+                  <div className="col-span-full">
+                    <EmptyState icon={<Film className="h-5 w-5" />} title="No titles found" />
+                  </div>
+                ) : (
+                  results.map((result) => (
+                    <MovieCard
+                      key={result.assetKey}
+                      result={result}
+                      pendingAssetKeys={pendingAssetKeys}
+                      trackedByAssetKey={trackedByAssetKey}
+                      onSelect={onSelect}
+                    />
+                  ))
+                )}
+              </div>
             </div>
           ) : (
             <MovieListView
@@ -343,6 +345,8 @@ function VariantButtons({
             variant={displayAsset?.status === "ready" ? "default" : "secondary"}
             onClick={() => onSelect(result, variant)}
             disabled={pending}
+            title={`${variant.label} / ${displayStatus}`}
+            aria-label={`${variant.label} / ${displayStatus}`}
           >
             {tracked ? (
               <span
