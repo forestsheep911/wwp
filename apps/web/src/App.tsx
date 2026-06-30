@@ -13,6 +13,7 @@ import {
   checkAccess,
   clearAccessKey,
   createMemberAccessCode,
+  deleteCacheJob,
   deleteMemberAccessCode,
   ensureCache,
   errorMessage,
@@ -25,6 +26,7 @@ import {
   listCacheJobs,
   listMemberCodes,
   revokeMemberAccessCode,
+  retryCacheJob,
   searchAssets,
   setMemberCredits as setMemberCreditsApi,
   setAccessKey
@@ -355,6 +357,42 @@ export default function App() {
     }
   }
 
+  async function retryAdminCacheJob(jobId: string) {
+    setCacheJobsLoading(true);
+    setAdminError("");
+    try {
+      const response = await retryCacheJob(jobId);
+      upsertTrackedItem({
+        job: response.job,
+        asset: response.asset
+      });
+      await refreshCacheJobs();
+    } catch (retryError) {
+      setAdminError(errorMessage(retryError, "Could not retry cache job."));
+    } finally {
+      setCacheJobsLoading(false);
+    }
+  }
+
+  async function deleteAdminCacheJob(jobId: string) {
+    setCacheJobsLoading(true);
+    setAdminError("");
+    try {
+      const response = await deleteCacheJob(jobId);
+      if (response.jobId) {
+        setTrackedItems((currentItems) => currentItems.filter((item) => item.job.id !== response.jobId));
+      }
+      if (response.assetKey) {
+        setCachedAssets((currentAssets) => currentAssets.filter((item) => item.assetKey !== response.assetKey));
+      }
+      await refreshCacheJobs();
+    } catch (deleteError) {
+      setAdminError(errorMessage(deleteError, "Could not delete cache entry."));
+    } finally {
+      setCacheJobsLoading(false);
+    }
+  }
+
   async function unlockAdmin() {
     const candidate = adminKeyInput.trim();
     if (!candidate) {
@@ -651,6 +689,8 @@ export default function App() {
           onCopy={(code) => void copyMemberCode(code)}
           onDelete={deleteMemberCode}
           onRefreshJobs={() => void refreshCacheJobs()}
+          onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
+          onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
           onUpdateCredits={updateMemberCredits}
           onRevoke={revokeMemberCode}
         />

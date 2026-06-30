@@ -34,7 +34,12 @@ import {
   isIdleReadyAsset,
   readyAssetIdleReference
 } from "./jobs.js";
-import type { CacheStore, CleanupExpiredResult } from "./types.js";
+import type {
+  CacheStore,
+  CleanupExpiredResult,
+  DeleteCacheEntryInput,
+  DeleteCacheEntryResult
+} from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 const defaultAccountName = "stwwcachee9219db7";
@@ -524,7 +529,9 @@ export class AzureCacheStore implements CacheStore {
       assetKey: result.assetKey,
       title: result.title,
       source: result.source,
-      sourceUrl: result.sourceUrl
+      sourceUrl: result.sourceUrl,
+      sourcePageId: result.sourcePageId,
+      sourceBreadcrumb: result.sourceBreadcrumb
     });
     const asset: CacheAsset = {
       assetKey: result.assetKey,
@@ -598,6 +605,81 @@ export class AzureCacheStore implements CacheStore {
     return jobs
       .sort((left, right) => jobActivityTime(right).localeCompare(jobActivityTime(left)))
       .slice(0, limit);
+  }
+
+  async retryJob(jobId: string, refreshedResult?: SearchResult) {
+    await this.ensureReady();
+    const job = await this.getJob(jobId);
+    if (!job || job.status !== "failed") {
+      return undefined;
+    }
+
+    const now = new Date().toISOString();
+    const nextJob: CacheJob = {
+      ...job,
+      title: refreshedResult?.title ?? job.title,
+      source: refreshedResult?.source ?? job.source,
+      sourceUrl: refreshedResult?.sourceUrl ?? job.sourceUrl,
+      sourcePageId: refreshedResult?.sourcePageId ?? job.sourcePageId,
+      sourceBreadcrumb: refreshedResult?.sourceBreadcrumb ?? job.sourceBreadcrumb,
+      status: "queued",
+      progress: 0,
+      message: "Waiting for a cache worker.",
+      updatedAt: now,
+      lastRequestedAt: now,
+      completedAt: undefined,
+      error: undefined,
+      resolve: undefined
+    };
+    const asset: CacheAsset = {
+      assetKey: nextJob.assetKey,
+      title: nextJob.title,
+      source: nextJob.source,
+      status: "queued",
+      jobId: nextJob.id,
+      lastRequestedAt: now
+    };
+
+    await this.saveJob(nextJob);
+    await this.saveAsset(asset);
+    await this.queueClient.sendMessage(
+      encodeQueueMessage({
+        jobId: nextJob.id,
+        assetKey: nextJob.assetKey
+      })
+    );
+
+    return { job: nextJob, asset };
+  }
+
+  async deleteCacheEntry(input: DeleteCacheEntryInput): Promise<DeleteCacheEntryResult> {
+    await this.ensureReady();
+    const job = input.jobId ? await this.getJob(input.jobId) : undefined;
+    const assetKey = input.assetKey ?? job?.assetKey;
+    const asset = assetKey ? await this.getAsset(assetKey) : undefined;
+    const jobId = input.jobId ?? asset?.jobId;
+    const result: DeleteCacheEntryResult = {
+      assetKey,
+      jobId,
+      deletedAsset: false,
+      deletedJob: false,
+      deletedBlob: false,
+      errors: []
+    };
+
+    if (asset && (!input.jobId || asset.jobId === input.jobId)) {
+      const deletion = await this.deleteAssetAndLinkedJob(asset, encodeRowKey(asset.assetKey), "admin");
+      result.deletedAsset = deletion.deletedAsset;
+      result.deletedBlob = deletion.deletedBlob;
+      result.deletedJob = deletion.deletedJob;
+      result.errors.push(...deletion.errors);
+    }
+
+    if (jobId && !result.deletedJob) {
+      result.deletedJob = await this.deleteJobRecord(jobId, assetKey);
+    }
+
+    return result;
   }
 
   async saveJob(job: CacheJob) {
@@ -876,7 +958,11 @@ export class AzureCacheStore implements CacheStore {
         expiresAt: asset.expiresAt,
         idleReferenceAt: readyAssetIdleReference(asset)
       });
-      await this.deleteExpiredAsset(asset, entity.rowKey, result);
+      const deletion = await this.deleteAssetAndLinkedJob(asset, entity.rowKey, "cleanup");
+      result.deletedAssets += deletion.deletedAsset ? 1 : 0;
+      result.deletedJobs += deletion.deletedJob ? 1 : 0;
+      result.deletedBlobs += deletion.deletedBlob ? 1 : 0;
+      result.errors.push(...deletion.errors);
     }
 
     return result;
@@ -994,30 +1080,39 @@ export class AzureCacheStore implements CacheStore {
     return playbackUrl.slice(prefix.length);
   }
 
-  private async deleteExpiredAsset(
+  private async deleteAssetAndLinkedJob(
     asset: CacheAsset,
     rowKey: string,
-    result: CleanupExpiredResult
-  ) {
+    reason: "admin" | "cleanup"
+  ): Promise<DeleteCacheEntryResult> {
+    const result: DeleteCacheEntryResult = {
+      assetKey: asset.assetKey,
+      jobId: asset.jobId,
+      deletedAsset: false,
+      deletedJob: false,
+      deletedBlob: false,
+      errors: []
+    };
     const blobName = asset.playbackUrl ? this.blobNameFromPlaybackUrl(asset.playbackUrl) : undefined;
     let blobDeleted = true;
 
     if (blobName) {
       blobDeleted = false;
       try {
-      await this.containerClient.deleteBlob(blobName, {
-        deleteSnapshots: "include"
-      });
-      result.deletedBlobs += 1;
-      blobDeleted = true;
-      logInfo("cache.cleanup.blob_deleted", {
-        assetKey: asset.assetKey,
-        jobId: asset.jobId,
-        blobName
-      });
-    } catch (error) {
-      if (isNotFound(error)) {
+        await this.containerClient.deleteBlob(blobName, {
+          deleteSnapshots: "include"
+        });
+        result.deletedBlob = true;
         blobDeleted = true;
+        logInfo("cache.delete.blob_deleted", {
+          assetKey: asset.assetKey,
+          jobId: asset.jobId,
+          blobName,
+          reason
+        });
+      } catch (error) {
+        if (isNotFound(error)) {
+          blobDeleted = true;
         } else {
           result.errors.push(`Could not delete blob for ${asset.assetKey}: ${error instanceof Error ? error.message : "unknown error"}`);
         }
@@ -1025,15 +1120,16 @@ export class AzureCacheStore implements CacheStore {
     }
 
     if (!blobDeleted) {
-      return;
+      return result;
     }
 
     try {
       await this.assetTable.deleteEntity("asset", rowKey);
-      result.deletedAssets += 1;
-      logInfo("cache.cleanup.asset_deleted", {
+      result.deletedAsset = true;
+      logInfo("cache.delete.asset_deleted", {
         assetKey: asset.assetKey,
-        jobId: asset.jobId
+        jobId: asset.jobId,
+        reason
       });
     } catch (error) {
       if (!isNotFound(error)) {
@@ -1042,20 +1138,32 @@ export class AzureCacheStore implements CacheStore {
     }
 
     if (!asset.jobId) {
-      return;
+      return result;
     }
 
     try {
-      await this.jobTable.deleteEntity("job", asset.jobId);
-      result.deletedJobs += 1;
-      logInfo("cache.cleanup.job_deleted", {
-        assetKey: asset.assetKey,
-        jobId: asset.jobId
-      });
+      result.deletedJob = await this.deleteJobRecord(asset.jobId, asset.assetKey, reason);
     } catch (error) {
-      if (!isNotFound(error)) {
-        result.errors.push(`Could not delete job ${asset.jobId}: ${error instanceof Error ? error.message : "unknown error"}`);
+      result.errors.push(`Could not delete job ${asset.jobId}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    return result;
+  }
+
+  private async deleteJobRecord(jobId: string, assetKey?: string, reason: "admin" | "cleanup" = "admin") {
+    try {
+      await this.jobTable.deleteEntity("job", jobId);
+      logInfo("cache.delete.job_deleted", {
+        assetKey,
+        jobId,
+        reason
+      });
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
       }
+
+      throw error;
     }
   }
 

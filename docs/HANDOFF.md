@@ -23,7 +23,8 @@ jobs view. Each pass is bound to a member name, but family members still sign in
 with only the pass string. Passes carry a simple 🍀 balance that admins set when
 creating the pass and can update later. The cache job view shows worker status, progress, job id,
 asset key, latest request id, blob diagnostics, size, range support, and MP4
-faststart status.
+faststart status. Admins can retry failed cache jobs, delete failed job records,
+and delete ready cached videos together with their Blob and job state.
 
 Known successful playback example:
 
@@ -104,6 +105,16 @@ Azure Storage may also have a coarse lifecycle rule as a safety net, but the
 application-level cleanup job is authoritative because it updates Table state and
 deletes the matching cache job record.
 
+Admins can also delete a ready cache entry manually from the Admin tab. That path
+uses the same cache-store deletion flow as cleanup: remove Blob media first,
+then remove the asset row and linked job row. Failed cache jobs can be retried,
+which refreshes the source URL from Notion before resetting the same job to
+`queued` and re-enqueuing it for the worker, or deleted when the source is no
+longer useful. New jobs store the Notion page id for the page carrying the media
+link as `sourcePageId`; older jobs can usually recover the same id from the
+`notion-page-...` asset key. `sourceBreadcrumb` is stored only for operator
+context.
+
 ## Data Flow
 
 Notion search is intentionally library-scoped:
@@ -152,6 +163,17 @@ web search
   -> API /api/playback/{assetKey}
   -> SAS URL
   -> browser video playback
+```
+
+Admin retry flow:
+
+```text
+Admin Continue
+  -> API loads the failed job
+  -> refreshes the same Notion source page by sourcePageId or assetKey page id
+  -> falls back to a title search only if direct page refresh misses
+  -> updates sourceUrl on the same job
+  -> worker downloads with the refreshed URL
 ```
 
 ## Deployment
@@ -239,6 +261,15 @@ The API and worker write structured JSON logs. The most useful fields are:
 - `statusCode`
 - `jobStatus`
 - `progress`
+- `sourcePageId`
+- `sourceUrlChanged`
+
+Useful retry-source events:
+
+- `api.admin.cache_jobs.retry_source_refresh_start`
+- `api.admin.cache_jobs.retry_source_refresh_hit`
+- `api.admin.cache_jobs.retry_source_refresh_miss`
+- `api.admin.cache_jobs.retry_source_refresh_failed`
 
 The frontend includes the request id in most API error messages. Use that request id to find the matching API log line.
 

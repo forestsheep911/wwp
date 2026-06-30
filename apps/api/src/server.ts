@@ -11,10 +11,12 @@ import {
   type AdminCacheJobsResponse,
   type AccessRole,
   type AuthCheckResponse,
+  type CacheJob,
   type CacheStatus,
   type CacheAssetLookupResponse,
   type CachedAssetsResponse,
   type CreateMemberCodeRequest,
+  type DeleteCacheEntryResponse,
   type EnsureCacheRequest,
   type MediaVariant,
   type SearchResult,
@@ -200,11 +202,28 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     title: `${result.title} / ${variant.label}`,
     source: result.source,
     sourceUrl: variant.sourceUrl,
+    sourcePageId: variant.sourcePageId ?? result.sourcePageId,
+    sourceBreadcrumb: variant.sourceBreadcrumb ?? result.sourceBreadcrumb,
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
     summary: variant.summary,
     metadata: result.metadata
   };
+}
+
+function findSearchResultByAssetKey(results: SearchResult[], assetKey: string) {
+  for (const result of results) {
+    if (result.assetKey === assetKey) {
+      return result;
+    }
+
+    const variant = result.variants?.find((item) => item.assetKey === assetKey);
+    if (variant) {
+      return variantToSearchResult(result, variant);
+    }
+  }
+
+  return undefined;
 }
 
 function searchCacheKey(query: string) {
@@ -281,6 +300,92 @@ async function loadSearchResults(query: string): Promise<{
     results: cloneSearchResults(await nextSearch),
     cacheStatus: "miss"
   };
+}
+
+function retrySearchQuery(job: CacheJob) {
+  const breadcrumbTitle = job.sourceBreadcrumb?.[0]?.trim();
+  if (breadcrumbTitle) {
+    return breadcrumbTitle;
+  }
+
+  return job.title.split(" / ")[0]?.trim() || job.title.trim();
+}
+
+async function refreshRetrySource(job: CacheJob, context: RequestContext) {
+  const startedAt = Date.now();
+  let method = searchSource.refreshAsset ? "source_page" : "title_search";
+  let fallbackQuery: string | undefined;
+  let fallbackResultCount: number | undefined;
+
+  logInfo("api.admin.cache_jobs.retry_source_refresh_start", {
+    requestId: context.requestId,
+    jobId: job.id,
+    assetKey: job.assetKey,
+    sourcePageId: job.sourcePageId,
+    breadcrumbDepth: job.sourceBreadcrumb?.length,
+    method
+  });
+
+  try {
+    let refreshed = searchSource.refreshAsset
+      ? await searchSource.refreshAsset({
+        assetKey: job.assetKey,
+        sourcePageId: job.sourcePageId,
+        title: job.title,
+        sourceBreadcrumb: job.sourceBreadcrumb
+      })
+      : undefined;
+
+    if (!refreshed) {
+      fallbackQuery = retrySearchQuery(job);
+      method = searchSource.refreshAsset ? "source_page_then_title_search" : "title_search";
+      const results = await searchSource.search(fallbackQuery);
+      fallbackResultCount = results.length;
+      rememberResults(results);
+      refreshed = findSearchResultByAssetKey(results, job.assetKey);
+    }
+
+    if (!refreshed) {
+      logWarn("api.admin.cache_jobs.retry_source_refresh_miss", {
+        requestId: context.requestId,
+        jobId: job.id,
+        assetKey: job.assetKey,
+        sourcePageId: job.sourcePageId,
+        method,
+        fallbackQuery,
+        fallbackResultCount,
+        durationMs: durationMs(startedAt)
+      });
+      return undefined;
+    }
+
+    recentResults.set(refreshed.assetKey, refreshed);
+    logInfo("api.admin.cache_jobs.retry_source_refresh_hit", {
+      requestId: context.requestId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      refreshedAssetKey: refreshed.assetKey,
+      sourcePageId: refreshed.sourcePageId,
+      breadcrumbDepth: refreshed.sourceBreadcrumb?.length,
+      method,
+      sourceUrlChanged: refreshed.sourceUrl !== job.sourceUrl,
+      durationMs: durationMs(startedAt)
+    });
+
+    return refreshed;
+  } catch (error) {
+    logError("api.admin.cache_jobs.retry_source_refresh_failed", {
+      requestId: context.requestId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      sourcePageId: job.sourcePageId,
+      method,
+      fallbackQuery,
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
+    return undefined;
+  }
 }
 
 function visibleCacheAsset<T extends { status: string; expiresAt?: string; playbackUrl?: string }>(
@@ -617,6 +722,84 @@ async function handleListCacheJobs(url: URL, response: http.ServerResponse, cont
   sendJson(response, 200, payload);
 }
 
+async function handleRetryCacheJob(jobId: string, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const job = await store.getJob(jobId);
+  if (!job || job.status !== "failed") {
+    logWarn("api.admin.cache_jobs.retry_not_found", {
+      requestId: context.requestId,
+      jobId,
+      status: job?.status,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Failed cache job was not found." });
+    return;
+  }
+
+  const refreshedResult = await refreshRetrySource(job, context);
+  const activeJobsBefore = await store.listActiveJobs(1);
+  const output = await store.retryJob(jobId, refreshedResult);
+  if (!output) {
+    logWarn("api.admin.cache_jobs.retry_not_found", {
+      requestId: context.requestId,
+      jobId,
+      status: job.status,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Failed cache job was not found." });
+    return;
+  }
+
+  const trigger = activeJobsBefore.length === 0
+    ? await workerTrigger.start(output.job)
+    : {
+      status: "skipped" as const,
+      message: "Worker trigger skipped because active cache jobs already exist."
+    };
+
+  logInfo("api.admin.cache_jobs.retry", {
+    requestId: context.requestId,
+    jobId: output.job.id,
+    assetKey: output.job.assetKey,
+    sourceRefreshed: Boolean(refreshedResult),
+    sourcePageId: output.job.sourcePageId,
+    breadcrumbDepth: output.job.sourceBreadcrumb?.length,
+    activeJobsBefore: activeJobsBefore.length,
+    triggerStatus: trigger.status,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, {
+    ...output,
+    trigger
+  });
+}
+
+async function handleDeleteCacheJob(jobId: string, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const result: DeleteCacheEntryResponse = await store.deleteCacheEntry({ jobId });
+  if (!result.deletedAsset && !result.deletedJob && result.errors.length === 0) {
+    logWarn("api.admin.cache_jobs.delete_not_found", {
+      requestId: context.requestId,
+      jobId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Cache job was not found." });
+    return;
+  }
+
+  logInfo("api.admin.cache_jobs.delete", {
+    requestId: context.requestId,
+    jobId,
+    assetKey: result.assetKey,
+    deletedAsset: result.deletedAsset,
+    deletedJob: result.deletedJob,
+    deletedBlob: result.deletedBlob,
+    errorCount: result.errors.length,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, result);
+}
+
 async function handleCreateMemberCode(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -759,6 +942,26 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/admin/cache-jobs") {
       await handleListCacheJobs(url, response, context);
+      return;
+    }
+
+    const retryCacheJobMatch = pathname.match(/^\/api\/admin\/cache-jobs\/([^/]+)\/retry$/);
+    if (retryCacheJobMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && retryCacheJobMatch) {
+      await handleRetryCacheJob(decodeURIComponent(retryCacheJobMatch[1]), response, context);
+      return;
+    }
+
+    const deleteCacheJobMatch = pathname.match(/^\/api\/admin\/cache-jobs\/([^/]+)\/delete$/);
+    if (deleteCacheJobMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && deleteCacheJobMatch) {
+      await handleDeleteCacheJob(decodeURIComponent(deleteCacheJobMatch[1]), response, context);
       return;
     }
 

@@ -18,6 +18,20 @@ export interface CleanupExpiredResult {
   errors: string[];
 }
 
+export interface DeleteCacheEntryInput {
+  assetKey?: string;
+  jobId?: string;
+}
+
+export interface DeleteCacheEntryResult {
+  assetKey?: string;
+  jobId?: string;
+  deletedAsset: boolean;
+  deletedJob: boolean;
+  deletedBlob: boolean;
+  errors: string[];
+}
+
 export interface CacheStore {
   readonly backend: CacheBackend;
   readonly description: string;
@@ -30,6 +44,8 @@ export interface CacheStore {
   syncQueue(maxMessages: number): Promise<void>;
   listActiveJobs(limit: number): Promise<CacheJob[]>;
   listRecentJobs(limit: number): Promise<CacheJob[]>;
+  retryJob(jobId: string, refreshedResult?: SearchResult): Promise<EnsureCacheResponse | undefined>;
+  deleteCacheEntry(input: DeleteCacheEntryInput): Promise<DeleteCacheEntryResult>;
   saveJob(job: CacheJob): Promise<void>;
   saveAsset(asset: CacheAsset): Promise<void>;
   finalizeReadyAsset(job: CacheJob): Promise<CacheAsset>;

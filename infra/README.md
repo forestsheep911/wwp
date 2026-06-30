@@ -57,6 +57,8 @@ The API keeps a short in-memory cache for parsed Notion search results with `SEA
 
 Member Cinema Passes use a simple 🍀 balance to control cache cost. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
 
+The Admin tab can retry failed cache jobs or delete failed/ready cache entries. Retry first refreshes the Notion media URL by the stored source page id when possible, then re-queues the same job. Deleting a ready entry removes the Blob plus the matching Table asset/job records.
+
 The Static Web App is deployed from the local `apps/web/dist` build by the Azure Static Web Apps CLI.
 
 See [`docs/HANDOFF.md`](../docs/HANDOFF.md) for resource names, log commands, secrets, and troubleshooting.

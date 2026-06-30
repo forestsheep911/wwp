@@ -68,6 +68,8 @@ const metadataLabelPattern =
   /\u6d77\u62a5|poster|\u57fa\u672c\u4fe1\u606f|\u7b80\u4ecb|imdb|\u8c46\u74e3|douban|rotten|metascore/i;
 const imageFilePattern = /\.(webp|png|jpe?g|gif|avif)(?:[?#].*)?$/i;
 const nonPlayableFilePattern = /\.(?:7z|zip|rar|tar|gz|bz2|xz|srt|ass|ssa|nfo|txt|pdf)(?:\.\d+)?(?:[?#].*)?$/i;
+const notionAssetPageIdPattern =
+  /^notion-page-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})(?:-|$)/;
 
 function asRecord(value: unknown): JsonRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -613,6 +615,75 @@ function variantAssetKey(pageId: string, candidate: MediaCandidate, index: numbe
   return `notion-page-${pageId}-variant-${index + 1}-${hash}`;
 }
 
+function pageIdFromAssetKey(assetKey: string) {
+  return assetKey.match(notionAssetPageIdPattern)?.[1];
+}
+
+function variantToSearchResult(result: SearchResult, variant: MediaVariant): SearchResult {
+  return {
+    assetKey: variant.assetKey,
+    title: `${result.title} / ${variant.label}`,
+    source: result.source,
+    sourceUrl: variant.sourceUrl,
+    sourcePageId: variant.sourcePageId ?? result.sourcePageId,
+    sourceBreadcrumb: variant.sourceBreadcrumb ?? result.sourceBreadcrumb,
+    durationLabel: result.durationLabel,
+    updatedAt: result.updatedAt,
+    summary: variant.summary,
+    metadata: result.metadata
+  };
+}
+
+function findResultByAssetKey(results: SearchResult[], assetKey: string) {
+  for (const result of results) {
+    if (result.assetKey === assetKey) {
+      return result;
+    }
+
+    const variant = result.variants?.find((item) => item.assetKey === assetKey);
+    if (variant) {
+      return variantToSearchResult(result, variant);
+    }
+  }
+
+  return undefined;
+}
+
+function textIncludesEither(left: string | undefined, right: string | undefined) {
+  const normalizedLeft = left?.trim().toLowerCase();
+  const normalizedRight = right?.trim().toLowerCase();
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft);
+}
+
+function titleTail(title: string | undefined) {
+  const parts = title?.split("/") ?? [];
+  return parts[parts.length - 1]?.trim();
+}
+
+function fallbackResultForPage(result: SearchResult, pageId: string, inputTitle?: string) {
+  const pageVariants = result.variants?.filter((variant) => variant.sourcePageId === pageId) ?? [];
+  const wantedTail = titleTail(inputTitle);
+  const labelMatch = pageVariants.find((variant) => textIncludesEither(variant.label, wantedTail));
+
+  if (labelMatch) {
+    return variantToSearchResult(result, labelMatch);
+  }
+
+  if (pageVariants.length === 1) {
+    return variantToSearchResult(result, pageVariants[0]);
+  }
+
+  if (result.sourcePageId === pageId) {
+    return result;
+  }
+
+  return undefined;
+}
+
 function candidateSummary(candidate: MediaCandidate) {
   return `${looksDirect(candidate.url) ? "Direct media candidate" : "Intermediate link candidate"} from ${candidate.label}.`;
 }
@@ -704,6 +775,32 @@ export class NotionSearchSource {
     }
 
     return this.searchGlobal(normalizedQuery);
+  }
+
+  async refreshAsset(input: {
+    assetKey: string;
+    sourcePageId?: string;
+    title?: string;
+    sourceBreadcrumb?: string[];
+  }): Promise<SearchResult | undefined> {
+    const pageId = input.sourcePageId ?? pageIdFromAssetKey(input.assetKey);
+    if (!pageId) {
+      return undefined;
+    }
+
+    const library = await this.getLibraryMetadata();
+    const page = await this.notion.pages.retrieve({ page_id: pageId });
+    const result = await this.pageToSearchResult(page as JsonRecord, {
+      libraryMode: Boolean(library)
+    });
+
+    const exact = findResultByAssetKey([result], input.assetKey);
+    if (exact) {
+      return exact;
+    }
+
+    const fallback = fallbackResultForPage(result, pageId, input.title);
+    return fallback ? { ...fallback, assetKey: input.assetKey } : undefined;
   }
 
   private hasLibraryConfig() {
@@ -1077,19 +1174,23 @@ export class NotionSearchSource {
     const title = titleFromProperties(properties);
     const metadata = movieMetadataFromPage(page, properties, title);
     const pageUrl = asString(page.url);
+    const pageId = asString(page.id);
+    const sourceBreadcrumb = [title].filter(Boolean);
     const variants = context.libraryMode
-      ? await this.libraryVariants(asString(page.id), title, unique, childPages)
-      : this.candidatesToVariants(asString(page.id), unique);
+      ? await this.libraryVariants(pageId, title, unique, childPages)
+      : this.candidatesToVariants(pageId, unique, 0, sourceBreadcrumb);
     const sourceUrl = variants[0]?.sourceUrl || best?.url || pageUrl;
     const summary = context.libraryMode
       ? this.librarySummary(variants)
       : this.globalSummary(best);
 
     return {
-      assetKey: `notion-page-${asString(page.id)}`,
+      assetKey: `notion-page-${pageId}`,
       title,
       source: context.libraryMode ? "Notion library" : "Notion",
       sourceUrl,
+      sourcePageId: pageId,
+      sourceBreadcrumb,
       durationLabel: durationFromProperties(properties),
       updatedAt: asString(page.last_edited_time) || new Date().toISOString(),
       summary,
@@ -1121,7 +1222,13 @@ export class NotionSearchSource {
       const best = uniqueCandidates(candidates).find(isLikelyPlayableCandidate);
       if (best && !seenUrls.has(best.url)) {
         seenUrls.add(best.url);
-        variants.push(this.candidateToVariant(childPage.id, best, variants.length, childPage.title));
+        variants.push(this.candidateToVariant(
+          childPage.id,
+          best,
+          variants.length,
+          childPage.title,
+          [title, childPage.title]
+        ));
         if (variants.length >= this.options.variantLimit) {
           return variants;
         }
@@ -1149,7 +1256,8 @@ export class NotionSearchSource {
             variants.length,
             playableCandidates.length === 1
               ? `${childPage.title} / ${episodePage.title}`
-              : `${childPage.title} / ${episodePage.title} / ${episodeCandidate.label}`
+              : `${childPage.title} / ${episodePage.title} / ${episodeCandidate.label}`,
+            [title, childPage.title, episodePage.title]
           ));
           if (variants.length >= this.options.variantLimit) {
             return variants;
@@ -1161,7 +1269,8 @@ export class NotionSearchSource {
     const directVariants = this.candidatesToVariants(
       pageId,
       directCandidates.filter(isLikelyPlayableCandidate),
-      variants.length
+      variants.length,
+      [title]
     ).filter((variant) => {
       if (seenUrls.has(variant.sourceUrl)) {
         return false;
@@ -1176,24 +1285,30 @@ export class NotionSearchSource {
   private candidatesToVariants(
     pageId: string,
     candidates: MediaCandidate[],
-    indexOffset = 0
+    indexOffset = 0,
+    sourceBreadcrumb?: string[]
   ): MediaVariant[] {
     return candidates
       .filter((candidate) => candidate.score >= 20)
       .slice(0, Math.max(0, this.options.variantLimit - indexOffset))
-      .map((candidate, index) => this.candidateToVariant(pageId, candidate, index + indexOffset));
+      .map((candidate, index) =>
+        this.candidateToVariant(pageId, candidate, index + indexOffset, undefined, sourceBreadcrumb)
+      );
   }
 
   private candidateToVariant(
     pageId: string,
     candidate: MediaCandidate,
     index: number,
-    label?: string
+    label?: string,
+    sourceBreadcrumb?: string[]
   ): MediaVariant {
     return {
       assetKey: variantAssetKey(pageId, candidate, index),
       label: label || candidate.label || `Option ${index + 1}`,
       sourceUrl: candidate.url,
+      sourcePageId: pageId,
+      sourceBreadcrumb,
       kind: candidate.kind,
       summary: candidateSummary(candidate)
     };

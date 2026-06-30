@@ -15,7 +15,7 @@ import {
   isFreshReady,
   isIdleReadyAsset
 } from "./jobs.js";
-import type { CacheStore, CleanupExpiredResult } from "./types.js";
+import type { CacheStore, CleanupExpiredResult, DeleteCacheEntryInput, DeleteCacheEntryResult } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
 
@@ -106,7 +106,9 @@ export class LocalCacheStore implements CacheStore {
         assetKey: result.assetKey,
         title: result.title,
         source: result.source,
-        sourceUrl: result.sourceUrl
+        sourceUrl: result.sourceUrl,
+        sourcePageId: result.sourcePageId,
+        sourceBreadcrumb: result.sourceBreadcrumb
       });
 
       const asset: CacheAsset = {
@@ -142,6 +144,74 @@ export class LocalCacheStore implements CacheStore {
     return Object.values(state.jobs)
       .sort((left, right) => jobActivityTime(right).localeCompare(jobActivityTime(left)))
       .slice(0, limit);
+  }
+
+  async retryJob(jobId: string, refreshedResult?: SearchResult) {
+    return this.updateState((state) => {
+      const job = state.jobs[jobId];
+      if (!job || job.status !== "failed") {
+        return undefined;
+      }
+
+      const now = new Date().toISOString();
+      const nextJob: CacheJob = {
+        ...job,
+        title: refreshedResult?.title ?? job.title,
+        source: refreshedResult?.source ?? job.source,
+        sourceUrl: refreshedResult?.sourceUrl ?? job.sourceUrl,
+        sourcePageId: refreshedResult?.sourcePageId ?? job.sourcePageId,
+        sourceBreadcrumb: refreshedResult?.sourceBreadcrumb ?? job.sourceBreadcrumb,
+        status: "queued",
+        progress: 0,
+        message: "Waiting for a cache worker.",
+        updatedAt: now,
+        lastRequestedAt: now,
+        completedAt: undefined,
+        error: undefined,
+        resolve: undefined
+      };
+      const asset: CacheAsset = {
+        assetKey: nextJob.assetKey,
+        title: nextJob.title,
+        source: nextJob.source,
+        status: "queued",
+        jobId: nextJob.id,
+        lastRequestedAt: now
+      };
+
+      state.jobs[nextJob.id] = nextJob;
+      state.assets[nextJob.assetKey] = asset;
+      return { job: nextJob, asset };
+    });
+  }
+
+  async deleteCacheEntry(input: DeleteCacheEntryInput): Promise<DeleteCacheEntryResult> {
+    return this.updateState((state) => {
+      const job = input.jobId ? state.jobs[input.jobId] : undefined;
+      const assetKey = input.assetKey ?? job?.assetKey;
+      const asset = assetKey ? state.assets[assetKey] : undefined;
+      const jobId = input.jobId ?? asset?.jobId;
+      const result: DeleteCacheEntryResult = {
+        assetKey,
+        jobId,
+        deletedAsset: false,
+        deletedJob: false,
+        deletedBlob: false,
+        errors: []
+      };
+
+      if (assetKey && asset && (!input.jobId || asset.jobId === input.jobId)) {
+        delete state.assets[assetKey];
+        result.deletedAsset = true;
+      }
+
+      if (jobId && state.jobs[jobId]) {
+        delete state.jobs[jobId];
+        result.deletedJob = true;
+      }
+
+      return result;
+    });
   }
 
   async saveJob(job: CacheJob) {

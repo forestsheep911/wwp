@@ -5,6 +5,7 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users
 } from "lucide-react";
@@ -53,6 +54,8 @@ interface AdminPanelProps {
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
   onRefreshJobs: () => void;
+  onRetryCacheJob: (jobId: string) => void;
+  onDeleteCacheJob: (jobId: string) => void;
   onUpdateCredits: (id: string) => void;
   onRevoke: (id: string) => void;
 }
@@ -79,6 +82,8 @@ export function AdminPanel({
   onCopy,
   onDelete,
   onRefreshJobs,
+  onRetryCacheJob,
+  onDeleteCacheJob,
   onUpdateCredits,
   onRevoke
 }: AdminPanelProps) {
@@ -120,6 +125,11 @@ export function AdminPanel({
 
   return (
     <div className="grid gap-4">
+      {adminError ? (
+        <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
+          {adminError}
+        </div>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
         <Card>
           <CardHeader>
@@ -163,7 +173,6 @@ export function AdminPanel({
                   onChange={(event) => setMemberCredits(Number(event.target.value))}
                 />
               </div>
-              {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
               <Button type="submit" disabled={adminLoading}>
                 {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                 Generate
@@ -260,20 +269,35 @@ export function AdminPanel({
         </div>
       </div>
 
-      <AdminCacheJobsPanel jobs={cacheJobs} loading={cacheJobsLoading} onRefresh={onRefreshJobs} />
+      <AdminCacheJobsPanel
+        actionLoading={adminLoading}
+        jobs={cacheJobs}
+        loading={cacheJobsLoading}
+        onDelete={onDeleteCacheJob}
+        onRefresh={onRefreshJobs}
+        onRetry={onRetryCacheJob}
+      />
     </div>
   );
 }
 
 function AdminCacheJobsPanel({
+  actionLoading,
   jobs,
   loading,
+  onDelete,
+  onRetry,
   onRefresh
 }: {
+  actionLoading: boolean;
   jobs: AdminCacheJobEntry[];
   loading: boolean;
+  onDelete: (jobId: string) => void;
+  onRetry: (jobId: string) => void;
   onRefresh: () => void;
 }) {
+  const busy = actionLoading || loading;
+
   return (
     <Card>
       <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
@@ -284,7 +308,7 @@ function AdminCacheJobsPanel({
           </CardTitle>
           <CardDescription>Worker state, asset keys, and request ids for cache debugging.</CardDescription>
         </div>
-        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
@@ -315,6 +339,8 @@ function AdminCacheJobsPanel({
                   <Metric label="Job" value={job.id} />
                   <Metric label="Request" value={job.lastRequestId ?? job.requestId ?? "not captured"} />
                   <Metric label="Asset" value={job.assetKey} />
+                  <Metric label="Source page" value={job.sourcePageId ?? "not captured"} />
+                  <Metric label="Breadcrumb" value={job.sourceBreadcrumb?.join(" / ") ?? "not captured"} />
                   <Metric label="Updated" value={formatDateTime(job.lastRequestedAt ?? job.updatedAt)} />
                   <Metric label="Blob" value={asset?.media?.blobName ?? "not ready"} />
                   <Metric label="Size" value={formatBytes(asset?.media?.contentLength)} />
@@ -323,6 +349,33 @@ function AdminCacheJobsPanel({
                 </div>
 
                 {job.error ? <p className="text-sm font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
+
+                {job.status === "failed" || job.status === "ready" ? (
+                  <div className="flex flex-wrap gap-2">
+                    {job.status === "failed" ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onRetry(job.id)}
+                        disabled={busy}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Continue
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onDelete(job.id)}
+                      disabled={busy}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {job.status === "ready" ? "Delete cache" : "Delete"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

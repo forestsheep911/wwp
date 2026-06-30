@@ -5,6 +5,7 @@ import type {
   CacheAssetLookupResponse,
   CreateMemberCodeRequest,
   CreateMemberCodeResponse,
+  DeleteCacheEntryResponse,
   EnsureCacheResponse,
   MemberCodeListResponse,
   PlaybackResponse,
@@ -164,4 +165,22 @@ export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
 export function listCacheJobs(limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<AdminCacheJobsResponse>(apiUrl(`/api/admin/cache-jobs?${params.toString()}`));
+}
+
+export function retryCacheJob(jobId: string) {
+  return request<EnsureCacheResponse>(
+    apiUrl(`/api/admin/cache-jobs/${encodeURIComponent(jobId)}/retry`),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function deleteCacheJob(jobId: string) {
+  return request<DeleteCacheEntryResponse>(
+    apiUrl(`/api/admin/cache-jobs/${encodeURIComponent(jobId)}/delete`),
+    {
+      method: "POST"
+    }
+  );
 }

@@ -53,6 +53,8 @@ export interface SearchResult {
   title: string;
   source: string;
   sourceUrl: string;
+  sourcePageId?: string;
+  sourceBreadcrumb?: string[];
   durationLabel: string;
   updatedAt: string;
   summary: string;
@@ -64,6 +66,8 @@ export interface MediaVariant {
   assetKey: string;
   label: string;
   sourceUrl: string;
+  sourcePageId?: string;
+  sourceBreadcrumb?: string[];
   kind: "file" | "video" | "embed" | "url" | "text";
   summary: string;
   cache?: CacheAsset;
@@ -111,6 +115,8 @@ export interface CacheJob {
   title: string;
   source: string;
   sourceUrl?: string;
+  sourcePageId?: string;
+  sourceBreadcrumb?: string[];
   requestId?: string;
   lastRequestId?: string;
   lastRequestedAt?: string;
@@ -244,6 +250,15 @@ export interface AdminCacheJobEntry {
 
 export interface AdminCacheJobsResponse {
   jobs: AdminCacheJobEntry[];
+}
+
+export interface DeleteCacheEntryResponse {
+  assetKey?: string;
+  jobId?: string;
+  deletedAsset: boolean;
+  deletedJob: boolean;
+  deletedBlob: boolean;
+  errors: string[];
 }
 
 export const mockSearchResults: SearchResult[] = [
