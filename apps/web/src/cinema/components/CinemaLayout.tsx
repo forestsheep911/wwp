@@ -34,6 +34,7 @@ interface CinemaLayoutProps {
   showAdmin: boolean;
   status?: ReactNode;
   statusCount: number;
+  statusOffset?: "none" | "librarySearch";
   onActiveTabChange: (value: AppTab) => void;
   onChangePasscode: () => void;
   onLock: () => void;
@@ -55,6 +56,7 @@ export function CinemaLayout({
   showAdmin,
   status,
   statusCount,
+  statusOffset = "none",
   onActiveTabChange,
   onChangePasscode,
   onLock,
@@ -64,6 +66,7 @@ export function CinemaLayout({
 }: CinemaLayoutProps) {
   const [statusCollapsed, setStatusCollapsed] = useState(false);
   const showDesktopStatus = Boolean(status) && !statusCollapsed;
+  const statusOffsetClass = statusOffset === "librarySearch" ? "lg:pt-[62px]" : "";
 
   return (
     <main className="min-h-screen">
@@ -159,7 +162,7 @@ export function CinemaLayout({
             </div>
 
             {showDesktopStatus ? (
-              <aside className="hidden min-w-0 lg:block">
+              <aside className={`hidden min-w-0 lg:block ${statusOffsetClass}`}>
                 <div className="relative min-w-0">
                   <Button
                     className="absolute right-4 top-4 z-10 h-8 px-2.5"

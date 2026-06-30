@@ -1182,6 +1182,7 @@ export default function App() {
 
   const showStatusPanel = activeTab === "library" || activeTab === "tasks" || trackedItems.length > 0;
   const showAdmin = role === "admin";
+  const librarySearchMode = activeTab === "library" && (query.trim().length > 0 || results.length > 0);
   const accountLabel = role === "admin" ? "Admin" : member?.name ?? "Member";
   const accountDetail = role === "admin"
     ? "Administrator"
@@ -1246,6 +1247,7 @@ export default function App() {
         canChangePasscode={role === "member"}
         canRequestMovie={role === "member"}
         statusCount={trackedItems.length}
+        statusOffset={librarySearchMode ? "librarySearch" : "none"}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
         onChangePasscode={() => setPasscodeOpen(true)}
