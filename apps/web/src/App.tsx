@@ -1275,7 +1275,7 @@ export default function App() {
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
-        canRequestMovie={role === "member"}
+        canRequestMovie={role === "member" || role === "admin"}
         statusCount={trackedItems.length}
         statusOffset={librarySearchMode ? "librarySearch" : "none"}
         showAdmin={showAdmin}

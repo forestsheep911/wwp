@@ -162,22 +162,16 @@ function LibraryHome({
   return (
     <div className="grid gap-6">
       <section className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-emerald-300" />
             <h2 className="text-lg font-semibold text-slate-50">Ready now</h2>
             <Badge variant="secondary">{cachedAssets.length}</Badge>
           </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onRefreshCachedAssets}>
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={() => onOpenTab("cached")}>
-              <Database className="h-4 w-4" />
-              Cached
-            </Button>
-          </div>
+          <Button type="button" variant="outline" size="icon" onClick={onRefreshCachedAssets} title="Refresh ready titles">
+            <RefreshCw className="h-4 w-4" />
+            <span className="sr-only">Refresh ready titles</span>
+          </Button>
         </div>
         {readyAssets.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

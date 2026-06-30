@@ -65,14 +65,17 @@ export function CinemaLayout({
   onOpenSearch
 }: CinemaLayoutProps) {
   const [statusCollapsed, setStatusCollapsed] = useState(false);
-  const showDesktopStatus = Boolean(status) && !statusCollapsed;
+  const hasActiveTasks = statusCount > 0;
+  const showDesktopStatus = Boolean(status) && hasActiveTasks && !statusCollapsed;
+  const showDesktopStatusToggle = Boolean(status) && hasActiveTasks && statusCollapsed;
+  const showMobileTaskLauncher = Boolean(status) && hasActiveTasks && activeTab !== "tasks";
   const statusOffsetClass = statusOffset === "librarySearch" ? "lg:pt-[62px]" : "";
 
   return (
     <main className="min-h-screen">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
         <header className="relative z-[100] border-b border-slate-800 bg-slate-950/70 backdrop-blur">
-          <div className="mx-auto grid max-w-7xl gap-3 px-5 py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
+          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
             <div className="flex min-w-0 items-center gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
                 <Film className="h-5 w-5" />
@@ -83,7 +86,7 @@ export function CinemaLayout({
               </div>
             </div>
 
-            <TabsList className="min-w-0 lg:mx-auto">
+            <TabsList className="order-3 col-span-2 min-w-0 lg:order-2 lg:col-span-1 lg:mx-auto">
               <TabsTrigger value="library">
                 <Film className="h-4 w-4" />
                 <span className="sm:hidden">片库</span>
@@ -108,7 +111,7 @@ export function CinemaLayout({
               ) : null}
             </TabsList>
 
-            <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">
+            <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title="Search">
                 <Search className="h-4 w-4" />
                 <span className="sr-only">Search</span>
@@ -129,25 +132,20 @@ export function CinemaLayout({
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 md:px-8">
-          {status ? (
-            <div className={`flex justify-end ${statusCollapsed ? "" : "lg:hidden"}`}>
+        <div className={`mx-auto grid max-w-7xl gap-4 px-5 py-5 md:px-8 ${showMobileTaskLauncher ? "pb-24 lg:pb-5" : ""}`}>
+          {showDesktopStatusToggle ? (
+            <div className="hidden justify-end lg:flex">
               <Button
-                className="w-full sm:w-auto"
                 type="button"
-                variant={activeTab === "tasks" ? "secondary" : "outline"}
+                variant="outline"
                 size="sm"
                 onClick={() => {
-                  if (statusCollapsed) {
-                    setStatusCollapsed(false);
-                    return;
-                  }
-                  onActiveTabChange("tasks");
+                  setStatusCollapsed(false);
                 }}
               >
-                {statusCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ListChecks className="h-4 w-4" />}
-                {statusCollapsed ? "Show tasks" : "Tasks"}
-                <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
+                <ChevronLeft className="h-4 w-4" />
+                Show tasks
+                <Badge variant="default">{statusCount}</Badge>
               </Button>
             </div>
           ) : null}
@@ -181,6 +179,21 @@ export function CinemaLayout({
             ) : null}
           </section>
         </div>
+
+        {showMobileTaskLauncher ? (
+          <div className="fixed inset-x-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-[90] lg:hidden">
+            <Button
+              className="h-11 w-full border border-emerald-300/25 bg-slate-950/95 shadow-2xl shadow-black/40 backdrop-blur"
+              type="button"
+              variant="secondary"
+              onClick={() => onActiveTabChange("tasks")}
+            >
+              <ListChecks className="h-4 w-4 text-emerald-200" />
+              Preparing
+              <Badge variant="default">{statusCount}</Badge>
+            </Button>
+          </div>
+        ) : null}
       </Tabs>
     </main>
   );
@@ -261,7 +274,7 @@ function AccountMenu({
 
       {open ? (
         <div
-          className="absolute right-0 z-[110] mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40"
+          className="absolute right-0 z-[110] mt-2 w-[min(18rem,calc(100vw-2.5rem))] overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40"
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         >

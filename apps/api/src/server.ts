@@ -62,6 +62,8 @@ const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_C
 const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? 24)));
 const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? 1000 * 1000 * 1000)));
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
+const adminMovieRequestMemberId = "admin";
+const adminMovieRequestMemberName = "Admin";
 const adminKey =
   process.env.WWPDW_ADMIN_KEY ??
   process.env.WWPDW_ACCESS_KEY ??
@@ -1145,8 +1147,10 @@ async function handleCreateMovieRequest(
   identity: AccessIdentity
 ) {
   const startedAt = Date.now();
-  if (identity.role !== "member" || !identity.memberId) {
-    sendJson(response, 403, { error: "Only member accounts can request movies here." });
+  const requesterId = identity.role === "admin" ? adminMovieRequestMemberId : identity.memberId;
+  const requesterName = identity.role === "admin" ? adminMovieRequestMemberName : identity.memberName;
+  if (!requesterId) {
+    sendJson(response, 403, { error: "Only signed-in accounts can request movies here." });
     return;
   }
 
@@ -1164,15 +1168,16 @@ async function handleCreateMovieRequest(
 
   const entry = await accessStore.createMovieRequest({
     text,
-    memberId: identity.memberId,
-    memberName: identity.memberName
+    memberId: requesterId,
+    memberName: requesterName
   });
 
   logInfo("api.member.movie_requests.create", {
     requestId: context.requestId,
     movieRequestId: entry.id,
-    memberId: identity.memberId,
-    memberName: identity.memberName,
+    role: identity.role,
+    memberId: requesterId,
+    memberName: requesterName,
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 201, { request: entry });
@@ -1185,20 +1190,22 @@ async function handleListOwnMovieRequests(
   identity: AccessIdentity
 ) {
   const startedAt = Date.now();
-  if (identity.role !== "member" || !identity.memberId) {
-    sendJson(response, 403, { error: "Only member accounts have movie requests." });
+  const requesterId = identity.role === "admin" ? adminMovieRequestMemberId : identity.memberId;
+  if (!requesterId) {
+    sendJson(response, 403, { error: "Only signed-in accounts have movie requests." });
     return;
   }
 
   const limit = requestLimit(url, 50, 200);
   const requests = await accessStore.listMovieRequests({
-    memberId: identity.memberId,
+    memberId: requesterId,
     limit
   });
 
   logInfo("api.member.movie_requests.list", {
     requestId: context.requestId,
-    memberId: identity.memberId,
+    role: identity.role,
+    memberId: requesterId,
     count: requests.length,
     limit,
     durationMs: durationMs(startedAt)
