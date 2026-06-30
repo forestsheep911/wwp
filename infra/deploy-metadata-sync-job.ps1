@@ -11,6 +11,9 @@ param(
     [string]$KeyVaultName = "kv-wwcache-e9219db7",
     [string]$NotionKeyVaultSecretName = "NOTION-READ-ONLY-TOKEN",
     [string]$NotionContainerSecretName = "notion-token",
+    [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
+    [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
+    [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$SearchIndexTable = "movieindex",
     [string]$CronExpression = "0 */6 * * *",
@@ -21,12 +24,54 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-DotEnvValue {
+    param(
+        [string[]]$Names
+    )
+
+    $envPath = Join-Path (Get-Location) ".env"
+    if (-not (Test-Path $envPath)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content $envPath) {
+        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
+            continue
+        }
+
+        $name = $matches[1]
+        if ($Names -notcontains $name) {
+            continue
+        }
+
+        return $matches[2].Trim().Trim('"').Trim("'")
+    }
+
+    return $null
+}
+
 if (-not $JobName) {
     $JobName = if ($Mode -eq "full") { "job-ww-meta-index-full" } else { "job-ww-meta-index-incremental" }
 }
 
 if ($DelayMs -lt 0) {
     $DelayMs = if ($Mode -eq "full") { 1500 } else { 500 }
+}
+
+if (-not $NotionLibraryRootPageId -and $env:PAGE_ID) {
+    $NotionLibraryRootPageId = $env:PAGE_ID
+}
+
+if (-not $NotionLibraryRootPageId) {
+    $NotionLibraryRootPageId = Get-DotEnvValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
+}
+
+if (-not $NotionLibraryDatabaseId) {
+    $NotionLibraryDatabaseId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
+}
+
+if (-not $NotionLibraryDataSourceId) {
+    $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
 $loginServer = az2 acr show `
@@ -74,6 +119,18 @@ $envVars = @(
     "NOTION_READ_ONLY_TOKEN=secretref:$NotionContainerSecretName"
 )
 
+if ($NotionLibraryRootPageId) {
+    $envVars += "NOTION_LIBRARY_ROOT_PAGE_ID=$NotionLibraryRootPageId"
+}
+
+if ($NotionLibraryDatabaseId) {
+    $envVars += "NOTION_LIBRARY_DATABASE_ID=$NotionLibraryDatabaseId"
+}
+
+if ($NotionLibraryDataSourceId) {
+    $envVars += "NOTION_LIBRARY_DATA_SOURCE_ID=$NotionLibraryDataSourceId"
+}
+
 $exists = $false
 az2 containerapp job show `
     --name $JobName `
@@ -102,7 +159,7 @@ if (-not $exists) {
         "--cpu", "0.5",
         "--memory", "1.0Gi",
         "--command", "node",
-        "--args", "--import", "tsx", "apps/api/src/meta-sync.ts",
+        "--args", "node_modules/tsx/dist/cli.mjs", "apps/api/src/meta-sync.ts",
         "--secrets", "$NotionContainerSecretName=keyvaultref:$notionSecretUri,identityref:$($identity.id)",
         "--env-vars"
     ) + $envVars + @(
@@ -132,6 +189,8 @@ if (-not $exists) {
         "--memory", "1.0Gi",
         "--replica-timeout", "14400",
         "--replica-retry-limit", "1",
+        "--command", "node",
+        "--args", "node_modules/tsx/dist/cli.mjs", "apps/api/src/meta-sync.ts",
         "--replace-env-vars"
     ) + $envVars + @("--output", "none")
 
