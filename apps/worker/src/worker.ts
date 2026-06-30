@@ -19,6 +19,8 @@ const store = createCacheStore();
 const workerRunId = randomUUID();
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
+const runningJobIds = new Set<string>();
+let tickInFlight = false;
 
 const timedStages: Array<{
   from: CacheStatus;
@@ -30,37 +32,30 @@ const timedStages: Array<{
   {
     from: "queued",
     to: "fetching",
-    delayMs: 500,
-    progress: 10,
-    message: "Fetching source metadata."
+    delayMs: 300,
+    progress: 8,
+    message: "正在准备片源。"
   },
   {
     from: "fetching",
     to: "fetching",
-    delayMs: 900,
-    progress: 18,
-    message: "Resolving the media source."
+    delayMs: 700,
+    progress: 16,
+    message: "正在确认可播放版本。"
   },
   {
     from: "downloading",
-    to: "processing",
-    delayMs: 2400,
-    progress: 62,
-    message: "Copying the resolved media into the cache lane."
-  },
-  {
-    from: "processing",
     to: "uploading",
-    delayMs: 1800,
-    progress: 84,
-    message: "Publishing the cached asset."
+    delayMs: 0,
+    progress: 24,
+    message: "正在建立播放缓存。"
   },
   {
     from: "uploading",
     to: "ready",
-    delayMs: 1200,
+    delayMs: 0,
     progress: 100,
-    message: "Ready for playback."
+    message: "可以播放。"
   }
 ];
 
@@ -97,8 +92,9 @@ async function persistJob(job: CacheJob) {
 
 async function completeReadyJob(job: CacheJob, now: Date) {
   const startedAt = Date.now();
-  job.progress = Math.max(job.progress, 92);
-  job.message = "Uploading the resolved media into Blob cache.";
+  job.status = "uploading";
+  job.progress = Math.max(job.progress, 24);
+  job.message = "正在建立播放缓存。";
   job.updatedAt = now.toISOString();
   await persistJob(job);
 
@@ -118,7 +114,7 @@ async function completeReadyJob(job: CacheJob, now: Date) {
     const completedAt = new Date().toISOString();
     job.status = "ready";
     job.progress = 100;
-    job.message = "Ready for playback.";
+    job.message = "可以播放。";
     job.updatedAt = completedAt;
     job.completedAt = completedAt;
     job.error = undefined;
@@ -140,9 +136,9 @@ async function completeReadyJob(job: CacheJob, now: Date) {
   } catch (error) {
     const failedAt = new Date().toISOString();
     job.status = "failed";
-    job.progress = Math.max(job.progress, 92);
-    job.message = error instanceof Error ? error.message : "Failed to cache the resolved media.";
-    job.error = job.message;
+    job.progress = Math.max(job.progress, 24);
+    job.error = error instanceof Error ? error.message : "Failed to cache the resolved media.";
+    job.message = "准备失败。";
     job.updatedAt = failedAt;
     job.completedAt = failedAt;
     await persistJob(job);
@@ -171,14 +167,14 @@ async function resolveJob(job: CacheJob, now: Date) {
   job.updatedAt = now.toISOString();
 
   if (resolve.kind === "direct_file" && resolve.url) {
-    job.status = "downloading";
-    job.progress = 30;
-    job.message = `Resolved by ${resolve.layer} resolver.`;
+    job.status = "uploading";
+    job.progress = 24;
+    job.message = "正在建立播放缓存。";
   } else {
     job.status = "failed";
     job.progress = Math.max(job.progress, 18);
     job.error = resolve.reason ?? "The source could not be resolved into a media file.";
-    job.message = job.error;
+    job.message = "未能确认可播放片源。";
     job.completedAt = job.updatedAt;
   }
 
@@ -196,6 +192,19 @@ async function resolveJob(job: CacheJob, now: Date) {
     durationMs: durationMs(startedAt)
   });
   return true;
+}
+
+async function advanceJobOnce(job: CacheJob, now: Date) {
+  if (runningJobIds.has(job.id)) {
+    return false;
+  }
+
+  runningJobIds.add(job.id);
+  try {
+    return await advanceJob(job, now);
+  } finally {
+    runningJobIds.delete(job.id);
+  }
 }
 
 async function advanceJob(job: CacheJob, now: Date) {
@@ -239,16 +248,17 @@ async function tick() {
   await store.syncQueue(maxConcurrent);
   const activeJobs = await store.listActiveJobs(maxConcurrent);
 
-  let changed = false;
-  for (const job of activeJobs) {
-    if (!terminalStatuses.includes(job.status)) {
-      changed = (await advanceJob(job, now)) || changed;
-    }
-  }
+  const changes = await Promise.all(
+    activeJobs.map((job) =>
+      terminalStatuses.includes(job.status)
+        ? Promise.resolve(false)
+        : advanceJobOnce(job, now)
+    )
+  );
 
   return {
     activeCount: activeJobs.length,
-    changed
+    changed: changes.some(Boolean)
   };
 }
 
@@ -295,23 +305,34 @@ async function runDaemon() {
     workerRunId
   });
 
-  tick().catch((error) => {
-    logError("worker.tick.failed", {
-      workerRunId,
-      phase: "initial",
-      ...errorLogFields(error)
-    });
-  });
+  void runTickSafely("initial");
 
   setInterval(() => {
-    tick().catch((error) => {
-      logError("worker.tick.failed", {
-        workerRunId,
-        phase: "interval",
-        ...errorLogFields(error)
-      });
-    });
+    void runTickSafely("interval");
   }, pollMs);
+}
+
+async function runTickSafely(phase: "initial" | "interval") {
+  if (tickInFlight) {
+    logInfo("worker.tick.skipped_overlap", {
+      workerRunId,
+      phase
+    });
+    return;
+  }
+
+  tickInFlight = true;
+  try {
+    await tick();
+  } catch (error) {
+    logError("worker.tick.failed", {
+      workerRunId,
+      phase,
+      ...errorLogFields(error)
+    });
+  } finally {
+    tickInFlight = false;
+  }
 }
 
 async function runCleanup() {
@@ -324,6 +345,7 @@ async function runCleanup() {
     workerRunId,
     scannedAssets: result.scannedAssets,
     expiredAssets: result.expiredAssets,
+    idleExpiredAssets: result.idleExpiredAssets,
     deletedAssets: result.deletedAssets,
     deletedBlobs: result.deletedBlobs,
     deletedJobs: result.deletedJobs,

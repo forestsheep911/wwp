@@ -49,3 +49,42 @@ export function cacheAssetTtlDays() {
   const value = Number(process.env.CACHE_ASSET_TTL_DAYS ?? 30);
   return Number.isFinite(value) && value > 0 ? value : 30;
 }
+
+export function cacheAssetIdleTtlDays() {
+  const value = Number(process.env.CACHE_ASSET_IDLE_TTL_DAYS ?? 7);
+  return Number.isFinite(value) && value > 0 ? value : 7;
+}
+
+export function readyAssetIdleReference(asset: {
+  cachedAt?: string;
+  lastPlayedAt?: string;
+  lastRequestedAt?: string;
+}) {
+  return asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt;
+}
+
+export function isIdleReadyAsset(
+  asset: {
+    status: string;
+    cachedAt?: string;
+    lastPlayedAt?: string;
+    lastRequestedAt?: string;
+  },
+  now: Date
+) {
+  if (asset.status !== "ready") {
+    return false;
+  }
+
+  const reference = readyAssetIdleReference(asset);
+  if (!reference) {
+    return false;
+  }
+
+  const referenceTime = new Date(reference).getTime();
+  if (Number.isNaN(referenceTime)) {
+    return false;
+  }
+
+  return now.getTime() - referenceTime >= cacheAssetIdleTtlDays() * 24 * 60 * 60 * 1000;
+}

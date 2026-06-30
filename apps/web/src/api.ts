@@ -1,5 +1,8 @@
 import type {
+  AdminCacheJobsResponse,
   AuthCheckResponse,
+  CachedAssetsResponse,
+  CacheAssetLookupResponse,
   CreateMemberCodeRequest,
   CreateMemberCodeResponse,
   EnsureCacheResponse,
@@ -108,6 +111,15 @@ export function getPlayback(assetKey: string) {
   return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}`));
 }
 
+export function getCacheAsset(assetKey: string) {
+  return request<CacheAssetLookupResponse>(apiUrl(`/api/assets/${encodeURIComponent(assetKey)}`));
+}
+
+export function listCachedAssets(limit = 100) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<CachedAssetsResponse>(apiUrl(`/api/cached-assets?${params.toString()}`));
+}
+
 export function listMemberCodes() {
   return request<MemberCodeListResponse>(apiUrl("/api/admin/member-codes"));
 }
@@ -135,4 +147,9 @@ export function deleteMemberAccessCode(id: string) {
       method: "POST"
     }
   );
+}
+
+export function listCacheJobs(limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<AdminCacheJobsResponse>(apiUrl(`/api/admin/cache-jobs?${params.toString()}`));
 }

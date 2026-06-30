@@ -31,9 +31,10 @@ $envVars = @(
     "CACHE_BACKEND=azure",
     "WORKER_MODE=oneshot",
     "WORKER_POLL_MS=900",
-    "WORKER_MAX_CONCURRENT=2",
+    "WORKER_MAX_CONCURRENT=1",
     "WORKER_ONESHOT_MAX_TICKS=30",
     "CACHE_ASSET_TTL_DAYS=30",
+    "CACHE_ASSET_IDLE_TTL_DAYS=7",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
@@ -59,7 +60,7 @@ if (-not $exists) {
         --resource-group $ResourceGroup `
         --environment $ContainerEnv `
         --trigger-type Manual `
-        --replica-timeout 900 `
+        --replica-timeout 3600 `
         --replica-retry-limit 1 `
         --replica-completion-count 1 `
         --parallelism 1 `
@@ -80,7 +81,7 @@ if (-not $exists) {
         --image $image `
         --cpu 0.5 `
         --memory 1.0Gi `
-        --replica-timeout 900 `
+        --replica-timeout 3600 `
         --replica-retry-limit 1 `
         --replace-env-vars $envVars `
         --output none

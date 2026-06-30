@@ -26,5 +26,6 @@ __pycache__/
 
 *.log
 *.tmp
+*-app.zip
 .DS_Store
 Thumbs.db

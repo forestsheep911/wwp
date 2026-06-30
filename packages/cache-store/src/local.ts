@@ -8,15 +8,41 @@ import {
   type SearchResult,
   emptyCacheState
 } from "@wwpdw/shared";
-import { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
+import {
+  addDays,
+  cacheAssetTtlDays,
+  createJob,
+  isFreshReady,
+  isIdleReadyAsset
+} from "./jobs.js";
 import type { CacheStore, CleanupExpiredResult } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
+
+function jobActivityTime(job: CacheJob) {
+  return job.lastRequestedAt ?? job.updatedAt ?? job.createdAt;
+}
+
+function cacheAssetActivityTime(asset: CacheAsset) {
+  return asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt;
+}
 
 function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
   return asset.status === "ready" &&
     Boolean(asset.expiresAt) &&
     new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
+}
+
+function cacheRemovalReason(asset: CacheAsset, now: Date) {
+  if (isExpiredReadyAsset(asset, now)) {
+    return "expired";
+  }
+
+  if (isIdleReadyAsset(asset, now)) {
+    return "idle";
+  }
+
+  return undefined;
 }
 
 export class LocalCacheStore implements CacheStore {
@@ -41,6 +67,14 @@ export class LocalCacheStore implements CacheStore {
         .map((assetKey) => [assetKey, state.assets[assetKey]] as const)
         .filter((entry): entry is readonly [string, CacheAsset] => Boolean(entry[1]))
     );
+  }
+
+  async listCachedAssets(limit: number) {
+    const state = await this.readState();
+    return Object.values(state.assets)
+      .filter((asset) => isFreshReady(asset))
+      .sort((left, right) => cacheAssetActivityTime(right).localeCompare(cacheAssetActivityTime(left)))
+      .slice(0, limit);
   }
 
   async getAsset(assetKey: string) {
@@ -103,6 +137,13 @@ export class LocalCacheStore implements CacheStore {
       .slice(0, limit);
   }
 
+  async listRecentJobs(limit: number) {
+    const state = await this.readState();
+    return Object.values(state.jobs)
+      .sort((left, right) => jobActivityTime(right).localeCompare(jobActivityTime(left)))
+      .slice(0, limit);
+  }
+
   async saveJob(job: CacheJob) {
     await this.updateState((state) => {
       state.jobs[job.id] = job;
@@ -116,6 +157,7 @@ export class LocalCacheStore implements CacheStore {
   }
 
   async finalizeReadyAsset(job: CacheJob) {
+    const cachedAt = new Date().toISOString();
     const asset: CacheAsset = {
       assetKey: job.assetKey,
       title: job.title,
@@ -123,7 +165,8 @@ export class LocalCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `mock://cached-videos/${encodeURIComponent(job.assetKey)}`,
-      expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
+      expiresAt: addDays(new Date(cachedAt), cacheAssetTtlDays()).toISOString(),
+      cachedAt,
       lastRequestedAt: job.createdAt,
       media: {
         checkedAt: new Date().toISOString(),
@@ -148,6 +191,11 @@ export class LocalCacheStore implements CacheStore {
       return undefined;
     }
 
+    const playedAt = new Date();
+    asset.lastPlayedAt = playedAt.toISOString();
+    asset.expiresAt = addDays(playedAt, cacheAssetTtlDays()).toISOString();
+    await this.saveAsset(asset);
+
     return {
       assetKey: asset.assetKey,
       title: asset.title,
@@ -162,6 +210,7 @@ export class LocalCacheStore implements CacheStore {
       const result: CleanupExpiredResult = {
         scannedAssets: 0,
         expiredAssets: 0,
+        idleExpiredAssets: 0,
         deletedAssets: 0,
         deletedJobs: 0,
         deletedBlobs: 0,
@@ -170,11 +219,15 @@ export class LocalCacheStore implements CacheStore {
 
       for (const [assetKey, asset] of Object.entries(state.assets)) {
         result.scannedAssets += 1;
-        if (!isExpiredReadyAsset(asset, now)) {
+        const removalReason = cacheRemovalReason(asset, now);
+        if (!removalReason) {
           continue;
         }
 
         result.expiredAssets += 1;
+        if (removalReason === "idle") {
+          result.idleExpiredAssets += 1;
+        }
         delete state.assets[assetKey];
         result.deletedAssets += 1;
 

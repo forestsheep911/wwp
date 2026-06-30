@@ -11,6 +11,7 @@ export type CacheBackend = "local" | "azure";
 export interface CleanupExpiredResult {
   scannedAssets: number;
   expiredAssets: number;
+  idleExpiredAssets: number;
   deletedAssets: number;
   deletedJobs: number;
   deletedBlobs: number;
@@ -22,11 +23,13 @@ export interface CacheStore {
   readonly description: string;
   getHealth(): Promise<Record<string, unknown>>;
   listAssets(assetKeys: string[]): Promise<Record<string, CacheAsset>>;
+  listCachedAssets(limit: number): Promise<CacheAsset[]>;
   getAsset(assetKey: string): Promise<CacheAsset | undefined>;
   getJob(jobId: string): Promise<CacheJob | undefined>;
   ensureCache(result: SearchResult): Promise<EnsureCacheResponse>;
   syncQueue(maxMessages: number): Promise<void>;
   listActiveJobs(limit: number): Promise<CacheJob[]>;
+  listRecentJobs(limit: number): Promise<CacheJob[]>;
   saveJob(job: CacheJob): Promise<void>;
   saveAsset(asset: CacheAsset): Promise<void>;
   finalizeReadyAsset(job: CacheJob): Promise<CacheAsset>;

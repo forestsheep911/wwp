@@ -39,6 +39,7 @@ export interface MovieMetadata {
   releaseDate?: string;
   year?: string;
   genres?: string[];
+  directors?: string[];
   people?: string[];
   ratings?: RatingValue[];
   ratingLevel?: string[];
@@ -98,7 +99,9 @@ export interface CacheAsset {
   jobId?: string;
   playbackUrl?: string;
   expiresAt?: string;
+  cachedAt?: string;
   lastRequestedAt: string;
+  lastPlayedAt?: string;
   media?: MediaDiagnostics;
 }
 
@@ -108,6 +111,9 @@ export interface CacheJob {
   title: string;
   source: string;
   sourceUrl?: string;
+  requestId?: string;
+  lastRequestId?: string;
+  lastRequestedAt?: string;
   status: CacheStatus;
   progress: number;
   message: string;
@@ -151,6 +157,19 @@ export interface PlaybackResponse {
   media?: MediaDiagnostics;
 }
 
+export interface CacheAssetLookupResponse {
+  asset?: CacheAsset;
+  playable: boolean;
+}
+
+export interface CachedAssetEntry {
+  asset: CacheAsset;
+}
+
+export interface CachedAssetsResponse {
+  items: CachedAssetEntry[];
+}
+
 export type AccessRole = "admin" | "member";
 
 export interface AuthCheckResponse {
@@ -187,6 +206,15 @@ export interface CreateMemberCodeRequest {
 
 export interface CreateMemberCodeResponse {
   code: GeneratedMemberAccessCode;
+}
+
+export interface AdminCacheJobEntry {
+  job: CacheJob;
+  asset?: CacheAsset;
+}
+
+export interface AdminCacheJobsResponse {
+  jobs: AdminCacheJobEntry[];
 }
 
 export const mockSearchResults: SearchResult[] = [

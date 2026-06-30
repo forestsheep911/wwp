@@ -51,7 +51,9 @@ The API Container App scales to zero and starts the worker Container Apps Job af
 
 The worker job runs `WORKER_MODE=oneshot`. It drains queued cache jobs, resolves media URLs, streams media into Blob Storage, and updates Table state.
 
-The cleanup job runs `WORKER_MODE=cleanup` on a daily schedule and deletes expired cache state/blobs according to `CACHE_ASSET_TTL_DAYS`.
+The cleanup job runs `WORKER_MODE=cleanup` on a daily schedule. It deletes cache state/blobs after `CACHE_ASSET_TTL_DAYS`, and also deletes ready videos that have not been played for `CACHE_ASSET_IDLE_TTL_DAYS` days.
+
+The API keeps a short in-memory cache for parsed Notion search results with `SEARCH_RESULT_CACHE_TTL_SECONDS` and `SEARCH_RESULT_CACHE_LIMIT`. Cache availability is still checked against Azure on every search response, so ready/playable status stays fresh.
 
 The Static Web App is deployed from the local `apps/web/dist` build by the Azure Static Web Apps CLI.
 

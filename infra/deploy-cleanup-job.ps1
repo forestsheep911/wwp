@@ -12,7 +12,8 @@ param(
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
-    [int]$CacheAssetTtlDays = 30
+    [int]$CacheAssetTtlDays = 30,
+    [int]$CacheAssetIdleTtlDays = 7
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,7 @@ $envVars = @(
     "CACHE_BACKEND=azure",
     "WORKER_MODE=cleanup",
     "CACHE_ASSET_TTL_DAYS=$CacheAssetTtlDays",
+    "CACHE_ASSET_IDLE_TTL_DAYS=$CacheAssetIdleTtlDays",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",

@@ -53,17 +53,21 @@ const descriptionPropertyPattern = /\u7b80\u4ecb|summary|description|synopsis|pl
 const infoPropertyPattern = /\u57fa\u672c\u4fe1\u606f|info|metadata/i;
 const releaseDatePropertyPattern = /\u4e0a\u6620|release|premiere|date/i;
 const genrePropertyPattern = /\u65e8\u8da3|\u7c7b\u578b|genre|tag/i;
-const peoplePropertyPattern = /\u95fb\u8fbe|\u4e3b\u6f14|\bcast\b|\bactors?\b|\bdirectors?\b|\bpeople\b/i;
+const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
+const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
 const ratingPropertyPattern = /\u8c46\u74e3\u8bc4\u5206|imdb\u8bc4\u5206|metascore|\u70c2\u756a\u8304|rating|score/i;
 const cjkPattern = /[\u3400-\u9fff]/;
 const specTitlePattern =
-  /\d+(?:\.\d+)?\s*(?:GB|MB)|\b(?:4k|2160p|1080p|720p|480p)\b|\u56fd\u914d|\u666e\u901a\u8bdd|\u7e41\u82f1|\u4e2d\u5b57|\u5b57\u5e55|\u539f\u76d8|\u84dd\u5149|BD|BluRay|WEB[- ]?DL|HDRip/i;
+  /\d+(?:\.\d+)?\s*(?:GB|MB)|\b(?:4k|2160p|1080p|720p|480p)\b|\u56fd\u914d|\u666e\u901a\u8bdd|\u7e41\u7b80\u82f1|\u7e41\u7b80|\u7b80\u82f1|\u7b80\u4e2d|\u7e41\u82f1|\u53cc\u8bed|\u4e2d\u5b57|\u5b57\u5e55|\u539f\u76d8|\u84dd\u5149|BD|BluRay|WEB[- ]?DL|HDRip/i;
+const sourceGroupTitlePattern = /\u7247\u6e90|\u8d44\u6e90|\bsource\b|\bmedia\b|\bfiles?\b/i;
+const ignoredTitlePrefixPattern = /^(?:\u4ec5\u4f9b\u4e0b\u8f7d|\u656c\u8bf7\u671f\u5f85)$/;
 const metadataLabelPattern =
   /\u6d77\u62a5|poster|\u57fa\u672c\u4fe1\u606f|\u7b80\u4ecb|imdb|\u8c46\u74e3|douban|rotten|metascore/i;
 const imageFilePattern = /\.(webp|png|jpe?g|gif|avif)(?:[?#].*)?$/i;
+const nonPlayableFilePattern = /\.(?:7z|zip|rar|tar|gz|bz2|xz|srt|ass|ssa|nfo|txt|pdf)(?:\.\d+)?(?:[?#].*)?$/i;
 
 function asRecord(value: unknown): JsonRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -474,6 +478,7 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
     releaseDate,
     year: yearFromTitleOrDate(title, releaseDate),
     genres: listFromNamedProperty(properties, genrePropertyPattern, 4),
+    directors: listFromNamedProperty(properties, directorPropertyPattern, 3),
     people: listFromNamedProperty(properties, peoplePropertyPattern, 4),
     ratings: ratingsFromProperties(properties),
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
@@ -548,11 +553,13 @@ function collectBlockCandidates(block: JsonRecord, candidates: MediaCandidate[])
   }
 
   if (type === "video") {
-    pushCandidate(candidates, mediaUrlFromObject(payload.video ?? payload), "video", 90, "video");
+    const label = cleanText(plainTextFromRichText(payload.caption)) || fileNameFromObject(payload) || "video";
+    pushCandidate(candidates, mediaUrlFromObject(payload.video ?? payload), label, 90, "video");
   }
 
   if (type === "file" || type === "audio" || type === "pdf") {
-    pushCandidate(candidates, mediaUrlFromObject(payload), type, 76, "file");
+    const label = cleanText(plainTextFromRichText(payload.caption)) || fileNameFromObject(payload) || type;
+    pushCandidate(candidates, mediaUrlFromObject(payload), label, 76, "file");
   }
 
   if (type === "embed" || type === "bookmark" || type === "link_preview") {
@@ -615,16 +622,25 @@ function isLikelyPlayableCandidate(candidate: MediaCandidate) {
     return false;
   }
 
+  if (nonPlayableFilePattern.test(candidate.label) || nonPlayableFilePattern.test(candidate.url)) {
+    return false;
+  }
+
   return candidate.kind === "video" ||
     looksDirect(candidate.url) ||
     specTitlePattern.test(candidate.label);
 }
 
 function primaryCjkTitle(title: string) {
-  return title.match(/[\u3400-\u9fff]{2,}/)?.[0] ?? "";
+  const matches = title.match(/[\u3400-\u9fff]{2,}/g) ?? [];
+  return matches.find((match) => !ignoredTitlePrefixPattern.test(match)) ?? matches[0] ?? "";
 }
 
 function isLikelySpecPage(title: string, movieTitle: string) {
+  if (sourceGroupTitlePattern.test(title)) {
+    return true;
+  }
+
   if (specTitlePattern.test(title)) {
     return true;
   }
@@ -1093,22 +1109,52 @@ export class NotionSearchSource {
 
     for (const childPage of childPages.filter((item) => isLikelySpecPage(item.title, title))) {
       const candidates: MediaCandidate[] = [];
+      const nestedChildPages: ChildPageCandidate[] = [];
       await this.collectBlockTree(
         childPage.id,
         0,
         { count: 0 },
         candidates,
-        Math.min(this.options.blockDepth, 1)
+        Math.min(this.options.blockDepth, 1),
+        nestedChildPages
       );
       const best = uniqueCandidates(candidates).find(isLikelyPlayableCandidate);
-      if (!best || seenUrls.has(best.url)) {
-        continue;
+      if (best && !seenUrls.has(best.url)) {
+        seenUrls.add(best.url);
+        variants.push(this.candidateToVariant(childPage.id, best, variants.length, childPage.title));
+        if (variants.length >= this.options.variantLimit) {
+          return variants;
+        }
       }
 
-      seenUrls.add(best.url);
-      variants.push(this.candidateToVariant(childPage.id, best, variants.length, childPage.title));
-      if (variants.length >= this.options.variantLimit) {
-        return variants;
+      for (const episodePage of nestedChildPages) {
+        const episodeCandidates: MediaCandidate[] = [];
+        await this.collectBlockTree(
+          episodePage.id,
+          0,
+          { count: 0 },
+          episodeCandidates,
+          Math.min(this.options.blockDepth, 1)
+        );
+        const playableCandidates = uniqueCandidates(episodeCandidates).filter(isLikelyPlayableCandidate);
+        for (const episodeCandidate of playableCandidates) {
+          if (seenUrls.has(episodeCandidate.url)) {
+            continue;
+          }
+
+          seenUrls.add(episodeCandidate.url);
+          variants.push(this.candidateToVariant(
+            episodePage.id,
+            episodeCandidate,
+            variants.length,
+            playableCandidates.length === 1
+              ? `${childPage.title} / ${episodePage.title}`
+              : `${childPage.title} / ${episodePage.title} / ${episodeCandidate.label}`
+          ));
+          if (variants.length >= this.options.variantLimit) {
+            return variants;
+          }
+        }
       }
     }
 

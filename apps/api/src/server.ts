@@ -8,8 +8,12 @@ import {
   logError,
   logInfo,
   logWarn,
+  type AdminCacheJobsResponse,
   type AccessRole,
   type AuthCheckResponse,
+  type CacheStatus,
+  type CacheAssetLookupResponse,
+  type CachedAssetsResponse,
   type CreateMemberCodeRequest,
   type EnsureCacheRequest,
   type MediaVariant,
@@ -27,8 +31,17 @@ const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
+const searchResultCacheTtlMs = Math.max(0, Number(process.env.SEARCH_RESULT_CACHE_TTL_SECONDS ?? 600)) * 1000;
+const searchResultCacheLimit = Math.max(1, Number(process.env.SEARCH_RESULT_CACHE_LIMIT ?? 100));
+const searchResultCache = new Map<string, {
+  expiresAt: number;
+  lastUsedAt: number;
+  results: SearchResult[];
+}>();
+const pendingSearches = new Map<string, Promise<SearchResult[]>>();
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
+const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
 const adminKey =
   process.env.WWPDW_ADMIN_KEY ??
   process.env.WWPDW_ACCESS_KEY ??
@@ -191,6 +204,82 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
   };
 }
 
+function searchCacheKey(query: string) {
+  return query.trim().replace(/\s+/g, " ");
+}
+
+function cloneSearchResults(results: SearchResult[]) {
+  return JSON.parse(JSON.stringify(results)) as SearchResult[];
+}
+
+function pruneSearchResultCache(now = Date.now()) {
+  for (const [key, entry] of searchResultCache) {
+    if (entry.expiresAt <= now) {
+      searchResultCache.delete(key);
+    }
+  }
+
+  while (searchResultCache.size > searchResultCacheLimit) {
+    const oldest = [...searchResultCache.entries()]
+      .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)[0];
+    if (!oldest) {
+      break;
+    }
+    searchResultCache.delete(oldest[0]);
+  }
+}
+
+async function loadSearchResults(query: string): Promise<{
+  results: SearchResult[];
+  cacheStatus: "disabled" | "hit" | "miss" | "deduped";
+}> {
+  if (searchResultCacheTtlMs <= 0) {
+    return {
+      results: await searchSource.search(query),
+      cacheStatus: "disabled"
+    };
+  }
+
+  const key = searchCacheKey(query);
+  const now = Date.now();
+  const cached = searchResultCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    cached.lastUsedAt = now;
+    return {
+      results: cloneSearchResults(cached.results),
+      cacheStatus: "hit"
+    };
+  }
+
+  const pending = pendingSearches.get(key);
+  if (pending) {
+    return {
+      results: cloneSearchResults(await pending),
+      cacheStatus: "deduped"
+    };
+  }
+
+  const nextSearch = searchSource.search(query)
+    .then((results) => {
+      searchResultCache.set(key, {
+        expiresAt: Date.now() + searchResultCacheTtlMs,
+        lastUsedAt: Date.now(),
+        results: cloneSearchResults(results)
+      });
+      pruneSearchResultCache();
+      return results;
+    })
+    .finally(() => {
+      pendingSearches.delete(key);
+    });
+
+  pendingSearches.set(key, nextSearch);
+  return {
+    results: cloneSearchResults(await nextSearch),
+    cacheStatus: "miss"
+  };
+}
+
 function visibleCacheAsset<T extends { status: string; expiresAt?: string; playbackUrl?: string }>(
   asset: T | undefined
 ) {
@@ -204,7 +293,8 @@ function visibleCacheAsset<T extends { status: string; expiresAt?: string; playb
 async function handleSearch(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const query = url.searchParams.get("q")?.trim() ?? "";
-  const searchResults = await searchSource.search(query);
+  const searchLoad = await loadSearchResults(query);
+  const searchResults = searchLoad.results;
   rememberResults(searchResults);
   const assetKeys = searchResults.flatMap((item) => [
     item.assetKey,
@@ -225,6 +315,8 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
     query,
     resultCount: results.length,
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
+    searchCache: searchLoad.cacheStatus,
+    searchCacheEntries: searchResultCache.size,
     durationMs: durationMs(startedAt)
   });
 
@@ -253,8 +345,22 @@ async function handleEnsureCache(
   }
 
   const existingAsset = await store.getAsset(result.assetKey);
+  const activeJobsBefore = await store.listActiveJobs(1);
   const output = await store.ensureCache(result);
-  const trigger = await workerTrigger.start(output.job);
+  const requestedAt = new Date().toISOString();
+  output.job.requestId ??= context.requestId;
+  output.job.lastRequestId = context.requestId;
+  output.job.lastRequestedAt = requestedAt;
+  await store.saveJob(output.job);
+  const shouldStartWorker = !terminalJobStatuses.includes(output.job.status) && activeJobsBefore.length === 0;
+  const trigger = shouldStartWorker
+    ? await workerTrigger.start(output.job)
+    : {
+      status: "skipped" as const,
+      message: terminalJobStatuses.includes(output.job.status)
+        ? "Worker trigger skipped because the cache job is already complete."
+        : "Worker trigger skipped because active cache jobs already exist."
+    };
 
   logInfo("api.cache.ensure", {
     requestId: context.requestId,
@@ -263,6 +369,7 @@ async function handleEnsureCache(
     assetStatus: output.asset.status,
     jobStatus: output.job.status,
     readyHit: isFreshReady(existingAsset),
+    activeJobsBefore: activeJobsBefore.length,
     triggerStatus: trigger.status,
     durationMs: durationMs(startedAt)
   });
@@ -271,6 +378,15 @@ async function handleEnsureCache(
     ...output,
     trigger
   });
+}
+
+function requestLimit(url: URL, fallback: number, maximum: number) {
+  const raw = Number(url.searchParams.get("limit") ?? fallback);
+  if (!Number.isFinite(raw)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.floor(raw), 1), maximum);
 }
 
 async function handleStatus(jobId: string, response: http.ServerResponse, context: RequestContext) {
@@ -335,6 +451,47 @@ async function handlePlayback(
   sendJson(response, 200, playback);
 }
 
+async function handleAssetLookup(
+  assetKey: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const asset = await store.getAsset(assetKey);
+  const payload: CacheAssetLookupResponse = {
+    asset,
+    playable: isFreshReady(asset)
+  };
+
+  logInfo("api.asset.lookup", {
+    requestId: context.requestId,
+    assetKey,
+    assetStatus: asset?.status,
+    playable: payload.playable,
+    durationMs: durationMs(startedAt)
+  });
+
+  sendJson(response, 200, payload);
+}
+
+async function handleListCachedAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 200);
+  const assets = await store.listCachedAssets(limit);
+  const payload: CachedAssetsResponse = {
+    items: assets.map((asset) => ({ asset }))
+  };
+
+  logInfo("api.cached_assets.list", {
+    requestId: context.requestId,
+    count: payload.items.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+
+  sendJson(response, 200, payload);
+}
+
 async function handleListMemberCodes(response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const codes = await accessStore.listMemberCodes();
@@ -344,6 +501,31 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 200, { codes });
+}
+
+async function handleListCacheJobs(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 20, 100);
+  const jobs = await store.listRecentJobs(limit);
+  const assetKeys = Array.from(new Set(jobs.map((job) => job.assetKey)));
+  const assets = await store.listAssets(assetKeys);
+  const payload: AdminCacheJobsResponse = {
+    jobs: jobs.map((job) => {
+      const asset = assets[job.assetKey];
+      return {
+        job,
+        asset: asset?.jobId === job.id ? asset : undefined
+      };
+    })
+  };
+
+  logInfo("api.admin.cache_jobs.list", {
+    requestId: context.requestId,
+    count: payload.jobs.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
 }
 
 async function handleCreateMemberCode(
@@ -480,6 +662,15 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (pathname === "/api/admin/cache-jobs" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/cache-jobs") {
+      await handleListCacheJobs(url, response, context);
+      return;
+    }
+
     const revokeMemberCodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/revoke$/);
     if (revokeMemberCodeMatch && !requireAdmin(identity, response, context)) {
       return;
@@ -505,6 +696,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/cached-assets") {
+      await handleListCachedAssets(url, response, context);
+      return;
+    }
+
     if (request.method === "POST" && pathname === "/api/cache") {
       await handleEnsureCache(request, response, context);
       return;
@@ -519,6 +715,12 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     const playbackMatch = pathname.match(/^\/api\/playback\/([^/]+)$/);
     if (request.method === "GET" && playbackMatch) {
       await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context);
+      return;
+    }
+
+    const assetMatch = pathname.match(/^\/api\/assets\/([^/]+)$/);
+    if (request.method === "GET" && assetMatch) {
+      await handleAssetLookup(decodeURIComponent(assetMatch[1]), response, context);
       return;
     }
 

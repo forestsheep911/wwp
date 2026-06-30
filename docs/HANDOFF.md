@@ -10,11 +10,18 @@ The cloud path has been proven end to end:
 2. The user enters the private access key.
 3. The API searches the scoped Notion library.
 4. The user chooses a media variant/spec under a film entry.
-5. The API queues a cache job and starts the Container Apps Job worker.
-6. The worker streams the resolved media URL into private Azure Blob Storage.
+5. The API queues a cache job and starts the Container Apps Job worker when no
+   active cache job is already running.
+6. The worker streams the resolved media URL into private Azure Blob Storage
+   with SDK-managed block upload and byte-based progress.
 7. The worker records media diagnostics for the ready asset.
 8. The API returns a short-lived SAS playback URL with diagnostics metadata.
 9. The browser plays the cached Blob video.
+
+The Admin tab now includes household member-code management plus a recent cache
+jobs view. The cache job view shows worker status, progress, job id, asset key,
+latest request id, blob diagnostics, size, range support, and MP4 faststart
+status.
 
 Known successful playback example:
 
@@ -61,6 +68,21 @@ Container environment variables:
 
 The frontend only stores the user-entered access key in browser `sessionStorage`.
 
+## Cache Retention
+
+Ready cached videos track both `cachedAt` and `lastPlayedAt`. The playback API
+refreshes `lastPlayedAt` whenever it issues a playback URL.
+
+The cleanup job deletes Blob media and cache state when either condition is met:
+
+- `expiresAt` has passed.
+- The video has not been played for `CACHE_ASSET_IDLE_TTL_DAYS` days. The
+  default is 7 days; never-played videos use `cachedAt` as the idle reference.
+
+Azure Storage may also have a coarse lifecycle rule as a safety net, but the
+application-level cleanup job is authoritative because it updates Table state and
+deletes the matching cache job record.
+
 ## Data Flow
 
 Notion search is intentionally library-scoped:
@@ -75,6 +97,26 @@ root Notion page
 
 This avoids broad Notion page search. If a film entry is not a direct database entry under the configured library database, the web app should treat it as missing for now.
 
+Current search behavior:
+
+- First tries a Notion data-source title `contains` query when the title
+  property is known.
+- If that has no result, tries short CJK title segments.
+- Then scans up to `NOTION_LIBRARY_QUERY_LIMIT` recent library rows and matches
+  against the row title plus row properties/metadata.
+- It does not currently maintain a local metadata index, and it does not search
+  child-page block text until a matching library row is being parsed.
+
+TV-series parsing has an extra nested pass:
+
+- A season row may contain a version/spec child page, such as `简英`,
+  `繁英`, `繁简英`, a resolution/size label, or `片源`/`资源`.
+- That child page may contain episode child pages.
+- The parser enters each episode child page and exposes playable video/file
+  blocks as variants, capped by `NOTION_VARIANT_LIMIT`.
+- Archive/download bundles such as `.7z`, `.zip`, subtitles, PDFs, and text
+  sidecars are filtered out because they are not browser-playable assets.
+
 Cache flow:
 
 ```text
@@ -83,8 +125,8 @@ web search
   -> user selects variant
   -> API /api/cache
   -> Azure Queue + Table state
-  -> Container Apps Job worker
-  -> Blob upload
+  -> Container Apps Job worker, one cache item at a time
+  -> Blob cache write with progress updates
   -> Table ready state
   -> API /api/playback/{assetKey}
   -> SAS URL
@@ -197,6 +239,9 @@ Cache request fails:
 - Check API logs for `api.cache.ensure`.
 - Check worker job executions.
 - Check worker logs for `worker.job.failed` or `cache.blob.upload_failed`.
+- If multiple cache requests arrive together, only the first request should
+  start the worker. Later requests join the active queue and should show as
+  queued/preparing in the web UI.
 
 Playback does not start:
 
@@ -219,6 +264,6 @@ The Notion token is read-only because the app may later add AI-assisted parsing/
 ## Near-Term Code Priorities
 
 1. Improve player error states: expired SAS, codec unsupported, network stall, and blob missing.
-2. Add a small admin/debug view for recent cache jobs and request ids.
-3. Add optional remux/faststart handling for MP4 files whose `moov` box is late.
+2. Expand the admin/debug view if needed for playback attempts and request-log drilldown. Recent cache jobs and request ids are already visible.
+3. Add optional remux/faststart handling for MP4 files whose `moov` box is late. Diagnostics exist; remuxing does not.
 4. Later, migrate the thin UI to a shadcn/Vite style and consider ArtPlayer or Vidstack.

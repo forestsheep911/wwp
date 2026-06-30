@@ -26,7 +26,14 @@ import type {
   Mp4Diagnostics,
   SearchResult
 } from "@wwpdw/shared";
-import { addDays, cacheAssetTtlDays, createJob, isFreshReady } from "./jobs.js";
+import {
+  addDays,
+  cacheAssetTtlDays,
+  createJob,
+  isFreshReady,
+  isIdleReadyAsset,
+  readyAssetIdleReference
+} from "./jobs.js";
 import type { CacheStore, CleanupExpiredResult } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
@@ -36,6 +43,10 @@ const defaultQueueName = "cache-jobs";
 const defaultAssetTableName = "cacheindex";
 const defaultJobTableName = "cachejobs";
 const defaultMp4ProbeBytes = 4 * 1024 * 1024;
+const defaultUploadBlockBytes = 8 * 1024 * 1024;
+const uploadProgressStart = 24;
+const uploadProgressEnd = 90;
+const playbackCheckProgress = 96;
 
 interface AzureStoreConfig {
   accountName: string;
@@ -168,6 +179,15 @@ function mp4ProbeBytes() {
   }
 
   return Math.min(Math.max(Math.floor(configured), 64 * 1024), 16 * 1024 * 1024);
+}
+
+function uploadBlockBytes() {
+  const configured = Number(process.env.CACHE_UPLOAD_BLOCK_BYTES ?? defaultUploadBlockBytes);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return defaultUploadBlockBytes;
+  }
+
+  return Math.min(Math.max(Math.floor(configured), 1024 * 1024), 64 * 1024 * 1024);
 }
 
 function isMp4Like(contentType?: string, blobName?: string) {
@@ -315,6 +335,39 @@ function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
     new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
 }
 
+function cacheRemovalReason(asset: CacheAsset, now: Date) {
+  if (isExpiredReadyAsset(asset, now)) {
+    return "expired";
+  }
+
+  if (isIdleReadyAsset(asset, now)) {
+    return "idle";
+  }
+
+  return undefined;
+}
+
+function jobActivityTime(job: CacheJob) {
+  return job.lastRequestedAt ?? job.updatedAt ?? job.createdAt;
+}
+
+function cacheAssetActivityTime(asset: CacheAsset) {
+  return asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt;
+}
+
+function uploadProgress(bytesUploaded: number, contentLength?: number) {
+  if (!contentLength || contentLength <= 0) {
+    const estimated = uploadProgressStart + Math.floor(bytesUploaded / (64 * 1024 * 1024));
+    return Math.min(uploadProgressEnd, estimated);
+  }
+
+  const span = uploadProgressEnd - uploadProgressStart;
+  return Math.min(
+    uploadProgressEnd,
+    uploadProgressStart + Math.floor((bytesUploaded / contentLength) * span)
+  );
+}
+
 export class AzureCacheStore implements CacheStore {
   readonly backend = "azure" as const;
   readonly description: string;
@@ -398,6 +451,27 @@ export class AzureCacheStore implements CacheStore {
     return Object.fromEntries(
       entries.filter((entry): entry is readonly [string, CacheAsset] => Boolean(entry[1]))
     );
+  }
+
+  async listCachedAssets(limit: number) {
+    await this.ensureReady();
+    const assets: CacheAsset[] = [];
+    const entities = this.assetTable.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'asset'"
+      }
+    });
+
+    for await (const entity of entities) {
+      const asset = deserialize<CacheAsset>(entity);
+      if (isFreshReady(asset)) {
+        assets.push(asset);
+      }
+    }
+
+    return assets
+      .sort((left, right) => cacheAssetActivityTime(right).localeCompare(cacheAssetActivityTime(left)))
+      .slice(0, limit);
   }
 
   async getAsset(assetKey: string) {
@@ -508,6 +582,24 @@ export class AzureCacheStore implements CacheStore {
       .slice(0, limit);
   }
 
+  async listRecentJobs(limit: number) {
+    await this.ensureReady();
+    const jobs: CacheJob[] = [];
+    const entities = this.jobTable.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'job'"
+      }
+    });
+
+    for await (const entity of entities) {
+      jobs.push(deserialize<CacheJob>(entity));
+    }
+
+    return jobs
+      .sort((left, right) => jobActivityTime(right).localeCompare(jobActivityTime(left)))
+      .slice(0, limit);
+  }
+
   async saveJob(job: CacheJob) {
     await this.ensureReady();
     await this.jobTable.upsertEntity<PayloadEntity>(
@@ -575,17 +667,23 @@ export class AzureCacheStore implements CacheStore {
       const sourceContentLength = parseHeaderNumber(sourceResponse.headers.get("content-length"));
       const sourceAcceptRanges = sourceResponse.headers.get("accept-ranges") ?? undefined;
       const contentType = contentTypeFor(sourceUrl, sourceContentType);
-      const stream = Readable.fromWeb(sourceResponse.body as ReadableStream<Uint8Array>);
-      await blockBlob.uploadStream(stream, 8 * 1024 * 1024, 4, {
-        blobHTTPHeaders: {
-          blobContentType: contentType
-        },
+      const upload = await this.uploadSourceToBlockBlob(blockBlob, {
+        job,
+        body: sourceResponse.body as ReadableStream<Uint8Array>,
+        contentType,
+        sourceContentLength,
         metadata: {
           assetkey: encodeRowKey(job.assetKey),
           jobid: job.id,
           resolver: job.resolve?.layer ?? "unknown"
         }
       });
+
+      job.status = "processing";
+      job.progress = Math.max(job.progress, playbackCheckProgress);
+      job.message = "正在检查播放状态。";
+      job.updatedAt = new Date().toISOString();
+      await this.saveJob(job);
 
       media = await this.inspectCachedBlob(blockBlob, {
         job,
@@ -602,6 +700,8 @@ export class AzureCacheStore implements CacheStore {
         blobName,
         contentType: media?.contentType ?? contentType,
         contentLength: media?.contentLength,
+        uploadedBytes: upload.bytesUploaded,
+        blockCount: upload.blockCount,
         sourceContentLength,
         rangeSupported: media?.rangeSupported,
         mp4Status: media?.mp4?.status,
@@ -620,6 +720,7 @@ export class AzureCacheStore implements CacheStore {
       throw error;
     }
 
+    const cachedAt = new Date();
     const asset: CacheAsset = {
       assetKey: job.assetKey,
       title: job.title,
@@ -627,13 +728,82 @@ export class AzureCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `azure://${this.config.containerName}/${blobName}`,
-      expiresAt: addDays(new Date(), cacheAssetTtlDays()).toISOString(),
+      expiresAt: addDays(cachedAt, cacheAssetTtlDays()).toISOString(),
+      cachedAt: cachedAt.toISOString(),
       lastRequestedAt: job.createdAt,
       media
     };
 
     await this.saveAsset(asset);
     return asset;
+  }
+
+  private async uploadSourceToBlockBlob(
+    blockBlob: BlockBlobClient,
+    input: {
+      job: CacheJob;
+      body: ReadableStream<Uint8Array>;
+      contentType: string;
+      sourceContentLength?: number;
+      metadata: Record<string, string>;
+    }
+  ) {
+    const blockSize = uploadBlockBytes();
+    let bytesUploaded = 0;
+    let lastSavedProgress = input.job.progress;
+    let progressSave = Promise.resolve();
+
+    const saveUploadProgress = async (force = false) => {
+      const nextProgress = Math.max(
+        input.job.progress,
+        uploadProgress(bytesUploaded, input.sourceContentLength)
+      );
+
+      if (!force && nextProgress <= lastSavedProgress) {
+        return;
+      }
+
+      input.job.status = "uploading";
+      input.job.progress = nextProgress;
+      input.job.message = "正在建立播放缓存。";
+      input.job.updatedAt = new Date().toISOString();
+      lastSavedProgress = nextProgress;
+      await this.saveJob(input.job);
+    };
+
+    const queueProgressSave = (force = false) => {
+      progressSave = progressSave.then(() => saveUploadProgress(force));
+      return progressSave;
+    };
+
+    const progressTimer = setInterval(() => {
+      void queueProgressSave();
+    }, 3000);
+
+    try {
+      const sourceStream = Readable.fromWeb(input.body);
+      await blockBlob.uploadStream(sourceStream, blockSize, 1, {
+        blobHTTPHeaders: {
+          blobContentType: input.contentType
+        },
+        metadata: input.metadata,
+        onProgress: (event) => {
+          bytesUploaded = event.loadedBytes;
+        }
+      });
+    } finally {
+      clearInterval(progressTimer);
+      await queueProgressSave(true);
+    }
+
+    if (bytesUploaded <= 0) {
+      throw new Error("Source returned an empty media file.");
+    }
+
+    return {
+      bytesUploaded,
+      blockCount: Math.ceil(bytesUploaded / blockSize)
+    };
   }
 
   async getPlayback(assetKey: string) {
@@ -647,6 +817,11 @@ export class AzureCacheStore implements CacheStore {
     if (!blobName) {
       return undefined;
     }
+
+    const playedAt = new Date();
+    asset.lastPlayedAt = playedAt.toISOString();
+    asset.expiresAt = addDays(playedAt, cacheAssetTtlDays()).toISOString();
+    await this.saveAsset(asset);
 
     const expiresOn = new Date(Date.now() + this.config.sasMinutes * 60 * 1000);
     return {
@@ -663,6 +838,7 @@ export class AzureCacheStore implements CacheStore {
     const result: CleanupExpiredResult = {
       scannedAssets: 0,
       expiredAssets: 0,
+      idleExpiredAssets: 0,
       deletedAssets: 0,
       deletedJobs: 0,
       deletedBlobs: 0,
@@ -684,15 +860,21 @@ export class AzureCacheStore implements CacheStore {
         continue;
       }
 
-      if (!isExpiredReadyAsset(asset, now)) {
+      const removalReason = cacheRemovalReason(asset, now);
+      if (!removalReason) {
         continue;
       }
 
       result.expiredAssets += 1;
+      if (removalReason === "idle") {
+        result.idleExpiredAssets += 1;
+      }
       logInfo("cache.cleanup.expired_asset", {
         assetKey: asset.assetKey,
         jobId: asset.jobId,
-        expiresAt: asset.expiresAt
+        reason: removalReason,
+        expiresAt: asset.expiresAt,
+        idleReferenceAt: readyAssetIdleReference(asset)
       });
       await this.deleteExpiredAsset(asset, entity.rowKey, result);
     }
