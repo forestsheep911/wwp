@@ -10,7 +10,6 @@ import {
   logWarn,
   type AdminCacheJobsResponse,
   type AccessRole,
-  type AddMemberCreditsRequest,
   type AuthCheckResponse,
   type CacheStatus,
   type CacheAssetLookupResponse,
@@ -18,7 +17,8 @@ import {
   type CreateMemberCodeRequest,
   type EnsureCacheRequest,
   type MediaVariant,
-  type SearchResult
+  type SearchResult,
+  type SetMemberCreditsRequest
 } from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity } from "./access-store.js";
@@ -326,16 +326,8 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
   sendJson(response, 200, { results });
 }
 
-function creditLimitErrorMessage(reason: "total" | "five_hour" | "week") {
-  if (reason === "total") {
-    return "This Cinema Pass does not have enough 🍀 left.";
-  }
-
-  if (reason === "five_hour") {
-    return "This Cinema Pass has reached its 5-hour 🍀 limit.";
-  }
-
-  return "This Cinema Pass has reached its weekly 🍀 limit.";
+function creditLimitErrorMessage() {
+  return "This Cinema Pass does not have enough 🍀 left.";
 }
 
 async function handleEnsureCache(
@@ -391,13 +383,11 @@ async function handleEnsureCache(
       memberId: identity.memberId,
       assetKey: result.assetKey,
       reason: charge.reason,
-      retryAt: charge.retryAt,
       durationMs: durationMs(startedAt)
     });
     sendJson(response, 429, {
-      error: creditLimitErrorMessage(charge.reason),
+      error: creditLimitErrorMessage(),
       reason: charge.reason,
-      retryAt: charge.retryAt,
       credits: charge.code.credits
     });
     return;
@@ -565,23 +555,24 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
   sendJson(response, 200, { codes });
 }
 
-async function handleAddMemberCredits(
+async function handleSetMemberCredits(
   codeId: string,
   request: http.IncomingMessage,
   response: http.ServerResponse,
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const body = await readBody<AddMemberCreditsRequest>(request);
-  const credits = Math.max(0, Math.floor(Number(body.credits ?? 0)));
-  if (credits <= 0) {
-    sendJson(response, 400, { error: "Credits must be greater than zero." });
+  const body = await readBody<SetMemberCreditsRequest>(request);
+  const rawCredits = Number(body.credits);
+  if (!Number.isFinite(rawCredits) || rawCredits < 0) {
+    sendJson(response, 400, { error: "Credits must be zero or greater." });
     return;
   }
+  const credits = Math.floor(rawCredits);
 
-  const code = await accessStore.addMemberCredits(codeId, credits);
+  const code = await accessStore.setMemberCredits(codeId, credits);
   if (!code) {
-    logWarn("api.admin.member_codes.credits_not_found", {
+    logWarn("api.admin.member_codes.credits_set_not_found", {
       requestId: context.requestId,
       memberCodeId: codeId,
       credits,
@@ -591,12 +582,10 @@ async function handleAddMemberCredits(
     return;
   }
 
-  logInfo("api.admin.member_codes.credits_add", {
+  logInfo("api.admin.member_codes.credits_set", {
     requestId: context.requestId,
     memberCodeId: code.id,
     name: code.name,
-    credits,
-    totalCredits: code.credits.total,
     remainingCredits: code.credits.remaining,
     durationMs: durationMs(startedAt)
   });
@@ -638,18 +627,14 @@ async function handleCreateMemberCode(
   const code = await accessStore.createMemberCode({
     name: body.name,
     days: body.days,
-    credits: body.credits,
-    fiveHourLimit: body.fiveHourLimit,
-    weekLimit: body.weekLimit
+    credits: body.credits
   });
   logInfo("api.admin.member_codes.create", {
     requestId: context.requestId,
     memberCodeId: code.id,
     name: code.name,
     expiresAt: code.expiresAt,
-    totalCredits: code.credits.total,
-    fiveHourLimit: code.credits.fiveHour.limit,
-    weekLimit: code.credits.week.limit,
+    remainingCredits: code.credits.remaining,
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 201, { code });
@@ -777,13 +762,13 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
-    const addMemberCreditsMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/credits$/);
-    if (addMemberCreditsMatch && !requireAdmin(identity, response, context)) {
+    const setMemberCreditsMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/credits$/);
+    if (setMemberCreditsMatch && !requireAdmin(identity, response, context)) {
       return;
     }
 
-    if (request.method === "POST" && addMemberCreditsMatch) {
-      await handleAddMemberCredits(decodeURIComponent(addMemberCreditsMatch[1]), request, response, context);
+    if (request.method === "POST" && setMemberCreditsMatch) {
+      await handleSetMemberCredits(decodeURIComponent(setMemberCreditsMatch[1]), request, response, context);
       return;
     }
 

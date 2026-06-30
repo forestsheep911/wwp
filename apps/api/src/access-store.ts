@@ -25,10 +25,9 @@ interface StoredMemberCode {
   codePreview: string;
   createdAt: string;
   expiresAt: string;
+  creditBalance?: number;
   creditLimit?: number;
   creditsUsed?: number;
-  fiveHourLimit?: number;
-  weekLimit?: number;
   usage?: StoredMemberCreditUsage[];
   revokedAt?: string;
   lastUsedAt?: string;
@@ -55,8 +54,6 @@ type PayloadEntity = {
 const defaultAccountName = "stwwcachee9219db7";
 const defaultMemberTableName = "membercodes";
 const memberCreditUnitSymbol = "🍀";
-const fiveHourWindowMs = 5 * 60 * 60 * 1000;
-const weekWindowMs = 7 * 24 * 60 * 60 * 1000;
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
 
 function backend(): AccessBackend {
@@ -112,14 +109,6 @@ function defaultCredits() {
   return positiveInt(process.env.MEMBER_DEFAULT_CREDITS, 20, { min: 0, max: 10000 });
 }
 
-function defaultFiveHourLimit() {
-  return positiveInt(process.env.MEMBER_DEFAULT_FIVE_HOUR_LIMIT, 5, { min: 0, max: 10000 });
-}
-
-function defaultWeekLimit() {
-  return positiveInt(process.env.MEMBER_DEFAULT_WEEK_LIMIT, 20, { min: 0, max: 10000 });
-}
-
 function usageEvents(code: StoredMemberCode) {
   return code.usage ?? [];
 }
@@ -137,83 +126,29 @@ function pruneUsage(code: StoredMemberCode, now = new Date()) {
 }
 
 function prepareStoredCode(code: StoredMemberCode, now = new Date()) {
-  code.creditLimit = positiveInt(code.creditLimit, defaultCredits(), { min: 0, max: 10000 });
   code.usage = usageEvents(code);
-  code.creditsUsed = positiveInt(code.creditsUsed, usageCredits(code.usage), { min: 0, max: 1000000 });
-  code.fiveHourLimit = positiveInt(code.fiveHourLimit, defaultFiveHourLimit(), { min: 0, max: 10000 });
-  code.weekLimit = positiveInt(code.weekLimit, defaultWeekLimit(), { min: 0, max: 10000 });
+  if (code.creditBalance === undefined) {
+    const legacyLimit = positiveInt(code.creditLimit, defaultCredits(), { min: 0, max: 10000 });
+    const legacyUsed = positiveInt(code.creditsUsed, usageCredits(code.usage), { min: 0, max: 1000000 });
+    code.creditBalance = Math.max(0, legacyLimit - legacyUsed);
+  }
+  code.creditBalance = positiveInt(code.creditBalance, defaultCredits(), { min: 0, max: 10000 });
   pruneUsage(code, now);
   return code;
 }
 
-function windowEvents(code: StoredMemberCode, windowMs: number, now: Date) {
-  const cutoff = now.getTime() - windowMs;
-  return usageEvents(code).filter((event) => {
-    const at = new Date(event.at).getTime();
-    return Number.isFinite(at) && at > cutoff && at <= now.getTime();
-  });
-}
-
-function windowRetryAt(events: StoredMemberCreditUsage[], windowMs: number, now: Date, limit: number, credits: number) {
-  if (limit <= 0) {
-    return undefined;
-  }
-
-  let used = usageCredits(events);
-  if (used + credits <= limit) {
-    return undefined;
-  }
-
-  const sorted = [...events].sort((left, right) => left.at.localeCompare(right.at));
-  for (const event of sorted) {
-    used -= Math.max(0, event.credits);
-    const at = new Date(event.at).getTime();
-    if (Number.isFinite(at) && used + credits <= limit) {
-      return new Date(at + windowMs).toISOString();
-    }
-  }
-
-  return undefined;
-}
-
-function creditWindow(limit: number, events: StoredMemberCreditUsage[], windowMs: number, now: Date): MemberCreditSummary["fiveHour"] {
-  const used = usageCredits(events);
-  return {
-    limit,
-    used,
-    remaining: Math.max(0, limit - used),
-    retryAt: windowRetryAt(events, windowMs, now, limit, 1)
-  };
-}
-
 function creditSummary(code: StoredMemberCode, now = new Date()): MemberCreditSummary {
   const prepared = prepareStoredCode(code, now);
-  const fiveHourEvents = windowEvents(prepared, fiveHourWindowMs, now);
-  const weekEvents = windowEvents(prepared, weekWindowMs, now);
-  const total = prepared.creditLimit ?? 0;
-  const used = prepared.creditsUsed ?? 0;
   return {
     unit: "clover",
     unitSymbol: memberCreditUnitSymbol,
-    total,
-    used,
-    remaining: Math.max(0, total - used),
-    fiveHour: creditWindow(prepared.fiveHourLimit ?? 0, fiveHourEvents, fiveHourWindowMs, now),
-    week: creditWindow(prepared.weekLimit ?? 0, weekEvents, weekWindowMs, now)
+    remaining: prepared.creditBalance ?? 0
   };
 }
 
 function memberCreditDenial(summary: MemberCreditSummary, credits: number): MemberCreditLimitReason | undefined {
   if (summary.remaining < credits) {
-    return "total";
-  }
-
-  if (summary.fiveHour.remaining < credits) {
-    return "five_hour";
-  }
-
-  if (summary.week.remaining < credits) {
-    return "week";
+    return "balance";
   }
 
   return undefined;
@@ -221,29 +156,14 @@ function memberCreditDenial(summary: MemberCreditSummary, credits: number): Memb
 
 function creditFieldsFromInput(input: CreateMemberCodeRequest) {
   return {
-    creditLimit: positiveInt(input.credits, defaultCredits(), { min: 0, max: 10000 }),
-    creditsUsed: 0,
-    fiveHourLimit: positiveInt(input.fiveHourLimit, defaultFiveHourLimit(), { min: 0, max: 10000 }),
-    weekLimit: positiveInt(input.weekLimit, defaultWeekLimit(), { min: 0, max: 10000 }),
+    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: 10000 }),
     usage: []
   };
 }
 
-function retryAtForReason(code: StoredMemberCode, reason: MemberCreditLimitReason, credits: number, now: Date) {
-  if (reason === "five_hour") {
-    return windowRetryAt(windowEvents(code, fiveHourWindowMs, now), fiveHourWindowMs, now, code.fiveHourLimit ?? 0, credits);
-  }
-
-  if (reason === "week") {
-    return windowRetryAt(windowEvents(code, weekWindowMs, now), weekWindowMs, now, code.weekLimit ?? 0, credits);
-  }
-
-  return undefined;
-}
-
-function addCreditsToStoredCode(code: StoredMemberCode, credits: number) {
+function setCreditsOnStoredCode(code: StoredMemberCode, credits: number) {
   prepareStoredCode(code);
-  code.creditLimit = (code.creditLimit ?? 0) + positiveInt(credits, 0, { min: 0, max: 10000 });
+  code.creditBalance = positiveInt(credits, 0, { min: 0, max: 10000 });
   return publicCode(code);
 }
 
@@ -257,8 +177,7 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     return {
       ok: false,
       code: publicCode(code),
-      reason: denial,
-      retryAt: retryAtForReason(code, denial, credits, now)
+      reason: denial
     };
   }
 
@@ -279,7 +198,7 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     requestId: input.requestId
   };
   code.usage = [usage, ...usageEvents(code)];
-  code.creditsUsed = (code.creditsUsed ?? 0) + credits;
+  code.creditBalance = Math.max(0, (code.creditBalance ?? 0) - credits);
   pruneUsage(code, now);
 
   return {
@@ -355,7 +274,6 @@ export type MemberCreditChargeResult =
     ok: false;
     code: MemberAccessCode;
     reason: MemberCreditLimitReason;
-    retryAt?: string;
   };
 
 export interface ChargeMemberCreditsInput {
@@ -370,7 +288,7 @@ export interface AccessStore {
   readonly description: string;
   createMemberCode(input: CreateMemberCodeRequest): Promise<GeneratedMemberAccessCode>;
   listMemberCodes(): Promise<MemberAccessCode[]>;
-  addMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
+  setMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
   deleteMemberCode(id: string): Promise<boolean>;
@@ -425,14 +343,14 @@ class LocalAccessStore implements AccessStore {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async addMemberCredits(id: string, credits: number) {
+  async setMemberCredits(id: string, credits: number) {
     return this.updateState((state) => {
       const code = state.codes[id];
       if (!code) {
         return undefined;
       }
 
-      return addCreditsToStoredCode(code, credits);
+      return setCreditsOnStoredCode(code, credits);
     });
   }
 
@@ -587,14 +505,14 @@ class AzureAccessStore implements AccessStore {
     return codes.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async addMemberCredits(id: string, credits: number) {
+  async setMemberCredits(id: string, credits: number) {
     await this.ensureReady();
     const stored = await this.getStored(id);
     if (!stored) {
       return undefined;
     }
 
-    const code = addCreditsToStoredCode(stored, credits);
+    const code = setCreditsOnStoredCode(stored, credits);
     await this.save(stored);
     return code;
   }

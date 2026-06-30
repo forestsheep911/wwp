@@ -18,7 +18,6 @@ import { Progress } from "../../components/ui/progress";
 import {
   booleanLabel,
   cacheErrorLabel,
-  creditWindowLabel,
   creditsLabel,
   formatBytes,
   formatDateTime,
@@ -42,23 +41,19 @@ interface AdminPanelProps {
   memberName: string;
   memberDays: number;
   memberCredits: number;
-  memberFiveHourLimit: number;
-  memberWeekLimit: number;
-  memberTopUps: Record<string, number>;
+  memberCreditEdits: Record<string, number>;
   memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
   setMemberDays: (value: number) => void;
   setMemberCredits: (value: number) => void;
-  setMemberFiveHourLimit: (value: number) => void;
-  setMemberWeekLimit: (value: number) => void;
-  setMemberTopUp: (id: string, value: number) => void;
+  setMemberCreditEdit: (id: string, value: number) => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
   onRefreshJobs: () => void;
-  onTopUp: (id: string) => void;
+  onUpdateCredits: (id: string) => void;
   onRevoke: (id: string) => void;
 }
 
@@ -72,23 +67,19 @@ export function AdminPanel({
   memberName,
   memberDays,
   memberCredits,
-  memberFiveHourLimit,
-  memberWeekLimit,
-  memberTopUps,
+  memberCreditEdits,
   memberCodes,
   setAdminKeyInput,
   setMemberName,
   setMemberDays,
   setMemberCredits,
-  setMemberFiveHourLimit,
-  setMemberWeekLimit,
-  setMemberTopUp,
+  setMemberCreditEdit,
   onUnlock,
   onGenerate,
   onCopy,
   onDelete,
   onRefreshJobs,
-  onTopUp,
+  onUpdateCredits,
   onRevoke
 }: AdminPanelProps) {
   if (!adminUnlocked) {
@@ -136,7 +127,7 @@ export function AdminPanel({
               <UserPlus className="h-5 w-5 text-emerald-300" />
               New Cinema Pass
             </CardTitle>
-            <CardDescription>Generate a household pass with a personal 🍀 allowance</CardDescription>
+            <CardDescription>Generate a household pass with a starting 🍀 balance</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -161,40 +152,16 @@ export function AdminPanel({
                   onChange={(event) => setMemberDays(Number(event.target.value))}
                 />
               </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="grid gap-2">
-                  <Label htmlFor="member-credits">🍀 Total</Label>
-                  <Input
-                    id="member-credits"
-                    min={0}
-                    max={10000}
-                    type="number"
-                    value={memberCredits}
-                    onChange={(event) => setMemberCredits(Number(event.target.value))}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="member-five-hour-limit">5h limit</Label>
-                  <Input
-                    id="member-five-hour-limit"
-                    min={0}
-                    max={10000}
-                    type="number"
-                    value={memberFiveHourLimit}
-                    onChange={(event) => setMemberFiveHourLimit(Number(event.target.value))}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="member-week-limit">Week limit</Label>
-                  <Input
-                    id="member-week-limit"
-                    min={0}
-                    max={10000}
-                    type="number"
-                    value={memberWeekLimit}
-                    onChange={(event) => setMemberWeekLimit(Number(event.target.value))}
-                  />
-                </div>
+              <div className="grid gap-2">
+                <Label htmlFor="member-credits">🍀 Balance</Label>
+                <Input
+                  id="member-credits"
+                  min={0}
+                  max={10000}
+                  type="number"
+                  value={memberCredits}
+                  onChange={(event) => setMemberCredits(Number(event.target.value))}
+                />
               </div>
               {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
               <Button type="submit" disabled={adminLoading}>
@@ -221,22 +188,10 @@ export function AdminPanel({
                       {code.code ?? code.codePreview}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">Expires {formatLongDate(code.expiresAt)}</p>
-                    <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
+                    <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-[minmax(0,180px)]">
                       <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                        <p className="text-slate-500">Allowance</p>
+                        <p className="text-slate-500">Balance</p>
                         <p className="mt-1 font-semibold text-emerald-200">{creditsLabel(code)}</p>
-                      </div>
-                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                        <p className="text-slate-500">5h limit</p>
-                        <p className="mt-1 font-semibold">
-                          {creditWindowLabel(code.credits.fiveHour.used, code.credits.fiveHour.limit)}
-                        </p>
-                      </div>
-                      <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                        <p className="text-slate-500">Week limit</p>
-                        <p className="mt-1 font-semibold">
-                          {creditWindowLabel(code.credits.week.used, code.credits.week.limit)}
-                        </p>
                       </div>
                     </div>
                     {!code.code ? (
@@ -249,20 +204,20 @@ export function AdminPanel({
                     <div className="flex items-center gap-2">
                       <Input
                         className="h-9 w-20"
-                        min={1}
+                        min={0}
                         max={10000}
                         type="number"
-                        value={memberTopUps[code.id] ?? 10}
-                        onChange={(event) => setMemberTopUp(code.id, Number(event.target.value))}
+                        value={memberCreditEdits[code.id] ?? code.credits.remaining}
+                        onChange={(event) => setMemberCreditEdit(code.id, Number(event.target.value))}
                       />
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => onTopUp(code.id)}
+                        onClick={() => onUpdateCredits(code.id)}
                         disabled={adminLoading || code.status !== "active"}
                       >
-                        +🍀
+                        Set 🍀
                       </Button>
                     </div>
                     <Button

@@ -10,7 +10,6 @@ import type {
   SearchResult
 } from "@wwpdw/shared";
 import {
-  addMemberCredits,
   checkAccess,
   clearAccessKey,
   createMemberAccessCode,
@@ -27,6 +26,7 @@ import {
   listMemberCodes,
   revokeMemberAccessCode,
   searchAssets,
+  setMemberCredits as setMemberCreditsApi,
   setAccessKey
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
@@ -75,9 +75,7 @@ export default function App() {
   const [memberName, setMemberName] = useState("");
   const [memberDays, setMemberDays] = useState(30);
   const [memberCredits, setMemberCredits] = useState(20);
-  const [memberFiveHourLimit, setMemberFiveHourLimit] = useState(5);
-  const [memberWeekLimit, setMemberWeekLimit] = useState(20);
-  const [memberTopUps, setMemberTopUps] = useState<Record<string, number>>({});
+  const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
 
@@ -401,9 +399,7 @@ export default function App() {
       const response = await createMemberAccessCode({
         name: memberName.trim() || "Family member",
         days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30,
-        credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20,
-        fiveHourLimit: Number.isFinite(memberFiveHourLimit) && memberFiveHourLimit >= 0 ? memberFiveHourLimit : 5,
-        weekLimit: Number.isFinite(memberWeekLimit) && memberWeekLimit >= 0 ? memberWeekLimit : 20
+        credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20
       });
       setMemberCodes((currentCodes) => [
         response.code,
@@ -412,8 +408,6 @@ export default function App() {
       setMemberName("");
       setMemberDays(30);
       setMemberCredits(20);
-      setMemberFiveHourLimit(5);
-      setMemberWeekLimit(20);
     } catch (generateError) {
       setAdminError(errorMessage(generateError, "Could not generate member code."));
     } finally {
@@ -421,32 +415,33 @@ export default function App() {
     }
   }
 
-  function setMemberTopUp(id: string, value: number) {
-    setMemberTopUps((currentTopUps) => ({
-      ...currentTopUps,
+  function setMemberCreditEdit(id: string, value: number) {
+    setMemberCreditEdits((currentCredits) => ({
+      ...currentCredits,
       [id]: value
     }));
   }
 
-  async function topUpMemberCredits(id: string) {
-    const credits = memberTopUps[id] ?? 10;
-    if (!Number.isFinite(credits) || credits <= 0) {
-      setAdminError("Top-up amount must be greater than zero.");
+  async function updateMemberCredits(id: string) {
+    const currentCode = memberCodes.find((code) => code.id === id);
+    const credits = memberCreditEdits[id] ?? currentCode?.credits.remaining ?? 0;
+    if (!Number.isFinite(credits) || credits < 0) {
+      setAdminError("Credit balance must be zero or greater.");
       return;
     }
 
     setAdminLoading(true);
     setAdminError("");
     try {
-      const response = await addMemberCredits(id, { credits });
+      const response = await setMemberCreditsApi(id, { credits });
       setMemberCodes((currentCodes) => currentCodes.map((code) => (
         code.id === id
           ? { ...response.code, code: code.code }
           : code
       )));
-      setMemberTopUp(id, 10);
-    } catch (topUpError) {
-      setAdminError(errorMessage(topUpError, "Could not add credits."));
+      setMemberCreditEdit(id, response.code.credits.remaining);
+    } catch (creditUpdateError) {
+      setAdminError(errorMessage(creditUpdateError, "Could not update credits."));
     } finally {
       setAdminLoading(false);
     }
@@ -644,23 +639,19 @@ export default function App() {
           memberName={memberName}
           memberDays={memberDays}
           memberCredits={memberCredits}
-          memberFiveHourLimit={memberFiveHourLimit}
-          memberWeekLimit={memberWeekLimit}
-          memberTopUps={memberTopUps}
+          memberCreditEdits={memberCreditEdits}
           memberCodes={memberCodes}
           setAdminKeyInput={setAdminKeyInput}
           setMemberName={setMemberName}
           setMemberDays={setMemberDays}
           setMemberCredits={setMemberCredits}
-          setMemberFiveHourLimit={setMemberFiveHourLimit}
-          setMemberWeekLimit={setMemberWeekLimit}
-          setMemberTopUp={setMemberTopUp}
+          setMemberCreditEdit={setMemberCreditEdit}
           onUnlock={unlockAdmin}
           onGenerate={generateMemberCode}
           onCopy={(code) => void copyMemberCode(code)}
           onDelete={deleteMemberCode}
           onRefreshJobs={() => void refreshCacheJobs()}
-          onTopUp={topUpMemberCredits}
+          onUpdateCredits={updateMemberCredits}
           onRevoke={revokeMemberCode}
         />
       )}

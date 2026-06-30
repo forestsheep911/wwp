@@ -20,8 +20,8 @@ The cloud path has been proven end to end:
 
 The Admin tab now includes household Cinema Pass management plus a recent cache
 jobs view. Each pass is bound to a member name, but family members still sign in
-with only the pass string. Passes carry a 🍀 allowance with total, 5-hour, and
-weekly rolling limits. The cache job view shows worker status, progress, job id,
+with only the pass string. Passes carry a simple 🍀 balance that admins set when
+creating the pass and can update later. The cache job view shows worker status, progress, job id,
 asset key, latest request id, blob diagnostics, size, range support, and MP4
 faststart status.
 
@@ -78,15 +78,12 @@ The API still uses `x-wwpdw-access-key` internally.
 Default pass allowance settings:
 
 - `MEMBER_DEFAULT_CREDITS=20`
-- `MEMBER_DEFAULT_FIVE_HOUR_LIMIT=5`
-- `MEMBER_DEFAULT_WEEK_LIMIT=20`
 - `MEMBER_CACHE_CREDIT_COST=1`
 
 Search, playback, cache hits, and joining an already-running cache job are free.
 Creating a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST`
 🍀. Admin keys bypass member allowance checks. A member request that exceeds the
-total allowance, 5-hour rolling limit, or weekly rolling limit returns HTTP 429
-before it creates a cache job.
+remaining balance returns HTTP 429 before it creates a cache job.
 
 Current accounting is stored on the member pass row in the `membercodes` table.
 That is intentionally simple for a family-scale system. If usage grows, split

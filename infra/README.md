@@ -55,7 +55,7 @@ The cleanup job runs `WORKER_MODE=cleanup` on a daily schedule. It deletes cache
 
 The API keeps a short in-memory cache for parsed Notion search results with `SEARCH_RESULT_CACHE_TTL_SECONDS` and `SEARCH_RESULT_CACHE_LIMIT`. Cache availability is still checked against Azure on every search response, so ready/playable status stays fresh.
 
-Member Cinema Passes use 🍀 allowances to control cache cost. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. Defaults are configured with `MEMBER_DEFAULT_CREDITS`, `MEMBER_DEFAULT_FIVE_HOUR_LIMIT`, and `MEMBER_DEFAULT_WEEK_LIMIT`.
+Member Cinema Passes use a simple 🍀 balance to control cache cost. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
 
 The Static Web App is deployed from the local `apps/web/dist` build by the Azure Static Web Apps CLI.
 

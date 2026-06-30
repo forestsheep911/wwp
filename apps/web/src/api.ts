@@ -1,6 +1,4 @@
 import type {
-  AddMemberCreditsRequest,
-  AddMemberCreditsResponse,
   AdminCacheJobsResponse,
   AuthCheckResponse,
   CachedAssetsResponse,
@@ -11,7 +9,9 @@ import type {
   MemberCodeListResponse,
   PlaybackResponse,
   SearchResult,
-  SearchResponse
+  SearchResponse,
+  SetMemberCreditsRequest,
+  SetMemberCreditsResponse
 } from "@wwpdw/shared";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
@@ -151,8 +151,8 @@ export function deleteMemberAccessCode(id: string) {
   );
 }
 
-export function addMemberCredits(id: string, input: AddMemberCreditsRequest) {
-  return request<AddMemberCreditsResponse>(
+export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
+  return request<SetMemberCreditsResponse>(
     apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/credits`),
     {
       method: "POST",

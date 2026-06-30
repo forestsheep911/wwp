@@ -83,11 +83,7 @@ export function formatDateTime(value?: string) {
 }
 
 export function creditsLabel(code: MemberAccessCode) {
-  return `${code.credits.unitSymbol} ${code.credits.remaining}/${code.credits.total}`;
-}
-
-export function creditWindowLabel(used: number, limit: number) {
-  return `${used}/${limit}`;
+  return `${code.credits.unitSymbol} ${code.credits.remaining}`;
 }
 
 export function cacheLabel(asset?: CacheAsset) {

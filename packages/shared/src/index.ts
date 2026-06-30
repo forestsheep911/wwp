@@ -159,23 +159,12 @@ export interface PlaybackResponse {
   media?: MediaDiagnostics;
 }
 
-export type MemberCreditLimitReason = "total" | "five_hour" | "week";
-
-export interface MemberCreditWindow {
-  limit: number;
-  used: number;
-  remaining: number;
-  retryAt?: string;
-}
+export type MemberCreditLimitReason = "balance";
 
 export interface MemberCreditSummary {
   unit: "clover";
   unitSymbol: string;
-  total: number;
-  used: number;
   remaining: number;
-  fiveHour: MemberCreditWindow;
-  week: MemberCreditWindow;
 }
 
 export interface MemberCreditCharge {
@@ -234,19 +223,17 @@ export interface CreateMemberCodeRequest {
   name: string;
   days: number;
   credits?: number;
-  fiveHourLimit?: number;
-  weekLimit?: number;
 }
 
 export interface CreateMemberCodeResponse {
   code: GeneratedMemberAccessCode;
 }
 
-export interface AddMemberCreditsRequest {
+export interface SetMemberCreditsRequest {
   credits: number;
 }
 
-export interface AddMemberCreditsResponse {
+export interface SetMemberCreditsResponse {
   code: MemberAccessCode;
 }
 
