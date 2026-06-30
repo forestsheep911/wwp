@@ -14,6 +14,7 @@ import type {
   SearchResult
 } from "@wwpdw/shared";
 import {
+  adjustMemberCredits as adjustMemberCreditsApi,
   checkAccess,
   changeMemberPasscode,
   clearAccessKey,
@@ -175,6 +176,7 @@ export default function App() {
   const [adminKeyInput, setAdminKeyInput] = useState("");
   const [memberName, setMemberName] = useState("");
   const [memberCredits, setMemberCredits] = useState(20);
+  const [memberBulkCredits, setMemberBulkCredits] = useState(1);
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
   const [memberPasscodeEdits, setMemberPasscodeEdits] = useState<Record<string, string>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
@@ -774,6 +776,32 @@ export default function App() {
     }
   }
 
+  async function adjustMemberCredits(delta: number) {
+    const normalizedDelta = Math.trunc(delta);
+    if (!Number.isFinite(normalizedDelta) || normalizedDelta === 0) {
+      setAdminError("Credit adjustment must be a non-zero number.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await adjustMemberCreditsApi({ delta: normalizedDelta });
+      setMemberCodes((currentCodes) => response.codes.map((code) => {
+        const currentCode = currentCodes.find((item) => item.id === code.id);
+        return {
+          ...code,
+          code: currentCode?.code
+        };
+      }));
+      setMemberCreditEdits({});
+    } catch (creditUpdateError) {
+      setAdminError(errorMessage(creditUpdateError, "Could not adjust member credits."));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
   async function updateMemberPasscode(id: string) {
     const passcode = memberPasscodeEdits[id]?.trim() ?? "";
     if (!passcode) {
@@ -979,6 +1007,7 @@ export default function App() {
     setAsset(undefined);
     setMemberCodes([]);
     setMemberPasscodeEdits({});
+    setMemberBulkCredits(1);
     setCacheJobs([]);
     setLoginAudit([]);
     setAdminMovieRequests([]);
@@ -1314,12 +1343,14 @@ export default function App() {
             adminKeyInput={adminKeyInput}
             memberName={memberName}
             memberCredits={memberCredits}
+            memberBulkCredits={memberBulkCredits}
             memberCreditEdits={memberCreditEdits}
             memberPasscodeEdits={memberPasscodeEdits}
             memberCodes={memberCodes}
             setAdminKeyInput={setAdminKeyInput}
             setMemberName={setMemberName}
             setMemberCredits={setMemberCredits}
+            setMemberBulkCredits={setMemberBulkCredits}
             setMemberCreditEdit={setMemberCreditEdit}
             setMemberPasscodeEdit={setMemberPasscodeEdit}
             onUnlock={unlockAdmin}
@@ -1334,6 +1365,7 @@ export default function App() {
             onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
             onUpdateCredits={updateMemberCredits}
+            onAdjustCredits={(delta) => void adjustMemberCredits(delta)}
             onUpdatePasscode={updateMemberPasscode}
             onUpdateMovieRequestStatus={(id, status) => void updateAdminMovieRequestStatus(id, status)}
             onViewCreditUsage={(id) => void openMemberCreditUsage(id)}

@@ -7,7 +7,9 @@ import {
   KeyRound,
   Loader2,
   MessageSquarePlus,
+  MinusCircle,
   MonitorSmartphone,
+  PlusCircle,
   ReceiptText,
   RefreshCw,
   ShieldCheck,
@@ -60,18 +62,21 @@ interface AdminPanelProps {
   adminKeyInput: string;
   memberName: string;
   memberCredits: number;
+  memberBulkCredits: number;
   memberCreditEdits: Record<string, number>;
   memberPasscodeEdits: Record<string, string>;
   memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
   setMemberCredits: (value: number) => void;
+  setMemberBulkCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
   setMemberPasscodeEdit: (id: string, value: string) => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
+  onAdjustCredits: (delta: number) => void;
   onRefreshJobs: () => void;
   onRefreshCachedAssets: () => void;
   onRefreshLoginAudit: () => void;
@@ -101,18 +106,21 @@ export function AdminPanel({
   adminKeyInput,
   memberName,
   memberCredits,
+  memberBulkCredits,
   memberCreditEdits,
   memberPasscodeEdits,
   memberCodes,
   setAdminKeyInput,
   setMemberName,
   setMemberCredits,
+  setMemberBulkCredits,
   setMemberCreditEdit,
   setMemberPasscodeEdit,
   onUnlock,
   onGenerate,
   onCopy,
   onDelete,
+  onAdjustCredits,
   onRefreshJobs,
   onRefreshCachedAssets,
   onRefreshLoginAudit,
@@ -228,11 +236,13 @@ export function AdminPanel({
           <AdminPassesPanel
             adminLoading={adminLoading}
             memberCodes={memberCodes}
+            memberBulkCredits={memberBulkCredits}
             memberCreditEdits={memberCreditEdits}
             memberPasscodeEdits={memberPasscodeEdits}
             memberCredits={memberCredits}
             memberName={memberName}
             onCopy={onCopy}
+            onAdjustCredits={onAdjustCredits}
             onDelete={onDelete}
             onGenerate={onGenerate}
             onRevoke={onRevoke}
@@ -240,6 +250,7 @@ export function AdminPanel({
             onUpdatePasscode={onUpdatePasscode}
             onViewCreditUsage={onViewCreditUsage}
             setMemberCreditEdit={setMemberCreditEdit}
+            setMemberBulkCredits={setMemberBulkCredits}
             setMemberPasscodeEdit={setMemberPasscodeEdit}
             setMemberCredits={setMemberCredits}
             setMemberName={setMemberName}
@@ -449,10 +460,12 @@ function AdminLoginAuditPanel({
 function AdminPassesPanel({
   adminLoading,
   memberCodes,
+  memberBulkCredits,
   memberCreditEdits,
   memberPasscodeEdits,
   memberCredits,
   memberName,
+  onAdjustCredits,
   onCopy,
   onDelete,
   onGenerate,
@@ -460,6 +473,7 @@ function AdminPassesPanel({
   onUpdateCredits,
   onUpdatePasscode,
   onViewCreditUsage,
+  setMemberBulkCredits,
   setMemberCreditEdit,
   setMemberPasscodeEdit,
   setMemberCredits,
@@ -467,10 +481,12 @@ function AdminPassesPanel({
 }: {
   adminLoading: boolean;
   memberCodes: ManagedMemberCode[];
+  memberBulkCredits: number;
   memberCreditEdits: Record<string, number>;
   memberPasscodeEdits: Record<string, string>;
   memberCredits: number;
   memberName: string;
+  onAdjustCredits: (delta: number) => void;
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
   onGenerate: () => void;
@@ -478,51 +494,103 @@ function AdminPassesPanel({
   onUpdateCredits: (id: string) => void;
   onUpdatePasscode: (id: string) => void;
   onViewCreditUsage: (id: string) => void;
+  setMemberBulkCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
   setMemberPasscodeEdit: (id: string, value: string) => void;
   setMemberCredits: (value: number) => void;
   setMemberName: (value: string) => void;
 }) {
+  const activeMemberCount = memberCodes.filter((code) => code.status === "active").length;
+  const bulkAmount = Number.isFinite(memberBulkCredits) ? Math.max(0, Math.floor(memberBulkCredits)) : 0;
+
   return (
     <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserPlus className="h-5 w-5 text-emerald-300" />
-            New member
-          </CardTitle>
-          <CardDescription>Generate a temporary passcode with a starting 🍀 balance.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              onGenerate();
-            }}
-          >
-            <div className="grid gap-2">
-              <Label htmlFor="member-name">Member name</Label>
-              <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
+      <div className="grid gap-4 self-start">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-emerald-300" />
+              New member
+            </CardTitle>
+            <CardDescription>Generate a temporary passcode with a starting 🍀 balance.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onGenerate();
+              }}
+            >
+              <div className="grid gap-2">
+                <Label htmlFor="member-name">Member name</Label>
+                <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="member-credits">🍀 Balance</Label>
+                <Input
+                  id="member-credits"
+                  min={0}
+                  max={10000}
+                  type="number"
+                  value={memberCredits}
+                  onChange={(event) => setMemberCredits(Number(event.target.value))}
+                />
+              </div>
+              <Button type="submit" disabled={adminLoading}>
+                {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                Generate
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PlusCircle className="h-5 w-5 text-emerald-300" />
+              Bulk balance
+            </CardTitle>
+            <CardDescription>Adjust all active Cinema Pass balances.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="member-bulk-credits">🍀 Amount</Label>
+                <Input
+                  id="member-bulk-credits"
+                  min={1}
+                  max={10000}
+                  type="number"
+                  value={memberBulkCredits}
+                  onChange={(event) => setMemberBulkCredits(Number(event.target.value))}
+                />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => onAdjustCredits(bulkAmount)}
+                  disabled={adminLoading || bulkAmount <= 0 || activeMemberCount === 0}
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  Add to all
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onAdjustCredits(-bulkAmount)}
+                  disabled={adminLoading || bulkAmount <= 0 || activeMemberCount === 0}
+                >
+                  <MinusCircle className="h-4 w-4" />
+                  Subtract all
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500">{activeMemberCount} active passes</p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="member-credits">🍀 Balance</Label>
-              <Input
-                id="member-credits"
-                min={0}
-                max={10000}
-                type="number"
-                value={memberCredits}
-                onChange={(event) => setMemberCredits(Number(event.target.value))}
-              />
-            </div>
-            <Button type="submit" disabled={adminLoading}>
-              {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-              Generate
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid gap-3">
         {memberCodes.length === 0 ? (

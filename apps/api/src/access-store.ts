@@ -485,6 +485,12 @@ export interface MemberCreditUsageList {
   entries: MemberCreditUsageEntry[];
 }
 
+export interface MemberCreditAdjustmentResult {
+  codes: MemberAccessCode[];
+  adjustedCount: number;
+  delta: number;
+}
+
 export interface ChargeMemberCreditsInput {
   credits: number;
   assetKey: string;
@@ -520,6 +526,7 @@ export interface AccessStore {
   registerMember(input: RegisterMemberRequest): Promise<MemberRegistrationResult>;
   listMemberCodes(): Promise<MemberAccessCode[]>;
   setMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
+  adjustMemberCredits(delta: number): Promise<MemberCreditAdjustmentResult>;
   setMemberPasscode(id: string, passcode: string): Promise<MemberPasscodeUpdateResult>;
   changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string): Promise<MemberPasscodeUpdateResult>;
   listMemberCreditUsage(id: string, limit: number): Promise<MemberCreditUsageList | undefined>;
@@ -611,6 +618,30 @@ class LocalAccessStore implements AccessStore {
       }
 
       return setCreditsOnStoredCode(code, credits);
+    });
+  }
+
+  async adjustMemberCredits(delta: number) {
+    return this.updateState((state) => {
+      let adjustedCount = 0;
+      const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: 10000 }) * Math.sign(delta);
+      for (const code of Object.values(state.codes)) {
+        if (statusFor(code) !== "active") {
+          continue;
+        }
+
+        prepareStoredCode(code);
+        setCreditsOnStoredCode(code, (code.creditBalance ?? 0) + boundedDelta);
+        adjustedCount += 1;
+      }
+
+      return {
+        codes: Object.values(state.codes)
+          .map(publicCode)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+        adjustedCount,
+        delta: boundedDelta
+      };
     });
   }
 
@@ -915,6 +946,39 @@ class AzureAccessStore implements AccessStore {
     const code = setCreditsOnStoredCode(stored, credits);
     await this.save(stored);
     return code;
+  }
+
+  async adjustMemberCredits(delta: number) {
+    await this.ensureReady();
+    const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: 10000 }) * Math.sign(delta);
+    const storedCodes: StoredMemberCode[] = [];
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'member'"
+      }
+    });
+
+    for await (const entity of entities) {
+      storedCodes.push(deserialize<StoredMemberCode>(entity));
+    }
+
+    let adjustedCount = 0;
+    for (const code of storedCodes) {
+      if (statusFor(code) !== "active") {
+        continue;
+      }
+
+      prepareStoredCode(code);
+      setCreditsOnStoredCode(code, (code.creditBalance ?? 0) + boundedDelta);
+      await this.save(code);
+      adjustedCount += 1;
+    }
+
+    return {
+      codes: storedCodes.map(publicCode).sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+      adjustedCount,
+      delta: boundedDelta
+    };
   }
 
   async setMemberPasscode(id: string, passcode: string) {

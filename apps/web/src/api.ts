@@ -3,6 +3,8 @@ import type {
   AdminLoginAuditResponse,
   AdminSetMemberPasscodeRequest,
   AdminSetMemberPasscodeResponse,
+  AdjustMemberCreditsRequest,
+  AdjustMemberCreditsResponse,
   AuthCheckResponse,
   CachedAssetsResponse,
   CacheAssetLookupResponse,
@@ -199,6 +201,16 @@ export function deleteMemberAccessCode(id: string) {
 export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
   return request<SetMemberCreditsResponse>(
     apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/credits`),
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function adjustMemberCredits(input: AdjustMemberCreditsRequest) {
+  return request<AdjustMemberCreditsResponse>(
+    apiUrl("/api/admin/member-codes/credits/adjust"),
     {
       method: "POST",
       body: JSON.stringify(input)

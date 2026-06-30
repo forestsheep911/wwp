@@ -340,6 +340,16 @@ export interface SetMemberCreditsResponse {
   code: MemberAccessCode;
 }
 
+export interface AdjustMemberCreditsRequest {
+  delta: number;
+}
+
+export interface AdjustMemberCreditsResponse {
+  codes: MemberAccessCode[];
+  adjustedCount: number;
+  delta: number;
+}
+
 export interface AdminSetMemberPasscodeRequest {
   passcode: string;
 }

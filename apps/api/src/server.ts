@@ -12,6 +12,7 @@ import {
   type AdminLoginAuditResponse,
   type AdminCacheJobsResponse,
   type AccessRole,
+  type AdjustMemberCreditsRequest,
   type AuthCheckResponse,
   type CacheJob,
   type CacheStatus,
@@ -1287,6 +1288,32 @@ async function handleSetMemberCredits(
   sendJson(response, 200, { code });
 }
 
+async function handleAdjustMemberCredits(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<AdjustMemberCreditsRequest>(request);
+  const rawDelta = Number(body.delta);
+  if (!Number.isFinite(rawDelta) || rawDelta === 0) {
+    sendJson(response, 400, { error: "Credit adjustment must be a non-zero number." });
+    return;
+  }
+
+  const delta = Math.trunc(rawDelta);
+  const result = await accessStore.adjustMemberCredits(delta);
+
+  logInfo("api.admin.member_codes.credits_adjust", {
+    requestId: context.requestId,
+    delta: result.delta,
+    adjustedCount: result.adjustedCount,
+    memberCount: result.codes.length,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, result);
+}
+
 async function handleListMovieRequests(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 100, 200);
@@ -1653,6 +1680,15 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && pathname === "/api/admin/member-codes") {
       await handleCreateMemberCode(request, response, context);
+      return;
+    }
+
+    if (pathname === "/api/admin/member-codes/credits/adjust" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/member-codes/credits/adjust") {
+      await handleAdjustMemberCredits(request, response, context);
       return;
     }
 
