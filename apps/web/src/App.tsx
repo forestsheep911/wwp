@@ -39,6 +39,7 @@ import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { Player } from "./cinema/components/Player";
+import { SearchDialog } from "./cinema/components/SearchDialog";
 import { StatusPanel } from "./cinema/components/StatusPanel";
 import { cacheErrorLabel } from "./cinema/format";
 import { historyStorageKey, readJsonStorage, writeJsonStorage } from "./cinema/storage";
@@ -130,6 +131,7 @@ export default function App() {
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
+  const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -319,6 +321,13 @@ export default function App() {
       tab: "library",
       query: normalizedQuery
     }, "push");
+  }
+
+  async function runDialogSearch(event?: FormEvent<HTMLFormElement>) {
+    await runSearch(event);
+    if (query.trim()) {
+      setSearchOpen(false);
+    }
   }
 
   async function refreshResultsInBackground() {
@@ -704,6 +713,22 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!unlocked) {
+      return;
+    }
+
+    function handleSearchShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleSearchShortcut);
+    return () => window.removeEventListener("keydown", handleSearchShortcut);
+  }, [unlocked]);
+
+  useEffect(() => {
     const activeItems = trackedItems.filter((item) => item.job.status !== "ready" && item.job.status !== "failed");
     if (activeItems.length === 0) {
       return;
@@ -857,6 +882,12 @@ export default function App() {
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab === "library" && cachedAssets.length === 0 && !cachedAssetsLoading) {
+      void refreshCachedAssets();
+    }
+  }, [activeTab]);
+
   if (!unlocked) {
     return <AccessGate onUnlock={(auth) => {
       setUnlocked(true);
@@ -872,83 +903,99 @@ export default function App() {
   const showAdmin = role === "admin";
 
   return (
-    <CinemaLayout
-      activeTab={activeTab}
-      resultsCount={results.length}
-      readyCount={readyCount}
-      statusCount={trackedItems.length}
-      showAdmin={showAdmin}
-      onActiveTabChange={navigateToTab}
-      onLock={lockCinema}
-      status={showStatusPanel ? (
-        <StatusPanel
-          items={trackedItems}
-          onOpenPlayer={(assetKey) => void openPlayer(assetKey)}
-        />
-      ) : null}
-      library={(
-        <LibraryTab
-          query={query}
-          searchLoading={searchLoading}
-          error={error}
-          viewMode={libraryViewMode}
-          results={results}
-          pendingAssetKeys={cacheRequestAssetKeys}
-          trackedByAssetKey={trackedByAssetKey}
-          onQueryChange={setQuery}
-          onViewModeChange={setLibraryViewMode}
-          onSearch={(event) => void runSearch(event)}
-          onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
-        />
-      )}
-      cached={(
-        <CachedShelf
-          cachedAssets={cachedAssets}
-          loading={cachedAssetsLoading}
-          onOpen={(assetKey) => void openPlayer(assetKey)}
-          onRefresh={() => void refreshCachedAssets()}
-        />
-      )}
-      history={(
-        <HistoryPanel
-          items={history}
-          statusByAssetKey={historyAssetStatus}
-          onClear={clearHistory}
-          onPlay={(assetKey, result) => void openPlayer(assetKey, result)}
-          onRecache={(entry) => void recacheHistoryEntry(entry)}
-        />
-      )}
-      admin={showAdmin ? (
-        <AdminPanel
-          adminUnlocked={adminUnlocked}
-          adminError={adminError}
-          adminLoading={adminLoading}
-          cacheJobs={cacheJobs}
-          cacheJobsLoading={cacheJobsLoading}
-          cachedAssets={cachedAssets}
-          cachedAssetsLoading={cachedAssetsLoading}
-          adminKeyInput={adminKeyInput}
-          memberName={memberName}
-          memberCredits={memberCredits}
-          memberCreditEdits={memberCreditEdits}
-          memberCodes={memberCodes}
-          setAdminKeyInput={setAdminKeyInput}
-          setMemberName={setMemberName}
-          setMemberCredits={setMemberCredits}
-          setMemberCreditEdit={setMemberCreditEdit}
-          onUnlock={unlockAdmin}
-          onGenerate={generateMemberCode}
-          onCopy={(code) => void copyMemberCode(code)}
-          onDelete={deleteMemberCode}
-          onRefreshJobs={() => void refreshCacheJobs()}
-          onRefreshCachedAssets={() => void refreshCachedAssets()}
-          onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
-          onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
-          onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
-          onUpdateCredits={updateMemberCredits}
-          onRevoke={revokeMemberCode}
-        />
-      ) : undefined}
-    />
+    <>
+      <SearchDialog
+        error={error}
+        loading={searchLoading}
+        open={searchOpen}
+        query={query}
+        onOpenChange={setSearchOpen}
+        onQueryChange={setQuery}
+        onSearch={(event) => void runDialogSearch(event)}
+      />
+      <CinemaLayout
+        activeTab={activeTab}
+        resultsCount={results.length}
+        readyCount={readyCount}
+        statusCount={trackedItems.length}
+        showAdmin={showAdmin}
+        onActiveTabChange={navigateToTab}
+        onLock={lockCinema}
+        onOpenSearch={() => setSearchOpen(true)}
+        status={showStatusPanel ? (
+          <StatusPanel
+            items={trackedItems}
+            onOpenPlayer={(assetKey) => void openPlayer(assetKey)}
+          />
+        ) : null}
+        library={(
+          <LibraryTab
+            query={query}
+            error={error}
+            viewMode={libraryViewMode}
+            results={results}
+            cachedAssets={cachedAssets}
+            historyItems={history}
+            trackedItems={trackedItems}
+            pendingAssetKeys={cacheRequestAssetKeys}
+            trackedByAssetKey={trackedByAssetKey}
+            onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
+            onOpenHistoryItem={(assetKey, result) => void openPlayer(assetKey, result)}
+            onOpenTab={navigateToTab}
+            onRefreshCachedAssets={() => void refreshCachedAssets()}
+            onViewModeChange={setLibraryViewMode}
+            onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
+          />
+        )}
+        cached={(
+          <CachedShelf
+            cachedAssets={cachedAssets}
+            loading={cachedAssetsLoading}
+            onOpen={(assetKey) => void openPlayer(assetKey)}
+            onRefresh={() => void refreshCachedAssets()}
+          />
+        )}
+        history={(
+          <HistoryPanel
+            items={history}
+            statusByAssetKey={historyAssetStatus}
+            onClear={clearHistory}
+            onPlay={(assetKey, result) => void openPlayer(assetKey, result)}
+            onRecache={(entry) => void recacheHistoryEntry(entry)}
+          />
+        )}
+        admin={showAdmin ? (
+          <AdminPanel
+            adminUnlocked={adminUnlocked}
+            adminError={adminError}
+            adminLoading={adminLoading}
+            cacheJobs={cacheJobs}
+            cacheJobsLoading={cacheJobsLoading}
+            cachedAssets={cachedAssets}
+            cachedAssetsLoading={cachedAssetsLoading}
+            adminKeyInput={adminKeyInput}
+            memberName={memberName}
+            memberCredits={memberCredits}
+            memberCreditEdits={memberCreditEdits}
+            memberCodes={memberCodes}
+            setAdminKeyInput={setAdminKeyInput}
+            setMemberName={setMemberName}
+            setMemberCredits={setMemberCredits}
+            setMemberCreditEdit={setMemberCreditEdit}
+            onUnlock={unlockAdmin}
+            onGenerate={generateMemberCode}
+            onCopy={(code) => void copyMemberCode(code)}
+            onDelete={deleteMemberCode}
+            onRefreshJobs={() => void refreshCacheJobs()}
+            onRefreshCachedAssets={() => void refreshCachedAssets()}
+            onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
+            onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
+            onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
+            onUpdateCredits={updateMemberCredits}
+            onRevoke={revokeMemberCode}
+          />
+        ) : undefined}
+      />
+    </>
   );
 }

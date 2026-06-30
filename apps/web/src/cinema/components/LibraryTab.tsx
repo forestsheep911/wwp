@@ -1,127 +1,272 @@
-import type { FormEvent } from "react";
-import { Film, LayoutGrid, List, Loader2, Play, Search } from "lucide-react";
-import type { MediaVariant, SearchResult } from "@wwpdw/shared";
+import { Activity, CheckCircle2, Database, Film, History, LayoutGrid, List, Loader2, Play, RefreshCw } from "lucide-react";
+import type { CacheAsset, MediaVariant, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
-import { Input } from "../../components/ui/input";
 import { Progress } from "../../components/ui/progress";
 import {
   bestSummary,
   cacheLabel,
   cacheVariant,
   directorLine,
+  formatBytes,
+  formatDateTime,
+  formatLongDate,
   jobStatusLabel,
   jobVariant,
+  mediaQuality,
   metadataLine,
   peopleTags,
   titleInitial,
   visibleTags
 } from "../format";
-import type { LibraryViewMode, ResultWithCache, TrackedCacheItem } from "../types";
+import type { AppTab, LibraryViewMode, PlaybackHistoryEntry, ResultWithCache, TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryTabProps {
   query: string;
-  searchLoading: boolean;
   error: string;
   viewMode: LibraryViewMode;
   results: ResultWithCache[];
+  cachedAssets: CacheAsset[];
+  historyItems: PlaybackHistoryEntry[];
+  trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
-  onQueryChange: (value: string) => void;
+  onOpenCachedAsset: (assetKey: string) => void;
+  onOpenHistoryItem: (assetKey: string, result?: SearchResult) => void;
+  onOpenTab: (tab: AppTab) => void;
+  onRefreshCachedAssets: () => void;
   onViewModeChange: (value: LibraryViewMode) => void;
-  onSearch: (event?: FormEvent<HTMLFormElement>) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }
 
 export function LibraryTab({
   query,
-  searchLoading,
   error,
   viewMode,
   results,
+  cachedAssets,
+  historyItems,
+  trackedItems,
   pendingAssetKeys,
   trackedByAssetKey,
-  onQueryChange,
+  onOpenCachedAsset,
+  onOpenHistoryItem,
+  onOpenTab,
+  onRefreshCachedAssets,
   onViewModeChange,
-  onSearch,
   onSelect
 }: LibraryTabProps) {
+  const hasQuery = query.trim().length > 0;
+
   return (
     <div className="grid gap-5">
-      <Card>
-        <CardContent className="p-4">
-          <form className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]" onSubmit={onSearch}>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-              <Input
-                className="pl-9"
-                value={query}
-                onChange={(event) => onQueryChange(event.target.value)}
-                placeholder="Search collection"
-              />
-            </div>
-            <Button type="submit" disabled={!query.trim()} aria-busy={searchLoading}>
-              {searchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              Search
+      {error ? (
+        <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
+          {error}
+        </div>
+      ) : null}
+
+      {!hasQuery && results.length === 0 ? (
+        <LibraryHome
+          cachedAssets={cachedAssets}
+          historyItems={historyItems}
+          trackedItems={trackedItems}
+          onOpenCachedAsset={onOpenCachedAsset}
+          onOpenHistoryItem={onOpenHistoryItem}
+          onOpenTab={onOpenTab}
+          onRefreshCachedAssets={onRefreshCachedAssets}
+        />
+      ) : (
+        <>
+          <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+            <Button
+              className="flex-1 sm:flex-none"
+              type="button"
+              size="sm"
+              variant={viewMode === "gallery" ? "secondary" : "ghost"}
+              onClick={() => onViewModeChange("gallery")}
+              title="Gallery view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Gallery
             </Button>
-          </form>
-          {error ? <p className="mt-3 text-sm font-semibold text-rose-300">{error}</p> : null}
-        </CardContent>
-      </Card>
+            <Button
+              className="flex-1 sm:flex-none"
+              type="button"
+              size="sm"
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              onClick={() => onViewModeChange("list")}
+              title="List view"
+            >
+              <List className="h-4 w-4" />
+              List
+            </Button>
+          </div>
 
-      <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
-        <Button
-          className="flex-1 sm:flex-none"
-          type="button"
-          size="sm"
-          variant={viewMode === "gallery" ? "secondary" : "ghost"}
-          onClick={() => onViewModeChange("gallery")}
-          title="Gallery view"
-        >
-          <LayoutGrid className="h-4 w-4" />
-          Gallery
-        </Button>
-        <Button
-          className="flex-1 sm:flex-none"
-          type="button"
-          size="sm"
-          variant={viewMode === "list" ? "secondary" : "ghost"}
-          onClick={() => onViewModeChange("list")}
-          title="List view"
-        >
-          <List className="h-4 w-4" />
-          List
-        </Button>
-      </div>
-
-      {viewMode === "gallery" ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {results.length === 0 ? (
-            <div className="xl:col-span-2">
-              <EmptyState icon={<Film className="h-5 w-5" />} title="No titles loaded" />
+          {viewMode === "gallery" ? (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {results.length === 0 ? (
+                <div className="xl:col-span-2">
+                  <EmptyState icon={<Film className="h-5 w-5" />} title="No titles found" />
+                </div>
+              ) : (
+                results.map((result) => (
+                  <MovieCard
+                    key={result.assetKey}
+                    result={result}
+                    pendingAssetKeys={pendingAssetKeys}
+                    trackedByAssetKey={trackedByAssetKey}
+                    onSelect={onSelect}
+                  />
+                ))
+              )}
             </div>
           ) : (
-            results.map((result) => (
-              <MovieCard
-                key={result.assetKey}
-                result={result}
-                pendingAssetKeys={pendingAssetKeys}
-                trackedByAssetKey={trackedByAssetKey}
-                onSelect={onSelect}
-              />
-            ))
+            <MovieListView
+              results={results}
+              pendingAssetKeys={pendingAssetKeys}
+              trackedByAssetKey={trackedByAssetKey}
+              onSelect={onSelect}
+            />
           )}
-        </div>
-      ) : (
-        <MovieListView
-          results={results}
-          pendingAssetKeys={pendingAssetKeys}
-          trackedByAssetKey={trackedByAssetKey}
-          onSelect={onSelect}
-        />
+        </>
       )}
+    </div>
+  );
+}
+
+function LibraryHome({
+  cachedAssets,
+  historyItems,
+  trackedItems,
+  onOpenCachedAsset,
+  onOpenHistoryItem,
+  onOpenTab,
+  onRefreshCachedAssets
+}: {
+  cachedAssets: CacheAsset[];
+  historyItems: PlaybackHistoryEntry[];
+  trackedItems: TrackedCacheItem[];
+  onOpenCachedAsset: (assetKey: string) => void;
+  onOpenHistoryItem: (assetKey: string, result?: SearchResult) => void;
+  onOpenTab: (tab: AppTab) => void;
+  onRefreshCachedAssets: () => void;
+}) {
+  const readyAssets = cachedAssets.slice(0, 6);
+  const recentHistory = historyItems.slice(0, 4);
+
+  return (
+    <div className="grid gap-6">
+      <section className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+            <h2 className="text-lg font-semibold text-slate-50">Ready now</h2>
+            <Badge variant="secondary">{cachedAssets.length}</Badge>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={onRefreshCachedAssets}>
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => onOpenTab("cached")}>
+              <Database className="h-4 w-4" />
+              Cached
+            </Button>
+          </div>
+        </div>
+        {readyAssets.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {readyAssets.map((asset) => (
+              <Card key={asset.assetKey} className="min-w-0 overflow-hidden">
+                <CardContent className="grid gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 min-h-10 font-semibold leading-5 text-slate-50">{asset.title}</p>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
+                    </p>
+                  </div>
+                  <Button type="button" size="sm" onClick={() => onOpenCachedAsset(asset.assetKey)}>
+                    <Play className="h-4 w-4" />
+                    Play
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={<Database className="h-5 w-5" />} title="No cached titles" />
+        )}
+      </section>
+
+      {trackedItems.length ? (
+        <section className="grid gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-amber-200" />
+            <h2 className="text-lg font-semibold text-slate-50">Preparing</h2>
+            <Badge variant="warning">{trackedItems.length}</Badge>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {trackedItems.slice(0, 4).map(({ job }) => (
+              <Card key={job.id} className="min-w-0 overflow-hidden">
+                <CardContent className="grid gap-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="line-clamp-2 min-w-0 font-semibold leading-5 text-slate-50">{job.title}</p>
+                    <Badge className="shrink-0" variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
+                  </div>
+                  <Progress value={job.progress} />
+                  <p className="text-sm font-semibold text-slate-300">{job.progress}%</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-slate-300" />
+            <h2 className="text-lg font-semibold text-slate-50">Recent plays</h2>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => onOpenTab("history")}>
+            <History className="h-4 w-4" />
+            History
+          </Button>
+        </div>
+        {recentHistory.length ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {recentHistory.map((item) => (
+              <Card key={`${item.assetKey}-${item.playedAt}`} className="min-w-0 overflow-hidden">
+                <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-50">{item.title}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {formatLongDate(item.playedAt)} / {formatBytes(item.contentLength)}
+                    </p>
+                  </div>
+                  <Button
+                    className="w-full shrink-0 sm:w-auto"
+                    type="button"
+                    size="sm"
+                    onClick={() => onOpenHistoryItem(item.assetKey, item.result)}
+                  >
+                    <Play className="h-4 w-4" />
+                    Play
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={<History className="h-5 w-5" />} title="No playback history" />
+        )}
+      </section>
     </div>
   );
 }

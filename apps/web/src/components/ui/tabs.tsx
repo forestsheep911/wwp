@@ -10,7 +10,7 @@ export const TabsList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
-    className={cn("flex min-h-10 w-full max-w-full items-center justify-between overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1 sm:inline-flex sm:w-auto sm:justify-start", className)}
+    className={cn("scrollbar-none flex min-h-10 w-full max-w-full items-center justify-between overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1 sm:inline-flex sm:w-auto sm:justify-start", className)}
     {...props}
   />
 ));
@@ -23,7 +23,7 @@ export const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex h-8 min-w-0 flex-1 shrink-0 items-center justify-center gap-2 rounded px-3 text-sm font-semibold text-slate-400 transition-colors data-[state=active]:bg-slate-800 data-[state=active]:text-slate-50 sm:flex-none",
+      "inline-flex h-8 flex-none shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded px-3 text-sm font-semibold text-slate-400 transition-colors data-[state=active]:bg-slate-800 data-[state=active]:text-slate-50",
       className
     )}
     {...props}
