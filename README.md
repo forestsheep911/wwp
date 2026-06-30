@@ -85,7 +85,7 @@ Deploy/update:
 
 The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes queue/table state and starts the cache worker Container Apps Job through Azure Resource Manager using managed identity.
 
-The cleanup job removes expired cache assets on a daily schedule.
+The cleanup job removes expired cache assets on a daily schedule. Member Cinema Passes do not expire by date; admins revoke or delete them when needed.
 
 ## Verification
 

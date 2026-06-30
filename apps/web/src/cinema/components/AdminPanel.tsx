@@ -1,5 +1,6 @@
 import {
   Activity,
+  Database,
   Copy,
   KeyRound,
   Loader2,
@@ -9,7 +10,7 @@ import {
   UserPlus,
   Users
 } from "lucide-react";
-import type { AdminCacheJobEntry } from "@wwpdw/shared";
+import type { AdminCacheJobEntry, CacheAsset } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -22,10 +23,10 @@ import {
   creditsLabel,
   formatBytes,
   formatDateTime,
-  formatLongDate,
   jobMessageLabel,
   jobStatusLabel,
   jobVariant,
+  mediaQuality,
   mp4StatusLabel
 } from "../format";
 import type { ManagedMemberCode } from "../types";
@@ -38,15 +39,15 @@ interface AdminPanelProps {
   adminLoading: boolean;
   cacheJobs: AdminCacheJobEntry[];
   cacheJobsLoading: boolean;
+  cachedAssets: CacheAsset[];
+  cachedAssetsLoading: boolean;
   adminKeyInput: string;
   memberName: string;
-  memberDays: number;
   memberCredits: number;
   memberCreditEdits: Record<string, number>;
   memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
-  setMemberDays: (value: number) => void;
   setMemberCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
   onUnlock: () => void;
@@ -54,8 +55,10 @@ interface AdminPanelProps {
   onCopy: (code: string) => void;
   onDelete: (id: string) => void;
   onRefreshJobs: () => void;
+  onRefreshCachedAssets: () => void;
   onRetryCacheJob: (jobId: string) => void;
   onDeleteCacheJob: (jobId: string) => void;
+  onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
   onRevoke: (id: string) => void;
 }
@@ -66,15 +69,15 @@ export function AdminPanel({
   adminLoading,
   cacheJobs,
   cacheJobsLoading,
+  cachedAssets,
+  cachedAssetsLoading,
   adminKeyInput,
   memberName,
-  memberDays,
   memberCredits,
   memberCreditEdits,
   memberCodes,
   setAdminKeyInput,
   setMemberName,
-  setMemberDays,
   setMemberCredits,
   setMemberCreditEdit,
   onUnlock,
@@ -82,8 +85,10 @@ export function AdminPanel({
   onCopy,
   onDelete,
   onRefreshJobs,
+  onRefreshCachedAssets,
   onRetryCacheJob,
   onDeleteCacheJob,
+  onDeleteCachedAsset,
   onUpdateCredits,
   onRevoke
 }: AdminPanelProps) {
@@ -130,6 +135,24 @@ export function AdminPanel({
           {adminError}
         </div>
       ) : null}
+
+      <AdminCachedAssetsPanel
+        actionLoading={adminLoading}
+        assets={cachedAssets}
+        loading={cachedAssetsLoading}
+        onDelete={onDeleteCachedAsset}
+        onRefresh={onRefreshCachedAssets}
+      />
+
+      <AdminCacheJobsPanel
+        actionLoading={adminLoading}
+        jobs={cacheJobs}
+        loading={cacheJobsLoading}
+        onDelete={onDeleteCacheJob}
+        onRefresh={onRefreshJobs}
+        onRetry={onRetryCacheJob}
+      />
+
       <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
         <Card>
           <CardHeader>
@@ -137,7 +160,7 @@ export function AdminPanel({
               <UserPlus className="h-5 w-5 text-emerald-300" />
               New Cinema Pass
             </CardTitle>
-            <CardDescription>Generate a household pass with a starting 🍀 balance</CardDescription>
+            <CardDescription>Generate a household pass with a starting 🍀 balance.</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -150,17 +173,6 @@ export function AdminPanel({
               <div className="grid gap-2">
                 <Label htmlFor="member-name">Member name</Label>
                 <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="member-days">Days</Label>
-                <Input
-                  id="member-days"
-                  min={1}
-                  max={365}
-                  type="number"
-                  value={memberDays}
-                  onChange={(event) => setMemberDays(Number(event.target.value))}
-                />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="member-credits">🍀 Balance</Label>
@@ -196,7 +208,6 @@ export function AdminPanel({
                     <p className="mt-1 truncate font-mono text-sm text-slate-300">
                       {code.code ?? code.codePreview}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">Expires {formatLongDate(code.expiresAt)}</p>
                     <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-[minmax(0,180px)]">
                       <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
                         <p className="text-slate-500">Balance</p>
@@ -268,16 +279,80 @@ export function AdminPanel({
           )}
         </div>
       </div>
-
-      <AdminCacheJobsPanel
-        actionLoading={adminLoading}
-        jobs={cacheJobs}
-        loading={cacheJobsLoading}
-        onDelete={onDeleteCacheJob}
-        onRefresh={onRefreshJobs}
-        onRetry={onRetryCacheJob}
-      />
     </div>
+  );
+}
+
+function AdminCachedAssetsPanel({
+  actionLoading,
+  assets,
+  loading,
+  onDelete,
+  onRefresh
+}: {
+  actionLoading: boolean;
+  assets: CacheAsset[];
+  loading: boolean;
+  onDelete: (assetKey: string) => void;
+  onRefresh: () => void;
+}) {
+  const busy = actionLoading || loading;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5 text-emerald-300" />
+            Cached videos
+          </CardTitle>
+          <CardDescription>Ready Blob cache entries that can be deleted by an administrator.</CardDescription>
+        </div>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {assets.length === 0 ? (
+          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+            {loading ? "Loading cached videos" : "No cached videos"}
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {assets.map((asset) => (
+              <div key={asset.assetKey} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-50">{asset.title}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => onDelete(asset.assetKey)}
+                    disabled={busy}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete cache
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 text-sm md:grid-cols-4">
+                  <Metric label="Asset" value={asset.assetKey} />
+                  <Metric label="Job" value={asset.jobId ?? "not captured"} />
+                  <Metric label="Blob" value={asset.media?.blobName ?? "not ready"} />
+                  <Metric label="Range" value={booleanLabel(asset.media?.rangeSupported)} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -350,32 +425,34 @@ function AdminCacheJobsPanel({
 
                 {job.error ? <p className="text-sm font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
 
-                {job.status === "failed" || job.status === "ready" ? (
-                  <div className="flex flex-wrap gap-2">
-                    {job.status === "failed" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onRetry(job.id)}
-                        disabled={busy}
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                        Continue
-                      </Button>
-                    ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {job.status === "failed" ? (
                     <Button
                       type="button"
-                      variant="destructive"
+                      variant="secondary"
                       size="sm"
-                      onClick={() => onDelete(job.id)}
+                      onClick={() => onRetry(job.id)}
                       disabled={busy}
                     >
-                      <Trash2 className="h-4 w-4" />
-                      {job.status === "ready" ? "Delete cache" : "Delete"}
+                      <RefreshCw className="h-4 w-4" />
+                      Continue
                     </Button>
-                  </div>
-                ) : null}
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => onDelete(job.id)}
+                    disabled={busy}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {job.status === "ready"
+                      ? "Delete cache"
+                      : job.status === "failed"
+                        ? "Delete failed job"
+                        : "Delete job"}
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

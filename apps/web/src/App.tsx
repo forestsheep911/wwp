@@ -13,6 +13,7 @@ import {
   checkAccess,
   clearAccessKey,
   createMemberAccessCode,
+  deleteCachedAsset,
   deleteCacheJob,
   deleteMemberAccessCode,
   ensureCache,
@@ -75,11 +76,11 @@ export default function App() {
   const [cacheJobsLoading, setCacheJobsLoading] = useState(false);
   const [adminKeyInput, setAdminKeyInput] = useState("");
   const [memberName, setMemberName] = useState("");
-  const [memberDays, setMemberDays] = useState(30);
   const [memberCredits, setMemberCredits] = useState(20);
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
+  const adminCacheJobLimit = 100;
 
   const readyCount = useMemo(
     () =>
@@ -116,6 +117,8 @@ export default function App() {
       title: `${result.title} / ${variant.label}`,
       source: result.source,
       sourceUrl: variant.sourceUrl,
+      sourcePageId: variant.sourcePageId ?? result.sourcePageId,
+      sourceBreadcrumb: variant.sourceBreadcrumb ?? result.sourceBreadcrumb,
       durationLabel: result.durationLabel,
       updatedAt: result.updatedAt,
       summary: variant.summary,
@@ -347,7 +350,7 @@ export default function App() {
 
     setCacheJobsLoading(true);
     try {
-      const response = await listCacheJobs(20);
+      const response = await listCacheJobs(adminCacheJobLimit);
       setCacheJobs(response.jobs);
       setAdminError("");
     } catch (cacheJobError) {
@@ -386,10 +389,31 @@ export default function App() {
         setCachedAssets((currentAssets) => currentAssets.filter((item) => item.assetKey !== response.assetKey));
       }
       await refreshCacheJobs();
+      await refreshCachedAssets();
     } catch (deleteError) {
       setAdminError(errorMessage(deleteError, "Could not delete cache entry."));
     } finally {
       setCacheJobsLoading(false);
+    }
+  }
+
+  async function deleteAdminCachedAsset(assetKey: string) {
+    setCachedAssetsLoading(true);
+    setAdminError("");
+    try {
+      const response = await deleteCachedAsset(assetKey);
+      if (response.assetKey) {
+        setCachedAssets((currentAssets) => currentAssets.filter((item) => item.assetKey !== response.assetKey));
+      }
+      if (response.jobId) {
+        setTrackedItems((currentItems) => currentItems.filter((item) => item.job.id !== response.jobId));
+      }
+      await refreshCacheJobs();
+      await refreshCachedAssets();
+    } catch (deleteError) {
+      setAdminError(errorMessage(deleteError, "Could not delete cached video."));
+    } finally {
+      setCachedAssetsLoading(false);
     }
   }
 
@@ -416,8 +440,9 @@ export default function App() {
       setAdminKeyInput("");
       const response = await listMemberCodes();
       setMemberCodes(response.codes);
+      await refreshCachedAssets();
       try {
-        const jobsResponse = await listCacheJobs(20);
+        const jobsResponse = await listCacheJobs(adminCacheJobLimit);
         setCacheJobs(jobsResponse.jobs);
       } catch (cacheJobError) {
         setAdminError(errorMessage(cacheJobError, "Could not load cache jobs."));
@@ -436,7 +461,6 @@ export default function App() {
     try {
       const response = await createMemberAccessCode({
         name: memberName.trim() || "Family member",
-        days: Number.isFinite(memberDays) && memberDays > 0 ? memberDays : 30,
         credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20
       });
       setMemberCodes((currentCodes) => [
@@ -444,7 +468,6 @@ export default function App() {
         ...currentCodes.filter((code) => code.id !== response.code.id)
       ]);
       setMemberName("");
-      setMemberDays(30);
       setMemberCredits(20);
     } catch (generateError) {
       setAdminError(errorMessage(generateError, "Could not generate member code."));
@@ -592,6 +615,7 @@ export default function App() {
   useEffect(() => {
     if (activeTab === "admin" && adminUnlocked) {
       void refreshMemberCodes();
+      void refreshCachedAssets();
       void refreshCacheJobs();
     }
   }, [activeTab, adminUnlocked]);
@@ -673,15 +697,15 @@ export default function App() {
           adminLoading={adminLoading}
           cacheJobs={cacheJobs}
           cacheJobsLoading={cacheJobsLoading}
+          cachedAssets={cachedAssets}
+          cachedAssetsLoading={cachedAssetsLoading}
           adminKeyInput={adminKeyInput}
           memberName={memberName}
-          memberDays={memberDays}
           memberCredits={memberCredits}
           memberCreditEdits={memberCreditEdits}
           memberCodes={memberCodes}
           setAdminKeyInput={setAdminKeyInput}
           setMemberName={setMemberName}
-          setMemberDays={setMemberDays}
           setMemberCredits={setMemberCredits}
           setMemberCreditEdit={setMemberCreditEdit}
           onUnlock={unlockAdmin}
@@ -689,8 +713,10 @@ export default function App() {
           onCopy={(code) => void copyMemberCode(code)}
           onDelete={deleteMemberCode}
           onRefreshJobs={() => void refreshCacheJobs()}
+          onRefreshCachedAssets={() => void refreshCachedAssets()}
           onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
           onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
+          onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
           onUpdateCredits={updateMemberCredits}
           onRevoke={revokeMemberCode}
         />

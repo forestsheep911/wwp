@@ -212,7 +212,7 @@ export interface MemberAccessCode {
   codePreview: string;
   createdAt: string;
   expiresAt: string;
-  status: "active" | "revoked" | "expired";
+  status: "active" | "revoked";
   lastUsedAt?: string;
   credits: MemberCreditSummary;
 }
@@ -227,7 +227,7 @@ export interface MemberCodeListResponse {
 
 export interface CreateMemberCodeRequest {
   name: string;
-  days: number;
+  days?: number;
   credits?: number;
 }
 

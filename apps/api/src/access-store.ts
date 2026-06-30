@@ -55,6 +55,7 @@ const defaultAccountName = "stwwcachee9219db7";
 const defaultMemberTableName = "membercodes";
 const memberCreditUnitSymbol = "🍀";
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
+const noExpiryAt = "9999-12-31T23:59:59.999Z";
 
 function backend(): AccessBackend {
   return process.env.CACHE_BACKEND === "azure" ? "azure" : "local";
@@ -86,12 +87,6 @@ function createRawMemberCode() {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
   return `fam-${token.slice(0, 6)}-${token.slice(6, 12)}-${token.slice(12, 18)}`;
-}
-
-function addDays(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toISOString();
 }
 
 function positiveInt(value: unknown, fallback: number, options: { min?: number; max?: number } = {}) {
@@ -213,10 +208,6 @@ function statusFor(code: StoredMemberCode): MemberAccessCode["status"] {
     return "revoked";
   }
 
-  if (new Date(code.expiresAt).getTime() <= Date.now()) {
-    return "expired";
-  }
-
   return "active";
 }
 
@@ -325,7 +316,7 @@ class LocalAccessStore implements AccessStore {
         codeHash: hashCode(rawCode),
         codePreview: codePreview(rawCode),
         createdAt: now,
-        expiresAt: addDays(Math.max(1, Math.min(365, Math.floor(input.days || 30)))),
+        expiresAt: noExpiryAt,
         ...creditFieldsFromInput(input)
       };
       state.codes[stored.id] = stored;
@@ -479,7 +470,7 @@ class AzureAccessStore implements AccessStore {
       codeHash: hashCode(rawCode),
       codePreview: codePreview(rawCode),
       createdAt: now,
-      expiresAt: addDays(Math.max(1, Math.min(365, Math.floor(input.days || 30)))),
+      expiresAt: noExpiryAt,
       ...creditFieldsFromInput(input)
     };
     await this.save(stored);

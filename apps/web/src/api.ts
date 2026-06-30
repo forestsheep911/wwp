@@ -184,3 +184,12 @@ export function deleteCacheJob(jobId: string) {
     }
   );
 }
+
+export function deleteCachedAsset(assetKey: string) {
+  return request<DeleteCacheEntryResponse>(
+    apiUrl(`/api/admin/assets/${encodeURIComponent(assetKey)}/delete`),
+    {
+      method: "POST"
+    }
+  );
+}

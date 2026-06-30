@@ -800,6 +800,32 @@ async function handleDeleteCacheJob(jobId: string, response: http.ServerResponse
   sendJson(response, 200, result);
 }
 
+async function handleDeleteCacheAsset(assetKey: string, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const result: DeleteCacheEntryResponse = await store.deleteCacheEntry({ assetKey });
+  if (!result.deletedAsset && !result.deletedJob && result.errors.length === 0) {
+    logWarn("api.admin.assets.delete_not_found", {
+      requestId: context.requestId,
+      assetKey,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Cached asset was not found." });
+    return;
+  }
+
+  logInfo("api.admin.assets.delete", {
+    requestId: context.requestId,
+    assetKey: result.assetKey,
+    jobId: result.jobId,
+    deletedAsset: result.deletedAsset,
+    deletedJob: result.deletedJob,
+    deletedBlob: result.deletedBlob,
+    errorCount: result.errors.length,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, result);
+}
+
 async function handleCreateMemberCode(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -809,7 +835,6 @@ async function handleCreateMemberCode(
   const body = await readBody<CreateMemberCodeRequest>(request);
   const code = await accessStore.createMemberCode({
     name: body.name,
-    days: body.days,
     credits: body.credits
   });
   logInfo("api.admin.member_codes.create", {
@@ -962,6 +987,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && deleteCacheJobMatch) {
       await handleDeleteCacheJob(decodeURIComponent(deleteCacheJobMatch[1]), response, context);
+      return;
+    }
+
+    const deleteCacheAssetMatch = pathname.match(/^\/api\/admin\/assets\/([^/]+)\/delete$/);
+    if (deleteCacheAssetMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && deleteCacheAssetMatch) {
+      await handleDeleteCacheAsset(decodeURIComponent(deleteCacheAssetMatch[1]), response, context);
       return;
     }
 

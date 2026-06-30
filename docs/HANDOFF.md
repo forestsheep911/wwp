@@ -18,13 +18,14 @@ The cloud path has been proven end to end:
 8. The API returns a short-lived SAS playback URL with diagnostics metadata.
 9. The browser plays the cached Blob video.
 
-The Admin tab now includes household Cinema Pass management plus a recent cache
-jobs view. Each pass is bound to a member name, but family members still sign in
-with only the pass string. Passes carry a simple 🍀 balance that admins set when
-creating the pass and can update later. The cache job view shows worker status, progress, job id,
-asset key, latest request id, blob diagnostics, size, range support, and MP4
-faststart status. Admins can retry failed cache jobs, delete failed job records,
-and delete ready cached videos together with their Blob and job state.
+The Admin tab now includes household Cinema Pass management, a ready cached-video
+view, and a recent cache jobs view. Each pass is bound to a member name, but
+family members still sign in with only the pass string. Passes do not expire by
+date; they carry a simple 🍀 balance that admins set when creating the pass and
+can update later. The cache job view shows worker status, progress, job id, asset
+key, latest request id, blob diagnostics, size, range support, and MP4 faststart
+status. Admins can retry failed cache jobs, delete failed/stuck job records, and
+delete ready cached videos together with their Blob and job state.
 
 Known successful playback example:
 
@@ -86,6 +87,10 @@ Creating a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST`
 🍀. Admin keys bypass member allowance checks. A member request that exceeds the
 remaining balance returns HTTP 429 before it creates a cache job.
 
+Cinema Passes do not currently expire by date. Existing stored `expiresAt`
+values are retained for backward compatibility, but `revokedAt` is the only
+member-pass status control besides deleting the pass row.
+
 Current accounting is stored on the member pass row in the `membercodes` table.
 That is intentionally simple for a family-scale system. If usage grows, split
 credit events into a separate ledger table with optimistic concurrency.
@@ -107,11 +112,13 @@ deletes the matching cache job record.
 
 Admins can also delete a ready cache entry manually from the Admin tab. That path
 uses the same cache-store deletion flow as cleanup: remove Blob media first,
-then remove the asset row and linked job row. Failed cache jobs can be retried,
-which refreshes the source URL from Notion before resetting the same job to
-`queued` and re-enqueuing it for the worker, or deleted when the source is no
-longer useful. New jobs store the Notion page id for the page carrying the media
-link as `sourcePageId`; older jobs can usually recover the same id from the
+then remove the asset row and linked job row. The Admin tab has a dedicated
+ready cached-video list for this. Failed cache jobs can be retried, which
+refreshes the source URL from Notion before resetting the same job to `queued`
+and re-enqueuing it for the worker, or deleted when the source is no longer
+useful. Stuck in-progress jobs can also be deleted from the recent cache jobs
+view. New jobs store the Notion page id for the page carrying the media link as
+`sourcePageId`; older jobs can usually recover the same id from the
 `notion-page-...` asset key. `sourceBreadcrumb` is stored only for operator
 context.
 
