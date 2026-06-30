@@ -152,16 +152,6 @@ export default function App() {
   const adminCacheJobLimit = 100;
   const historyInitializedRef = useRef(false);
 
-  const readyCount = useMemo(
-    () =>
-      results.reduce((count, item) => {
-        const resultReady = item.cache?.status === "ready" ? 1 : 0;
-        const variantReady = item.variants?.filter((variant) => variant.cache?.status === "ready").length ?? 0;
-        return count + resultReady + variantReady;
-      }, 0),
-    [results]
-  );
-
   const trackedPollKey = useMemo(
     () =>
       trackedItems
@@ -899,7 +889,7 @@ export default function App() {
     return <Player playback={playback} onClose={closePlayer} />;
   }
 
-  const showStatusPanel = activeTab === "library" || trackedItems.length > 0;
+  const showStatusPanel = activeTab === "library" || activeTab === "tasks" || trackedItems.length > 0;
   const showAdmin = role === "admin";
 
   return (
@@ -915,8 +905,6 @@ export default function App() {
       />
       <CinemaLayout
         activeTab={activeTab}
-        resultsCount={results.length}
-        readyCount={readyCount}
         statusCount={trackedItems.length}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}

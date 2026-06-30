@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import {
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -18,8 +17,6 @@ import type { AppTab } from "../types";
 
 interface CinemaLayoutProps {
   activeTab: AppTab;
-  resultsCount: number;
-  readyCount: number;
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
@@ -34,8 +31,6 @@ interface CinemaLayoutProps {
 
 export function CinemaLayout({
   activeTab,
-  resultsCount,
-  readyCount,
   library,
   cached,
   history,
@@ -88,34 +83,9 @@ export function CinemaLayout({
                   <span className="hidden sm:inline">Admin</span>
                 </TabsTrigger>
               ) : null}
-              {status ? (
-                <TabsTrigger className="lg:hidden" value="tasks">
-                  <ListChecks className="h-4 w-4" />
-                  <span>Tasks</span>
-                  <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
-                </TabsTrigger>
-              ) : null}
             </TabsList>
 
             <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">
-              <Badge className="hidden 2xl:inline-flex" variant="secondary">{resultsCount} found</Badge>
-              <Badge className="hidden 2xl:inline-flex" variant="default">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                {readyCount} current ready
-              </Badge>
-              {status ? (
-                <Button
-                  className="hidden shrink-0 lg:inline-flex"
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStatusCollapsed((current) => !current)}
-                >
-                  {statusCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  {statusCollapsed ? "Show tasks" : "Hide tasks"}
-                  <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
-                </Button>
-              ) : null}
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title="Search">
                 <Search className="h-4 w-4" />
                 <span className="sr-only">Search</span>
@@ -129,14 +99,41 @@ export function CinemaLayout({
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-6 px-5 py-5 md:px-8">
-          <section className={showDesktopStatus ? "grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]" : "grid gap-5"}>
+        <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 md:px-8">
+          {status ? (
+            <div className="flex justify-end">
+              <Button
+                className="w-full sm:w-auto lg:hidden"
+                type="button"
+                variant={activeTab === "tasks" ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => onActiveTabChange("tasks")}
+              >
+                <ListChecks className="h-4 w-4" />
+                Tasks
+                <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
+              </Button>
+              <Button
+                className="hidden shrink-0 lg:inline-flex"
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setStatusCollapsed((current) => !current)}
+              >
+                {statusCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {statusCollapsed ? "Show tasks" : "Hide tasks"}
+                <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
+              </Button>
+            </div>
+          ) : null}
+
+          <section className={showDesktopStatus ? "grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start" : "grid gap-5"}>
             <div className="min-w-0 overflow-hidden">
-              <TabsContent value="library">{library}</TabsContent>
-              <TabsContent value="cached">{cached}</TabsContent>
-              <TabsContent value="history">{history}</TabsContent>
-              {showAdmin ? <TabsContent value="admin">{admin}</TabsContent> : null}
-              {status ? <TabsContent className="lg:hidden" value="tasks">{status}</TabsContent> : null}
+              <TabsContent className="mt-0" value="library">{library}</TabsContent>
+              <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
+              <TabsContent className="mt-0" value="history">{history}</TabsContent>
+              {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
+              {status ? <TabsContent className="mt-0 lg:hidden" value="tasks">{status}</TabsContent> : null}
             </div>
 
             {showDesktopStatus ? <aside className="hidden min-w-0 lg:block">{status}</aside> : null}
