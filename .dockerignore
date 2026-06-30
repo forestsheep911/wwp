@@ -2,8 +2,10 @@
 .env
 .env.*
 !.env.example
+.douban.cookie
 .local-data
 downloads
+ref
 cache
 tmp
 temp

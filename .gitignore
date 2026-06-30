@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+.douban.cookie
 
 downloads/
 cache/
@@ -8,6 +9,7 @@ tmp/
 temp/
 artifacts/
 .local-data/
+ref/
 
 node_modules/
 dist/
