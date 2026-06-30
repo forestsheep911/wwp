@@ -1,0 +1,70 @@
+import { CheckCircle2, Database, Loader2, Play, RefreshCw } from "lucide-react";
+import type { CacheAsset } from "@wwpdw/shared";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { formatBytes, formatDateTime, mediaQuality } from "../format";
+import { EmptyState } from "./EmptyState";
+
+export function CachedShelf({
+  cachedAssets,
+  loading,
+  onOpen,
+  onRefresh
+}: {
+  cachedAssets: CacheAsset[];
+  loading: boolean;
+  onOpen: (assetKey: string) => void;
+  onRefresh: () => void;
+}) {
+  if (cachedAssets.length === 0 && loading) {
+    return <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title="Loading cached titles" />;
+  }
+
+  if (cachedAssets.length === 0) {
+    return (
+      <div className="grid gap-3">
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+        <EmptyState icon={<Database className="h-5 w-5" />} title="No cached titles" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Badge variant="default">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          {cachedAssets.length} 可播放
+        </Badge>
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        {cachedAssets.map((asset) => (
+          <Card key={asset.assetKey}>
+            <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-50">{asset.title}</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
+                </p>
+              </div>
+              <Button className="w-full sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
+                <Play className="h-4 w-4" />
+                Play
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
