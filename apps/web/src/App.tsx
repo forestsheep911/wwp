@@ -621,6 +621,12 @@ export default function App() {
   }, [activeTab, adminUnlocked]);
 
   useEffect(() => {
+    if (activeTab === "admin" && role && role !== "admin") {
+      setActiveTab("library");
+    }
+  }, [activeTab, role]);
+
+  useEffect(() => {
     if (activeTab === "history") {
       void refreshHistoryAssetStatus();
     }
@@ -644,6 +650,7 @@ export default function App() {
   }
 
   const showStatusPanel = activeTab === "library" || trackedItems.length > 0;
+  const showAdmin = role === "admin";
 
   return (
     <CinemaLayout
@@ -651,6 +658,7 @@ export default function App() {
       resultsCount={results.length}
       readyCount={readyCount}
       statusCount={trackedItems.length}
+      showAdmin={showAdmin}
       onActiveTabChange={setActiveTab}
       onLock={lockCinema}
       status={showStatusPanel ? (
@@ -691,7 +699,7 @@ export default function App() {
           onRecache={(entry) => void recacheHistoryEntry(entry)}
         />
       )}
-      admin={(
+      admin={showAdmin ? (
         <AdminPanel
           adminUnlocked={adminUnlocked}
           adminError={adminError}
@@ -721,7 +729,7 @@ export default function App() {
           onUpdateCredits={updateMemberCredits}
           onRevoke={revokeMemberCode}
         />
-      )}
+      ) : undefined}
     />
   );
 }

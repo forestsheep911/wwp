@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, Database, Film, History, Lock, ShieldCheck, ListChecks } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Database, Film, History, ListChecks, LogOut, ShieldCheck } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
@@ -12,7 +12,8 @@ interface CinemaLayoutProps {
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
-  admin: ReactNode;
+  admin?: ReactNode;
+  showAdmin: boolean;
   status?: ReactNode;
   statusCount: number;
   onActiveTabChange: (value: AppTab) => void;
@@ -27,6 +28,7 @@ export function CinemaLayout({
   cached,
   history,
   admin,
+  showAdmin,
   status,
   statusCount,
   onActiveTabChange,
@@ -54,9 +56,10 @@ export function CinemaLayout({
               <CheckCircle2 className="h-3.5 w-3.5" />
               {readyCount} current ready
             </Badge>
-            <Button type="button" variant="outline" size="sm" onClick={onLock} title="Lock cinema">
-              <Lock className="h-4 w-4" />
-              <span className="sr-only">Lock</span>
+            <Button type="button" variant="outline" size="sm" onClick={onLock} title="Logout">
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Logout</span>
+              <span className="sr-only sm:hidden">Logout</span>
             </Button>
           </div>
         </div>
@@ -83,11 +86,13 @@ export function CinemaLayout({
                     <span className="sm:hidden">历史</span>
                     <span className="hidden sm:inline">History</span>
                   </TabsTrigger>
-                  <TabsTrigger value="admin">
-                    <ShieldCheck className="h-4 w-4" />
-                    <span className="sm:hidden">管理</span>
-                    <span className="hidden sm:inline">Admin</span>
-                  </TabsTrigger>
+                  {showAdmin ? (
+                    <TabsTrigger value="admin">
+                      <ShieldCheck className="h-4 w-4" />
+                      <span className="sm:hidden">管理</span>
+                      <span className="hidden sm:inline">Admin</span>
+                    </TabsTrigger>
+                  ) : null}
                   {status ? (
                     <TabsTrigger className="lg:hidden" value="tasks">
                       <ListChecks className="h-4 w-4" />
@@ -115,7 +120,7 @@ export function CinemaLayout({
               <TabsContent value="library">{library}</TabsContent>
               <TabsContent value="cached">{cached}</TabsContent>
               <TabsContent value="history">{history}</TabsContent>
-              <TabsContent value="admin">{admin}</TabsContent>
+              {showAdmin ? <TabsContent value="admin">{admin}</TabsContent> : null}
               {status ? <TabsContent className="lg:hidden" value="tasks">{status}</TabsContent> : null}
             </Tabs>
           </div>
