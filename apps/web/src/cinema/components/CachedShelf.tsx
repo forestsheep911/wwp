@@ -49,15 +49,15 @@ export function CachedShelf({
       </div>
       <div className="grid gap-3 xl:grid-cols-2">
         {cachedAssets.map((asset) => (
-          <Card key={asset.assetKey}>
-            <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+          <Card key={asset.assetKey} className="min-w-0 overflow-hidden">
+            <CardContent className="grid min-w-0 gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-slate-50">{asset.title}</p>
                 <p className="mt-1 text-sm text-slate-400">
                   {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
                 </p>
               </div>
-              <Button className="w-full sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
+              <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
                 <Play className="h-4 w-4" />
                 Play
               </Button>

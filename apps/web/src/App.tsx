@@ -650,6 +650,7 @@ export default function App() {
       activeTab={activeTab}
       resultsCount={results.length}
       readyCount={readyCount}
+      statusCount={trackedItems.length}
       onActiveTabChange={setActiveTab}
       onLock={lockCinema}
       status={showStatusPanel ? (
