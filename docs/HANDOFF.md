@@ -172,6 +172,23 @@ web search
   -> browser video playback
 ```
 
+Cache concurrency and visibility:
+
+- The member-facing `Current tasks` panel is intentionally browser/session
+  scoped. It only shows cache jobs that this browser requested or explicitly
+  joined by clicking a result/history item. It should not become a global family
+  activity feed.
+- If member A clicks a video that member B already requested and the asset is
+  still downloading, the API should return the existing active job for the same
+  `assetKey`. A's browser then adds that job to A's local task panel and polls
+  the latest status/progress. Joining an already-running job is free and should
+  not create a duplicate download.
+- The Admin cache jobs view is global. It can show jobs requested by any
+  member, plus ready/failed/stuck state for operations.
+- Different videos can queue independently. The worker currently caps active
+  cache work with `WORKER_MAX_CONCURRENT` so Notion and Blob traffic do not
+  spike too hard from one public IP.
+
 Admin retry flow:
 
 ```text
@@ -325,4 +342,10 @@ The Notion token is read-only because the app may later add AI-assisted parsing/
 1. Improve player error states: expired SAS, codec unsupported, network stall, and blob missing.
 2. Expand the admin/debug view if needed for playback attempts and request-log drilldown. Recent cache jobs and request ids are already visible.
 3. Add optional remux/faststart handling for MP4 files whose `moov` box is late. Diagnostics exist; remuxing does not.
-4. Later, migrate the thin UI to a shadcn/Vite style and consider ArtPlayer or Vidstack.
+4. Harden cache concurrency before broader rollout. Add an asset-key scoped
+   atomic create/lease so simultaneous first clicks on the same uncached video
+   can never create duplicate jobs. Add a short worker-trigger lease so multiple
+   API instances do not start redundant worker executions at the same time, and
+   consider a scheduled watchdog that periodically drains queued/stuck work if a
+   one-shot worker exits early.
+5. Later, migrate the thin UI to a shadcn/Vite style and consider ArtPlayer or Vidstack.
