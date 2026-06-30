@@ -1,15 +1,21 @@
 import type {
   AdminCacheJobsResponse,
   AdminLoginAuditResponse,
+  AdminSetMemberPasscodeRequest,
+  AdminSetMemberPasscodeResponse,
   AuthCheckResponse,
   CachedAssetsResponse,
   CacheAssetLookupResponse,
+  ChangeMemberPasscodeRequest,
+  ChangeMemberPasscodeResponse,
   CreateMemberCodeRequest,
   CreateMemberCodeResponse,
   DeleteCacheEntryResponse,
   EnsureCacheResponse,
   MemberCodeListResponse,
   PlaybackResponse,
+  RegisterMemberRequest,
+  RegisterMemberResponse,
   SearchResult,
   SearchResponse,
   SetMemberCreditsRequest,
@@ -92,6 +98,20 @@ export function checkAccess() {
   return request<AuthCheckResponse>(apiUrl("/api/auth/check"));
 }
 
+export function registerMember(input: RegisterMemberRequest) {
+  return request<RegisterMemberResponse>(apiUrl("/api/auth/register"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
+  return request<ChangeMemberPasscodeResponse>(apiUrl("/api/auth/passcode"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function searchAssets(query: string) {
   const params = new URLSearchParams({ q: query });
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
@@ -156,6 +176,16 @@ export function deleteMemberAccessCode(id: string) {
 export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
   return request<SetMemberCreditsResponse>(
     apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/credits`),
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+export function setMemberPasscode(id: string, input: AdminSetMemberPasscodeRequest) {
+  return request<AdminSetMemberPasscodeResponse>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/passcode`),
     {
       method: "POST",
       body: JSON.stringify(input)

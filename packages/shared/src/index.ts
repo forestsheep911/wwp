@@ -206,6 +206,47 @@ export interface AuthCheckResponse {
   };
 }
 
+export const memberPasscodeLength = 12;
+
+export function validateMemberPasscode(passcode: string) {
+  if (passcode.length !== memberPasscodeLength) {
+    return "通行码必须是 12 位半角字符。";
+  }
+
+  if (!/^[\x21-\x7E]+$/.test(passcode)) {
+    return "通行码只能包含半角英数或常用符号，不能包含空格或中文。";
+  }
+
+  if (!/[A-Za-z]/.test(passcode)) {
+    return "通行码至少需要 1 个字母。";
+  }
+
+  if (!/[0-9]/.test(passcode)) {
+    return "通行码至少需要 1 个数字。";
+  }
+
+  return undefined;
+}
+
+export interface RegisterMemberRequest {
+  name: string;
+  passcode: string;
+}
+
+export interface RegisterMemberResponse {
+  auth: AuthCheckResponse;
+  code: MemberAccessCode;
+}
+
+export interface ChangeMemberPasscodeRequest {
+  currentPasscode: string;
+  newPasscode: string;
+}
+
+export interface ChangeMemberPasscodeResponse {
+  code: MemberAccessCode;
+}
+
 export interface MemberAccessCode {
   id: string;
   name: string;
@@ -240,6 +281,14 @@ export interface SetMemberCreditsRequest {
 }
 
 export interface SetMemberCreditsResponse {
+  code: MemberAccessCode;
+}
+
+export interface AdminSetMemberPasscodeRequest {
+  passcode: string;
+}
+
+export interface AdminSetMemberPasscodeResponse {
   code: MemberAccessCode;
 }
 

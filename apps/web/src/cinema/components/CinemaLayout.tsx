@@ -6,6 +6,7 @@ import {
   Database,
   Film,
   History,
+  KeyRound,
   ListChecks,
   LogOut,
   Search,
@@ -22,6 +23,7 @@ interface CinemaLayoutProps {
   activeTab: AppTab;
   accountLabel: string;
   accountDetail: string;
+  canChangePasscode: boolean;
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
@@ -30,6 +32,7 @@ interface CinemaLayoutProps {
   status?: ReactNode;
   statusCount: number;
   onActiveTabChange: (value: AppTab) => void;
+  onChangePasscode: () => void;
   onLock: () => void;
   onOpenSearch: () => void;
 }
@@ -38,6 +41,7 @@ export function CinemaLayout({
   activeTab,
   accountLabel,
   accountDetail,
+  canChangePasscode,
   library,
   cached,
   history,
@@ -46,6 +50,7 @@ export function CinemaLayout({
   status,
   statusCount,
   onActiveTabChange,
+  onChangePasscode,
   onLock,
   onOpenSearch
 }: CinemaLayoutProps) {
@@ -55,7 +60,7 @@ export function CinemaLayout({
   return (
     <main className="min-h-screen">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
-        <header className="border-b border-slate-800 bg-slate-950/70 backdrop-blur">
+        <header className="relative z-40 border-b border-slate-800 bg-slate-950/70 backdrop-blur">
           <div className="mx-auto grid max-w-7xl gap-3 px-5 py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
             <div className="flex min-w-0 items-center gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
@@ -100,7 +105,9 @@ export function CinemaLayout({
               <AccountMenu
                 accountDetail={accountDetail}
                 accountLabel={accountLabel}
+                canChangePasscode={canChangePasscode}
                 showAdmin={showAdmin}
+                onChangePasscode={onChangePasscode}
                 onOpenAdmin={() => onActiveTabChange("admin")}
                 onLock={onLock}
               />
@@ -156,18 +163,27 @@ export function CinemaLayout({
 function AccountMenu({
   accountLabel,
   accountDetail,
+  canChangePasscode,
   showAdmin,
+  onChangePasscode,
   onOpenAdmin,
   onLock
 }: {
   accountLabel: string;
   accountDetail: string;
+  canChangePasscode: boolean;
   showAdmin: boolean;
+  onChangePasscode: () => void;
   onOpenAdmin: () => void;
   onLock: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  function runAfterMenuClose(action: () => void) {
+    setOpen(false);
+    window.setTimeout(action, 80);
+  }
 
   useEffect(() => {
     if (!open) {
@@ -175,7 +191,8 @@ function AccountMenu({
     }
 
     function closeOnOutside(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) {
+      const path = event.composedPath();
+      if (menuRef.current && !path.includes(menuRef.current)) {
         setOpen(false);
       }
     }
@@ -186,10 +203,10 @@ function AccountMenu({
       }
     }
 
-    window.addEventListener("mousedown", closeOnOutside);
+    window.addEventListener("click", closeOnOutside);
     window.addEventListener("keydown", closeOnEscape);
     return () => {
-      window.removeEventListener("mousedown", closeOnOutside);
+      window.removeEventListener("click", closeOnOutside);
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
@@ -211,7 +228,11 @@ function AccountMenu({
       </Button>
 
       {open ? (
-        <div className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+        <div
+          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40"
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
           <div className="border-b border-slate-800 px-4 py-3">
             <p className="truncate text-sm font-semibold text-slate-50">{accountLabel}</p>
             <p className="mt-1 truncate text-xs text-slate-400">{accountDetail}</p>
@@ -222,13 +243,35 @@ function AccountMenu({
                 className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
                 type="button"
                 role="menuitem"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  runAfterMenuClose(onOpenAdmin);
+                }}
                 onClick={() => {
-                  onOpenAdmin();
-                  setOpen(false);
+                  runAfterMenuClose(onOpenAdmin);
                 }}
               >
                 <ShieldCheck className="h-4 w-4" />
                 Admin
+              </button>
+            ) : null}
+            {canChangePasscode ? (
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+                type="button"
+                role="menuitem"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  runAfterMenuClose(onChangePasscode);
+                }}
+                onClick={() => {
+                  runAfterMenuClose(onChangePasscode);
+                }}
+              >
+                <KeyRound className="h-4 w-4" />
+                Change passcode
               </button>
             ) : null}
             <button

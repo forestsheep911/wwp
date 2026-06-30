@@ -18,11 +18,16 @@ import {
   type CacheAssetLookupResponse,
   type CachedAssetsResponse,
   type CreateMemberCodeRequest,
+  type ChangeMemberPasscodeRequest,
+  type AdminSetMemberPasscodeRequest,
   type DeleteCacheEntryResponse,
   type EnsureCacheRequest,
+  type MemberAccessCode,
   type MediaVariant,
+  type RegisterMemberRequest,
   type SearchResult,
-  type SetMemberCreditsRequest
+  type SetMemberCreditsRequest,
+  validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity } from "./access-store.js";
@@ -298,6 +303,36 @@ function authPayload(identity: AccessIdentity): AuthCheckResponse {
       }
       : undefined
   };
+}
+
+function memberIdentityFromCode(code: Pick<MemberAccessCode, "id" | "name" | "credits">): AccessIdentity {
+  return {
+    role: "member",
+    memberId: code.id,
+    memberName: code.name,
+    credits: code.credits
+  };
+}
+
+function passcodeValidationError(passcode: string) {
+  return validateMemberPasscode(passcode) ?? (isAdminKey(passcode) ? "通行码不能和管理员密钥相同。" : undefined);
+}
+
+function sendPasscodeUpdateError(
+  result: { ok: false; reason: "not_found" | "duplicate" | "invalid_current" },
+  response: http.ServerResponse
+) {
+  if (result.reason === "not_found") {
+    sendJson(response, 404, { error: "Member was not found." });
+    return;
+  }
+
+  if (result.reason === "invalid_current") {
+    sendJson(response, 403, { error: "当前通行码不正确。" });
+    return;
+  }
+
+  sendJson(response, 409, { error: "这个通行码已经被使用，请换一个。" });
 }
 
 function loginAuditEntry(
@@ -835,6 +870,139 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
   sendJson(response, 200, { codes });
 }
 
+async function handleRegisterMember(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<RegisterMemberRequest>(request);
+  const name = body.name?.trim() ?? "";
+  const passcode = body.passcode ?? "";
+  const passcodeError = passcodeValidationError(passcode);
+
+  if (!name) {
+    sendJson(response, 400, { error: "请输入成员名称。" });
+    return;
+  }
+
+  if (passcodeError) {
+    sendJson(response, 400, { error: passcodeError });
+    return;
+  }
+
+  const result = await accessStore.registerMember({
+    name,
+    passcode
+  });
+  if (!result.ok) {
+    logWarn("api.auth.register.duplicate", {
+      requestId: context.requestId,
+      name,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: "这个通行码已经被使用，请换一个。" });
+    return;
+  }
+
+  const identity = memberIdentityFromCode(result.code);
+  await recordLoginAudit(request, identity, context);
+  logInfo("api.auth.register", {
+    requestId: context.requestId,
+    memberId: result.code.id,
+    name: result.code.name,
+    remainingCredits: result.code.credits.remaining,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, {
+    auth: authPayload(identity),
+    code: result.code
+  });
+}
+
+async function handleChangeMemberPasscode(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts can change a passcode here." });
+    return;
+  }
+
+  const body = await readBody<ChangeMemberPasscodeRequest>(request);
+  const currentPasscode = body.currentPasscode ?? "";
+  const newPasscode = body.newPasscode ?? "";
+  const passcodeError = passcodeValidationError(newPasscode);
+
+  if (!currentPasscode) {
+    sendJson(response, 400, { error: "请输入当前通行码。" });
+    return;
+  }
+
+  if (passcodeError) {
+    sendJson(response, 400, { error: passcodeError });
+    return;
+  }
+
+  const result = await accessStore.changeMemberPasscode(identity.memberId, currentPasscode, newPasscode);
+  if (!result.ok) {
+    logWarn("api.auth.passcode_change_failed", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      reason: result.reason,
+      durationMs: durationMs(startedAt)
+    });
+    sendPasscodeUpdateError(result, response);
+    return;
+  }
+
+  logInfo("api.auth.passcode_change", {
+    requestId: context.requestId,
+    memberId: result.code.id,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { code: result.code });
+}
+
+async function handleSetMemberPasscode(
+  codeId: string,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<AdminSetMemberPasscodeRequest>(request);
+  const passcode = body.passcode ?? "";
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    sendJson(response, 400, { error: passcodeError });
+    return;
+  }
+
+  const result = await accessStore.setMemberPasscode(codeId, passcode);
+  if (!result.ok) {
+    logWarn("api.admin.member_codes.passcode_set_failed", {
+      requestId: context.requestId,
+      memberCodeId: codeId,
+      reason: result.reason,
+      durationMs: durationMs(startedAt)
+    });
+    sendPasscodeUpdateError(result, response);
+    return;
+  }
+
+  logInfo("api.admin.member_codes.passcode_set", {
+    requestId: context.requestId,
+    memberCodeId: result.code.id,
+    name: result.code.name,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { code: result.code });
+}
+
 async function handleListLoginAudit(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 50, 200);
@@ -1119,6 +1287,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "POST" && pathname === "/api/auth/register") {
+      await handleRegisterMember(request, response, context);
+      return;
+    }
+
     let identity: AccessIdentity | undefined;
     if (pathname.startsWith("/api/")) {
       identity = await requireAccess(request, response, context);
@@ -1135,6 +1308,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         memberId: identity?.memberId
       });
       sendJson(response, 200, authPayload(identity!));
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/auth/passcode") {
+      await handleChangeMemberPasscode(request, response, context, identity!);
       return;
     }
 
@@ -1207,6 +1385,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && setMemberCreditsMatch) {
       await handleSetMemberCredits(decodeURIComponent(setMemberCreditsMatch[1]), request, response, context);
+      return;
+    }
+
+    const setMemberPasscodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/passcode$/);
+    if (setMemberPasscodeMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && setMemberPasscodeMatch) {
+      await handleSetMemberPasscode(decodeURIComponent(setMemberPasscodeMatch[1]), request, response, context);
       return;
     }
 

@@ -51,11 +51,13 @@ interface AdminPanelProps {
   memberName: string;
   memberCredits: number;
   memberCreditEdits: Record<string, number>;
+  memberPasscodeEdits: Record<string, string>;
   memberCodes: ManagedMemberCode[];
   setAdminKeyInput: (value: string) => void;
   setMemberName: (value: string) => void;
   setMemberCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
+  setMemberPasscodeEdit: (id: string, value: string) => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
@@ -67,6 +69,7 @@ interface AdminPanelProps {
   onDeleteCacheJob: (jobId: string) => void;
   onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
+  onUpdatePasscode: (id: string) => void;
   onRevoke: (id: string) => void;
 }
 
@@ -84,11 +87,13 @@ export function AdminPanel({
   memberName,
   memberCredits,
   memberCreditEdits,
+  memberPasscodeEdits,
   memberCodes,
   setAdminKeyInput,
   setMemberName,
   setMemberCredits,
   setMemberCreditEdit,
+  setMemberPasscodeEdit,
   onUnlock,
   onGenerate,
   onCopy,
@@ -100,6 +105,7 @@ export function AdminPanel({
   onDeleteCacheJob,
   onDeleteCachedAsset,
   onUpdateCredits,
+  onUpdatePasscode,
   onRevoke
 }: AdminPanelProps) {
   if (!adminUnlocked) {
@@ -162,7 +168,7 @@ export function AdminPanel({
           </TabsTrigger>
           <TabsTrigger value="passes">
             <Users className="h-4 w-4" />
-            Cinema Passes
+            Members
             <Badge variant="secondary">{memberCodes.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="security">
@@ -198,6 +204,7 @@ export function AdminPanel({
             adminLoading={adminLoading}
             memberCodes={memberCodes}
             memberCreditEdits={memberCreditEdits}
+            memberPasscodeEdits={memberPasscodeEdits}
             memberCredits={memberCredits}
             memberName={memberName}
             onCopy={onCopy}
@@ -205,7 +212,9 @@ export function AdminPanel({
             onGenerate={onGenerate}
             onRevoke={onRevoke}
             onUpdateCredits={onUpdateCredits}
+            onUpdatePasscode={onUpdatePasscode}
             setMemberCreditEdit={setMemberCreditEdit}
+            setMemberPasscodeEdit={setMemberPasscodeEdit}
             setMemberCredits={setMemberCredits}
             setMemberName={setMemberName}
           />
@@ -301,6 +310,7 @@ function AdminPassesPanel({
   adminLoading,
   memberCodes,
   memberCreditEdits,
+  memberPasscodeEdits,
   memberCredits,
   memberName,
   onCopy,
@@ -308,13 +318,16 @@ function AdminPassesPanel({
   onGenerate,
   onRevoke,
   onUpdateCredits,
+  onUpdatePasscode,
   setMemberCreditEdit,
+  setMemberPasscodeEdit,
   setMemberCredits,
   setMemberName
 }: {
   adminLoading: boolean;
   memberCodes: ManagedMemberCode[];
   memberCreditEdits: Record<string, number>;
+  memberPasscodeEdits: Record<string, string>;
   memberCredits: number;
   memberName: string;
   onCopy: (code: string) => void;
@@ -322,7 +335,9 @@ function AdminPassesPanel({
   onGenerate: () => void;
   onRevoke: (id: string) => void;
   onUpdateCredits: (id: string) => void;
+  onUpdatePasscode: (id: string) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
+  setMemberPasscodeEdit: (id: string, value: string) => void;
   setMemberCredits: (value: number) => void;
   setMemberName: (value: string) => void;
 }) {
@@ -332,9 +347,9 @@ function AdminPassesPanel({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <UserPlus className="h-5 w-5 text-emerald-300" />
-            New Cinema Pass
+            New member
           </CardTitle>
-          <CardDescription>Generate a household pass with a starting 🍀 balance.</CardDescription>
+          <CardDescription>Generate a temporary passcode with a starting 🍀 balance.</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -369,11 +384,11 @@ function AdminPassesPanel({
 
       <div className="grid gap-3">
         {memberCodes.length === 0 ? (
-          <EmptyState icon={<Users className="h-5 w-5" />} title="No Cinema Passes" />
+          <EmptyState icon={<Users className="h-5 w-5" />} title="No members" />
         ) : (
           memberCodes.map((code) => (
             <Card key={code.id}>
-              <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+              <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-semibold text-slate-50">{code.name}</p>
@@ -390,12 +405,13 @@ function AdminPassesPanel({
                   </div>
                   {!code.code ? (
                     <p className="mt-1 text-xs text-amber-200">
-                      Full code is shown only when generated.
+                      Full passcode is shown only when generated or reset.
                     </p>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-2 sm:justify-end">
-                  <div className="flex items-center gap-2">
+
+                <div className="grid gap-2 lg:min-w-[360px]">
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     <Input
                       className="h-9 w-20"
                       min={0}
@@ -414,38 +430,59 @@ function AdminPassesPanel({
                       Set 🍀
                     </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => code.code && onCopy(code.code)}
-                    disabled={!code.code || adminLoading}
-                  >
-                    <Copy className="h-4 w-4" />
-                    <span className="sr-only">Copy</span>
-                  </Button>
-                  {code.status === "active" ? (
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <Input
+                      className="h-9 w-40 font-mono"
+                      maxLength={12}
+                      placeholder="New passcode"
+                      type="text"
+                      value={memberPasscodeEdits[code.id] ?? ""}
+                      onChange={(event) => setMemberPasscodeEdit(code.id, event.target.value)}
+                    />
                     <Button
                       type="button"
-                      variant="destructive"
+                      variant="outline"
                       size="sm"
-                      onClick={() => onRevoke(code.id)}
-                      disabled={adminLoading}
+                      onClick={() => onUpdatePasscode(code.id)}
+                      disabled={adminLoading || code.status !== "active"}
                     >
-                      Revoke
+                      Set passcode
                     </Button>
-                  ) : null}
-                  {code.status !== "active" ? (
+                  </div>
+                  <div className="flex flex-wrap gap-2 lg:justify-end">
                     <Button
                       type="button"
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => onDelete(code.id)}
-                      disabled={adminLoading}
+                      variant="outline"
+                      size="icon"
+                      onClick={() => code.code && onCopy(code.code)}
+                      disabled={!code.code || adminLoading}
                     >
-                      Delete
+                      <Copy className="h-4 w-4" />
+                      <span className="sr-only">Copy</span>
                     </Button>
-                  ) : null}
+                    {code.status === "active" ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => onRevoke(code.id)}
+                        disabled={adminLoading}
+                      >
+                        Revoke
+                      </Button>
+                    ) : null}
+                    {code.status !== "active" ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => onDelete(code.id)}
+                        disabled={adminLoading}
+                      >
+                        Delete
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </CardContent>
             </Card>

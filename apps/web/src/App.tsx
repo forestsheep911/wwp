@@ -12,6 +12,7 @@ import type {
 } from "@wwpdw/shared";
 import {
   checkAccess,
+  changeMemberPasscode,
   clearAccessKey,
   createMemberAccessCode,
   deleteCachedAsset,
@@ -32,6 +33,7 @@ import {
   retryCacheJob,
   searchAssets,
   setMemberCredits as setMemberCreditsApi,
+  setMemberPasscode as setMemberPasscodeApi,
   setAccessKey
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
@@ -41,6 +43,7 @@ import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { Player } from "./cinema/components/Player";
+import { PasscodeDialog } from "./cinema/components/PasscodeDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
 import { StatusPanel } from "./cinema/components/StatusPanel";
 import { cacheErrorLabel } from "./cinema/format";
@@ -135,6 +138,9 @@ export default function App() {
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [passcodeOpen, setPasscodeOpen] = useState(false);
+  const [passcodeLoading, setPasscodeLoading] = useState(false);
+  const [passcodeError, setPasscodeError] = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -150,6 +156,7 @@ export default function App() {
   const [memberName, setMemberName] = useState("");
   const [memberCredits, setMemberCredits] = useState(20);
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
+  const [memberPasscodeEdits, setMemberPasscodeEdits] = useState<Record<string, string>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
   const [loginAudit, setLoginAudit] = useState<AdminLoginAuditEntry[]>([]);
@@ -653,6 +660,13 @@ export default function App() {
     }));
   }
 
+  function setMemberPasscodeEdit(id: string, value: string) {
+    setMemberPasscodeEdits((currentPasscodes) => ({
+      ...currentPasscodes,
+      [id]: value
+    }));
+  }
+
   async function updateMemberCredits(id: string) {
     const currentCode = memberCodes.find((code) => code.id === id);
     const credits = memberCreditEdits[id] ?? currentCode?.credits.remaining ?? 0;
@@ -673,6 +687,30 @@ export default function App() {
       setMemberCreditEdit(id, response.code.credits.remaining);
     } catch (creditUpdateError) {
       setAdminError(errorMessage(creditUpdateError, "Could not update credits."));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function updateMemberPasscode(id: string) {
+    const passcode = memberPasscodeEdits[id]?.trim() ?? "";
+    if (!passcode) {
+      setAdminError("Enter a new passcode.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await setMemberPasscodeApi(id, { passcode });
+      setMemberCodes((currentCodes) => currentCodes.map((code) => (
+        code.id === id
+          ? { ...response.code, code: passcode }
+          : code
+      )));
+      setMemberPasscodeEdit(id, "");
+    } catch (passcodeUpdateError) {
+      setAdminError(errorMessage(passcodeUpdateError, "Could not update passcode."));
     } finally {
       setAdminLoading(false);
     }
@@ -712,11 +750,35 @@ export default function App() {
     await navigator.clipboard?.writeText(code);
   }
 
+  async function changeOwnPasscode(currentPasscode: string, newPasscode: string) {
+    setPasscodeLoading(true);
+    setPasscodeError("");
+    try {
+      const response = await changeMemberPasscode({
+        currentPasscode,
+        newPasscode
+      });
+      setAccessKey(newPasscode);
+      setMember({
+        id: response.code.id,
+        name: response.code.name,
+        credits: response.code.credits
+      });
+      setPasscodeOpen(false);
+    } catch (changeError) {
+      setPasscodeError(errorMessage(changeError, "Could not change passcode."));
+    } finally {
+      setPasscodeLoading(false);
+    }
+  }
+
   function lockCinema() {
     clearAccessKey();
     setUnlocked(false);
     setRole(undefined);
     setMember(undefined);
+    setPasscodeOpen(false);
+    setPasscodeError("");
     setAdminUnlocked(false);
     setActiveTab("library");
     setQuery("");
@@ -725,6 +787,7 @@ export default function App() {
     setJob(undefined);
     setAsset(undefined);
     setMemberCodes([]);
+    setMemberPasscodeEdits({});
     setCacheJobs([]);
     setLoginAudit([]);
     setTrackedItems([]);
@@ -945,13 +1008,27 @@ export default function App() {
         onQueryChange={setQuery}
         onSearch={(event) => void runDialogSearch(event)}
       />
+      <PasscodeDialog
+        error={passcodeError}
+        loading={passcodeLoading}
+        open={passcodeOpen}
+        onOpenChange={(open) => {
+          setPasscodeOpen(open);
+          if (!open) {
+            setPasscodeError("");
+          }
+        }}
+        onSubmit={(currentPasscode, newPasscode) => void changeOwnPasscode(currentPasscode, newPasscode)}
+      />
       <CinemaLayout
         activeTab={activeTab}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
+        canChangePasscode={role === "member"}
         statusCount={trackedItems.length}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
+        onChangePasscode={() => setPasscodeOpen(true)}
         onLock={lockCinema}
         onOpenSearch={() => setSearchOpen(true)}
         status={showStatusPanel ? (
@@ -1011,11 +1088,13 @@ export default function App() {
             memberName={memberName}
             memberCredits={memberCredits}
             memberCreditEdits={memberCreditEdits}
+            memberPasscodeEdits={memberPasscodeEdits}
             memberCodes={memberCodes}
             setAdminKeyInput={setAdminKeyInput}
             setMemberName={setMemberName}
             setMemberCredits={setMemberCredits}
             setMemberCreditEdit={setMemberCreditEdit}
+            setMemberPasscodeEdit={setMemberPasscodeEdit}
             onUnlock={unlockAdmin}
             onGenerate={generateMemberCode}
             onCopy={(code) => void copyMemberCode(code)}
@@ -1027,6 +1106,7 @@ export default function App() {
             onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
             onUpdateCredits={updateMemberCredits}
+            onUpdatePasscode={updateMemberPasscode}
             onRevoke={revokeMemberCode}
           />
         ) : undefined}
