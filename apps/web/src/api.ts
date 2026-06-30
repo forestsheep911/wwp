@@ -1,5 +1,6 @@
 import type {
   AdminCacheJobsResponse,
+  AdminLoginAuditResponse,
   AuthCheckResponse,
   CachedAssetsResponse,
   CacheAssetLookupResponse,
@@ -165,6 +166,11 @@ export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
 export function listCacheJobs(limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<AdminCacheJobsResponse>(apiUrl(`/api/admin/cache-jobs?${params.toString()}`));
+}
+
+export function listLoginAudit(limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<AdminLoginAuditResponse>(apiUrl(`/api/admin/login-audit?${params.toString()}`));
 }
 
 export function retryCacheJob(jobId: string) {

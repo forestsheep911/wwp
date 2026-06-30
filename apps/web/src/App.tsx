@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AccessRole,
   AdminCacheJobEntry,
+  AdminLoginAuditEntry,
   AuthCheckResponse,
   CacheAsset,
   CacheJob,
@@ -25,6 +26,7 @@ import {
   isUnauthorizedError,
   listCachedAssets,
   listCacheJobs,
+  listLoginAudit,
   listMemberCodes,
   revokeMemberAccessCode,
   retryCacheJob,
@@ -123,6 +125,7 @@ export default function App() {
   const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
   const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
   const [role, setRole] = useState<AccessRole | undefined>();
+  const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
@@ -149,7 +152,10 @@ export default function App() {
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
+  const [loginAudit, setLoginAudit] = useState<AdminLoginAuditEntry[]>([]);
+  const [loginAuditLoading, setLoginAuditLoading] = useState(false);
   const adminCacheJobLimit = 100;
+  const loginAuditLimit = 100;
   const historyInitializedRef = useRef(false);
 
   const trackedPollKey = useMemo(
@@ -463,6 +469,7 @@ export default function App() {
 
   function applyAuth(auth: AuthCheckResponse) {
     setRole(auth.role);
+    setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
   }
 
@@ -477,6 +484,23 @@ export default function App() {
       setAdminError("");
     } catch (adminListError) {
       setAdminError(errorMessage(adminListError, "Could not load member codes."));
+    }
+  }
+
+  async function refreshLoginAudit() {
+    if (!adminUnlocked) {
+      return;
+    }
+
+    setLoginAuditLoading(true);
+    try {
+      const response = await listLoginAudit(loginAuditLimit);
+      setLoginAudit(response.events);
+      setAdminError("");
+    } catch (auditError) {
+      setAdminError(errorMessage(auditError, "Could not load login audit."));
+    } finally {
+      setLoginAuditLoading(false);
     }
   }
 
@@ -584,6 +608,15 @@ export default function App() {
       } catch (cacheJobError) {
         setAdminError(errorMessage(cacheJobError, "Could not load cache jobs."));
       }
+      try {
+        setLoginAuditLoading(true);
+        const auditResponse = await listLoginAudit(loginAuditLimit);
+        setLoginAudit(auditResponse.events);
+      } catch (auditError) {
+        setAdminError(errorMessage(auditError, "Could not load login audit."));
+      } finally {
+        setLoginAuditLoading(false);
+      }
     } catch (adminAccessError) {
       setAccessKey(previousKey);
       setAdminError(errorMessage(adminAccessError, "Admin key did not match."));
@@ -683,6 +716,7 @@ export default function App() {
     clearAccessKey();
     setUnlocked(false);
     setRole(undefined);
+    setMember(undefined);
     setAdminUnlocked(false);
     setActiveTab("library");
     setQuery("");
@@ -692,6 +726,7 @@ export default function App() {
     setAsset(undefined);
     setMemberCodes([]);
     setCacheJobs([]);
+    setLoginAudit([]);
     setTrackedItems([]);
     setCacheRequestAssetKeys([]);
     setCachedAssets([]);
@@ -846,6 +881,7 @@ export default function App() {
       void refreshMemberCodes();
       void refreshCachedAssets();
       void refreshCacheJobs();
+      void refreshLoginAudit();
     }
   }, [activeTab, adminUnlocked]);
 
@@ -891,6 +927,12 @@ export default function App() {
 
   const showStatusPanel = activeTab === "library" || activeTab === "tasks" || trackedItems.length > 0;
   const showAdmin = role === "admin";
+  const accountLabel = role === "admin" ? "Admin" : member?.name ?? "Member";
+  const accountDetail = role === "admin"
+    ? "Administrator"
+    : member?.credits
+      ? `${member.credits.unitSymbol} ${member.credits.remaining}`
+      : "Cinema member";
 
   return (
     <>
@@ -905,6 +947,8 @@ export default function App() {
       />
       <CinemaLayout
         activeTab={activeTab}
+        accountDetail={accountDetail}
+        accountLabel={accountLabel}
         statusCount={trackedItems.length}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
@@ -961,6 +1005,8 @@ export default function App() {
             cacheJobsLoading={cacheJobsLoading}
             cachedAssets={cachedAssets}
             cachedAssetsLoading={cachedAssetsLoading}
+            loginAudit={loginAudit}
+            loginAuditLoading={loginAuditLoading}
             adminKeyInput={adminKeyInput}
             memberName={memberName}
             memberCredits={memberCredits}
@@ -976,6 +1022,7 @@ export default function App() {
             onDelete={deleteMemberCode}
             onRefreshJobs={() => void refreshCacheJobs()}
             onRefreshCachedAssets={() => void refreshCachedAssets()}
+            onRefreshLoginAudit={() => void refreshLoginAudit()}
             onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
             onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}

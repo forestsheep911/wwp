@@ -4,6 +4,7 @@ import path from "node:path";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
 import type {
+  AdminLoginAuditEntry,
   MemberCreditCharge,
   MemberCreditLimitReason,
   MemberCreditSummary,
@@ -16,6 +17,7 @@ type AccessBackend = "local" | "azure";
 
 interface LocalAccessState {
   codes: Record<string, StoredMemberCode>;
+  audit?: AdminLoginAuditEntry[];
 }
 
 interface StoredMemberCode {
@@ -56,6 +58,7 @@ const defaultMemberTableName = "membercodes";
 const memberCreditUnitSymbol = "🍀";
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
 const noExpiryAt = "9999-12-31T23:59:59.999Z";
+const loginAuditRetention = 500;
 
 function backend(): AccessBackend {
   return process.env.CACHE_BACKEND === "azure" ? "azure" : "local";
@@ -232,6 +235,11 @@ function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
   return JSON.parse(entity.payload) as T;
 }
 
+function normalizeState(state: LocalAccessState): LocalAccessState {
+  state.audit ??= [];
+  return state;
+}
+
 function isConflict(error: unknown) {
   return (error as { statusCode?: number }).statusCode === 409;
 }
@@ -281,6 +289,8 @@ export interface AccessStore {
   listMemberCodes(): Promise<MemberAccessCode[]>;
   setMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
+  recordLoginAudit(entry: AdminLoginAuditEntry): Promise<void>;
+  listLoginAudit(limit: number): Promise<AdminLoginAuditEntry[]>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
   deleteMemberCode(id: string): Promise<boolean>;
   findMemberByCode(code: string): Promise<AccessIdentity | undefined>;
@@ -368,6 +378,20 @@ class LocalAccessStore implements AccessStore {
     });
   }
 
+  async recordLoginAudit(entry: AdminLoginAuditEntry) {
+    await this.updateState((state) => {
+      state.audit = [entry, ...(state.audit ?? [])].slice(0, loginAuditRetention);
+    });
+  }
+
+  async listLoginAudit(limit: number) {
+    const state = await this.readState();
+    return (state.audit ?? [])
+      .slice()
+      .sort((left, right) => right.at.localeCompare(left.at))
+      .slice(0, limit);
+  }
+
   async deleteMemberCode(id: string) {
     return this.updateState((state) => {
       if (!state.codes[id]) {
@@ -400,11 +424,11 @@ class LocalAccessStore implements AccessStore {
   private async readState(): Promise<LocalAccessState> {
     try {
       const raw = await readFile(this.statePath, "utf8");
-      return JSON.parse(raw) as LocalAccessState;
+      return normalizeState(JSON.parse(raw) as LocalAccessState);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        return { codes: {} };
+        return normalizeState({ codes: {} });
       }
       throw error;
     }
@@ -530,6 +554,37 @@ class AzureAccessStore implements AccessStore {
     stored.revokedAt = new Date().toISOString();
     await this.save(stored);
     return publicCode(stored);
+  }
+
+  async recordLoginAudit(entry: AdminLoginAuditEntry) {
+    await this.ensureReady();
+    await this.table.upsertEntity<PayloadEntity>(
+      {
+        partitionKey: "audit",
+        rowKey: `${entry.at}-${entry.id}`,
+        status: entry.role,
+        payload: serialize(entry)
+      },
+      "Replace"
+    );
+  }
+
+  async listLoginAudit(limit: number) {
+    await this.ensureReady();
+    const events: AdminLoginAuditEntry[] = [];
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'audit'"
+      }
+    });
+
+    for await (const entity of entities) {
+      events.push(deserialize<AdminLoginAuditEntry>(entity));
+    }
+
+    return events
+      .sort((left, right) => right.at.localeCompare(left.at))
+      .slice(0, limit);
   }
 
   async deleteMemberCode(id: string) {

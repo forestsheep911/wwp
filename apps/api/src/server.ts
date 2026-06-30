@@ -8,6 +8,8 @@ import {
   logError,
   logInfo,
   logWarn,
+  type AdminLoginAuditEntry,
+  type AdminLoginAuditResponse,
   type AdminCacheJobsResponse,
   type AccessRole,
   type AuthCheckResponse,
@@ -72,6 +74,135 @@ function sendJson(response: http.ServerResponse, statusCode: number, payload: un
 
 function headerValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function boundedHeaderValue(value: string | string[] | undefined, maxLength = 320) {
+  const raw = headerValue(value)?.trim();
+  return raw ? raw.slice(0, maxLength) : undefined;
+}
+
+function firstForwardedIp(value: string | undefined) {
+  const first = value?.split(",")[0]?.trim();
+  if (!first) {
+    return undefined;
+  }
+
+  const forwardedFor = first.match(/^for="?([^";]+)"?/i)?.[1] ?? first;
+  return forwardedFor.replace(/^::ffff:/, "").slice(0, 80);
+}
+
+function requestIp(request: http.IncomingMessage) {
+  return firstForwardedIp(
+    boundedHeaderValue(request.headers["x-forwarded-for"], 512) ??
+      boundedHeaderValue(request.headers.forwarded, 512) ??
+      boundedHeaderValue(request.headers["x-real-ip"]) ??
+      boundedHeaderValue(request.headers["x-client-ip"]) ??
+      boundedHeaderValue(request.headers["cf-connecting-ip"]) ??
+      request.socket.remoteAddress
+  );
+}
+
+function privateNetworkLabel(ip?: string) {
+  if (!ip) {
+    return undefined;
+  }
+
+  if (ip === "::1" || ip === "127.0.0.1" || ip.startsWith("10.") || ip.startsWith("192.168.")) {
+    return "Private network";
+  }
+
+  const parts = ip.split(".").map(Number);
+  if (parts.length === 4 && parts.every((part) => Number.isInteger(part))) {
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
+      return "Private network";
+    }
+  }
+
+  return undefined;
+}
+
+function requestLocation(request: http.IncomingMessage, ip?: string) {
+  const country = boundedHeaderValue(
+    request.headers["cf-ipcountry"] ??
+      request.headers["x-vercel-ip-country"] ??
+      request.headers["x-appengine-country"],
+    80
+  );
+  const region = boundedHeaderValue(
+    request.headers["cf-region"] ??
+      request.headers["x-vercel-ip-country-region"] ??
+      request.headers["x-appengine-region"],
+    120
+  );
+  const city = boundedHeaderValue(
+    request.headers["cf-ipcity"] ??
+      request.headers["x-vercel-ip-city"] ??
+      request.headers["x-appengine-city"],
+    120
+  );
+  const parts = [city, region, country].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(", ") : privateNetworkLabel(ip) ?? "Unknown";
+}
+
+function browserLabel(userAgent: string) {
+  if (userAgent.includes("Edg/")) {
+    return "Edge";
+  }
+
+  if (userAgent.includes("Chrome/") || userAgent.includes("CriOS/")) {
+    return "Chrome";
+  }
+
+  if (userAgent.includes("Firefox/") || userAgent.includes("FxiOS/")) {
+    return "Firefox";
+  }
+
+  if (userAgent.includes("Safari/")) {
+    return "Safari";
+  }
+
+  return "Browser";
+}
+
+function osLabel(userAgent: string) {
+  if (userAgent.includes("Windows")) {
+    return "Windows";
+  }
+
+  if (userAgent.includes("iPhone") || userAgent.includes("iPad")) {
+    return "iOS";
+  }
+
+  if (userAgent.includes("Android")) {
+    return "Android";
+  }
+
+  if (userAgent.includes("Mac OS X")) {
+    return "macOS";
+  }
+
+  if (userAgent.includes("Linux")) {
+    return "Linux";
+  }
+
+  return "Device";
+}
+
+function requestDevice(request: http.IncomingMessage) {
+  const userAgent = boundedHeaderValue(request.headers["user-agent"], 600);
+  if (!userAgent) {
+    return {
+      device: "Unknown device",
+      userAgent: undefined
+    };
+  }
+
+  const mobile = /Mobile|Android|iPhone|iPad/i.test(userAgent) ? " mobile" : "";
+  return {
+    device: `${osLabel(userAgent)} / ${browserLabel(userAgent)}${mobile}`,
+    userAgent
+  };
 }
 
 function safeEqual(left: string, right: string) {
@@ -167,6 +298,50 @@ function authPayload(identity: AccessIdentity): AuthCheckResponse {
       }
       : undefined
   };
+}
+
+function loginAuditEntry(
+  request: http.IncomingMessage,
+  identity: AccessIdentity,
+  requestId: string
+): AdminLoginAuditEntry {
+  const ipAddress = requestIp(request);
+  const device = requestDevice(request);
+  return {
+    id: randomUUID(),
+    at: new Date().toISOString(),
+    role: identity.role as AccessRole,
+    memberId: identity.memberId,
+    memberName: identity.memberName,
+    ipAddress,
+    ipLocation: requestLocation(request, ipAddress),
+    device: device.device,
+    userAgent: device.userAgent,
+    requestId
+  };
+}
+
+async function recordLoginAudit(request: http.IncomingMessage, identity: AccessIdentity, context: RequestContext) {
+  const entry = loginAuditEntry(request, identity, context.requestId);
+  try {
+    await accessStore.recordLoginAudit(entry);
+    logInfo("api.auth.login_audit.record", {
+      requestId: context.requestId,
+      auditId: entry.id,
+      role: entry.role,
+      memberId: entry.memberId,
+      ipAddress: entry.ipAddress,
+      ipLocation: entry.ipLocation,
+      device: entry.device
+    });
+  } catch (error) {
+    logWarn("api.auth.login_audit.record_failed", {
+      requestId: context.requestId,
+      role: entry.role,
+      memberId: entry.memberId,
+      ...errorLogFields(error)
+    });
+  }
 }
 
 async function readBody<T>(request: http.IncomingMessage): Promise<T> {
@@ -660,6 +835,21 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
   sendJson(response, 200, { codes });
 }
 
+async function handleListLoginAudit(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 200);
+  const events = await accessStore.listLoginAudit(limit);
+  const payload: AdminLoginAuditResponse = { events };
+
+  logInfo("api.admin.login_audit.list", {
+    requestId: context.requestId,
+    count: payload.events.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
 async function handleSetMemberCredits(
   codeId: string,
   request: http.IncomingMessage,
@@ -938,12 +1128,22 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "GET" && pathname === "/api/auth/check") {
+      await recordLoginAudit(request, identity!, context);
       logInfo("api.auth.check", {
         requestId,
         role: identity?.role,
         memberId: identity?.memberId
       });
       sendJson(response, 200, authPayload(identity!));
+      return;
+    }
+
+    if (pathname === "/api/admin/login-audit" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/login-audit") {
+      await handleListLoginAudit(url, response, context);
       return;
     }
 

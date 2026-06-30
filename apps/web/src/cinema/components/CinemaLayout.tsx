@@ -1,14 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Database,
   Film,
   History,
   ListChecks,
   LogOut,
   Search,
-  ShieldCheck
+  ShieldCheck,
+  SlidersHorizontal,
+  UserCircle
 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -17,6 +20,8 @@ import type { AppTab } from "../types";
 
 interface CinemaLayoutProps {
   activeTab: AppTab;
+  accountLabel: string;
+  accountDetail: string;
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
@@ -31,6 +36,8 @@ interface CinemaLayoutProps {
 
 export function CinemaLayout({
   activeTab,
+  accountLabel,
+  accountDetail,
   library,
   cached,
   history,
@@ -90,11 +97,13 @@ export function CinemaLayout({
                 <Search className="h-4 w-4" />
                 <span className="sr-only">Search</span>
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={onLock} title="Logout">
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline">Logout</span>
-                <span className="sr-only sm:hidden">Logout</span>
-              </Button>
+              <AccountMenu
+                accountDetail={accountDetail}
+                accountLabel={accountLabel}
+                showAdmin={showAdmin}
+                onOpenAdmin={() => onActiveTabChange("admin")}
+                onLock={onLock}
+              />
             </div>
           </div>
         </header>
@@ -141,5 +150,120 @@ export function CinemaLayout({
         </div>
       </Tabs>
     </main>
+  );
+}
+
+function AccountMenu({
+  accountLabel,
+  accountDetail,
+  showAdmin,
+  onOpenAdmin,
+  onLock
+}: {
+  accountLabel: string;
+  accountDetail: string;
+  showAdmin: boolean;
+  onOpenAdmin: () => void;
+  onLock: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function closeOnOutside(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("mousedown", closeOnOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("mousedown", closeOnOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+        title="Account"
+      >
+        <UserCircle className="h-4 w-4" />
+        <span className="hidden max-w-[8rem] truncate sm:inline">{accountLabel}</span>
+        <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+      </Button>
+
+      {open ? (
+        <div className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-md border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <p className="truncate text-sm font-semibold text-slate-50">{accountLabel}</p>
+            <p className="mt-1 truncate text-xs text-slate-400">{accountDetail}</p>
+          </div>
+          <div className="grid p-1" role="menu">
+            {showAdmin ? (
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onOpenAdmin();
+                  setOpen(false);
+                }}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Admin
+              </button>
+            ) : null}
+            <button
+              className="flex cursor-not-allowed items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-500"
+              type="button"
+              role="menuitem"
+              disabled
+            >
+              <UserCircle className="h-4 w-4" />
+              Profile
+            </button>
+            <button
+              className="flex cursor-not-allowed items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-500"
+              type="button"
+              role="menuitem"
+              disabled
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              Settings
+            </button>
+            <button
+              className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-rose-200 hover:bg-rose-400/10 hover:text-rose-100"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onLock();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

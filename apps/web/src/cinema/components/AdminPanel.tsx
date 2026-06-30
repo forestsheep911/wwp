@@ -2,15 +2,18 @@ import {
   Activity,
   Database,
   Copy,
+  Fingerprint,
+  Globe2,
   KeyRound,
   Loader2,
+  MonitorSmartphone,
   RefreshCw,
   ShieldCheck,
   Trash2,
   UserPlus,
   Users
 } from "lucide-react";
-import type { AdminCacheJobEntry, CacheAsset } from "@wwpdw/shared";
+import type { AdminCacheJobEntry, AdminLoginAuditEntry, CacheAsset } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -42,6 +45,8 @@ interface AdminPanelProps {
   cacheJobsLoading: boolean;
   cachedAssets: CacheAsset[];
   cachedAssetsLoading: boolean;
+  loginAudit: AdminLoginAuditEntry[];
+  loginAuditLoading: boolean;
   adminKeyInput: string;
   memberName: string;
   memberCredits: number;
@@ -57,6 +62,7 @@ interface AdminPanelProps {
   onDelete: (id: string) => void;
   onRefreshJobs: () => void;
   onRefreshCachedAssets: () => void;
+  onRefreshLoginAudit: () => void;
   onRetryCacheJob: (jobId: string) => void;
   onDeleteCacheJob: (jobId: string) => void;
   onDeleteCachedAsset: (assetKey: string) => void;
@@ -72,6 +78,8 @@ export function AdminPanel({
   cacheJobsLoading,
   cachedAssets,
   cachedAssetsLoading,
+  loginAudit,
+  loginAuditLoading,
   adminKeyInput,
   memberName,
   memberCredits,
@@ -87,6 +95,7 @@ export function AdminPanel({
   onDelete,
   onRefreshJobs,
   onRefreshCachedAssets,
+  onRefreshLoginAudit,
   onRetryCacheJob,
   onDeleteCacheJob,
   onDeleteCachedAsset,
@@ -156,6 +165,11 @@ export function AdminPanel({
             Cinema Passes
             <Badge variant="secondary">{memberCodes.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="security">
+            <ShieldCheck className="h-4 w-4" />
+            Security
+            <Badge variant="secondary">{loginAudit.length}</Badge>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="cached">
@@ -196,8 +210,90 @@ export function AdminPanel({
             setMemberName={setMemberName}
           />
         </TabsContent>
+
+        <TabsContent value="security">
+          <AdminLoginAuditPanel
+            events={loginAudit}
+            loading={loginAuditLoading}
+            onRefresh={onRefreshLoginAudit}
+          />
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function AdminLoginAuditPanel({
+  events,
+  loading,
+  onRefresh
+}: {
+  events: AdminLoginAuditEntry[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Fingerprint className="h-5 w-5 text-emerald-300" />
+            Login audit
+          </CardTitle>
+          <CardDescription>Successful Cinema Pass checks with network and device context.</CardDescription>
+        </div>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {events.length === 0 ? (
+          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+            {loading ? "Loading login audit" : "No login audit recorded"}
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {events.map((event) => (
+              <div key={event.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-slate-50">
+                        {event.role === "admin" ? "Administrator" : event.memberName ?? "Cinema member"}
+                      </p>
+                      <Badge variant={event.role === "admin" ? "warning" : "secondary"}>{event.role}</Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-400">{formatDateTime(event.at)}</p>
+                  </div>
+                  <Badge variant="muted">{event.ipAddress ?? "unknown ip"}</Badge>
+                </div>
+
+                <div className="grid gap-3 text-sm md:grid-cols-4">
+                  <Metric label="Location" value={event.ipLocation ?? "Unknown"} />
+                  <Metric label="Device" value={event.device ?? "Unknown device"} />
+                  <Metric label="Member" value={event.memberId ?? "admin"} />
+                  <Metric label="Request" value={event.requestId ?? "not captured"} />
+                </div>
+
+                {event.userAgent ? (
+                  <p className="truncate text-xs text-slate-500" title={event.userAgent}>
+                    <MonitorSmartphone className="mr-1 inline h-3.5 w-3.5" />
+                    {event.userAgent}
+                  </p>
+                ) : null}
+                {event.ipLocation ? (
+                  <p className="text-xs text-slate-500">
+                    <Globe2 className="mr-1 inline h-3.5 w-3.5" />
+                    {event.ipLocation}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

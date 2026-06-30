@@ -243,6 +243,23 @@ export interface SetMemberCreditsResponse {
   code: MemberAccessCode;
 }
 
+export interface AdminLoginAuditEntry {
+  id: string;
+  at: string;
+  role: AccessRole;
+  memberId?: string;
+  memberName?: string;
+  ipAddress?: string;
+  ipLocation?: string;
+  device?: string;
+  userAgent?: string;
+  requestId?: string;
+}
+
+export interface AdminLoginAuditResponse {
+  events: AdminLoginAuditEntry[];
+}
+
 export interface AdminCacheJobEntry {
   job: CacheJob;
   asset?: CacheAsset;
