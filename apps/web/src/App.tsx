@@ -7,6 +7,7 @@ import type {
   CacheAsset,
   CacheJob,
   MediaVariant,
+  MemberCreditUsageResponse,
   PlaybackResponse,
   SearchResult
 } from "@wwpdw/shared";
@@ -29,6 +30,8 @@ import {
   listCacheJobs,
   listLoginAudit,
   listMemberCodes,
+  listMemberCreditUsage,
+  listOwnCreditUsage,
   revokeMemberAccessCode,
   retryCacheJob,
   searchAssets,
@@ -40,6 +43,7 @@ import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
 import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
+import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { Player } from "./cinema/components/Player";
@@ -141,6 +145,10 @@ export default function App() {
   const [passcodeOpen, setPasscodeOpen] = useState(false);
   const [passcodeLoading, setPasscodeLoading] = useState(false);
   const [passcodeError, setPasscodeError] = useState("");
+  const [creditUsageOpen, setCreditUsageOpen] = useState(false);
+  const [creditUsageLoading, setCreditUsageLoading] = useState(false);
+  const [creditUsageError, setCreditUsageError] = useState("");
+  const [creditUsage, setCreditUsage] = useState<MemberCreditUsageResponse | undefined>();
   const [searchLoading, setSearchLoading] = useState(false);
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -346,6 +354,7 @@ export default function App() {
     try {
       const target = variantToResult(result, variant);
       const response = await ensureCache(target);
+      updateCurrentMemberCredits(response.memberCredits);
       setJob(response.job);
       setAsset(response.asset);
       upsertTrackedItem({
@@ -458,6 +467,7 @@ export default function App() {
     ));
     try {
       const response = await ensureCache(entry.result);
+      updateCurrentMemberCredits(response.memberCredits);
       setJob(response.job);
       setAsset(response.asset);
       upsertTrackedItem({
@@ -478,6 +488,21 @@ export default function App() {
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
+  }
+
+  function updateCurrentMemberCredits(credits: NonNullable<AuthCheckResponse["member"]>["credits"]) {
+    if (!credits) {
+      return;
+    }
+
+    setMember((currentMember) => (
+      currentMember
+        ? {
+          ...currentMember,
+          credits
+        }
+        : currentMember
+    ));
   }
 
   async function refreshMemberCodes() {
@@ -750,6 +775,50 @@ export default function App() {
     await navigator.clipboard?.writeText(code);
   }
 
+  async function openOwnCreditUsage() {
+    setCreditUsageOpen(true);
+    setCreditUsageLoading(true);
+    setCreditUsageError("");
+    setCreditUsage(undefined);
+    try {
+      const response = await listOwnCreditUsage(100);
+      setCreditUsage(response);
+      updateCurrentMemberCredits(response.member?.credits);
+    } catch (usageError) {
+      if (isUnauthorizedError(usageError)) {
+        handleRequestError(usageError, "Could not load spending record.");
+        return;
+      }
+      setCreditUsageError(errorMessage(usageError, "Could not load spending record."));
+    } finally {
+      setCreditUsageLoading(false);
+    }
+  }
+
+  async function openMemberCreditUsage(id: string) {
+    setCreditUsageOpen(true);
+    setCreditUsageLoading(true);
+    setCreditUsageError("");
+    setCreditUsage(undefined);
+    try {
+      const response = await listMemberCreditUsage(id, 100);
+      setCreditUsage(response);
+      setMemberCodes((currentCodes) => currentCodes.map((code) => (
+        code.id === id && response.member
+          ? { ...code, credits: response.member.credits }
+          : code
+      )));
+    } catch (usageError) {
+      if (isUnauthorizedError(usageError)) {
+        handleRequestError(usageError, "Could not load member spending record.");
+        return;
+      }
+      setCreditUsageError(errorMessage(usageError, "Could not load member spending record."));
+    } finally {
+      setCreditUsageLoading(false);
+    }
+  }
+
   async function changeOwnPasscode(currentPasscode: string, newPasscode: string) {
     setPasscodeLoading(true);
     setPasscodeError("");
@@ -779,6 +848,9 @@ export default function App() {
     setMember(undefined);
     setPasscodeOpen(false);
     setPasscodeError("");
+    setCreditUsageOpen(false);
+    setCreditUsageError("");
+    setCreditUsage(undefined);
     setAdminUnlocked(false);
     setActiveTab("library");
     setQuery("");
@@ -1020,6 +1092,18 @@ export default function App() {
         }}
         onSubmit={(currentPasscode, newPasscode) => void changeOwnPasscode(currentPasscode, newPasscode)}
       />
+      <CreditUsageDialog
+        error={creditUsageError}
+        loading={creditUsageLoading}
+        open={creditUsageOpen}
+        usage={creditUsage}
+        onOpenChange={(open) => {
+          setCreditUsageOpen(open);
+          if (!open) {
+            setCreditUsageError("");
+          }
+        }}
+      />
       <CinemaLayout
         activeTab={activeTab}
         accountDetail={accountDetail}
@@ -1030,6 +1114,7 @@ export default function App() {
         onActiveTabChange={navigateToTab}
         onChangePasscode={() => setPasscodeOpen(true)}
         onLock={lockCinema}
+        onOpenSpending={() => void openOwnCreditUsage()}
         onOpenSearch={() => setSearchOpen(true)}
         status={showStatusPanel ? (
           <StatusPanel
@@ -1107,6 +1192,7 @@ export default function App() {
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
             onUpdateCredits={updateMemberCredits}
             onUpdatePasscode={updateMemberPasscode}
+            onViewCreditUsage={(id) => void openMemberCreditUsage(id)}
             onRevoke={revokeMemberCode}
           />
         ) : undefined}

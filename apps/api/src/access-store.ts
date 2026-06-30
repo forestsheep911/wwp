@@ -8,6 +8,7 @@ import type {
   MemberCreditCharge,
   MemberCreditLimitReason,
   MemberCreditSummary,
+  MemberCreditUsageEntry,
   CreateMemberCodeRequest,
   GeneratedMemberAccessCode,
   MemberAccessCode,
@@ -150,6 +151,28 @@ function creditSummary(code: StoredMemberCode, now = new Date()): MemberCreditSu
     unit: "clover",
     unitSymbol: memberCreditUnitSymbol,
     remaining: prepared.creditBalance ?? 0
+  };
+}
+
+function creditUsageList(code: StoredMemberCode, limit: number): MemberCreditUsageList {
+  prepareStoredCode(code);
+  const boundedLimit = positiveInt(limit, 50, { min: 1, max: 200 });
+  const entries = usageEvents(code)
+    .slice()
+    .sort((left, right) => right.at.localeCompare(left.at))
+    .slice(0, boundedLimit)
+    .map((event) => ({
+      id: event.id,
+      credits: event.credits,
+      reason: event.reason,
+      assetKey: event.assetKey,
+      title: event.title,
+      chargedAt: event.at,
+      requestId: event.requestId
+    }));
+  return {
+    code: publicCode(code),
+    entries
   };
 }
 
@@ -316,6 +339,11 @@ export type MemberPasscodeUpdateResult =
     reason: "not_found" | "duplicate" | "invalid_current";
   };
 
+export interface MemberCreditUsageList {
+  code: MemberAccessCode;
+  entries: MemberCreditUsageEntry[];
+}
+
 export interface ChargeMemberCreditsInput {
   credits: number;
   assetKey: string;
@@ -332,6 +360,7 @@ export interface AccessStore {
   setMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
   setMemberPasscode(id: string, passcode: string): Promise<MemberPasscodeUpdateResult>;
   changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string): Promise<MemberPasscodeUpdateResult>;
+  listMemberCreditUsage(id: string, limit: number): Promise<MemberCreditUsageList | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
   recordLoginAudit(entry: AdminLoginAuditEntry): Promise<void>;
   listLoginAudit(limit: number): Promise<AdminLoginAuditEntry[]>;
@@ -478,6 +507,12 @@ class LocalAccessStore implements AccessStore {
         code: publicCode(code)
       };
     });
+  }
+
+  async listMemberCreditUsage(id: string, limit: number) {
+    const state = await this.readState();
+    const code = state.codes[id];
+    return code ? creditUsageList(code, limit) : undefined;
   }
 
   async chargeMemberCredits(id: string, input: ChargeMemberCreditsInput) {
@@ -740,6 +775,12 @@ class AzureAccessStore implements AccessStore {
       ok: true as const,
       code: publicCode(stored)
     };
+  }
+
+  async listMemberCreditUsage(id: string, limit: number) {
+    await this.ensureReady();
+    const stored = await this.getStored(id);
+    return stored ? creditUsageList(stored, limit) : undefined;
   }
 
   async chargeMemberCredits(id: string, input: ChargeMemberCreditsInput) {

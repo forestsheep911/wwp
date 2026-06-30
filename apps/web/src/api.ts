@@ -13,6 +13,7 @@ import type {
   DeleteCacheEntryResponse,
   EnsureCacheResponse,
   MemberCodeListResponse,
+  MemberCreditUsageResponse,
   PlaybackResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
@@ -112,6 +113,11 @@ export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
   });
 }
 
+export function listOwnCreditUsage(limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MemberCreditUsageResponse>(apiUrl(`/api/member/credit-usage?${params.toString()}`));
+}
+
 export function searchAssets(query: string) {
   const params = new URLSearchParams({ q: query });
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
@@ -190,6 +196,13 @@ export function setMemberPasscode(id: string, input: AdminSetMemberPasscodeReque
       method: "POST",
       body: JSON.stringify(input)
     }
+  );
+}
+
+export function listMemberCreditUsage(id: string, limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MemberCreditUsageResponse>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/credit-usage?${params.toString()}`)
   );
 }
 

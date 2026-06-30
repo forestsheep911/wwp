@@ -9,6 +9,7 @@ import {
   KeyRound,
   ListChecks,
   LogOut,
+  ReceiptText,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -34,6 +35,7 @@ interface CinemaLayoutProps {
   onActiveTabChange: (value: AppTab) => void;
   onChangePasscode: () => void;
   onLock: () => void;
+  onOpenSpending: () => void;
   onOpenSearch: () => void;
 }
 
@@ -52,6 +54,7 @@ export function CinemaLayout({
   onActiveTabChange,
   onChangePasscode,
   onLock,
+  onOpenSpending,
   onOpenSearch
 }: CinemaLayoutProps) {
   const [statusCollapsed, setStatusCollapsed] = useState(false);
@@ -109,6 +112,7 @@ export function CinemaLayout({
                 showAdmin={showAdmin}
                 onChangePasscode={onChangePasscode}
                 onOpenAdmin={() => onActiveTabChange("admin")}
+                onOpenSpending={onOpenSpending}
                 onLock={onLock}
               />
             </div>
@@ -167,6 +171,7 @@ function AccountMenu({
   showAdmin,
   onChangePasscode,
   onOpenAdmin,
+  onOpenSpending,
   onLock
 }: {
   accountLabel: string;
@@ -175,6 +180,7 @@ function AccountMenu({
   showAdmin: boolean;
   onChangePasscode: () => void;
   onOpenAdmin: () => void;
+  onOpenSpending: () => void;
   onLock: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -272,6 +278,24 @@ function AccountMenu({
               >
                 <KeyRound className="h-4 w-4" />
                 Change passcode
+              </button>
+            ) : null}
+            {canChangePasscode ? (
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+                type="button"
+                role="menuitem"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  runAfterMenuClose(onOpenSpending);
+                }}
+                onClick={() => {
+                  runAfterMenuClose(onOpenSpending);
+                }}
+              >
+                <ReceiptText className="h-4 w-4" />
+                Spending
               </button>
             ) : null}
             <button

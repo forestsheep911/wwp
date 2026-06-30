@@ -181,6 +181,20 @@ export interface MemberCreditCharge {
   chargedAt: string;
 }
 
+export interface MemberCreditUsageEntry extends MemberCreditCharge {
+  id: string;
+  requestId?: string;
+}
+
+export interface MemberCreditUsageResponse {
+  member?: {
+    id: string;
+    name: string;
+    credits: MemberCreditSummary;
+  };
+  entries: MemberCreditUsageEntry[];
+}
+
 export interface CacheAssetLookupResponse {
   asset?: CacheAsset;
   playable: boolean;

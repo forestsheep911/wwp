@@ -23,6 +23,7 @@ import {
   type DeleteCacheEntryResponse,
   type EnsureCacheRequest,
   type MemberAccessCode,
+  type MemberCreditUsageResponse,
   type MediaVariant,
   type RegisterMemberRequest,
   type SearchResult,
@@ -30,7 +31,7 @@ import {
   validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
-import { createAccessStore, type AccessIdentity } from "./access-store.js";
+import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
@@ -1003,6 +1004,81 @@ async function handleSetMemberPasscode(
   sendJson(response, 200, { code: result.code });
 }
 
+function creditUsagePayload(usage: MemberCreditUsageList): MemberCreditUsageResponse {
+  return {
+    member: {
+      id: usage.code.id,
+      name: usage.code.name,
+      credits: usage.code.credits
+    },
+    entries: usage.entries
+  };
+}
+
+async function handleListOwnCreditUsage(
+  url: URL,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts have a spending record." });
+    return;
+  }
+
+  const limit = requestLimit(url, 50, 200);
+  const usage = await accessStore.listMemberCreditUsage(identity.memberId, limit);
+  if (!usage) {
+    logWarn("api.member.credit_usage.not_found", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member was not found." });
+    return;
+  }
+
+  logInfo("api.member.credit_usage.list", {
+    requestId: context.requestId,
+    memberId: identity.memberId,
+    count: usage.entries.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, creditUsagePayload(usage));
+}
+
+async function handleListMemberCreditUsage(
+  codeId: string,
+  url: URL,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 200);
+  const usage = await accessStore.listMemberCreditUsage(codeId, limit);
+  if (!usage) {
+    logWarn("api.admin.member_codes.credit_usage_not_found", {
+      requestId: context.requestId,
+      memberCodeId: codeId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member code was not found." });
+    return;
+  }
+
+  logInfo("api.admin.member_codes.credit_usage", {
+    requestId: context.requestId,
+    memberCodeId: usage.code.id,
+    name: usage.code.name,
+    count: usage.entries.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, creditUsagePayload(usage));
+}
+
 async function handleListLoginAudit(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 50, 200);
@@ -1316,6 +1392,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/member/credit-usage") {
+      await handleListOwnCreditUsage(url, response, context, identity!);
+      return;
+    }
+
     if (pathname === "/api/admin/login-audit" && !requireAdmin(identity, response, context)) {
       return;
     }
@@ -1385,6 +1466,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && setMemberCreditsMatch) {
       await handleSetMemberCredits(decodeURIComponent(setMemberCreditsMatch[1]), request, response, context);
+      return;
+    }
+
+    const memberCreditUsageMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/credit-usage$/);
+    if (memberCreditUsageMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && memberCreditUsageMatch) {
+      await handleListMemberCreditUsage(decodeURIComponent(memberCreditUsageMatch[1]), url, response, context);
       return;
     }
 

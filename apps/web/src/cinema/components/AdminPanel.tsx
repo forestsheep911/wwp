@@ -7,6 +7,7 @@ import {
   KeyRound,
   Loader2,
   MonitorSmartphone,
+  ReceiptText,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -70,6 +71,7 @@ interface AdminPanelProps {
   onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
   onUpdatePasscode: (id: string) => void;
+  onViewCreditUsage: (id: string) => void;
   onRevoke: (id: string) => void;
 }
 
@@ -106,6 +108,7 @@ export function AdminPanel({
   onDeleteCachedAsset,
   onUpdateCredits,
   onUpdatePasscode,
+  onViewCreditUsage,
   onRevoke
 }: AdminPanelProps) {
   if (!adminUnlocked) {
@@ -213,6 +216,7 @@ export function AdminPanel({
             onRevoke={onRevoke}
             onUpdateCredits={onUpdateCredits}
             onUpdatePasscode={onUpdatePasscode}
+            onViewCreditUsage={onViewCreditUsage}
             setMemberCreditEdit={setMemberCreditEdit}
             setMemberPasscodeEdit={setMemberPasscodeEdit}
             setMemberCredits={setMemberCredits}
@@ -319,6 +323,7 @@ function AdminPassesPanel({
   onRevoke,
   onUpdateCredits,
   onUpdatePasscode,
+  onViewCreditUsage,
   setMemberCreditEdit,
   setMemberPasscodeEdit,
   setMemberCredits,
@@ -336,6 +341,7 @@ function AdminPassesPanel({
   onRevoke: (id: string) => void;
   onUpdateCredits: (id: string) => void;
   onUpdatePasscode: (id: string) => void;
+  onViewCreditUsage: (id: string) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
   setMemberPasscodeEdit: (id: string, value: string) => void;
   setMemberCredits: (value: number) => void;
@@ -450,6 +456,16 @@ function AdminPassesPanel({
                     </Button>
                   </div>
                   <div className="flex flex-wrap gap-2 lg:justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onViewCreditUsage(code.id)}
+                      disabled={adminLoading}
+                    >
+                      <ReceiptText className="h-4 w-4" />
+                      Spending
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
