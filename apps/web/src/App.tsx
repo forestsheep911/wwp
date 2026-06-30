@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AccessRole,
   AdminCacheJobEntry,
@@ -52,12 +52,79 @@ import type {
   TrackedCacheItem
 } from "./cinema/types";
 
+interface CinemaRoute {
+  tab: AppTab;
+  query: string;
+  playerAssetKey?: string;
+}
+
+interface CinemaHistoryState {
+  app: "wwpdw-cinema";
+  route: CinemaRoute;
+}
+
+const routeTabs: AppTab[] = ["library", "cached", "history", "admin", "tasks"];
+
+function isAppTab(value: string | null): value is AppTab {
+  return Boolean(value && routeTabs.includes(value as AppTab));
+}
+
+function routeFromLocation(): CinemaRoute {
+  if (typeof window === "undefined") {
+    return {
+      tab: "library",
+      query: ""
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const tab = isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
+  return {
+    tab,
+    query: params.get("q") ?? "",
+    playerAssetKey: params.get("play") ?? undefined
+  };
+}
+
+function historyStateRoute(state: unknown): CinemaRoute | undefined {
+  const candidate = state as Partial<CinemaHistoryState> | undefined;
+  return candidate?.app === "wwpdw-cinema" && candidate.route
+    ? candidate.route
+    : undefined;
+}
+
+function routeUrl(route: CinemaRoute) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  if (route.tab !== "library") {
+    url.searchParams.set("tab", route.tab);
+  }
+  if (route.query.trim()) {
+    url.searchParams.set("q", route.query.trim());
+  }
+  if (route.playerAssetKey) {
+    url.searchParams.set("play", route.playerAssetKey);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
+  return Boolean(
+    left &&
+      left.tab === right.tab &&
+      left.query === right.query &&
+      left.playerAssetKey === right.playerAssetKey
+  );
+}
+
 export default function App() {
+  const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
   const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
   const [role, setRole] = useState<AccessRole | undefined>();
-  const [activeTab, setActiveTab] = useState<AppTab>("library");
+  const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialRoute.query);
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
@@ -81,6 +148,7 @@ export default function App() {
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
   const adminCacheJobLimit = 100;
+  const historyInitializedRef = useRef(false);
 
   const readyCount = useMemo(
     () =>
@@ -110,6 +178,52 @@ export default function App() {
     }
     return itemsByAssetKey;
   }, [trackedItems]);
+
+  function permittedRoute(route: CinemaRoute): CinemaRoute {
+    if (route.tab === "admin" && role && role !== "admin") {
+      return {
+        ...route,
+        tab: "library"
+      };
+    }
+    return route;
+  }
+
+  function writeRoute(route: CinemaRoute, mode: "push" | "replace") {
+    const nextRoute = permittedRoute(route);
+    const state: CinemaHistoryState = {
+      app: "wwpdw-cinema",
+      route: nextRoute
+    };
+    const url = routeUrl(nextRoute);
+    const currentRoute = historyStateRoute(window.history.state);
+
+    if (mode === "push" && !sameRoute(currentRoute, nextRoute)) {
+      window.history.pushState(state, "", url);
+      return;
+    }
+
+    window.history.replaceState(state, "", url);
+  }
+
+  function routeForCurrentView(overrides: Partial<CinemaRoute> = {}): CinemaRoute {
+    return {
+      tab: activeTab,
+      query,
+      playerAssetKey: playback?.assetKey,
+      ...overrides
+    };
+  }
+
+  function navigateToTab(nextTab: AppTab) {
+    const nextRoute = permittedRoute(routeForCurrentView({
+      tab: nextTab,
+      playerAssetKey: undefined
+    }));
+    setPlayback(undefined);
+    setActiveTab(nextRoute.tab);
+    writeRoute(nextRoute, "push");
+  }
 
   function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
     return {
@@ -164,8 +278,11 @@ export default function App() {
     setError(cacheErrorLabel(errorMessage(errorValue, fallback)));
   }
 
-  async function refreshResults(options: { showLoading: boolean; activateLibrary: boolean }) {
-    const normalizedQuery = query.trim();
+  async function refreshResults(
+    options: { showLoading: boolean; activateLibrary: boolean },
+    queryOverride = query
+  ) {
+    const normalizedQuery = queryOverride.trim();
     if (!normalizedQuery) {
       setResults([]);
       setError("");
@@ -196,7 +313,12 @@ export default function App() {
 
   async function runSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    await refreshResults({ showLoading: true, activateLibrary: true });
+    const normalizedQuery = query.trim();
+    await refreshResults({ showLoading: true, activateLibrary: true }, normalizedQuery);
+    writeRoute({
+      tab: "library",
+      query: normalizedQuery
+    }, "push");
   }
 
   async function refreshResultsInBackground() {
@@ -246,7 +368,11 @@ export default function App() {
     });
   }
 
-  async function openPlayer(assetKey = asset?.assetKey, result?: SearchResult) {
+  async function openPlayer(
+    assetKey = asset?.assetKey,
+    result?: SearchResult,
+    options: { syncHistory?: boolean } = {}
+  ) {
     if (!assetKey) {
       return;
     }
@@ -255,9 +381,21 @@ export default function App() {
       const response = await getPlayback(assetKey);
       setPlayback(response);
       rememberPlayback(response, result);
+      if (options.syncHistory !== false) {
+        writeRoute(routeForCurrentView({
+          playerAssetKey: response.assetKey
+        }), "push");
+      }
     } catch (playbackError) {
       handleRequestError(playbackError, "Playback is not ready.");
     }
+  }
+
+  function closePlayer() {
+    setPlayback(undefined);
+    writeRoute(routeForCurrentView({
+      playerAssetKey: undefined
+    }), "replace");
   }
 
   function clearHistory() {
@@ -315,7 +453,7 @@ export default function App() {
         asset: response.asset,
         result: entry.result
       });
-      setActiveTab("library");
+      navigateToTab("library");
       await refreshHistoryAssetStatus();
     } catch (cacheError) {
       handleRequestError(cacheError, "Cache request failed.");
@@ -547,11 +685,22 @@ export default function App() {
     setUnlocked(false);
     setRole(undefined);
     setAdminUnlocked(false);
+    setActiveTab("library");
+    setQuery("");
+    setResults([]);
+    setPlayback(undefined);
+    setJob(undefined);
+    setAsset(undefined);
     setMemberCodes([]);
     setCacheJobs([]);
     setTrackedItems([]);
     setCacheRequestAssetKeys([]);
     setCachedAssets([]);
+    historyInitializedRef.current = false;
+    writeRoute({
+      tab: "library",
+      query: ""
+    }, "replace");
   }
 
   useEffect(() => {
@@ -613,6 +762,71 @@ export default function App() {
   }, [unlocked, role]);
 
   useEffect(() => {
+    if (!unlocked || !role || historyInitializedRef.current) {
+      return;
+    }
+
+    historyInitializedRef.current = true;
+    const initialPermittedRoute = permittedRoute({
+      tab: activeTab,
+      query,
+      playerAssetKey: initialRoute.playerAssetKey
+    });
+    setActiveTab(initialPermittedRoute.tab);
+    setQuery(initialPermittedRoute.query);
+    writeRoute(initialPermittedRoute, "replace");
+
+    if (initialPermittedRoute.query.trim()) {
+      void refreshResults({ showLoading: true, activateLibrary: false }, initialPermittedRoute.query);
+    }
+
+    if (initialPermittedRoute.playerAssetKey) {
+      void openPlayer(initialPermittedRoute.playerAssetKey, undefined, { syncHistory: false });
+    }
+  }, [activeTab, initialRoute.playerAssetKey, query, role, unlocked]);
+
+  useEffect(() => {
+    function applyRouteFromHistory(event: PopStateEvent) {
+      const requestedRoute = historyStateRoute(event.state) ?? routeFromLocation();
+      const nextRoute = permittedRoute(requestedRoute);
+      const nextQuery = nextRoute.query.trim();
+
+      if (!sameRoute(requestedRoute, nextRoute)) {
+        writeRoute(nextRoute, "replace");
+      }
+
+      setError("");
+      setActiveTab(nextRoute.tab);
+      setQuery(nextRoute.query);
+
+      if (!nextRoute.playerAssetKey) {
+        setPlayback(undefined);
+      }
+
+      if (nextQuery) {
+        void refreshResults({ showLoading: true, activateLibrary: false }, nextQuery);
+      } else {
+        setResults([]);
+      }
+
+      if (nextRoute.tab === "cached") {
+        void refreshCachedAssets();
+      }
+
+      if (nextRoute.tab === "history") {
+        void refreshHistoryAssetStatus();
+      }
+
+      if (nextRoute.playerAssetKey) {
+        void openPlayer(nextRoute.playerAssetKey, undefined, { syncHistory: false });
+      }
+    }
+
+    window.addEventListener("popstate", applyRouteFromHistory);
+    return () => window.removeEventListener("popstate", applyRouteFromHistory);
+  }, [role, adminUnlocked, history.length]);
+
+  useEffect(() => {
     if (activeTab === "admin" && adminUnlocked) {
       void refreshMemberCodes();
       void refreshCachedAssets();
@@ -622,7 +836,12 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "admin" && role && role !== "admin") {
-      setActiveTab("library");
+      const nextRoute = routeForCurrentView({
+        tab: "library",
+        playerAssetKey: undefined
+      });
+      setActiveTab(nextRoute.tab);
+      writeRoute(nextRoute, "replace");
     }
   }, [activeTab, role]);
 
@@ -646,7 +865,7 @@ export default function App() {
   }
 
   if (playback) {
-    return <Player playback={playback} onClose={() => setPlayback(undefined)} />;
+    return <Player playback={playback} onClose={closePlayer} />;
   }
 
   const showStatusPanel = activeTab === "library" || trackedItems.length > 0;
@@ -659,7 +878,7 @@ export default function App() {
       readyCount={readyCount}
       statusCount={trackedItems.length}
       showAdmin={showAdmin}
-      onActiveTabChange={setActiveTab}
+      onActiveTabChange={navigateToTab}
       onLock={lockCinema}
       status={showStatusPanel ? (
         <StatusPanel
