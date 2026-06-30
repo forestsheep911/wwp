@@ -58,6 +58,8 @@ const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
 const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? 1)));
+const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? 24)));
+const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? 1000 * 1000 * 1000)));
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminKey =
   process.env.WWPDW_ADMIN_KEY ??
@@ -651,6 +653,14 @@ function creditLimitErrorMessage() {
   return "This Cinema Pass does not have enough 🍀 left.";
 }
 
+function playbackCreditCost(contentLength: number | undefined) {
+  if (!contentLength || !Number.isFinite(contentLength) || contentLength <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.ceil(contentLength / playbackCreditBytes));
+}
+
 function movieRequestStatus(value: unknown): MovieRequestStatus | undefined {
   return movieRequestStatuses.includes(value as MovieRequestStatus) ? value as MovieRequestStatus : undefined;
 }
@@ -798,9 +808,62 @@ async function handleStatus(jobId: string, response: http.ServerResponse, contex
 async function handlePlayback(
   assetKey: string,
   response: http.ServerResponse,
-  context: RequestContext
+  context: RequestContext,
+  identity: AccessIdentity
 ) {
   const startedAt = Date.now();
+  const asset = await store.getAsset(assetKey);
+  if (!asset || !isFreshReady(asset)) {
+    logWarn("api.playback.not_ready", {
+      requestId: context.requestId,
+      assetKey,
+      assetStatus: asset?.status,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: "Asset is not ready for playback." });
+    return;
+  }
+
+  const shouldChargeMember = identity.role === "member" && Boolean(identity.memberId);
+  const playbackCredits = playbackCreditCost(asset?.media?.contentLength);
+  const chargeResult = shouldChargeMember
+    ? await accessStore.chargeMemberPlayback(identity.memberId!, {
+      credits: playbackCredits,
+      assetKey: asset.assetKey,
+      title: asset.title,
+      requestId: context.requestId,
+      windowHours: playbackReplayFreeHours
+    })
+    : undefined;
+
+  if (shouldChargeMember && !chargeResult) {
+    logWarn("api.playback.credit_member_not_found", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      assetKey,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 403, { error: "This Cinema Pass is no longer available." });
+    return;
+  }
+
+  if (chargeResult && !chargeResult.ok) {
+    logWarn("api.playback.credit_denied", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      assetKey,
+      requestedCredits: playbackCredits,
+      reason: chargeResult.reason,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 429, {
+      error: creditLimitErrorMessage(),
+      reason: chargeResult.reason,
+      credits: chargeResult.code.credits
+    });
+    return;
+  }
+
   const playback = await store.getPlayback(assetKey);
 
   if (!playback) {
@@ -822,10 +885,26 @@ async function handlePlayback(
     mp4Status: playback.media?.mp4?.status,
     moovOffset: playback.media?.mp4?.moovOffset,
     signedUrlExpiresAt: playback.expiresAt,
+    memberId: identity.memberId,
+    playbackCredits,
+    chargedCredits: chargeResult?.ok && chargeResult.charged ? chargeResult.charge.credits : 0,
+    playbackWindowHours: playbackReplayFreeHours,
+    playbackWindowExpiresAt: chargeResult?.ok ? chargeResult.windowExpiresAt : undefined,
     durationMs: durationMs(startedAt)
   });
 
-  sendJson(response, 200, playback);
+  sendJson(response, 200, {
+    ...playback,
+    charge: chargeResult?.ok && chargeResult.charged ? chargeResult.charge : undefined,
+    memberCredits: chargeResult?.ok ? chargeResult.code.credits : undefined,
+    playbackCredit: chargeResult?.ok
+      ? {
+        charged: chargeResult.charged,
+        windowHours: playbackReplayFreeHours,
+        windowExpiresAt: chargeResult.windowExpiresAt
+      }
+      : undefined
+  });
 }
 
 async function handleAssetLookup(
@@ -1689,7 +1768,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     const playbackMatch = pathname.match(/^\/api\/playback\/([^/]+)$/);
     if (request.method === "GET" && playbackMatch) {
-      await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context);
+      await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context, identity!);
       return;
     }
 

@@ -81,11 +81,16 @@ Default pass allowance settings:
 
 - `MEMBER_DEFAULT_CREDITS=20`
 - `MEMBER_CACHE_CREDIT_COST=1`
+- `MEMBER_PLAYBACK_REPLAY_FREE_HOURS=24`
+- `MEMBER_PLAYBACK_CREDIT_BYTES=1000000000`
 
-Search, playback, cache hits, and joining an already-running cache job are free.
-Creating a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST`
-🍀. Admin keys bypass member allowance checks. A member request that exceeds the
-remaining balance returns HTTP 429 before it creates a cache job.
+Search, cache hits, and joining an already-running cache job are free. Creating
+a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST` 🍀.
+Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` 🍀, but the
+same member can replay the same asset within `MEMBER_PLAYBACK_REPLAY_FREE_HOURS`
+without another playback charge. Admin keys bypass member allowance checks. A
+member request that exceeds the remaining balance returns HTTP 429 before it
+creates a cache job or issues a playback URL.
 
 Cinema Passes do not currently expire by date. Existing stored `expiresAt`
 values are retained for backward compatibility, but `revokedAt` is the only

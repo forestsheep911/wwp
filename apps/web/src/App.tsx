@@ -415,6 +415,7 @@ export default function App() {
 
     try {
       const response = await getPlayback(assetKey);
+      updateCurrentMemberCredits(response.memberCredits);
       setPlayback(response);
       rememberPlayback(response, result);
       if (options.syncHistory !== false) {

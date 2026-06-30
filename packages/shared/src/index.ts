@@ -163,6 +163,13 @@ export interface PlaybackResponse {
   playbackUrl: string;
   expiresAt: string;
   media?: MediaDiagnostics;
+  charge?: MemberCreditCharge;
+  memberCredits?: MemberCreditSummary;
+  playbackCredit?: {
+    charged: boolean;
+    windowHours: number;
+    windowExpiresAt?: string;
+  };
 }
 
 export type MemberCreditLimitReason = "balance";
@@ -173,12 +180,15 @@ export interface MemberCreditSummary {
   remaining: number;
 }
 
+export type MemberCreditChargeReason = "cache_reserved" | "playback_stream";
+
 export interface MemberCreditCharge {
   credits: number;
-  reason: "cache_reserved";
+  reason: MemberCreditChargeReason;
   assetKey: string;
   title: string;
   chargedAt: string;
+  windowExpiresAt?: string;
 }
 
 export interface MemberCreditUsageEntry extends MemberCreditCharge {

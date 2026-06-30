@@ -18,6 +18,18 @@ interface CreditUsageDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+function creditReasonLabel(reason: string) {
+  if (reason === "cache_reserved") {
+    return "Cache";
+  }
+
+  if (reason === "playback_stream") {
+    return "Play";
+  }
+
+  return reason;
+}
+
 export function CreditUsageDialog({
   error,
   loading,
@@ -62,14 +74,17 @@ export function CreditUsageDialog({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-50" title={entry.title}>{entry.title}</p>
                     <p className="mt-1 truncate font-mono text-xs text-slate-500" title={entry.assetKey}>{entry.assetKey}</p>
-                    <p className="mt-1 text-xs text-slate-400">{formatDateTime(entry.chargedAt)}</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {formatDateTime(entry.chargedAt)}
+                      {entry.windowExpiresAt ? ` / free replay until ${formatDateTime(entry.windowExpiresAt)}` : ""}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 sm:justify-end">
                     <Badge variant="secondary">
                       <Coins className="h-3.5 w-3.5" />
                       -{entry.credits}
                     </Badge>
-                    <Badge variant="muted">{entry.reason === "cache_reserved" ? "Cache" : entry.reason}</Badge>
+                    <Badge variant="muted">{creditReasonLabel(entry.reason)}</Badge>
                   </div>
                 </div>
               ))}

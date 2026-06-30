@@ -55,7 +55,7 @@ The cleanup job runs `WORKER_MODE=cleanup` on a daily schedule. It deletes cache
 
 The API keeps a short in-memory cache for parsed Notion search results with `SEARCH_RESULT_CACHE_TTL_SECONDS` and `SEARCH_RESULT_CACHE_LIMIT`. Cache availability is still checked against Azure on every search response, so ready/playable status stays fresh.
 
-Member Cinema Passes use a simple 🍀 balance to control cache cost and do not expire by date. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
+Member Cinema Passes use a simple 🍀 balance to control cache and playback cost and do not expire by date. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` and the same member can replay the same asset for `MEMBER_PLAYBACK_REPLAY_FREE_HOURS` without another playback charge. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
 
 The Admin tab has a dedicated ready cached-video list, can retry failed cache jobs, and can delete failed/ready/stuck cache entries. Retry first refreshes the Notion media URL by the stored source page id when possible, then re-queues the same job. Deleting a ready entry removes the Blob plus the matching Table asset/job records.
 

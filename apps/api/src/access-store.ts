@@ -8,6 +8,7 @@ import type {
   MovieRequestEntry,
   MovieRequestStatus,
   MemberCreditCharge,
+  MemberCreditChargeReason,
   MemberCreditLimitReason,
   MemberCreditSummary,
   MemberCreditUsageEntry,
@@ -44,10 +45,11 @@ interface StoredMemberCreditUsage {
   id: string;
   at: string;
   credits: number;
-  reason: "cache_reserved";
+  reason: MemberCreditChargeReason;
   assetKey: string;
   title: string;
   requestId?: string;
+  windowExpiresAt?: string;
 }
 
 interface StoredMovieRequest {
@@ -187,7 +189,8 @@ function creditUsageList(code: StoredMemberCode, limit: number): MemberCreditUsa
       assetKey: event.assetKey,
       title: event.title,
       chargedAt: event.at,
-      requestId: event.requestId
+      requestId: event.requestId,
+      windowExpiresAt: event.windowExpiresAt
     }));
   return {
     code: publicCode(code),
@@ -279,10 +282,11 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
 
   const charge: MemberCreditCharge = {
     credits,
-    reason: "cache_reserved",
+    reason: input.reason ?? "cache_reserved",
     assetKey: input.assetKey,
     title: input.title,
-    chargedAt: now.toISOString()
+    chargedAt: now.toISOString(),
+    windowExpiresAt: input.windowExpiresAt
   };
   const usage: StoredMemberCreditUsage = {
     id: randomUUID(),
@@ -291,7 +295,8 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     reason: charge.reason,
     assetKey: input.assetKey,
     title: input.title,
-    requestId: input.requestId
+    requestId: input.requestId,
+    windowExpiresAt: input.windowExpiresAt
   };
   code.usage = [usage, ...usageEvents(code)];
   code.creditBalance = Math.max(0, (code.creditBalance ?? 0) - credits);
@@ -301,6 +306,67 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     ok: true,
     code: publicCode(code),
     charge
+  };
+}
+
+function playbackWindowExpiresAt(event: StoredMemberCreditUsage, windowMs: number) {
+  const chargedAt = new Date(event.at).getTime();
+  if (!Number.isFinite(chargedAt)) {
+    return undefined;
+  }
+
+  return new Date(chargedAt + windowMs).toISOString();
+}
+
+function recentPlaybackCharge(
+  code: StoredMemberCode,
+  input: ChargeMemberPlaybackInput,
+  now = new Date()
+) {
+  prepareStoredCode(code, now);
+  const windowMs = input.windowHours * 60 * 60 * 1000;
+  const cutoff = now.getTime() - windowMs;
+  return usageEvents(code)
+    .filter((event) => event.reason === "playback_stream" && event.assetKey === input.assetKey)
+    .filter((event) => {
+      const at = new Date(event.at).getTime();
+      return Number.isFinite(at) && at >= cutoff;
+    })
+    .sort((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function chargeStoredPlayback(code: StoredMemberCode, input: ChargeMemberPlaybackInput): MemberPlaybackChargeResult {
+  const now = new Date();
+  const windowMs = input.windowHours * 60 * 60 * 1000;
+  const previous = recentPlaybackCharge(code, input, now);
+  if (previous) {
+    return {
+      ok: true,
+      charged: false,
+      code: publicCode(code),
+      windowExpiresAt: previous.windowExpiresAt ?? playbackWindowExpiresAt(previous, windowMs)
+    };
+  }
+
+  const windowExpiresAt = new Date(now.getTime() + windowMs).toISOString();
+  const result = chargeStoredCode(code, {
+    credits: input.credits,
+    reason: "playback_stream",
+    assetKey: input.assetKey,
+    title: input.title,
+    requestId: input.requestId,
+    windowExpiresAt
+  });
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    charged: true,
+    code: result.code,
+    charge: result.charge,
+    windowExpiresAt
   };
 }
 
@@ -374,6 +440,26 @@ export type MemberCreditChargeResult =
     reason: MemberCreditLimitReason;
   };
 
+export type MemberPlaybackChargeResult =
+  | {
+    ok: true;
+    charged: true;
+    code: MemberAccessCode;
+    charge: MemberCreditCharge;
+    windowExpiresAt: string;
+  }
+  | {
+    ok: true;
+    charged: false;
+    code: MemberAccessCode;
+    windowExpiresAt?: string;
+  }
+  | {
+    ok: false;
+    code: MemberAccessCode;
+    reason: MemberCreditLimitReason;
+  };
+
 export type MemberRegistrationResult =
   | {
     ok: true;
@@ -404,6 +490,16 @@ export interface ChargeMemberCreditsInput {
   assetKey: string;
   title: string;
   requestId?: string;
+  reason?: MemberCreditChargeReason;
+  windowExpiresAt?: string;
+}
+
+export interface ChargeMemberPlaybackInput {
+  credits: number;
+  assetKey: string;
+  title: string;
+  requestId?: string;
+  windowHours: number;
 }
 
 export interface CreateMovieRequestInput {
@@ -428,6 +524,7 @@ export interface AccessStore {
   changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string): Promise<MemberPasscodeUpdateResult>;
   listMemberCreditUsage(id: string, limit: number): Promise<MemberCreditUsageList | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
+  chargeMemberPlayback(id: string, input: ChargeMemberPlaybackInput): Promise<MemberPlaybackChargeResult | undefined>;
   createMovieRequest(input: CreateMovieRequestInput): Promise<MovieRequestEntry>;
   listMovieRequests(input: ListMovieRequestsInput): Promise<MovieRequestEntry[]>;
   updateMovieRequestStatus(id: string, status: MovieRequestStatus): Promise<MovieRequestEntry | undefined>;
@@ -592,6 +689,17 @@ class LocalAccessStore implements AccessStore {
       }
 
       return chargeStoredCode(code, input);
+    });
+  }
+
+  async chargeMemberPlayback(id: string, input: ChargeMemberPlaybackInput) {
+    return this.updateState((state) => {
+      const code = state.codes[id];
+      if (!code) {
+        return undefined;
+      }
+
+      return chargeStoredPlayback(code, input);
     });
   }
 
@@ -886,6 +994,18 @@ class AzureAccessStore implements AccessStore {
     }
 
     const result = chargeStoredCode(stored, input);
+    await this.save(stored);
+    return result;
+  }
+
+  async chargeMemberPlayback(id: string, input: ChargeMemberPlaybackInput) {
+    await this.ensureReady();
+    const stored = await this.getStored(id);
+    if (!stored) {
+      return undefined;
+    }
+
+    const result = chargeStoredPlayback(stored, input);
     await this.save(stored);
     return result;
   }
