@@ -159,21 +159,21 @@ export function CinemaLayout({
             </div>
 
             {showDesktopStatus ? (
-              <aside className="hidden min-w-0 gap-5 lg:grid">
-                <div className="flex justify-end">
+              <aside className="hidden min-w-0 lg:block">
+                <div className="relative min-w-0">
                   <Button
-                    className="shrink-0"
+                    className="absolute right-4 top-4 z-10 h-8 px-2.5"
                     type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => setStatusCollapsed(true)}
+                    title="Hide tasks"
                   >
                     <ChevronRight className="h-4 w-4" />
-                    Hide tasks
-                    <Badge variant={statusCount > 0 ? "default" : "secondary"}>{statusCount}</Badge>
+                    <span className="sr-only">Hide tasks</span>
                   </Button>
+                  {status}
                 </div>
-                <div className="min-w-0">{status}</div>
               </aside>
             ) : null}
           </section>

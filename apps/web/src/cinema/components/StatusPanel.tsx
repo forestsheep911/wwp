@@ -24,7 +24,7 @@ export function StatusPanel({
   if (items.length === 0) {
     return (
       <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
-        <CardHeader className="shrink-0">
+        <CardHeader className="shrink-0 pr-16">
           <CardTitle className="flex items-center gap-2 text-base">
             <Database className="h-4 w-4 text-emerald-300" />
             当前准备任务
@@ -37,7 +37,7 @@ export function StatusPanel({
 
   return (
     <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
-      <CardHeader className="shrink-0">
+      <CardHeader className="shrink-0 pr-16">
         <CardTitle className="flex items-center justify-between gap-3 text-base">
           <span className="min-w-0 truncate">当前准备任务</span>
           <Badge className="shrink-0" variant="secondary">{items.length} 项</Badge>
