@@ -9,6 +9,7 @@ import {
   KeyRound,
   ListChecks,
   LogOut,
+  MessageSquarePlus,
   ReceiptText,
   Search,
   ShieldCheck,
@@ -25,6 +26,7 @@ interface CinemaLayoutProps {
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
+  canRequestMovie: boolean;
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
@@ -35,6 +37,7 @@ interface CinemaLayoutProps {
   onActiveTabChange: (value: AppTab) => void;
   onChangePasscode: () => void;
   onLock: () => void;
+  onOpenMovieRequest: () => void;
   onOpenSpending: () => void;
   onOpenSearch: () => void;
 }
@@ -44,6 +47,7 @@ export function CinemaLayout({
   accountLabel,
   accountDetail,
   canChangePasscode,
+  canRequestMovie,
   library,
   cached,
   history,
@@ -54,6 +58,7 @@ export function CinemaLayout({
   onActiveTabChange,
   onChangePasscode,
   onLock,
+  onOpenMovieRequest,
   onOpenSpending,
   onOpenSearch
 }: CinemaLayoutProps) {
@@ -109,9 +114,11 @@ export function CinemaLayout({
                 accountDetail={accountDetail}
                 accountLabel={accountLabel}
                 canChangePasscode={canChangePasscode}
+                canRequestMovie={canRequestMovie}
                 showAdmin={showAdmin}
                 onChangePasscode={onChangePasscode}
                 onOpenAdmin={() => onActiveTabChange("admin")}
+                onOpenMovieRequest={onOpenMovieRequest}
                 onOpenSpending={onOpenSpending}
                 onLock={onLock}
               />
@@ -168,18 +175,22 @@ function AccountMenu({
   accountLabel,
   accountDetail,
   canChangePasscode,
+  canRequestMovie,
   showAdmin,
   onChangePasscode,
   onOpenAdmin,
+  onOpenMovieRequest,
   onOpenSpending,
   onLock
 }: {
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
+  canRequestMovie: boolean;
   showAdmin: boolean;
   onChangePasscode: () => void;
   onOpenAdmin: () => void;
+  onOpenMovieRequest: () => void;
   onOpenSpending: () => void;
   onLock: () => void;
 }) {
@@ -260,6 +271,24 @@ function AccountMenu({
               >
                 <ShieldCheck className="h-4 w-4" />
                 Admin
+              </button>
+            ) : null}
+            {canRequestMovie ? (
+              <button
+                className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+                type="button"
+                role="menuitem"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  runAfterMenuClose(onOpenMovieRequest);
+                }}
+                onClick={() => {
+                  runAfterMenuClose(onOpenMovieRequest);
+                }}
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+                Request movie
               </button>
             ) : null}
             {canChangePasscode ? (

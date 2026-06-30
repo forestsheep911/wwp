@@ -10,17 +10,22 @@ import type {
   ChangeMemberPasscodeResponse,
   CreateMemberCodeRequest,
   CreateMemberCodeResponse,
+  CreateMovieRequestRequest,
+  CreateMovieRequestResponse,
   DeleteCacheEntryResponse,
   EnsureCacheResponse,
   MemberCodeListResponse,
   MemberCreditUsageResponse,
+  MovieRequestsResponse,
   PlaybackResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
   SearchResult,
   SearchResponse,
   SetMemberCreditsRequest,
-  SetMemberCreditsResponse
+  SetMemberCreditsResponse,
+  UpdateMovieRequestStatusRequest,
+  UpdateMovieRequestStatusResponse
 } from "@wwpdw/shared";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
@@ -116,6 +121,18 @@ export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
 export function listOwnCreditUsage(limit = 50) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<MemberCreditUsageResponse>(apiUrl(`/api/member/credit-usage?${params.toString()}`));
+}
+
+export function createMovieRequest(input: CreateMovieRequestRequest) {
+  return request<CreateMovieRequestResponse>(apiUrl("/api/member/movie-requests"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function listOwnMovieRequests(limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MovieRequestsResponse>(apiUrl(`/api/member/movie-requests?${params.toString()}`));
 }
 
 export function searchAssets(query: string) {
@@ -214,6 +231,21 @@ export function listCacheJobs(limit = 20) {
 export function listLoginAudit(limit = 50) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<AdminLoginAuditResponse>(apiUrl(`/api/admin/login-audit?${params.toString()}`));
+}
+
+export function listMovieRequests(limit = 100) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MovieRequestsResponse>(apiUrl(`/api/admin/movie-requests?${params.toString()}`));
+}
+
+export function updateMovieRequestStatus(id: string, input: UpdateMovieRequestStatusRequest) {
+  return request<UpdateMovieRequestStatusResponse>(
+    apiUrl(`/api/admin/movie-requests/${encodeURIComponent(id)}/status`),
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
 }
 
 export function retryCacheJob(jobId: string) {

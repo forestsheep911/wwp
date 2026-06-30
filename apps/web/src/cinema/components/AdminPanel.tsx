@@ -6,6 +6,7 @@ import {
   Globe2,
   KeyRound,
   Loader2,
+  MessageSquarePlus,
   MonitorSmartphone,
   ReceiptText,
   RefreshCw,
@@ -14,7 +15,13 @@ import {
   UserPlus,
   Users
 } from "lucide-react";
-import type { AdminCacheJobEntry, AdminLoginAuditEntry, CacheAsset } from "@wwpdw/shared";
+import type {
+  AdminCacheJobEntry,
+  AdminLoginAuditEntry,
+  CacheAsset,
+  MovieRequestEntry,
+  MovieRequestStatus
+} from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -34,7 +41,7 @@ import {
   mediaQuality,
   mp4StatusLabel
 } from "../format";
-import type { ManagedMemberCode } from "../types";
+import type { BadgeVariant, ManagedMemberCode } from "../types";
 import { EmptyState } from "./EmptyState";
 import { Metric } from "./MediaDiagnosticsView";
 
@@ -48,6 +55,8 @@ interface AdminPanelProps {
   cachedAssetsLoading: boolean;
   loginAudit: AdminLoginAuditEntry[];
   loginAuditLoading: boolean;
+  movieRequests: MovieRequestEntry[];
+  movieRequestsLoading: boolean;
   adminKeyInput: string;
   memberName: string;
   memberCredits: number;
@@ -66,11 +75,13 @@ interface AdminPanelProps {
   onRefreshJobs: () => void;
   onRefreshCachedAssets: () => void;
   onRefreshLoginAudit: () => void;
+  onRefreshMovieRequests: () => void;
   onRetryCacheJob: (jobId: string) => void;
   onDeleteCacheJob: (jobId: string) => void;
   onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
   onUpdatePasscode: (id: string) => void;
+  onUpdateMovieRequestStatus: (id: string, status: MovieRequestStatus) => void;
   onViewCreditUsage: (id: string) => void;
   onRevoke: (id: string) => void;
 }
@@ -85,6 +96,8 @@ export function AdminPanel({
   cachedAssetsLoading,
   loginAudit,
   loginAuditLoading,
+  movieRequests,
+  movieRequestsLoading,
   adminKeyInput,
   memberName,
   memberCredits,
@@ -103,11 +116,13 @@ export function AdminPanel({
   onRefreshJobs,
   onRefreshCachedAssets,
   onRefreshLoginAudit,
+  onRefreshMovieRequests,
   onRetryCacheJob,
   onDeleteCacheJob,
   onDeleteCachedAsset,
   onUpdateCredits,
   onUpdatePasscode,
+  onUpdateMovieRequestStatus,
   onViewCreditUsage,
   onRevoke
 }: AdminPanelProps) {
@@ -174,6 +189,13 @@ export function AdminPanel({
             Members
             <Badge variant="secondary">{memberCodes.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="requests">
+            <MessageSquarePlus className="h-4 w-4" />
+            Requests
+            <Badge variant={movieRequests.some((request) => request.status === "new") ? "warning" : "secondary"}>
+              {movieRequests.length}
+            </Badge>
+          </TabsTrigger>
           <TabsTrigger value="security">
             <ShieldCheck className="h-4 w-4" />
             Security
@@ -224,6 +246,16 @@ export function AdminPanel({
           />
         </TabsContent>
 
+        <TabsContent value="requests">
+          <AdminMovieRequestsPanel
+            actionLoading={adminLoading}
+            loading={movieRequestsLoading}
+            requests={movieRequests}
+            onRefresh={onRefreshMovieRequests}
+            onUpdateStatus={onUpdateMovieRequestStatus}
+          />
+        </TabsContent>
+
         <TabsContent value="security">
           <AdminLoginAuditPanel
             events={loginAudit}
@@ -233,6 +265,110 @@ export function AdminPanel({
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+const movieRequestStatusOptions: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
+
+function movieRequestStatusLabel(status: MovieRequestStatus) {
+  const labels: Record<MovieRequestStatus, string> = {
+    new: "New",
+    planned: "Planned",
+    fulfilled: "Ready",
+    dismissed: "Closed"
+  };
+  return labels[status];
+}
+
+function movieRequestVariant(status: MovieRequestStatus): BadgeVariant {
+  const variants: Record<MovieRequestStatus, BadgeVariant> = {
+    new: "secondary",
+    planned: "warning",
+    fulfilled: "default",
+    dismissed: "muted"
+  };
+  return variants[status];
+}
+
+function AdminMovieRequestsPanel({
+  actionLoading,
+  loading,
+  requests,
+  onRefresh,
+  onUpdateStatus
+}: {
+  actionLoading: boolean;
+  loading: boolean;
+  requests: MovieRequestEntry[];
+  onRefresh: () => void;
+  onUpdateStatus: (id: string, status: MovieRequestStatus) => void;
+}) {
+  const busy = actionLoading || loading;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquarePlus className="h-5 w-5 text-emerald-300" />
+            Movie requests
+          </CardTitle>
+          <CardDescription>Member wish list items for future disc purchases or library updates.</CardDescription>
+        </div>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {requests.length === 0 ? (
+          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+            {loading ? "Loading movie requests" : "No movie requests"}
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {requests.map((request) => (
+              <div key={request.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-slate-50">{request.requestedByMemberName ?? "Cinema member"}</p>
+                      <Badge variant={movieRequestVariant(request.status)}>{movieRequestStatusLabel(request.status)}</Badge>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">{request.text}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Requested {formatDateTime(request.requestedAt)}
+                      {request.updatedAt !== request.requestedAt ? ` / updated ${formatDateTime(request.updatedAt)}` : ""}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 md:justify-end">
+                    {movieRequestStatusOptions.map((status) => (
+                      <Button
+                        key={status}
+                        type="button"
+                        variant={request.status === status ? "secondary" : "outline"}
+                        size="sm"
+                        onClick={() => onUpdateStatus(request.id, status)}
+                        disabled={busy || request.status === status}
+                      >
+                        {movieRequestStatusLabel(status)}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 text-sm md:grid-cols-3">
+                  <Metric label="Request" value={request.id} />
+                  <Metric label="Member" value={request.requestedByMemberId ?? "not captured"} />
+                  <Metric label="Status" value={request.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

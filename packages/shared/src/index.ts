@@ -195,6 +195,38 @@ export interface MemberCreditUsageResponse {
   entries: MemberCreditUsageEntry[];
 }
 
+export type MovieRequestStatus = "new" | "planned" | "fulfilled" | "dismissed";
+
+export interface MovieRequestEntry {
+  id: string;
+  text: string;
+  status: MovieRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  requestedByMemberId?: string;
+  requestedByMemberName?: string;
+}
+
+export interface CreateMovieRequestRequest {
+  text: string;
+}
+
+export interface CreateMovieRequestResponse {
+  request: MovieRequestEntry;
+}
+
+export interface MovieRequestsResponse {
+  requests: MovieRequestEntry[];
+}
+
+export interface UpdateMovieRequestStatusRequest {
+  status: MovieRequestStatus;
+}
+
+export interface UpdateMovieRequestStatusResponse {
+  request: MovieRequestEntry;
+}
+
 export interface CacheAssetLookupResponse {
   asset?: CacheAsset;
   playable: boolean;

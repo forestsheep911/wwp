@@ -5,6 +5,8 @@ import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
 import type {
   AdminLoginAuditEntry,
+  MovieRequestEntry,
+  MovieRequestStatus,
   MemberCreditCharge,
   MemberCreditLimitReason,
   MemberCreditSummary,
@@ -20,6 +22,7 @@ type AccessBackend = "local" | "azure";
 interface LocalAccessState {
   codes: Record<string, StoredMemberCode>;
   audit?: AdminLoginAuditEntry[];
+  movieRequests?: StoredMovieRequest[];
 }
 
 interface StoredMemberCode {
@@ -47,6 +50,16 @@ interface StoredMemberCreditUsage {
   requestId?: string;
 }
 
+interface StoredMovieRequest {
+  id: string;
+  text: string;
+  status: MovieRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  requestedByMemberId?: string;
+  requestedByMemberName?: string;
+}
+
 type PayloadEntity = {
   partitionKey: string;
   rowKey: string;
@@ -61,6 +74,8 @@ const memberCreditUnitSymbol = "🍀";
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
 const noExpiryAt = "9999-12-31T23:59:59.999Z";
 const loginAuditRetention = 500;
+const movieRequestPartitionKey = "movie-request";
+const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 
 function backend(): AccessBackend {
   return process.env.CACHE_BACKEND === "azure" ? "azure" : "local";
@@ -119,6 +134,10 @@ function defaultCredits() {
 
 function usageEvents(code: StoredMemberCode) {
   return code.usage ?? [];
+}
+
+function movieRequestStatus(value: unknown): MovieRequestStatus {
+  return movieRequestStatuses.includes(value as MovieRequestStatus) ? value as MovieRequestStatus : "new";
 }
 
 function usageCredits(events: StoredMemberCreditUsage[]) {
@@ -203,6 +222,41 @@ function storedMemberCode(input: { name: string; rawCode: string; credits?: numb
   return stored;
 }
 
+function storedMovieRequest(input: CreateMovieRequestInput): StoredMovieRequest {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    text: input.text.trim().slice(0, 2000),
+    status: "new",
+    requestedAt: now,
+    updatedAt: now,
+    requestedByMemberId: input.memberId,
+    requestedByMemberName: input.memberName
+  };
+}
+
+function publicMovieRequest(request: StoredMovieRequest): MovieRequestEntry {
+  const requestedAt = request.requestedAt || request.updatedAt || new Date(0).toISOString();
+  return {
+    id: request.id,
+    text: request.text,
+    status: movieRequestStatus(request.status),
+    requestedAt,
+    updatedAt: request.updatedAt || requestedAt,
+    requestedByMemberId: request.requestedByMemberId,
+    requestedByMemberName: request.requestedByMemberName
+  };
+}
+
+function listMovieRequestEntries(requests: StoredMovieRequest[], input: ListMovieRequestsInput) {
+  const boundedLimit = positiveInt(input.limit, 50, { min: 1, max: 200 });
+  return requests
+    .filter((request) => !input.memberId || request.requestedByMemberId === input.memberId)
+    .map(publicMovieRequest)
+    .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+    .slice(0, boundedLimit);
+}
+
 function setCreditsOnStoredCode(code: StoredMemberCode, credits: number) {
   prepareStoredCode(code);
   code.creditBalance = positiveInt(credits, 0, { min: 0, max: 10000 });
@@ -281,6 +335,7 @@ function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
 
 function normalizeState(state: LocalAccessState): LocalAccessState {
   state.audit ??= [];
+  state.movieRequests ??= [];
   return state;
 }
 
@@ -351,6 +406,17 @@ export interface ChargeMemberCreditsInput {
   requestId?: string;
 }
 
+export interface CreateMovieRequestInput {
+  text: string;
+  memberId: string;
+  memberName?: string;
+}
+
+export interface ListMovieRequestsInput {
+  memberId?: string;
+  limit: number;
+}
+
 export interface AccessStore {
   readonly backend: AccessBackend;
   readonly description: string;
@@ -362,6 +428,9 @@ export interface AccessStore {
   changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string): Promise<MemberPasscodeUpdateResult>;
   listMemberCreditUsage(id: string, limit: number): Promise<MemberCreditUsageList | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
+  createMovieRequest(input: CreateMovieRequestInput): Promise<MovieRequestEntry>;
+  listMovieRequests(input: ListMovieRequestsInput): Promise<MovieRequestEntry[]>;
+  updateMovieRequestStatus(id: string, status: MovieRequestStatus): Promise<MovieRequestEntry | undefined>;
   recordLoginAudit(entry: AdminLoginAuditEntry): Promise<void>;
   listLoginAudit(limit: number): Promise<AdminLoginAuditEntry[]>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
@@ -523,6 +592,32 @@ class LocalAccessStore implements AccessStore {
       }
 
       return chargeStoredCode(code, input);
+    });
+  }
+
+  async createMovieRequest(input: CreateMovieRequestInput) {
+    return this.updateState((state) => {
+      const request = storedMovieRequest(input);
+      state.movieRequests = [request, ...(state.movieRequests ?? [])].slice(0, 1000);
+      return publicMovieRequest(request);
+    });
+  }
+
+  async listMovieRequests(input: ListMovieRequestsInput) {
+    const state = await this.readState();
+    return listMovieRequestEntries(state.movieRequests ?? [], input);
+  }
+
+  async updateMovieRequestStatus(id: string, status: MovieRequestStatus) {
+    return this.updateState((state) => {
+      const request = (state.movieRequests ?? []).find((item) => item.id === id);
+      if (!request) {
+        return undefined;
+      }
+
+      request.status = movieRequestStatus(status);
+      request.updatedAt = new Date().toISOString();
+      return publicMovieRequest(request);
     });
   }
 
@@ -795,6 +890,42 @@ class AzureAccessStore implements AccessStore {
     return result;
   }
 
+  async createMovieRequest(input: CreateMovieRequestInput) {
+    await this.ensureReady();
+    const request = storedMovieRequest(input);
+    await this.saveMovieRequest(request);
+    return publicMovieRequest(request);
+  }
+
+  async listMovieRequests(input: ListMovieRequestsInput) {
+    await this.ensureReady();
+    const requests: StoredMovieRequest[] = [];
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${movieRequestPartitionKey}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      requests.push(deserialize<StoredMovieRequest>(entity));
+    }
+
+    return listMovieRequestEntries(requests, input);
+  }
+
+  async updateMovieRequestStatus(id: string, status: MovieRequestStatus) {
+    await this.ensureReady();
+    const request = await this.getMovieRequest(id);
+    if (!request) {
+      return undefined;
+    }
+
+    request.status = movieRequestStatus(status);
+    request.updatedAt = new Date().toISOString();
+    await this.saveMovieRequest(request);
+    return publicMovieRequest(request);
+  }
+
   async revokeMemberCode(id: string) {
     await this.ensureReady();
     const stored = await this.getStored(id);
@@ -931,6 +1062,30 @@ class AzureAccessStore implements AccessStore {
         codeHash: code.codeHash,
         status: statusFor(code),
         payload: serialize(code)
+      },
+      "Replace"
+    );
+  }
+
+  private async getMovieRequest(id: string) {
+    try {
+      const entity = await this.table.getEntity<PayloadEntity>(movieRequestPartitionKey, id);
+      return deserialize<StoredMovieRequest>(entity);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async saveMovieRequest(request: StoredMovieRequest) {
+    await this.table.upsertEntity<PayloadEntity>(
+      {
+        partitionKey: movieRequestPartitionKey,
+        rowKey: request.id,
+        status: movieRequestStatus(request.status),
+        payload: serialize(request)
       },
       "Replace"
     );

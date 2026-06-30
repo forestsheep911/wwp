@@ -18,6 +18,7 @@ import {
   type CacheAssetLookupResponse,
   type CachedAssetsResponse,
   type CreateMemberCodeRequest,
+  type CreateMovieRequestRequest,
   type ChangeMemberPasscodeRequest,
   type AdminSetMemberPasscodeRequest,
   type DeleteCacheEntryResponse,
@@ -25,9 +26,12 @@ import {
   type MemberAccessCode,
   type MemberCreditUsageResponse,
   type MediaVariant,
+  type MovieRequestsResponse,
+  type MovieRequestStatus,
   type RegisterMemberRequest,
   type SearchResult,
   type SetMemberCreditsRequest,
+  type UpdateMovieRequestStatusRequest,
   validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, isFreshReady } from "@wwpdw/cache-store";
@@ -54,6 +58,7 @@ const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
 const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? 1)));
+const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminKey =
   process.env.WWPDW_ADMIN_KEY ??
   process.env.WWPDW_ACCESS_KEY ??
@@ -646,6 +651,10 @@ function creditLimitErrorMessage() {
   return "This Cinema Pass does not have enough 🍀 left.";
 }
 
+function movieRequestStatus(value: unknown): MovieRequestStatus | undefined {
+  return movieRequestStatuses.includes(value as MovieRequestStatus) ? value as MovieRequestStatus : undefined;
+}
+
 async function handleEnsureCache(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -1049,6 +1058,74 @@ async function handleListOwnCreditUsage(
   sendJson(response, 200, creditUsagePayload(usage));
 }
 
+async function handleCreateMovieRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts can request movies here." });
+    return;
+  }
+
+  const body = await readBody<CreateMovieRequestRequest>(request);
+  const text = body.text?.trim() ?? "";
+  if (!text) {
+    sendJson(response, 400, { error: "Please describe what you want to watch." });
+    return;
+  }
+
+  if (text.length > 2000) {
+    sendJson(response, 400, { error: "Movie request is too long." });
+    return;
+  }
+
+  const entry = await accessStore.createMovieRequest({
+    text,
+    memberId: identity.memberId,
+    memberName: identity.memberName
+  });
+
+  logInfo("api.member.movie_requests.create", {
+    requestId: context.requestId,
+    movieRequestId: entry.id,
+    memberId: identity.memberId,
+    memberName: identity.memberName,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, { request: entry });
+}
+
+async function handleListOwnMovieRequests(
+  url: URL,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts have movie requests." });
+    return;
+  }
+
+  const limit = requestLimit(url, 50, 200);
+  const requests = await accessStore.listMovieRequests({
+    memberId: identity.memberId,
+    limit
+  });
+
+  logInfo("api.member.movie_requests.list", {
+    requestId: context.requestId,
+    memberId: identity.memberId,
+    count: requests.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { requests });
+}
+
 async function handleListMemberCreditUsage(
   codeId: string,
   url: URL,
@@ -1129,6 +1206,57 @@ async function handleSetMemberCredits(
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 200, { code });
+}
+
+async function handleListMovieRequests(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 100, 200);
+  const requests = await accessStore.listMovieRequests({ limit });
+  const payload: MovieRequestsResponse = { requests };
+
+  logInfo("api.admin.movie_requests.list", {
+    requestId: context.requestId,
+    count: payload.requests.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
+async function handleUpdateMovieRequestStatus(
+  movieRequestId: string,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const body = await readBody<UpdateMovieRequestStatusRequest>(request);
+  const status = movieRequestStatus(body.status);
+  if (!status) {
+    sendJson(response, 400, { error: "Movie request status is invalid." });
+    return;
+  }
+
+  const entry = await accessStore.updateMovieRequestStatus(movieRequestId, status);
+  if (!entry) {
+    logWarn("api.admin.movie_requests.status_not_found", {
+      requestId: context.requestId,
+      movieRequestId,
+      status,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Movie request was not found." });
+    return;
+  }
+
+  logInfo("api.admin.movie_requests.status", {
+    requestId: context.requestId,
+    movieRequestId: entry.id,
+    memberId: entry.requestedByMemberId,
+    status: entry.status,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { request: entry });
 }
 
 async function handleListCacheJobs(url: URL, response: http.ServerResponse, context: RequestContext) {
@@ -1397,12 +1525,41 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/member/movie-requests") {
+      await handleListOwnMovieRequests(url, response, context, identity!);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/member/movie-requests") {
+      await handleCreateMovieRequest(request, response, context, identity!);
+      return;
+    }
+
     if (pathname === "/api/admin/login-audit" && !requireAdmin(identity, response, context)) {
       return;
     }
 
     if (request.method === "GET" && pathname === "/api/admin/login-audit") {
       await handleListLoginAudit(url, response, context);
+      return;
+    }
+
+    if (pathname === "/api/admin/movie-requests" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/movie-requests") {
+      await handleListMovieRequests(url, response, context);
+      return;
+    }
+
+    const movieRequestStatusMatch = pathname.match(/^\/api\/admin\/movie-requests\/([^/]+)\/status$/);
+    if (movieRequestStatusMatch && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "POST" && movieRequestStatusMatch) {
+      await handleUpdateMovieRequestStatus(decodeURIComponent(movieRequestStatusMatch[1]), request, response, context);
       return;
     }
 

@@ -8,6 +8,8 @@ import type {
   CacheJob,
   MediaVariant,
   MemberCreditUsageResponse,
+  MovieRequestEntry,
+  MovieRequestStatus,
   PlaybackResponse,
   SearchResult
 } from "@wwpdw/shared";
@@ -16,6 +18,7 @@ import {
   changeMemberPasscode,
   clearAccessKey,
   createMemberAccessCode,
+  createMovieRequest,
   deleteCachedAsset,
   deleteCacheJob,
   deleteMemberAccessCode,
@@ -31,12 +34,15 @@ import {
   listLoginAudit,
   listMemberCodes,
   listMemberCreditUsage,
+  listMovieRequests,
+  listOwnMovieRequests,
   listOwnCreditUsage,
   revokeMemberAccessCode,
   retryCacheJob,
   searchAssets,
   setMemberCredits as setMemberCreditsApi,
   setMemberPasscode as setMemberPasscodeApi,
+  updateMovieRequestStatus as updateMovieRequestStatusApi,
   setAccessKey
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
@@ -46,6 +52,7 @@ import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
+import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { Player } from "./cinema/components/Player";
 import { PasscodeDialog } from "./cinema/components/PasscodeDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
@@ -149,6 +156,11 @@ export default function App() {
   const [creditUsageLoading, setCreditUsageLoading] = useState(false);
   const [creditUsageError, setCreditUsageError] = useState("");
   const [creditUsage, setCreditUsage] = useState<MemberCreditUsageResponse | undefined>();
+  const [movieRequestOpen, setMovieRequestOpen] = useState(false);
+  const [movieRequestText, setMovieRequestText] = useState("");
+  const [movieRequestLoading, setMovieRequestLoading] = useState(false);
+  const [movieRequestError, setMovieRequestError] = useState("");
+  const [ownMovieRequests, setOwnMovieRequests] = useState<MovieRequestEntry[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -169,8 +181,11 @@ export default function App() {
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
   const [loginAudit, setLoginAudit] = useState<AdminLoginAuditEntry[]>([]);
   const [loginAuditLoading, setLoginAuditLoading] = useState(false);
+  const [adminMovieRequests, setAdminMovieRequests] = useState<MovieRequestEntry[]>([]);
+  const [adminMovieRequestsLoading, setAdminMovieRequestsLoading] = useState(false);
   const adminCacheJobLimit = 100;
   const loginAuditLimit = 100;
+  const movieRequestLimit = 100;
   const historyInitializedRef = useRef(false);
 
   const trackedPollKey = useMemo(
@@ -536,6 +551,23 @@ export default function App() {
     }
   }
 
+  async function refreshAdminMovieRequests() {
+    if (!adminUnlocked) {
+      return;
+    }
+
+    setAdminMovieRequestsLoading(true);
+    try {
+      const response = await listMovieRequests(movieRequestLimit);
+      setAdminMovieRequests(response.requests);
+      setAdminError("");
+    } catch (requestError) {
+      setAdminError(errorMessage(requestError, "Could not load movie requests."));
+    } finally {
+      setAdminMovieRequestsLoading(false);
+    }
+  }
+
   async function refreshCacheJobs() {
     if (!adminUnlocked) {
       return;
@@ -610,6 +642,21 @@ export default function App() {
     }
   }
 
+  async function updateAdminMovieRequestStatus(id: string, status: MovieRequestStatus) {
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await updateMovieRequestStatusApi(id, { status });
+      setAdminMovieRequests((currentRequests) => currentRequests.map((request) => (
+        request.id === id ? response.request : request
+      )));
+    } catch (requestError) {
+      setAdminError(errorMessage(requestError, "Could not update movie request."));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
   async function unlockAdmin() {
     const candidate = adminKeyInput.trim();
     if (!candidate) {
@@ -639,6 +686,15 @@ export default function App() {
         setCacheJobs(jobsResponse.jobs);
       } catch (cacheJobError) {
         setAdminError(errorMessage(cacheJobError, "Could not load cache jobs."));
+      }
+      try {
+        setAdminMovieRequestsLoading(true);
+        const requestsResponse = await listMovieRequests(movieRequestLimit);
+        setAdminMovieRequests(requestsResponse.requests);
+      } catch (requestError) {
+        setAdminError(errorMessage(requestError, "Could not load movie requests."));
+      } finally {
+        setAdminMovieRequestsLoading(false);
       }
       try {
         setLoginAuditLoading(true);
@@ -795,6 +851,64 @@ export default function App() {
     }
   }
 
+  async function refreshOwnMovieRequests(showLoading = false) {
+    if (role !== "member") {
+      return;
+    }
+
+    if (showLoading) {
+      setMovieRequestLoading(true);
+    }
+    setMovieRequestError("");
+    try {
+      const response = await listOwnMovieRequests(movieRequestLimit);
+      setOwnMovieRequests(response.requests);
+    } catch (requestError) {
+      if (isUnauthorizedError(requestError)) {
+        handleRequestError(requestError, "Could not load movie requests.");
+        return;
+      }
+      setMovieRequestError(errorMessage(requestError, "Could not load movie requests."));
+    } finally {
+      if (showLoading) {
+        setMovieRequestLoading(false);
+      }
+    }
+  }
+
+  function openMovieRequestDialog() {
+    setMovieRequestOpen(true);
+    void refreshOwnMovieRequests(true);
+  }
+
+  async function submitMovieRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = movieRequestText.trim();
+    if (!text) {
+      setMovieRequestError("Describe what you want to watch.");
+      return;
+    }
+
+    setMovieRequestLoading(true);
+    setMovieRequestError("");
+    try {
+      const response = await createMovieRequest({ text });
+      setOwnMovieRequests((currentRequests) => [
+        response.request,
+        ...currentRequests.filter((request) => request.id !== response.request.id)
+      ]);
+      setMovieRequestText("");
+    } catch (requestError) {
+      if (isUnauthorizedError(requestError)) {
+        handleRequestError(requestError, "Could not submit movie request.");
+        return;
+      }
+      setMovieRequestError(errorMessage(requestError, "Could not submit movie request."));
+    } finally {
+      setMovieRequestLoading(false);
+    }
+  }
+
   async function openMemberCreditUsage(id: string) {
     setCreditUsageOpen(true);
     setCreditUsageLoading(true);
@@ -851,6 +965,10 @@ export default function App() {
     setCreditUsageOpen(false);
     setCreditUsageError("");
     setCreditUsage(undefined);
+    setMovieRequestOpen(false);
+    setMovieRequestText("");
+    setMovieRequestError("");
+    setOwnMovieRequests([]);
     setAdminUnlocked(false);
     setActiveTab("library");
     setQuery("");
@@ -862,6 +980,7 @@ export default function App() {
     setMemberPasscodeEdits({});
     setCacheJobs([]);
     setLoginAudit([]);
+    setAdminMovieRequests([]);
     setTrackedItems([]);
     setCacheRequestAssetKeys([]);
     setCachedAssets([]);
@@ -1016,6 +1135,7 @@ export default function App() {
       void refreshMemberCodes();
       void refreshCachedAssets();
       void refreshCacheJobs();
+      void refreshAdminMovieRequests();
       void refreshLoginAudit();
     }
   }, [activeTab, adminUnlocked]);
@@ -1104,16 +1224,33 @@ export default function App() {
           }
         }}
       />
+      <MovieRequestDialog
+        error={movieRequestError}
+        loading={movieRequestLoading}
+        open={movieRequestOpen}
+        requestText={movieRequestText}
+        requests={ownMovieRequests}
+        onOpenChange={(open) => {
+          setMovieRequestOpen(open);
+          if (!open) {
+            setMovieRequestError("");
+          }
+        }}
+        onRequestTextChange={setMovieRequestText}
+        onSubmit={(event) => void submitMovieRequest(event)}
+      />
       <CinemaLayout
         activeTab={activeTab}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
+        canRequestMovie={role === "member"}
         statusCount={trackedItems.length}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
         onChangePasscode={() => setPasscodeOpen(true)}
         onLock={lockCinema}
+        onOpenMovieRequest={openMovieRequestDialog}
         onOpenSpending={() => void openOwnCreditUsage()}
         onOpenSearch={() => setSearchOpen(true)}
         status={showStatusPanel ? (
@@ -1169,6 +1306,8 @@ export default function App() {
             cachedAssetsLoading={cachedAssetsLoading}
             loginAudit={loginAudit}
             loginAuditLoading={loginAuditLoading}
+            movieRequests={adminMovieRequests}
+            movieRequestsLoading={adminMovieRequestsLoading}
             adminKeyInput={adminKeyInput}
             memberName={memberName}
             memberCredits={memberCredits}
@@ -1187,11 +1326,13 @@ export default function App() {
             onRefreshJobs={() => void refreshCacheJobs()}
             onRefreshCachedAssets={() => void refreshCachedAssets()}
             onRefreshLoginAudit={() => void refreshLoginAudit()}
+            onRefreshMovieRequests={() => void refreshAdminMovieRequests()}
             onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
             onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
             onUpdateCredits={updateMemberCredits}
             onUpdatePasscode={updateMemberPasscode}
+            onUpdateMovieRequestStatus={(id, status) => void updateAdminMovieRequestStatus(id, status)}
             onViewCreditUsage={(id) => void openMemberCreditUsage(id)}
             onRevoke={revokeMemberCode}
           />
