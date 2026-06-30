@@ -23,8 +23,8 @@ export function StatusPanel({
 }) {
   if (items.length === 0) {
     return (
-      <Card className="sticky top-5">
-        <CardHeader>
+      <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
+        <CardHeader className="shrink-0">
           <CardTitle className="flex items-center gap-2 text-base">
             <Database className="h-4 w-4 text-emerald-300" />
             当前准备任务
@@ -36,15 +36,15 @@ export function StatusPanel({
   }
 
   return (
-    <Card className="sticky top-5">
-      <CardHeader>
+    <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
+      <CardHeader className="shrink-0">
         <CardTitle className="flex items-center justify-between gap-3 text-base">
-          <span>当前准备任务</span>
-          <Badge variant="secondary">{items.length} 项</Badge>
+          <span className="min-w-0 truncate">当前准备任务</span>
+          <Badge className="shrink-0" variant="secondary">{items.length} 项</Badge>
         </CardTitle>
         <CardDescription>本次浏览器发起的准备任务</CardDescription>
       </CardHeader>
-      <CardContent className="grid max-h-[calc(100vh-10rem)] gap-3 overflow-auto pr-3">
+      <CardContent className="grid min-h-0 flex-1 gap-3 overflow-y-auto pr-3">
         {items.map(({ job, asset, result }) => (
           <div key={job.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-3">
             <div className="flex items-start justify-between gap-3">

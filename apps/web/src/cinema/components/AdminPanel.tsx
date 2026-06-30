@@ -398,8 +398,8 @@ function AdminCachedAssetsPanel({
         ) : (
           <div className="grid gap-3">
             {assets.map((asset) => (
-              <div key={asset.assetKey} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div key={asset.assetKey} className="grid gap-3 overflow-hidden rounded-md border border-slate-800 bg-slate-950/70 p-4">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-slate-50">{asset.title}</p>
                     <p className="mt-1 text-sm text-slate-400">
@@ -407,6 +407,7 @@ function AdminCachedAssetsPanel({
                     </p>
                   </div>
                   <Button
+                    className="w-full sm:w-auto sm:justify-self-end"
                     type="button"
                     variant="destructive"
                     size="sm"
