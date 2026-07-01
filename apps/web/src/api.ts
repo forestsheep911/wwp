@@ -23,6 +23,7 @@ import type {
   CreditPreviewResponse,
   CreditPolicyResponse,
   DeleteCacheEntryResponse,
+  DirectDownloadResponse,
   EnsureCacheResponse,
   ForumThreadResponse,
   ForumThreadsResponse,
@@ -231,6 +232,16 @@ export function getCreditPolicy() {
 
 export function ensureCache(result: SearchResult) {
   return request<EnsureCacheResponse>(apiUrl("/api/cache"), {
+    method: "POST",
+    body: JSON.stringify({
+      assetKey: result.assetKey,
+      result
+    })
+  });
+}
+
+export function getDirectDownload(result: SearchResult) {
+  return request<DirectDownloadResponse>(apiUrl("/api/direct-download"), {
     method: "POST",
     body: JSON.stringify({
       assetKey: result.assetKey,

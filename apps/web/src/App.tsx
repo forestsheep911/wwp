@@ -37,6 +37,7 @@ import {
   getAccessKey,
   getCacheAsset,
   getCacheStatus,
+  getDirectDownload,
   getForumThread,
   getCreditPolicy,
   getPlayback,
@@ -225,6 +226,7 @@ function CinemaApp() {
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
+  const [downloadRequestAssetKeys, setDownloadRequestAssetKeys] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -425,6 +427,7 @@ function CinemaApp() {
       setAsset(undefined);
       setTrackedItems([]);
       setCacheRequestAssetKeys([]);
+      setDownloadRequestAssetKeys([]);
       return;
     }
 
@@ -612,6 +615,40 @@ function CinemaApp() {
       kind: "cache",
       target
     });
+  }
+
+  function openDownloadWindow(downloadUrl: string, pendingWindow?: Window | null) {
+    if (pendingWindow && !pendingWindow.closed) {
+      pendingWindow.location.href = downloadUrl;
+      return;
+    }
+
+    const anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.referrerPolicy = "no-referrer";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
+    const target = variantToResult(result, variant);
+    setError("");
+    setDownloadRequestAssetKeys((currentKeys) => (
+      currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
+    ));
+    const pendingWindow = window.open("about:blank", "_blank");
+    try {
+      const response = await getDirectDownload(target);
+      openDownloadWindow(response.downloadUrl, pendingWindow);
+    } catch (downloadError) {
+      pendingWindow?.close();
+      handleRequestError(downloadError, copy.fallbackErrors.directDownload);
+    } finally {
+      setDownloadRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
+    }
   }
 
   async function executeCache(target: SearchResult, after?: "historyRecache") {
@@ -1601,6 +1638,7 @@ function CinemaApp() {
     setAdminMovieRequests([]);
     setTrackedItems([]);
     setCacheRequestAssetKeys([]);
+    setDownloadRequestAssetKeys([]);
     setCachedAssets([]);
     historyInitializedRef.current = false;
     writeRoute({
@@ -2014,12 +2052,14 @@ function CinemaApp() {
             historyItems={history}
             trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
+            pendingDownloadAssetKeys={downloadRequestAssetKeys}
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onLoadMoreBrowse={() => void refreshBrowseAssets({ append: true })}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
+            onDownload={(selectedResult, variant) => void downloadResult(selectedResult, variant)}
           />
         )}
         cached={(

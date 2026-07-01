@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Database,
+  Download,
   Eye,
   Film,
   Flame,
@@ -58,12 +59,14 @@ interface LibraryTabProps {
   historyItems: PlaybackHistoryEntry[];
   trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onLoadMoreBrowse: () => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }
 
 export function LibraryTab({
@@ -82,12 +85,14 @@ export function LibraryTab({
   historyItems,
   trackedItems,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
   onFocusedAssetHandled,
   onLoadMoreBrowse,
   onViewModeChange,
-  onSelect
+  onSelect,
+  onDownload
 }: LibraryTabProps) {
   const hasQuery = query.trim().length > 0;
   const [detailResult, setDetailResult] = useState<ResultWithCache | undefined>();
@@ -121,9 +126,11 @@ export function LibraryTab({
           creditPolicy={creditPolicy}
           result={detailResult}
           pendingAssetKeys={pendingAssetKeys}
+          pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onBack={() => setDetailResult(undefined)}
           onSelect={onSelect}
+          onDownload={onDownload}
         />
       ) : !hasQuery && results.length === 0 ? (
         <LibraryHome
@@ -136,11 +143,13 @@ export function LibraryTab({
           browseHasMore={browseHasMore}
           historyItems={historyItems}
           pendingAssetKeys={pendingAssetKeys}
+          pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onOpenCachedAsset={onOpenCachedAsset}
           onLoadMoreBrowse={onLoadMoreBrowse}
           onOpenDetail={setDetailResult}
           onSelect={onSelect}
+          onDownload={onDownload}
         />
       ) : (
         <>
@@ -183,9 +192,11 @@ export function LibraryTab({
                       key={result.assetKey}
                       result={result}
                       pendingAssetKeys={pendingAssetKeys}
+                      pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                       trackedByAssetKey={trackedByAssetKey}
                       onOpenDetail={setDetailResult}
                       onSelect={onSelect}
+                      onDownload={onDownload}
                     />
                   ))
                 )}
@@ -196,9 +207,11 @@ export function LibraryTab({
               creditPolicy={creditPolicy}
               results={results}
               pendingAssetKeys={pendingAssetKeys}
+              pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
               onOpenDetail={setDetailResult}
               onSelect={onSelect}
+              onDownload={onDownload}
             />
           )}
         </>
@@ -260,11 +273,13 @@ function LibraryHome({
   browseHasMore,
   historyItems,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
   onLoadMoreBrowse,
   onOpenDetail,
-  onSelect
+  onSelect,
+  onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
   cachedAssets: CacheAsset[];
@@ -275,11 +290,13 @@ function LibraryHome({
   browseHasMore: boolean;
   historyItems: PlaybackHistoryEntry[];
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onLoadMoreBrowse: () => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>("recent");
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
@@ -383,9 +400,11 @@ function LibraryHome({
                     key={result.assetKey}
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
+                    pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                     trackedByAssetKey={trackedByAssetKey}
                     onOpenDetail={onOpenDetail}
                     onSelect={onSelect}
+                    onDownload={onDownload}
                     variantLimit={3}
                   />
                 ))}
@@ -869,8 +888,10 @@ function VariantButtons({
   creditPolicy,
   result,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onSelect,
+  onDownload,
   onShowAllVariants,
   compact = false,
   variantLimit
@@ -878,8 +899,10 @@ function VariantButtons({
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
   onShowAllVariants?: () => void;
   compact?: boolean;
   variantLimit?: number;
@@ -906,6 +929,7 @@ function VariantButtons({
             : displayAsset && displayAsset.status !== "ready"
               ? cacheLabel(displayAsset)
               : undefined;
+        const downloading = pendingDownloadAssetKeys.includes(variant.assetKey);
         const progress = tracked?.job.progress ?? 0;
         const progressColor = tracked?.job.status === "failed"
           ? "bg-rose-500/22"
@@ -929,34 +953,48 @@ function VariantButtons({
           : undefined;
 
         return (
-          <Button
-            className={`relative h-auto min-w-0 flex-col items-start overflow-hidden px-3 py-2 text-left sm:flex-row sm:items-center sm:justify-between ${compact ? "min-h-10" : ""}`}
-            key={variant.assetKey}
-            type="button"
-            variant={displayAsset?.status === "ready" ? "default" : "secondary"}
-            onClick={() => onSelect(result, variant)}
-            disabled={isActiveCacheHit}
-            title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-            aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-          >
-            {tracked ? (
-              <span
-                aria-hidden="true"
-                className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500`}
-                style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
-              />
-            ) : null}
-            <span className="relative z-10 min-w-0 max-w-full truncate">{variantLabel}</span>
-            <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
-              {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {!isActiveCacheHit ? (
-                <Badge className={costBadgeClass} variant="warning">
-                  {costDisplayLabel}
-                </Badge>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2.5rem] gap-2" key={variant.assetKey}>
+            <Button
+              className={`relative h-auto min-w-0 flex-col items-start overflow-hidden px-3 py-2 text-left sm:flex-row sm:items-center sm:justify-between ${compact ? "min-h-10" : ""}`}
+              type="button"
+              variant={displayAsset?.status === "ready" ? "default" : "secondary"}
+              onClick={() => onSelect(result, variant)}
+              disabled={isActiveCacheHit}
+              title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+              aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+            >
+              {tracked ? (
+                <span
+                  aria-hidden="true"
+                  className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500`}
+                  style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
+                />
               ) : null}
-              {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
-            </span>
-          </Button>
+              <span className="relative z-10 min-w-0 max-w-full truncate">{variantLabel}</span>
+              <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
+                {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {!isActiveCacheHit ? (
+                  <Badge className={costBadgeClass} variant="warning">
+                    {costDisplayLabel}
+                  </Badge>
+                ) : null}
+                {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
+              </span>
+            </Button>
+            <Button
+              className="h-full min-h-10 border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800"
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => onDownload(result, variant)}
+              disabled={downloading}
+              title={`${variantLabel} / ${copy.library.directDownload}`}
+              aria-label={`${variantLabel} / ${copy.library.directDownload}`}
+            >
+              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              <span className="sr-only">{copy.library.directDownload}</span>
+            </Button>
+          </div>
         );
       })}
       {hiddenVariantCount > 0 ? (
@@ -983,17 +1021,21 @@ function MovieCard({
   creditPolicy,
   result,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
   onSelect,
+  onDownload,
   variantLimit
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
   variantLimit?: number;
 }) {
   const tags = cardTags(result);
@@ -1038,8 +1080,10 @@ function MovieCard({
           creditPolicy={creditPolicy}
           result={result}
           pendingAssetKeys={pendingAssetKeys}
+          pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onSelect={onSelect}
+          onDownload={onDownload}
           onShowAllVariants={() => onOpenDetail(result)}
           variantLimit={variantLimit}
         />
@@ -1082,16 +1126,20 @@ function MovieListView({
   creditPolicy,
   results,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
-  onSelect
+  onSelect,
+  onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
   results: ResultWithCache[];
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   if (results.length === 0) {
     return <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesLoaded} />;
@@ -1158,8 +1206,10 @@ function MovieListView({
                     creditPolicy={creditPolicy}
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
+                    pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                     trackedByAssetKey={trackedByAssetKey}
                     onSelect={onSelect}
+                    onDownload={onDownload}
                     compact
                   />
                 </td>
@@ -1176,16 +1226,20 @@ function MovieDetailView({
   creditPolicy,
   result,
   pendingAssetKeys,
+  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onBack,
-  onSelect
+  onSelect,
+  onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onBack: () => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const tags = detailTags(result);
   const ratings = displayRatings(result);
@@ -1255,8 +1309,10 @@ function MovieDetailView({
               creditPolicy={creditPolicy}
               result={result}
               pendingAssetKeys={pendingAssetKeys}
+              pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
               onSelect={onSelect}
+              onDownload={onDownload}
             />
           </div>
         </div>

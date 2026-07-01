@@ -30,6 +30,8 @@ import {
   type CreateForumThreadRequest,
   type CreateMemberNoticeRequest,
   type DeleteCacheEntryResponse,
+  type DirectDownloadRequest,
+  type DirectDownloadResponse,
   type EnsureCacheRequest,
   type ForumThreadResponse,
   type ForumThreadsResponse,
@@ -938,9 +940,16 @@ async function refreshRetrySource(job: CacheJob, context: RequestContext) {
   }
 }
 
-async function refreshResultBeforeCache(result: SearchResult, context: RequestContext) {
-  if (!searchIndexRefreshOnCache || !searchSource.refreshAsset || !result.sourcePageId) {
-    return result;
+async function refreshResultSource(
+  result: SearchResult,
+  context: RequestContext,
+  options: { logPrefix: string; indexReason: string }
+): Promise<{ result: SearchResult; sourceRefreshed: boolean }> {
+  if (!searchSource.refreshAsset || !result.sourcePageId) {
+    return {
+      result,
+      sourceRefreshed: false
+    };
   }
 
   const startedAt = Date.now();
@@ -953,18 +962,21 @@ async function refreshResultBeforeCache(result: SearchResult, context: RequestCo
     });
 
     if (!refreshed) {
-      logWarn("api.cache.source_refresh_miss", {
+      logWarn(`${options.logPrefix}.source_refresh_miss`, {
         requestId: context.requestId,
         assetKey: result.assetKey,
         sourcePageId: result.sourcePageId,
         durationMs: durationMs(startedAt)
       });
-      return result;
+      return {
+        result,
+        sourceRefreshed: false
+      };
     }
 
     recentResults.set(refreshed.assetKey, refreshed);
-    void writeSearchResultsToIndex([refreshed], "cache_source_refresh");
-    logInfo("api.cache.source_refresh_hit", {
+    void writeSearchResultsToIndex([refreshed], options.indexReason);
+    logInfo(`${options.logPrefix}.source_refresh_hit`, {
       requestId: context.requestId,
       assetKey: result.assetKey,
       refreshedAssetKey: refreshed.assetKey,
@@ -973,17 +985,34 @@ async function refreshResultBeforeCache(result: SearchResult, context: RequestCo
       durationMs: durationMs(startedAt)
     });
 
-    return refreshed;
+    return {
+      result: refreshed,
+      sourceRefreshed: true
+    };
   } catch (error) {
-    logWarn("api.cache.source_refresh_failed", {
+    logWarn(`${options.logPrefix}.source_refresh_failed`, {
       requestId: context.requestId,
       assetKey: result.assetKey,
       sourcePageId: result.sourcePageId,
       durationMs: durationMs(startedAt),
       ...errorLogFields(error)
     });
+    return {
+      result,
+      sourceRefreshed: false
+    };
+  }
+}
+
+async function refreshResultBeforeCache(result: SearchResult, context: RequestContext) {
+  if (!searchIndexRefreshOnCache) {
     return result;
   }
+
+  return (await refreshResultSource(result, context, {
+    logPrefix: "api.cache",
+    indexReason: "cache_source_refresh"
+  })).result;
 }
 
 function visibleCacheAsset<T extends { status: string; expiresAt?: string; playbackUrl?: string }>(
@@ -1351,6 +1380,122 @@ async function handleEnsureCache(
     charge: charge?.ok ? charge.charge : undefined,
     memberCredits: charge?.ok ? charge.code.credits : undefined
   });
+}
+
+function unixOrIsoDate(value: string | null) {
+  if (!value) {
+    return undefined;
+  }
+
+  if (/^\d+$/.test(value)) {
+    const numeric = Number(value);
+    const timestamp = numeric > 9999999999 ? numeric : numeric * 1000;
+    const date = new Date(timestamp);
+    return Number.isFinite(date.getTime()) ? date : undefined;
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function amzDate(value: string | null) {
+  const match = value?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  const date = new Date(Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  ));
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function downloadUrlExpiresAt(downloadUrl: string) {
+  try {
+    const url = new URL(downloadUrl);
+    const explicitExpiry =
+      unixOrIsoDate(url.searchParams.get("expiryTime")) ??
+      unixOrIsoDate(url.searchParams.get("expiration")) ??
+      unixOrIsoDate(url.searchParams.get("Expires")) ??
+      unixOrIsoDate(url.searchParams.get("expires"));
+    if (explicitExpiry) {
+      return explicitExpiry.toISOString();
+    }
+
+    const signedAt = amzDate(url.searchParams.get("X-Amz-Date"));
+    const signedSeconds = Number(url.searchParams.get("X-Amz-Expires"));
+    if (signedAt && Number.isFinite(signedSeconds) && signedSeconds > 0) {
+      return new Date(signedAt.getTime() + signedSeconds * 1000).toISOString();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+async function handleDirectDownload(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const body = await readBody<DirectDownloadRequest>(request);
+  const candidate = body.result?.assetKey === body.assetKey
+    ? body.result
+    : recentResults.get(body.assetKey);
+
+  if (!candidate) {
+    logWarn("api.direct_download.asset_not_found", {
+      requestId: context.requestId,
+      assetKey: body.assetKey,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Asset was not found." });
+    return;
+  }
+
+  const refreshed = await refreshResultSource(candidate, context, {
+    logPrefix: "api.direct_download",
+    indexReason: "direct_download_source_refresh"
+  });
+  const result = refreshed.result;
+  if (!/^https?:\/\//i.test(result.sourceUrl)) {
+    logWarn("api.direct_download.invalid_url", {
+      requestId: context.requestId,
+      assetKey: result.assetKey,
+      sourceUrl: result.sourceUrl,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: "This asset does not have a direct download URL." });
+    return;
+  }
+
+  const payload: DirectDownloadResponse = {
+    assetKey: result.assetKey,
+    title: result.title,
+    downloadUrl: result.sourceUrl,
+    expiresAt: downloadUrlExpiresAt(result.sourceUrl),
+    sourceRefreshed: refreshed.sourceRefreshed
+  };
+
+  logInfo("api.direct_download.ready", {
+    requestId: context.requestId,
+    assetKey: result.assetKey,
+    memberId: identity.memberId,
+    role: identity.role,
+    sourceRefreshed: payload.sourceRefreshed,
+    expiresAt: payload.expiresAt,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
 }
 
 function requestLimit(url: URL, fallback: number, maximum: number) {
@@ -2873,6 +3018,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && pathname === "/api/cache") {
       await handleEnsureCache(request, response, context, identity!);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/direct-download") {
+      await handleDirectDownload(request, response, context, identity!);
       return;
     }
 

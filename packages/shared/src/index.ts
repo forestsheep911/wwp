@@ -219,6 +219,19 @@ export interface EnsureCacheResponse {
   memberCredits?: MemberCreditSummary;
 }
 
+export interface DirectDownloadRequest {
+  assetKey: string;
+  result?: SearchResult;
+}
+
+export interface DirectDownloadResponse {
+  assetKey: string;
+  title: string;
+  downloadUrl: string;
+  expiresAt?: string;
+  sourceRefreshed: boolean;
+}
+
 export interface PlaybackResponse {
   assetKey: string;
   title: string;
