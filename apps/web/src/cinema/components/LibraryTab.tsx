@@ -40,6 +40,7 @@ import {
   titleInitial,
   visibleTags
 } from "../format";
+import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
@@ -871,15 +872,25 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
 
 function cardTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({ key: `genre-${tag}`, tag, variant: "secondary" as const })),
-    ...peopleTags(result).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const }))
+    ...visibleTags(result.metadata?.genres).map((tag) => ({
+      key: `genre-${tag}`,
+      tag,
+      variant: "secondary" as const,
+      className: genreBadgeClass(tag)
+    })),
+    ...peopleTags(result).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ].slice(0, 3);
 }
 
 function detailTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({ key: `genre-${tag}`, tag, variant: "secondary" as const })),
-    ...visibleTags(result.metadata?.people).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const }))
+    ...visibleTags(result.metadata?.genres).map((tag) => ({
+      key: `genre-${tag}`,
+      tag,
+      variant: "secondary" as const,
+      className: genreBadgeClass(tag)
+    })),
+    ...visibleTags(result.metadata?.people).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ];
 }
 
@@ -1091,7 +1102,7 @@ function MovieCard({
         {tags.length ? (
           <div className="flex flex-wrap gap-2">
             {tags.map((tag) => (
-              <Badge key={tag.key} variant={tag.variant}>{tag.tag}</Badge>
+              <Badge className={tag.className} key={tag.key} variant={tag.variant}>{tag.tag}</Badge>
             ))}
           </div>
         ) : null}
@@ -1217,7 +1228,7 @@ function MovieListView({
                 <td className="px-4 py-4">
                   <div className="flex flex-wrap gap-2">
                     {genres.map((tag) => (
-                      <Badge key={`list-genre-${result.assetKey}-${tag}`} variant="secondary">{tag}</Badge>
+                      <Badge className={genreBadgeClass(tag)} key={`list-genre-${result.assetKey}-${tag}`} variant="secondary">{tag}</Badge>
                     ))}
                     {people.map((tag) => (
                       <Badge key={`list-people-${result.assetKey}-${tag}`} variant="muted">{tag}</Badge>
@@ -1313,7 +1324,7 @@ function MovieDetailView({
           {tags.length ? (
             <div className="flex flex-wrap gap-2">
               {tags.map((tag) => (
-                <Badge key={`detail-${tag.key}`} variant={tag.variant}>{tag.tag}</Badge>
+                <Badge className={tag.className} key={`detail-${tag.key}`} variant={tag.variant}>{tag.tag}</Badge>
               ))}
             </div>
           ) : null}

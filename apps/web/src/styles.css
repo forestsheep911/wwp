@@ -63,6 +63,306 @@ video {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.genre-badge {
+  border-color: var(--genre-border);
+  background: var(--genre-bg);
+  color: var(--genre-text);
+}
+
+.genre-badge-default {
+  --genre-border: rgb(148 163 184 / 0.32);
+  --genre-bg: rgb(30 41 59 / 0.76);
+  --genre-text: #cbd5e1;
+}
+
+.genre-badge-drama {
+  --genre-border: rgb(251 113 133 / 0.38);
+  --genre-bg: rgb(136 19 55 / 0.24);
+  --genre-text: #fecdd3;
+}
+
+.genre-badge-mystery {
+  --genre-border: rgb(129 140 248 / 0.42);
+  --genre-bg: rgb(49 46 129 / 0.30);
+  --genre-text: #c7d2fe;
+}
+
+.genre-badge-scifi {
+  --genre-border: rgb(34 211 238 / 0.42);
+  --genre-bg: rgb(14 116 144 / 0.22);
+  --genre-text: #a5f3fc;
+}
+
+.genre-badge-thriller {
+  --genre-border: rgb(168 85 247 / 0.42);
+  --genre-bg: rgb(88 28 135 / 0.28);
+  --genre-text: #e9d5ff;
+}
+
+.genre-badge-horror {
+  --genre-border: rgb(248 113 113 / 0.42);
+  --genre-bg: rgb(127 29 29 / 0.30);
+  --genre-text: #fecaca;
+}
+
+.genre-badge-comedy {
+  --genre-border: rgb(250 204 21 / 0.46);
+  --genre-bg: rgb(133 77 14 / 0.24);
+  --genre-text: #fef3c7;
+}
+
+.genre-badge-romance {
+  --genre-border: rgb(244 114 182 / 0.42);
+  --genre-bg: rgb(157 23 77 / 0.24);
+  --genre-text: #fbcfe8;
+}
+
+.genre-badge-action {
+  --genre-border: rgb(251 146 60 / 0.44);
+  --genre-bg: rgb(154 52 18 / 0.26);
+  --genre-text: #fed7aa;
+}
+
+.genre-badge-crime {
+  --genre-border: rgb(148 163 184 / 0.42);
+  --genre-bg: rgb(15 23 42 / 0.88);
+  --genre-text: #e2e8f0;
+}
+
+.genre-badge-fantasy {
+  --genre-border: rgb(167 139 250 / 0.44);
+  --genre-bg: rgb(76 29 149 / 0.26);
+  --genre-text: #ddd6fe;
+}
+
+.genre-badge-animation {
+  --genre-border: rgb(45 212 191 / 0.42);
+  --genre-bg: rgb(15 118 110 / 0.22);
+  --genre-text: #99f6e4;
+}
+
+.genre-badge-documentary {
+  --genre-border: rgb(132 204 22 / 0.42);
+  --genre-bg: rgb(63 98 18 / 0.22);
+  --genre-text: #d9f99d;
+}
+
+.genre-badge-history {
+  --genre-border: rgb(217 119 6 / 0.44);
+  --genre-bg: rgb(120 53 15 / 0.24);
+  --genre-text: #fde68a;
+}
+
+.genre-badge-family {
+  --genre-border: rgb(96 165 250 / 0.40);
+  --genre-bg: rgb(30 64 175 / 0.22);
+  --genre-text: #bfdbfe;
+}
+
+.genre-badge-music {
+  --genre-border: rgb(192 132 252 / 0.42);
+  --genre-bg: rgb(107 33 168 / 0.24);
+  --genre-text: #f3e8ff;
+}
+
+.genre-badge-war {
+  --genre-border: rgb(120 113 108 / 0.55);
+  --genre-bg: rgb(68 64 60 / 0.38);
+  --genre-text: #e7e5e4;
+}
+
+.genre-badge-western {
+  --genre-border: rgb(245 158 11 / 0.42);
+  --genre-bg: rgb(146 64 14 / 0.25);
+  --genre-text: #ffedd5;
+}
+
+:root[data-theme="light"] {
+  color: #24313f;
+  background: #f7f4ec;
+}
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(circle at top left, rgb(20 184 166 / 16%), transparent 34rem),
+    radial-gradient(circle at 82% 0%, rgb(56 189 248 / 13%), transparent 30rem),
+    linear-gradient(180deg, #fbf8ef 0%, #f4f7f7 48%, #eef5f2 100%);
+}
+
+:root[data-theme="light"] .text-slate-50,
+:root[data-theme="light"] .text-slate-100 {
+  color: #162033;
+}
+
+:root[data-theme="light"] .text-slate-200 {
+  color: #27364a;
+}
+
+:root[data-theme="light"] .text-slate-300 {
+  color: #3d4e63;
+}
+
+:root[data-theme="light"] .text-slate-400 {
+  color: #627086;
+}
+
+:root[data-theme="light"] .text-slate-500 {
+  color: #7a8799;
+}
+
+:root[data-theme="light"] .bg-slate-950,
+:root[data-theme="light"] .bg-slate-950\/95,
+:root[data-theme="light"] .bg-slate-950\/90,
+:root[data-theme="light"] .bg-slate-950\/80,
+:root[data-theme="light"] .bg-slate-950\/72,
+:root[data-theme="light"] .bg-slate-950\/70,
+:root[data-theme="light"] .bg-slate-950\/60,
+:root[data-theme="light"] .bg-slate-950\/50 {
+  background-color: rgb(255 255 255 / 0.82);
+}
+
+:root[data-theme="light"] .bg-slate-900,
+:root[data-theme="light"] .bg-slate-900\/80,
+:root[data-theme="light"] .hover\:bg-slate-900:hover {
+  background-color: rgb(238 245 242 / 0.94);
+}
+
+:root[data-theme="light"] .bg-slate-800,
+:root[data-theme="light"] .bg-slate-800\/80,
+:root[data-theme="light"] .bg-slate-800\/70,
+:root[data-theme="light"] .bg-slate-800\/60,
+:root[data-theme="light"] .bg-slate-800\/50,
+:root[data-theme="light"] .bg-slate-800\/40,
+:root[data-theme="light"] .hover\:bg-slate-800:hover,
+:root[data-theme="light"] [data-state="active"] {
+  background-color: rgb(221 232 229 / 0.95);
+}
+
+:root[data-theme="light"] .hover\:bg-slate-700:hover {
+  background-color: rgb(207 221 218 / 0.95);
+}
+
+:root[data-theme="light"] .border-slate-900\/80,
+:root[data-theme="light"] .border-slate-800,
+:root[data-theme="light"] .border-slate-700,
+:root[data-theme="light"] .border-slate-600 {
+  border-color: rgb(199 211 214 / 0.92);
+}
+
+:root[data-theme="light"] .shadow-black\/20,
+:root[data-theme="light"] .shadow-black\/40,
+:root[data-theme="light"] .shadow-black\/50 {
+  --tw-shadow-color: rgb(31 41 55 / 0.12);
+}
+
+:root[data-theme="light"] .genre-badge-default {
+  --genre-border: rgb(100 116 139 / 0.30);
+  --genre-bg: rgb(241 245 249 / 0.95);
+  --genre-text: #475569;
+}
+
+:root[data-theme="light"] .genre-badge-drama {
+  --genre-border: rgb(190 18 60 / 0.30);
+  --genre-bg: #fff1f3;
+  --genre-text: #9f1239;
+}
+
+:root[data-theme="light"] .genre-badge-mystery {
+  --genre-border: rgb(67 56 202 / 0.30);
+  --genre-bg: #eef2ff;
+  --genre-text: #3730a3;
+}
+
+:root[data-theme="light"] .genre-badge-scifi {
+  --genre-border: rgb(8 145 178 / 0.30);
+  --genre-bg: #e5fbff;
+  --genre-text: #0e7490;
+}
+
+:root[data-theme="light"] .genre-badge-thriller {
+  --genre-border: rgb(126 34 206 / 0.30);
+  --genre-bg: #f5ecff;
+  --genre-text: #6b21a8;
+}
+
+:root[data-theme="light"] .genre-badge-horror {
+  --genre-border: rgb(185 28 28 / 0.30);
+  --genre-bg: #fff0f0;
+  --genre-text: #991b1b;
+}
+
+:root[data-theme="light"] .genre-badge-comedy {
+  --genre-border: rgb(202 138 4 / 0.34);
+  --genre-bg: #fff8d8;
+  --genre-text: #854d0e;
+}
+
+:root[data-theme="light"] .genre-badge-romance {
+  --genre-border: rgb(219 39 119 / 0.30);
+  --genre-bg: #fff0f7;
+  --genre-text: #be185d;
+}
+
+:root[data-theme="light"] .genre-badge-action {
+  --genre-border: rgb(234 88 12 / 0.30);
+  --genre-bg: #fff2e6;
+  --genre-text: #c2410c;
+}
+
+:root[data-theme="light"] .genre-badge-crime {
+  --genre-border: rgb(51 65 85 / 0.28);
+  --genre-bg: #edf1f5;
+  --genre-text: #27364a;
+}
+
+:root[data-theme="light"] .genre-badge-fantasy {
+  --genre-border: rgb(124 58 237 / 0.30);
+  --genre-bg: #f3edff;
+  --genre-text: #5b21b6;
+}
+
+:root[data-theme="light"] .genre-badge-animation {
+  --genre-border: rgb(13 148 136 / 0.30);
+  --genre-bg: #e5fbf6;
+  --genre-text: #0f766e;
+}
+
+:root[data-theme="light"] .genre-badge-documentary {
+  --genre-border: rgb(77 124 15 / 0.30);
+  --genre-bg: #f0f8dc;
+  --genre-text: #3f6212;
+}
+
+:root[data-theme="light"] .genre-badge-history {
+  --genre-border: rgb(180 83 9 / 0.30);
+  --genre-bg: #fff1d8;
+  --genre-text: #92400e;
+}
+
+:root[data-theme="light"] .genre-badge-family {
+  --genre-border: rgb(37 99 235 / 0.28);
+  --genre-bg: #eaf2ff;
+  --genre-text: #1d4ed8;
+}
+
+:root[data-theme="light"] .genre-badge-music {
+  --genre-border: rgb(147 51 234 / 0.30);
+  --genre-bg: #f7edff;
+  --genre-text: #7e22ce;
+}
+
+:root[data-theme="light"] .genre-badge-war {
+  --genre-border: rgb(87 83 78 / 0.32);
+  --genre-bg: #f0eee9;
+  --genre-text: #57534e;
+}
+
+:root[data-theme="light"] .genre-badge-western {
+  --genre-border: rgb(217 119 6 / 0.32);
+  --genre-bg: #fff2dd;
+  --genre-text: #b45309;
+}
+
 @container (min-width: 760px) {
   .gallery-results-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

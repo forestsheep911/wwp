@@ -84,9 +84,10 @@ import { TaskDock } from "./cinema/components/TaskDock";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
-import { historyStorageKey, readJsonStorage, writeJsonStorage } from "./cinema/storage";
+import { historyStorageKey, readJsonStorage, themeStorageKey, writeJsonStorage } from "./cinema/storage";
 import type {
   AppTab,
+  AppTheme,
   BrowseChannel,
   HistoryAssetStatusMap,
   LibraryViewMode,
@@ -133,6 +134,15 @@ function isAppTab(value: string | null): value is AppTab {
 
 function isBrowseChannel(value: string | null): value is BrowseChannel {
   return Boolean(value && browseChannels.includes(value as BrowseChannel));
+}
+
+function isAppTheme(value: unknown): value is AppTheme {
+  return value === "dark" || value === "light";
+}
+
+function readStoredTheme(): AppTheme {
+  const storedTheme = readJsonStorage<unknown>(themeStorageKey, "dark");
+  return isAppTheme(storedTheme) ? storedTheme : "dark";
 }
 
 function routeFromLocation(): CinemaRoute {
@@ -212,6 +222,7 @@ function CinemaApp() {
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
+  const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [results, setResults] = useState<ResultWithCache[]>([]);
@@ -317,6 +328,12 @@ function CinemaApp() {
     }
     return itemsByAssetKey;
   }, [trackedItems]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    writeJsonStorage(themeStorageKey, theme);
+  }, [theme]);
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
     if (route.tab === "admin" && role && role !== "admin") {
@@ -1916,13 +1933,19 @@ function CinemaApp() {
   }, [activeTab, query]);
 
   if (!unlocked) {
-    return <AccessGate onUnlock={(auth, options) => {
-      setUnlocked(true);
-      applyAuth(auth);
-      if (options?.openProfile) {
-        setProfileOpen(true);
-      }
-    }} />;
+    return (
+      <AccessGate
+        theme={theme}
+        onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
+        onUnlock={(auth, options) => {
+          setUnlocked(true);
+          applyAuth(auth);
+          if (options?.openProfile) {
+            setProfileOpen(true);
+          }
+        }}
+      />
+    );
   }
 
   if (playback) {
@@ -2022,6 +2045,7 @@ function CinemaApp() {
         canRequestMovie={role === "member" || role === "admin"}
         noticeUnreadCount={noticeUnreadCount}
         showAdmin={showAdmin}
+        theme={theme}
         onActiveTabChange={navigateToTab}
         onBrowseChannelChange={openBrowseChannel}
         onLock={lockCinema}
@@ -2035,6 +2059,7 @@ function CinemaApp() {
         onOpenSpending={() => void openOwnCreditUsage()}
         onOpenTasks={() => navigateToTab("tasks")}
         onOpenSearch={openSearchDialog}
+        onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
         library={(
           <LibraryTab
             creditPolicy={creditPolicy}

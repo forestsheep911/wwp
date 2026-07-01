@@ -8,17 +8,19 @@ import {
   LogOut,
   MessageCircle,
   MessageSquarePlus,
+  Moon,
   ReceiptText,
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Sun,
   UserCircle
 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsContent } from "../../components/ui/tabs";
 import { copy } from "../i18n";
-import type { AppTab, BrowseChannel } from "../types";
+import type { AppTab, AppTheme, BrowseChannel } from "../types";
 
 const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
   { id: "recommended", label: copy.layout.browseChannels.recommended },
@@ -35,6 +37,7 @@ interface CinemaLayoutProps {
   canChangePasscode: boolean;
   canRequestMovie: boolean;
   noticeUnreadCount: number;
+  theme: AppTheme;
   library: ReactNode;
   cached: ReactNode;
   forum: ReactNode;
@@ -56,6 +59,7 @@ interface CinemaLayoutProps {
   onOpenSpending: () => void;
   onOpenTasks: () => void;
   onOpenSearch: () => void;
+  onToggleTheme: () => void;
 }
 
 export function CinemaLayout({
@@ -66,6 +70,7 @@ export function CinemaLayout({
   canChangePasscode,
   canRequestMovie,
   noticeUnreadCount,
+  theme,
   library,
   cached,
   forum,
@@ -86,8 +91,11 @@ export function CinemaLayout({
   onOpenProfile,
   onOpenSpending,
   onOpenTasks,
-  onOpenSearch
+  onOpenSearch,
+  onToggleTheme
 }: CinemaLayoutProps) {
+  const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
+
   return (
     <main className="min-h-screen">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
@@ -147,6 +155,10 @@ export function CinemaLayout({
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title={copy.common.search}>
                 <Search className="h-4 w-4" />
                 <span className="sr-only">{copy.common.search}</span>
+              </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onToggleTheme} title={themeToggleTitle}>
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                <span className="sr-only">{themeToggleTitle}</span>
               </Button>
               {canChangePasscode ? (
                 <Button className="relative" type="button" variant="outline" size="icon" onClick={onOpenNotices} title="站内信">

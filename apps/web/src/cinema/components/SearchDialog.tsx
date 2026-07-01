@@ -12,6 +12,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from "../format";
+import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import type { ResultWithCache } from "../types";
 
@@ -170,7 +171,7 @@ function SearchResultRow({
         <span className="truncate text-sm text-slate-500">{metadataLine(result)}</span>
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
           {genres.map((genre) => (
-            <Badge key={`${result.assetKey}-${genre}`} variant="secondary">{genre}</Badge>
+            <Badge className={genreBadgeClass(genre)} key={`${result.assetKey}-${genre}`} variant="secondary">{genre}</Badge>
           ))}
           {variantCount > 0 ? <Badge variant="muted">{copy.library.variantCount(variantCount)}</Badge> : null}
           {result.cache?.status === "ready" ? <Badge variant="default">{copy.cache.status.ready}</Badge> : null}

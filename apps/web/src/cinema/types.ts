@@ -13,6 +13,7 @@ export type AppTab = "library" | "cached" | "history" | "help" | "admin" | "task
 export type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 export type LibraryViewMode = "gallery" | "list";
 export type BadgeVariant = "default" | "secondary" | "warning" | "danger" | "muted";
+export type AppTheme = "dark" | "light";
 
 export interface PlaybackHistoryEntry {
   assetKey: string;

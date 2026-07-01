@@ -1,4 +1,5 @@
 export const historyStorageKey = "wwpdw-playback-history";
+export const themeStorageKey = "wwpdw-theme";
 
 export function readJsonStorage<T>(key: string, fallback: T): T {
   try {

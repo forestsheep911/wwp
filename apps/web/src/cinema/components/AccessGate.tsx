@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { KeyRound, Loader2, ShieldCheck, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
 import { type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { copy } from "../i18n";
+import type { AppTheme } from "../types";
 
 type AccessMode = "login" | "register" | "reset";
 
@@ -48,7 +49,15 @@ function initialInviteState(): { mode: AccessMode; inviteCode: string } {
   };
 }
 
-export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, options?: { openProfile?: boolean }) => void }) {
+export function AccessGate({
+  theme,
+  onToggleTheme,
+  onUnlock
+}: {
+  theme: AppTheme;
+  onToggleTheme: () => void;
+  onUnlock: (auth: AuthCheckResponse, options?: { openProfile?: boolean }) => void;
+}) {
   const [initialInvite] = useState(initialInviteState);
   const [mode, setMode] = useState<AccessMode>(initialInvite.mode);
   const [inviteCode, setInviteCode] = useState(initialInvite.inviteCode);
@@ -57,6 +66,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
   const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -154,7 +164,18 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-5 py-10">
+    <main className="relative grid min-h-screen place-items-center px-5 py-10">
+      <Button
+        className="absolute right-5 top-5"
+        type="button"
+        variant="outline"
+        size="icon"
+        onClick={onToggleTheme}
+        title={themeToggleTitle}
+      >
+        {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        <span className="sr-only">{themeToggleTitle}</span>
+      </Button>
       <Card className="w-full max-w-md">
         <CardHeader>
           <img alt="" className="mb-4 h-14 w-14 rounded-xl" src="/wwp-icon-192.png" />
