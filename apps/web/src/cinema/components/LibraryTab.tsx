@@ -26,6 +26,7 @@ import {
   cacheLabel,
   cacheVariant,
   directorLine,
+  displayVariantLabel,
   formatBytes,
   formatDateTime,
   formatLongDate,
@@ -894,16 +895,17 @@ function VariantButtons({
   return (
     <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
       {visibleVariants.map((variant) => {
+        const variantLabel = displayVariantLabel(result.title, variant.label);
         const pending = pendingAssetKeys.includes(variant.assetKey);
         const tracked = trackedByAssetKey.get(variant.assetKey);
         const displayAsset = tracked?.asset ?? variant.cache;
         const displayStatus = pending
           ? copy.cache.status.queued
-          : tracked
+          : tracked && tracked.job.status !== "ready"
             ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
-            : !displayAsset
-              ? undefined
-              : cacheLabel(displayAsset);
+            : displayAsset && displayAsset.status !== "ready"
+              ? cacheLabel(displayAsset)
+              : undefined;
         const progress = tracked?.job.progress ?? 0;
         const progressColor = tracked?.job.status === "failed"
           ? "bg-rose-500/22"
@@ -919,8 +921,11 @@ function VariantButtons({
         const costLabel = displayAsset?.status === "ready"
             ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
             : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);
+        const costDisplayLabel = displayAsset?.status === "ready" && !isActiveCacheHit
+          ? `▶ ${costLabel}`
+          : costLabel;
         const costBadgeClass = displayAsset?.status === "ready" && !isActiveCacheHit
-          ? "border-slate-950/25 bg-slate-950/90 text-emerald-100 shadow-sm shadow-emerald-950/20"
+          ? "border-slate-950/25 bg-slate-950/90 px-2.5 text-slate-50 shadow-sm shadow-emerald-950/20"
           : undefined;
 
         return (
@@ -931,8 +936,8 @@ function VariantButtons({
             variant={displayAsset?.status === "ready" ? "default" : "secondary"}
             onClick={() => onSelect(result, variant)}
             disabled={isActiveCacheHit}
-            title={displayStatus ? `${variant.label} / ${displayStatus}` : `${variant.label} / ${costLabel}`}
-            aria-label={displayStatus ? `${variant.label} / ${displayStatus}` : `${variant.label} / ${costLabel}`}
+            title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+            aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
           >
             {tracked ? (
               <span
@@ -941,12 +946,12 @@ function VariantButtons({
                 style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
               />
             ) : null}
-            <span className="relative z-10 min-w-0 max-w-full truncate">{variant.label}</span>
+            <span className="relative z-10 min-w-0 max-w-full truncate">{variantLabel}</span>
             <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
               {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               {!isActiveCacheHit ? (
                 <Badge className={costBadgeClass} variant="warning">
-                  {costLabel}
+                  {costDisplayLabel}
                 </Badge>
               ) : null}
               {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}

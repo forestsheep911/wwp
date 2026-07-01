@@ -235,6 +235,47 @@ export function bestDetailSummary(result: SearchResult) {
   return summary;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function titleAliases(title: string) {
+  const compactTitle = title.replace(/\s+/g, " ").trim();
+  const withoutYear = compactTitle
+    .replace(/\s*(?:\((?:19|20)\d{2}\)|（(?:19|20)\d{2}）)\s*$/u, "")
+    .trim();
+  const hanPrefix = withoutYear.match(/^[\p{Script=Han}][\p{Script=Han}\s·・《》]+/u)?.[0]?.trim();
+  const latinTail = hanPrefix ? withoutYear.slice(hanPrefix.length).trim() : "";
+
+  return [...new Set([
+    compactTitle,
+    withoutYear,
+    hanPrefix,
+    latinTail,
+    ...withoutYear.split(/\s*[\/／|｜]\s*/u)
+  ]
+    .map((alias) => alias?.trim())
+    .filter((alias): alias is string => Boolean(alias && alias.length >= 2)))]
+    .sort((left, right) => right.length - left.length);
+}
+
+export function displayVariantLabel(title: string, label: string) {
+  const cleanedLabel = label.replace(/\s+/g, " ").trim();
+  for (const alias of titleAliases(title)) {
+    const match = cleanedLabel.match(new RegExp(`^${escapeRegExp(alias)}(?:\\s+|[：:/／｜|-]+)`, "u"));
+    if (!match) {
+      continue;
+    }
+
+    const stripped = cleanedLabel.slice(match[0].length).trim();
+    if (stripped) {
+      return stripped;
+    }
+  }
+
+  return cleanedLabel || label;
+}
+
 export function mediaQuality(media?: MediaDiagnostics) {
   if (!media) {
     return copy.media.notChecked;
