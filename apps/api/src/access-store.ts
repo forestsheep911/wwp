@@ -286,14 +286,6 @@ function memberName(value: string) {
   return value.trim().slice(0, 80) || "Family member";
 }
 
-function temporaryMemberName() {
-  const suffix = Array.from(randomBytes(3))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-  return `New member ${suffix}`;
-}
-
 function storedMemberCode(input: { name: string; rawCode: string; credits?: number }) {
   const now = new Date().toISOString();
   const stored: StoredMemberCode = {
@@ -763,7 +755,6 @@ export type MemberRegistrationResult =
   | {
     ok: true;
     code: MemberAccessCode;
-    passcode: string;
   }
   | {
     ok: false;
@@ -961,11 +952,7 @@ class LocalAccessStore implements AccessStore {
         };
       }
 
-      let rawPasscode = createRawMemberCode();
-      for (let attempt = 0; attempt < 10 && this.accessHashExists(state, hashCode(rawPasscode)); attempt += 1) {
-        rawPasscode = createRawMemberCode();
-      }
-      if (this.accessHashExists(state, hashCode(rawPasscode))) {
+      if (this.accessHashExists(state, hashCode(input.passcode))) {
         return {
           ok: false as const,
           reason: "duplicate" as const
@@ -973,8 +960,8 @@ class LocalAccessStore implements AccessStore {
       }
 
       const stored = storedMemberCode({
-        name: temporaryMemberName(),
-        rawCode: rawPasscode,
+        name: input.name,
+        rawCode: input.passcode,
         credits: invitation.creditBalance
       });
       state.codes[stored.id] = stored;
@@ -983,8 +970,7 @@ class LocalAccessStore implements AccessStore {
       invitation.claimedByMemberName = stored.name;
       return {
         ok: true as const,
-        code: publicCode(stored),
-        passcode: rawPasscode
+        code: publicCode(stored)
       };
     });
   }
@@ -1480,11 +1466,7 @@ class AzureAccessStore implements AccessStore {
       };
     }
 
-    let rawPasscode = createRawMemberCode();
-    for (let attempt = 0; attempt < 10 && await this.accessHashExists(hashCode(rawPasscode)); attempt += 1) {
-      rawPasscode = createRawMemberCode();
-    }
-    if (await this.accessHashExists(hashCode(rawPasscode))) {
+    if (await this.accessHashExists(hashCode(input.passcode))) {
       return {
         ok: false as const,
         reason: "duplicate" as const
@@ -1492,8 +1474,8 @@ class AzureAccessStore implements AccessStore {
     }
 
     const stored = storedMemberCode({
-      name: temporaryMemberName(),
-      rawCode: rawPasscode,
+      name: input.name,
+      rawCode: input.passcode,
       credits: invitation.creditBalance
     });
     await this.save(stored);
@@ -1503,8 +1485,7 @@ class AzureAccessStore implements AccessStore {
     await this.saveInvitation(invitation);
     return {
       ok: true as const,
-      code: publicCode(stored),
-      passcode: rawPasscode
+      code: publicCode(stored)
     };
   }
 

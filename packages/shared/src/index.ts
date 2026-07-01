@@ -489,12 +489,13 @@ export function validateMemberPasscode(passcode: string) {
 
 export interface RegisterMemberRequest {
   inviteCode: string;
+  name: string;
+  passcode: string;
 }
 
 export interface RegisterMemberResponse {
   auth: AuthCheckResponse;
   code: MemberAccessCode;
-  passcode: string;
 }
 
 export interface ChangeMemberPasscodeRequest {

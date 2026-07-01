@@ -1787,14 +1787,29 @@ async function handleRegisterMember(
   const startedAt = Date.now();
   const body = await readBody<RegisterMemberRequest>(request);
   const inviteCode = body.inviteCode?.trim() ?? "";
+  const name = body.name?.trim() ?? "";
+  const passcode = body.passcode ?? "";
 
   if (!inviteCode) {
     sendJson(response, 400, { error: "请输入邀请码。" });
     return;
   }
 
+  if (!name) {
+    sendJson(response, 400, { error: "成员名称不能为空。" });
+    return;
+  }
+
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    sendJson(response, 400, { error: passcodeError });
+    return;
+  }
+
   const result = await accessStore.registerMember({
-    inviteCode
+    inviteCode,
+    name,
+    passcode
   });
   if (!result.ok) {
     logWarn("api.auth.register_failed", {
@@ -1817,8 +1832,7 @@ async function handleRegisterMember(
   });
   sendJson(response, 201, {
     auth: authPayload(identity),
-    code: result.code,
-    passcode: result.passcode
+    code: result.code
   });
 }
 

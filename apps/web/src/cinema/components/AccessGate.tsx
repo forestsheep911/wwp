@@ -52,6 +52,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
   const [initialInvite] = useState(initialInviteState);
   const [mode, setMode] = useState<AccessMode>(initialInvite.mode);
   const [inviteCode, setInviteCode] = useState(initialInvite.inviteCode);
+  const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
@@ -70,16 +71,33 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
     try {
       if (mode === "register") {
         const inviteValue = inviteCode.trim();
+        const nameValue = name.trim();
+        const confirmCandidate = confirmValue.trim();
+        const passcodeError = validateMemberPasscode(candidate);
         if (!inviteValue) {
           setError(copy.access.errors.enterInvite);
           return;
         }
+        if (!nameValue) {
+          setError(copy.access.errors.enterName);
+          return;
+        }
+        if (passcodeError) {
+          setError(passcodeError);
+          return;
+        }
+        if (candidate !== confirmCandidate) {
+          setError(copy.access.errors.mismatch);
+          return;
+        }
 
         const response = await registerMember({
-          inviteCode: inviteValue
+          inviteCode: inviteValue,
+          name: nameValue,
+          passcode: candidate
         });
-        setAccessKey(response.passcode);
-        onUnlock(response.auth, { openProfile: true });
+        setAccessKey(candidate);
+        onUnlock(response.auth);
         return;
       }
 
@@ -185,48 +203,60 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
                 />
               </div>
             ) : null}
-            {mode !== "register" ? (
+            {mode === "register" ? (
               <div className="grid gap-2">
-                <Label htmlFor="access-key">{mode === "login" ? copy.access.passcode : copy.access.newPasscode}</Label>
+                <Label htmlFor="member-name">{copy.access.displayName}</Label>
                 <Input
-                  id="access-key"
-                  autoFocus={mode === "login"}
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  maxLength={mode === "login" ? undefined : 12}
-                  value={value}
+                  id="member-name"
+                  autoComplete="name"
+                  value={name}
                   onChange={(event) => {
-                    setValue(event.target.value);
+                    setName(event.target.value);
                     setError("");
                   }}
-                  type="password"
                 />
-                {mode === "reset" ? (
-                  <p className="text-xs leading-5 text-slate-500">
-                    {copy.access.passcodeRule}
-                  </p>
-                ) : null}
-                {mode === "login" ? (
-                  <button
-                    className="w-fit text-xs font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                    type="button"
-                    onClick={() => {
-                      setMode("reset");
-                      setError("");
-                      setInviteCode("");
-                      setValue("");
-                    }}
-                  >
-                    {copy.access.forgot}
-                  </button>
-                ) : null}
               </div>
             ) : null}
+            {mode !== "login" ? (
+              <p className="text-xs leading-5 text-slate-500">
+                {copy.access.passcodeRule}
+              </p>
+            ) : null}
+            <div className="grid gap-2">
+              <Label htmlFor="access-key">{mode === "login" ? copy.access.passcode : copy.access.newPasscode}</Label>
+              <Input
+                id="access-key"
+                autoFocus={mode === "login"}
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                maxLength={mode === "login" ? undefined : 12}
+                value={value}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                  setError("");
+                }}
+                type="password"
+              />
+              {mode === "login" ? (
+                <button
+                  className="w-fit text-xs font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                  type="button"
+                  onClick={() => {
+                    setMode("reset");
+                    setError("");
+                    setInviteCode("");
+                    setValue("");
+                  }}
+                >
+                  {copy.access.forgot}
+                </button>
+              ) : null}
+            </div>
             {mode === "reset" ? (
               <p className="rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs leading-5 text-slate-400">
                 {copy.access.resetHelp}
               </p>
             ) : null}
-            {mode === "reset" ? (
+            {mode !== "login" ? (
               <div className="grid gap-2">
                 <Label htmlFor="confirm-access-key">{copy.access.confirmPasscode}</Label>
                 <Input
