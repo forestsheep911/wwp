@@ -210,6 +210,27 @@ video {
   color: #7a8799;
 }
 
+:root[data-theme="light"] .text-emerald-50,
+:root[data-theme="light"] .text-emerald-100,
+:root[data-theme="light"] .text-emerald-200 {
+  color: #047857;
+}
+
+:root[data-theme="light"] .text-emerald-300 {
+  color: #059669;
+}
+
+:root[data-theme="light"] .text-amber-50,
+:root[data-theme="light"] .text-amber-100,
+:root[data-theme="light"] .text-amber-200 {
+  color: #9a5b00;
+}
+
+:root[data-theme="light"] .text-rose-100,
+:root[data-theme="light"] .text-rose-200 {
+  color: #be123c;
+}
+
 :root[data-theme="light"] .bg-slate-950,
 :root[data-theme="light"] .bg-slate-950\/95,
 :root[data-theme="light"] .bg-slate-950\/90,
@@ -242,11 +263,44 @@ video {
   background-color: rgb(207 221 218 / 0.95);
 }
 
+:root[data-theme="light"] .bg-emerald-400\/15,
+:root[data-theme="light"] .bg-emerald-400\/18 {
+  background-color: rgb(167 243 208 / 0.78);
+}
+
+:root[data-theme="light"] .bg-emerald-300\/10 {
+  background-color: rgb(209 250 229 / 0.95);
+}
+
+:root[data-theme="light"] .bg-amber-400\/15,
+:root[data-theme="light"] .bg-amber-300\/22 {
+  background-color: rgb(254 240 138 / 0.84);
+}
+
+:root[data-theme="light"] .bg-rose-400\/10 {
+  background-color: rgb(255 228 230 / 0.92);
+}
+
 :root[data-theme="light"] .border-slate-900\/80,
 :root[data-theme="light"] .border-slate-800,
 :root[data-theme="light"] .border-slate-700,
 :root[data-theme="light"] .border-slate-600 {
   border-color: rgb(199 211 214 / 0.92);
+}
+
+:root[data-theme="light"] .border-emerald-400\/30,
+:root[data-theme="light"] .border-emerald-300\/25,
+:root[data-theme="light"] .border-emerald-300\/55 {
+  border-color: rgb(16 185 129 / 0.48);
+}
+
+:root[data-theme="light"] .border-amber-400\/30,
+:root[data-theme="light"] .border-amber-300\/65 {
+  border-color: rgb(217 119 6 / 0.42);
+}
+
+:root[data-theme="light"] .border-rose-400\/30 {
+  border-color: rgb(225 29 72 / 0.34);
 }
 
 :root[data-theme="light"] .shadow-black\/20,
@@ -361,6 +415,12 @@ video {
   --genre-border: rgb(217 119 6 / 0.32);
   --genre-bg: #fff2dd;
   --genre-text: #b45309;
+}
+
+:root[data-theme="light"] .genre-badge {
+  border-color: var(--genre-border) !important;
+  background: var(--genre-bg) !important;
+  color: var(--genre-text) !important;
 }
 
 @container (min-width: 760px) {
