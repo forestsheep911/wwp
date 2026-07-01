@@ -18,7 +18,7 @@ The cloud path has been proven end to end:
 8. The API returns a short-lived SAS playback URL with diagnostics metadata.
 9. The browser plays the cached Blob video.
 
-The Admin tab now includes household Cinema Pass management, a ready cached-video
+The Admin tab now includes member pass management, a ready cached-video
 view, and a recent cache jobs view. Each pass is bound to a member name, but
 family members still sign in with only the pass string. Passes do not expire by
 date; they carry a simple 🍀 balance that admins set when creating the pass and
@@ -76,11 +76,11 @@ Container environment variables:
 - API receives `WWPDW_ADMIN_KEY` from `WWPDW-ADMIN-KEY`
 - API and worker use managed identity for Azure Storage and Azure Resource Manager
 
-The frontend only stores the user-entered key in browser `sessionStorage`. Regular family access uses generated Cinema Passes stored in the member-code table.
+The frontend only stores the user-entered key in browser `sessionStorage`. Regular family access uses generated member passes stored in the member-code table.
 
 ## Member Allowances
 
-External UI copy should call user keys `Cinema Passes` rather than access keys.
+External UI copy should call user keys `member passes` rather than access keys.
 The API still uses `x-wwpdw-access-key` internally.
 
 Default pass allowance settings:
@@ -98,7 +98,7 @@ without another playback charge. Admin keys bypass member allowance checks. A
 member request that exceeds the remaining balance returns HTTP 429 before it
 creates a cache job or issues a playback URL.
 
-Cinema Passes do not currently expire by date. Existing stored `expiresAt`
+Member passes do not currently expire by date. Existing stored `expiresAt`
 values are retained for backward compatibility, but `revokedAt` is the only
 member-pass status control besides deleting the pass row.
 

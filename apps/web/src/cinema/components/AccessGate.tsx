@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { KeyRound, Loader2, LockKeyhole, ShieldCheck, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, UserPlus } from "lucide-react";
 import { type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
@@ -10,13 +10,48 @@ import {
   setAccessKey
 } from "../../api";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { copy } from "../i18n";
+
+type AccessMode = "login" | "register" | "reset";
+
+function initialInviteState(): { mode: AccessMode; inviteCode: string } {
+  if (typeof window === "undefined") {
+    return {
+      mode: "login",
+      inviteCode: ""
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const resetCode = (params.get("reset") ?? params.get("resetInvite") ?? "").trim();
+  if (resetCode) {
+    return {
+      mode: "reset",
+      inviteCode: resetCode
+    };
+  }
+
+  const signupCode = (params.get("invite") ?? params.get("signup") ?? params.get("signupInvite") ?? "").trim();
+  if (signupCode) {
+    return {
+      mode: "register",
+      inviteCode: signupCode
+    };
+  }
+
+  return {
+    mode: "login",
+    inviteCode: ""
+  };
+}
 
 export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, options?: { openProfile?: boolean }) => void }) {
-  const [mode, setMode] = useState<"login" | "register" | "reset">("login");
-  const [inviteCode, setInviteCode] = useState("");
+  const [initialInvite] = useState(initialInviteState);
+  const [mode, setMode] = useState<AccessMode>(initialInvite.mode);
+  const [inviteCode, setInviteCode] = useState(initialInvite.inviteCode);
   const [value, setValue] = useState("");
   const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
@@ -26,7 +61,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
     event.preventDefault();
     const candidate = value.trim();
     if (mode !== "register" && !candidate) {
-      setError(mode === "login" ? "Enter a passcode." : "Enter your new passcode.");
+      setError(mode === "login" ? copy.access.errors.enterPasscode : copy.access.errors.enterNewPasscode);
       return;
     }
 
@@ -36,7 +71,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
       if (mode === "register") {
         const inviteValue = inviteCode.trim();
         if (!inviteValue) {
-          setError("Enter a household invitation code.");
+          setError(copy.access.errors.enterInvite);
           return;
         }
 
@@ -53,7 +88,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
         const confirmCandidate = confirmValue.trim();
         const passcodeError = validateMemberPasscode(candidate);
         if (!inviteValue) {
-          setError("Enter a reset invitation code.");
+          setError(copy.access.errors.enterResetInvite);
           return;
         }
         if (passcodeError) {
@@ -61,7 +96,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
           return;
         }
         if (candidate !== confirmCandidate) {
-          setError("The two passcodes do not match.");
+          setError(copy.access.errors.mismatch);
           return;
         }
 
@@ -90,10 +125,10 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
       setError(errorMessage(
         accessError,
         mode === "register"
-          ? "Could not register."
+          ? copy.access.errors.registerFailed
           : mode === "reset"
-            ? "Could not reset passcode."
-            : "Passcode did not match."
+            ? copy.access.errors.resetFailed
+            : copy.access.errors.passcodeMismatch
       ));
     } finally {
       setLoading(false);
@@ -104,11 +139,8 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
     <main className="grid min-h-screen place-items-center px-5 py-10">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-400/15 text-emerald-200">
-            <LockKeyhole className="h-6 w-6" />
-          </div>
-          <CardTitle className="text-2xl">WWP Cinema</CardTitle>
-          <CardDescription>Private household screening room</CardDescription>
+          <img alt="" className="mb-4 h-14 w-14 rounded-xl" src="/wwp-icon-192.png" />
+          <CardTitle className="text-3xl">{copy.app.name}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="mb-4 grid grid-cols-2 rounded-md border border-slate-800 bg-slate-950 p-1">
@@ -122,7 +154,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
               }}
             >
               <ShieldCheck className="h-4 w-4" />
-              Enter
+              {copy.access.enter}
             </Button>
             <Button
               type="button"
@@ -134,13 +166,13 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
               }}
             >
               <UserPlus className="h-4 w-4" />
-              Join
+              {copy.access.join}
             </Button>
           </div>
           <form className="grid gap-4" onSubmit={submit}>
             {mode !== "login" ? (
               <div className="grid gap-2">
-                <Label htmlFor="invite-code">{mode === "register" ? "Household invitation" : "Reset invitation"}</Label>
+                <Label htmlFor="invite-code">{mode === "register" ? copy.access.householdInvitation : copy.access.resetInvitation}</Label>
                 <Input
                   id="invite-code"
                   autoFocus={mode === "register"}
@@ -155,7 +187,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
             ) : null}
             {mode !== "register" ? (
               <div className="grid gap-2">
-                <Label htmlFor="access-key">{mode === "login" ? "Passcode" : "New passcode"}</Label>
+                <Label htmlFor="access-key">{mode === "login" ? copy.access.passcode : copy.access.newPasscode}</Label>
                 <Input
                   id="access-key"
                   autoFocus={mode === "login"}
@@ -170,7 +202,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
                 />
                 {mode === "reset" ? (
                   <p className="text-xs leading-5 text-slate-500">
-                    12 half-width characters, with at least 1 letter and 1 number.
+                    {copy.access.passcodeRule}
                   </p>
                 ) : null}
                 {mode === "login" ? (
@@ -184,19 +216,19 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
                       setValue("");
                     }}
                   >
-                    忘记了？
+                    {copy.access.forgot}
                   </button>
                 ) : null}
               </div>
             ) : null}
             {mode === "reset" ? (
               <p className="rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs leading-5 text-slate-400">
-                请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。
+                {copy.access.resetHelp}
               </p>
             ) : null}
             {mode === "reset" ? (
               <div className="grid gap-2">
-                <Label htmlFor="confirm-access-key">Confirm passcode</Label>
+                <Label htmlFor="confirm-access-key">{copy.access.confirmPasscode}</Label>
                 <Input
                   id="confirm-access-key"
                   autoComplete="new-password"
@@ -213,7 +245,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, o
             {error ? <p className="text-sm font-semibold text-rose-300">{error}</p> : null}
             <Button type="submit" disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "register" ? <UserPlus className="h-4 w-4" /> : mode === "reset" ? <KeyRound className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-              {mode === "register" ? "Join household" : mode === "reset" ? "Reset pass" : "Enter"}
+              {mode === "register" ? copy.access.joinHousehold : mode === "reset" ? copy.access.resetPasscode : copy.access.enter}
             </Button>
           </form>
         </CardContent>

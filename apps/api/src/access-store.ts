@@ -13,10 +13,17 @@ import type {
   MemberCreditSummary,
   MemberCreditUsageEntry,
   CreateSignupInvitationRequest,
+  CreateForumReplyRequest,
+  CreateForumThreadRequest,
+  CreateMemberNoticeRequest,
+  ForumReplyEntry,
+  ForumThreadEntry,
+  ForumThreadSummary,
   GeneratedMemberInvitation,
   MemberAccessCode,
   MemberInvitation,
   MemberInvitationStatus,
+  MemberNoticeEntry,
   ResetMemberPasscodeRequest,
   RegisterMemberRequest,
   UpdateMemberProfileRequest
@@ -29,6 +36,8 @@ interface LocalAccessState {
   invitations?: Record<string, StoredMemberInvitation>;
   audit?: AdminLoginAuditEntry[];
   movieRequests?: StoredMovieRequest[];
+  forumThreads?: StoredForumThread[];
+  notices?: StoredMemberNotice[];
 }
 
 interface StoredMemberCode {
@@ -67,6 +76,41 @@ interface StoredMovieRequest {
   requestedByMemberName?: string;
 }
 
+interface StoredForumAuthor {
+  memberId?: string;
+  memberName?: string;
+  role: "admin" | "member";
+}
+
+interface StoredForumReply extends StoredForumAuthor {
+  id: string;
+  body: string;
+  createdAt: string;
+}
+
+interface StoredForumThread extends StoredForumAuthor {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  replies?: StoredForumReply[];
+}
+
+interface StoredMemberNotice {
+  id: string;
+  title: string;
+  body: string;
+  audience: "all" | "member";
+  createdAt: string;
+  createdByRole: "admin" | "member";
+  createdByMemberId?: string;
+  createdByMemberName?: string;
+  targetMemberId?: string;
+  targetMemberName?: string;
+  readByMemberIds?: Record<string, string>;
+}
+
 interface StoredMemberInvitation {
   id: string;
   type: "signup" | "reset";
@@ -100,6 +144,11 @@ const noExpiryAt = "9999-12-31T23:59:59.999Z";
 const loginAuditRetention = 500;
 const movieRequestPartitionKey = "movie-request";
 const invitationPartitionKey = "invite";
+const forumThreadPartitionKey = "forum-thread";
+const noticePartitionKey = "notice";
+const forumThreadRetention = 1000;
+const forumReplyRetention = 500;
+const noticeRetention = 1000;
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 
 function backend(): AccessBackend {
@@ -298,6 +347,60 @@ function storedMovieRequest(input: CreateMovieRequestInput): StoredMovieRequest 
   };
 }
 
+function forumText(value: string, maxLength: number) {
+  return value.trim().replace(/\r\n/g, "\n").slice(0, maxLength);
+}
+
+function forumAuthor(input: CreateForumAuthorInput): StoredForumAuthor {
+  return {
+    role: input.role,
+    memberId: input.memberId,
+    memberName: input.memberName
+  };
+}
+
+function storedForumThread(input: CreateForumThreadInput): StoredForumThread {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    title: forumText(input.title, 120),
+    body: forumText(input.body, 5000),
+    createdAt: now,
+    updatedAt: now,
+    replies: [],
+    ...forumAuthor(input)
+  };
+}
+
+function storedForumReply(input: CreateForumReplyInput): StoredForumReply {
+  return {
+    id: randomUUID(),
+    body: forumText(input.body, 5000),
+    createdAt: new Date().toISOString(),
+    ...forumAuthor(input)
+  };
+}
+
+function noticeText(value: string, maxLength: number) {
+  return value.trim().slice(0, maxLength);
+}
+
+function storedMemberNotice(input: CreateMemberNoticeRequest & CreateForumAuthorInput & { targetMemberName?: string }): StoredMemberNotice {
+  return {
+    id: randomUUID(),
+    title: noticeText(input.title, 120),
+    body: noticeText(input.body, 4000),
+    audience: input.audience,
+    createdAt: new Date().toISOString(),
+    createdByRole: input.role,
+    createdByMemberId: input.memberId,
+    createdByMemberName: input.memberName,
+    targetMemberId: input.targetMemberId,
+    targetMemberName: input.targetMemberName,
+    readByMemberIds: {}
+  };
+}
+
 function publicMovieRequest(request: StoredMovieRequest): MovieRequestEntry {
   const requestedAt = request.requestedAt || request.updatedAt || new Date(0).toISOString();
   return {
@@ -309,6 +412,93 @@ function publicMovieRequest(request: StoredMovieRequest): MovieRequestEntry {
     requestedByMemberId: request.requestedByMemberId,
     requestedByMemberName: request.requestedByMemberName
   };
+}
+
+function publicMemberNotice(notice: StoredMemberNotice, memberId?: string): MemberNoticeEntry {
+  return {
+    id: notice.id,
+    title: notice.title,
+    body: notice.body,
+    audience: notice.audience,
+    createdAt: notice.createdAt,
+    createdByRole: notice.createdByRole,
+    createdByMemberId: notice.createdByMemberId,
+    createdByMemberName: notice.createdByMemberName,
+    targetMemberId: notice.targetMemberId,
+    targetMemberName: notice.targetMemberName,
+    readAt: memberId ? notice.readByMemberIds?.[memberId] : undefined
+  };
+}
+
+function noticeVisibleToMember(notice: StoredMemberNotice, memberId: string) {
+  return notice.audience === "all" || notice.targetMemberId === memberId;
+}
+
+function listMemberNoticeEntries(notices: StoredMemberNotice[], input: { memberId?: string; limit: number }) {
+  const boundedLimit = positiveInt(input.limit, 50, { min: 1, max: 200 });
+  return notices
+    .filter((notice) => !input.memberId || noticeVisibleToMember(notice, input.memberId))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, boundedLimit)
+    .map((notice) => publicMemberNotice(notice, input.memberId));
+}
+
+function publicForumReply(reply: StoredForumReply): ForumReplyEntry {
+  return {
+    id: reply.id,
+    body: reply.body,
+    createdAt: reply.createdAt,
+    authorMemberId: reply.memberId,
+    authorMemberName: reply.memberName,
+    authorRole: reply.role
+  };
+}
+
+function latestForumReply(replies: StoredForumReply[]) {
+  return replies
+    .slice()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
+function publicForumThreadSummary(thread: StoredForumThread): ForumThreadSummary {
+  const replies = thread.replies ?? [];
+  const latestReply = latestForumReply(replies);
+  return {
+    id: thread.id,
+    title: thread.title,
+    body: thread.body,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    authorMemberId: thread.memberId,
+    authorMemberName: thread.memberName,
+    authorRole: thread.role,
+    replyCount: replies.length,
+    lastReplyAt: latestReply?.createdAt,
+    latestReply: latestReply ? publicForumReply(latestReply) : undefined
+  };
+}
+
+function publicForumThread(thread: StoredForumThread): ForumThreadEntry {
+  return {
+    ...publicForumThreadSummary(thread),
+    replies: (thread.replies ?? [])
+      .slice()
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(publicForumReply)
+  };
+}
+
+function forumThreadSortKey(thread: StoredForumThread) {
+  return latestForumReply(thread.replies ?? [])?.createdAt ?? thread.updatedAt ?? thread.createdAt;
+}
+
+function listForumThreadSummaries(threads: StoredForumThread[], limit: number) {
+  const boundedLimit = positiveInt(limit, 50, { min: 1, max: 200 });
+  return threads
+    .slice()
+    .sort((left, right) => forumThreadSortKey(right).localeCompare(forumThreadSortKey(left)))
+    .slice(0, boundedLimit)
+    .map(publicForumThreadSummary);
 }
 
 function listMovieRequestEntries(requests: StoredMovieRequest[], input: ListMovieRequestsInput) {
@@ -509,6 +699,8 @@ function normalizeState(state: LocalAccessState): LocalAccessState {
   state.invitations ??= {};
   state.audit ??= [];
   state.movieRequests ??= [];
+  state.forumThreads ??= [];
+  state.notices ??= [];
   return state;
 }
 
@@ -632,7 +824,24 @@ export interface CreateMovieRequestInput {
   memberName?: string;
 }
 
+export interface CreateForumAuthorInput {
+  role: "admin" | "member";
+  memberId?: string;
+  memberName?: string;
+}
+
+export interface CreateForumThreadInput extends CreateForumAuthorInput, CreateForumThreadRequest {}
+
+export interface CreateForumReplyInput extends CreateForumAuthorInput, CreateForumReplyRequest {}
+
+export interface CreateMemberNoticeInput extends CreateForumAuthorInput, CreateMemberNoticeRequest {}
+
 export interface ListMovieRequestsInput {
+  memberId?: string;
+  limit: number;
+}
+
+export interface ListMemberNoticesInput {
   memberId?: string;
   limit: number;
 }
@@ -656,6 +865,13 @@ export interface AccessStore {
   createMovieRequest(input: CreateMovieRequestInput): Promise<MovieRequestEntry>;
   listMovieRequests(input: ListMovieRequestsInput): Promise<MovieRequestEntry[]>;
   updateMovieRequestStatus(id: string, status: MovieRequestStatus): Promise<MovieRequestEntry | undefined>;
+  createForumThread(input: CreateForumThreadInput): Promise<ForumThreadEntry>;
+  listForumThreads(limit: number): Promise<ForumThreadSummary[]>;
+  getForumThread(id: string): Promise<ForumThreadEntry | undefined>;
+  createForumReply(threadId: string, input: CreateForumReplyInput): Promise<{ thread: ForumThreadEntry; reply: ForumReplyEntry } | undefined>;
+  createMemberNotice(input: CreateMemberNoticeInput): Promise<MemberNoticeEntry | undefined>;
+  listMemberNotices(input: ListMemberNoticesInput): Promise<MemberNoticeEntry[]>;
+  markMemberNoticeRead(id: string, memberId: string): Promise<MemberNoticeEntry | undefined>;
   recordLoginAudit(entry: AdminLoginAuditEntry): Promise<void>;
   listLoginAudit(limit: number): Promise<AdminLoginAuditEntry[]>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
@@ -972,6 +1188,78 @@ class LocalAccessStore implements AccessStore {
       request.status = movieRequestStatus(status);
       request.updatedAt = new Date().toISOString();
       return publicMovieRequest(request);
+    });
+  }
+
+  async createForumThread(input: CreateForumThreadInput) {
+    return this.updateState((state) => {
+      const thread = storedForumThread(input);
+      state.forumThreads = [thread, ...(state.forumThreads ?? [])].slice(0, forumThreadRetention);
+      return publicForumThread(thread);
+    });
+  }
+
+  async listForumThreads(limit: number) {
+    const state = await this.readState();
+    return listForumThreadSummaries(state.forumThreads ?? [], limit);
+  }
+
+  async getForumThread(id: string) {
+    const state = await this.readState();
+    const thread = (state.forumThreads ?? []).find((item) => item.id === id);
+    return thread ? publicForumThread(thread) : undefined;
+  }
+
+  async createForumReply(threadId: string, input: CreateForumReplyInput) {
+    return this.updateState((state) => {
+      const thread = (state.forumThreads ?? []).find((item) => item.id === threadId);
+      if (!thread) {
+        return undefined;
+      }
+
+      const reply = storedForumReply(input);
+      thread.replies = [...(thread.replies ?? []), reply].slice(-forumReplyRetention);
+      thread.updatedAt = reply.createdAt;
+      return {
+        thread: publicForumThread(thread),
+        reply: publicForumReply(reply)
+      };
+    });
+  }
+
+  async createMemberNotice(input: CreateMemberNoticeInput) {
+    return this.updateState((state) => {
+      const targetMember = input.audience === "member" && input.targetMemberId
+        ? state.codes[input.targetMemberId]
+        : undefined;
+      if (input.audience === "member" && !targetMember) {
+        return undefined;
+      }
+
+      const notice = storedMemberNotice({
+        ...input,
+        targetMemberName: targetMember?.name
+      });
+      state.notices = [notice, ...(state.notices ?? [])].slice(0, noticeRetention);
+      return publicMemberNotice(notice, input.audience === "member" ? input.targetMemberId : undefined);
+    });
+  }
+
+  async listMemberNotices(input: ListMemberNoticesInput) {
+    const state = await this.readState();
+    return listMemberNoticeEntries(state.notices ?? [], input);
+  }
+
+  async markMemberNoticeRead(id: string, memberId: string) {
+    return this.updateState((state) => {
+      const notice = (state.notices ?? []).find((item) => item.id === id && noticeVisibleToMember(item, memberId));
+      if (!notice) {
+        return undefined;
+      }
+
+      notice.readByMemberIds ??= {};
+      notice.readByMemberIds[memberId] ??= new Date().toISOString();
+      return publicMemberNotice(notice, memberId);
     });
   }
 
@@ -1461,6 +1749,98 @@ class AzureAccessStore implements AccessStore {
     return publicMovieRequest(request);
   }
 
+  async createForumThread(input: CreateForumThreadInput) {
+    await this.ensureReady();
+    const thread = storedForumThread(input);
+    await this.saveForumThread(thread);
+    return publicForumThread(thread);
+  }
+
+  async listForumThreads(limit: number) {
+    await this.ensureReady();
+    const threads: StoredForumThread[] = [];
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${forumThreadPartitionKey}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      threads.push(deserialize<StoredForumThread>(entity));
+    }
+
+    return listForumThreadSummaries(threads, limit);
+  }
+
+  async getForumThread(id: string) {
+    await this.ensureReady();
+    const thread = await this.getStoredForumThread(id);
+    return thread ? publicForumThread(thread) : undefined;
+  }
+
+  async createForumReply(threadId: string, input: CreateForumReplyInput) {
+    await this.ensureReady();
+    const thread = await this.getStoredForumThread(threadId);
+    if (!thread) {
+      return undefined;
+    }
+
+    const reply = storedForumReply(input);
+    thread.replies = [...(thread.replies ?? []), reply].slice(-forumReplyRetention);
+    thread.updatedAt = reply.createdAt;
+    await this.saveForumThread(thread);
+    return {
+      thread: publicForumThread(thread),
+      reply: publicForumReply(reply)
+    };
+  }
+
+  async createMemberNotice(input: CreateMemberNoticeInput) {
+    await this.ensureReady();
+    const targetMember = input.audience === "member" && input.targetMemberId
+      ? await this.getStored(input.targetMemberId)
+      : undefined;
+    if (input.audience === "member" && !targetMember) {
+      return undefined;
+    }
+
+    const notice = storedMemberNotice({
+      ...input,
+      targetMemberName: targetMember?.name
+    });
+    await this.saveMemberNotice(notice);
+    return publicMemberNotice(notice, input.audience === "member" ? input.targetMemberId : undefined);
+  }
+
+  async listMemberNotices(input: ListMemberNoticesInput) {
+    await this.ensureReady();
+    const notices: StoredMemberNotice[] = [];
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${noticePartitionKey}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      notices.push(deserialize<StoredMemberNotice>(entity));
+    }
+
+    return listMemberNoticeEntries(notices, input);
+  }
+
+  async markMemberNoticeRead(id: string, memberId: string) {
+    await this.ensureReady();
+    const notice = await this.getStoredMemberNotice(id);
+    if (!notice || !noticeVisibleToMember(notice, memberId)) {
+      return undefined;
+    }
+
+    notice.readByMemberIds ??= {};
+    notice.readByMemberIds[memberId] ??= new Date().toISOString();
+    await this.saveMemberNotice(notice);
+    return publicMemberNotice(notice, memberId);
+  }
+
   async revokeMemberCode(id: string) {
     await this.ensureReady();
     const stored = await this.getStored(id);
@@ -1655,6 +2035,54 @@ class AzureAccessStore implements AccessStore {
         rowKey: request.id,
         status: movieRequestStatus(request.status),
         payload: serialize(request)
+      },
+      "Replace"
+    );
+  }
+
+  private async getStoredForumThread(id: string) {
+    try {
+      const entity = await this.table.getEntity<PayloadEntity>(forumThreadPartitionKey, id);
+      return deserialize<StoredForumThread>(entity);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async getStoredMemberNotice(id: string) {
+    try {
+      const entity = await this.table.getEntity<PayloadEntity>(noticePartitionKey, id);
+      return deserialize<StoredMemberNotice>(entity);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async saveForumThread(thread: StoredForumThread) {
+    await this.table.upsertEntity<PayloadEntity>(
+      {
+        partitionKey: forumThreadPartitionKey,
+        rowKey: thread.id,
+        status: "open",
+        payload: serialize(thread)
+      },
+      "Replace"
+    );
+  }
+
+  private async saveMemberNotice(notice: StoredMemberNotice) {
+    await this.table.upsertEntity<PayloadEntity>(
+      {
+        partitionKey: noticePartitionKey,
+        rowKey: notice.id,
+        status: notice.audience,
+        payload: serialize(notice)
       },
       "Replace"
     );

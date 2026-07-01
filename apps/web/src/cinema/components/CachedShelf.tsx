@@ -4,6 +4,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { formatBytes, formatDateTime, mediaQuality } from "../format";
+import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
 
@@ -21,7 +22,7 @@ export function CachedShelf({
   onRefresh: () => void;
 }) {
   if (cachedAssets.length === 0 && loading) {
-    return <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title="Loading cached titles" />;
+    return <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title={copy.cachedShelf.loading} />;
   }
 
   if (cachedAssets.length === 0) {
@@ -30,10 +31,10 @@ export function CachedShelf({
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
+            {copy.common.refresh}
           </Button>
         </div>
-        <EmptyState icon={<Database className="h-5 w-5" />} title="No cached titles" />
+        <EmptyState icon={<Database className="h-5 w-5" />} title={copy.cachedShelf.empty} />
       </div>
     );
   }
@@ -43,11 +44,11 @@ export function CachedShelf({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Badge variant="default">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          {cachedAssets.length} 可播放
+          {copy.cachedShelf.playableCount(cachedAssets.length)}
         </Badge>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+          {copy.common.refresh}
         </Button>
       </div>
       <div className="grid gap-3 xl:grid-cols-2">

@@ -26,11 +26,17 @@ import {
   type CreditPolicyResponse,
   type CreditPreviewRequest,
   type CreditPreviewResponse,
+  type CreateForumReplyRequest,
+  type CreateForumThreadRequest,
+  type CreateMemberNoticeRequest,
   type DeleteCacheEntryResponse,
   type EnsureCacheRequest,
+  type ForumThreadResponse,
+  type ForumThreadsResponse,
   type MemberAccessCode,
   type MemberInvitationListResponse,
   type MemberCreditUsageResponse,
+  type MemberNoticeListResponse,
   type MediaVariant,
   type MovieRequestsResponse,
   type MovieRequestStatus,
@@ -95,6 +101,8 @@ const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLA
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminMovieRequestMemberId = "admin";
 const adminMovieRequestMemberName = "Admin";
+const forumAdminMemberId = "admin";
+const forumAdminMemberName = "Admin";
 const adminKey = process.env.WWPDW_ADMIN_KEY;
 
 interface RequestContext {
@@ -343,6 +351,20 @@ function authPayload(identity: AccessIdentity): AuthCheckResponse {
   };
 }
 
+function forumAuthor(identity: AccessIdentity) {
+  return identity.role === "admin"
+    ? {
+      role: "admin" as const,
+      memberId: forumAdminMemberId,
+      memberName: forumAdminMemberName
+    }
+    : {
+      role: "member" as const,
+      memberId: identity.memberId,
+      memberName: identity.memberName
+    };
+}
+
 function memberIdentityFromCode(code: Pick<MemberAccessCode, "id" | "name" | "credits">): AccessIdentity {
   return {
     role: "member",
@@ -383,7 +405,7 @@ function sendInvitationClaimError(
   }
 
   if (reason === "not_found") {
-    sendJson(response, 404, { error: "成员不存在，请重新向管理员索取重置邀请码。" });
+    sendJson(response, 404, { error: "成员不存在，请重新向管理员索取重置码。" });
     return;
   }
 
@@ -1066,7 +1088,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
 }
 
 function creditLimitErrorMessage() {
-  return "This Cinema Pass does not have enough 🍀 left.";
+  return "This member pass does not have enough 🍀 left.";
 }
 
 function playbackCreditCost(contentLength: number | undefined) {
@@ -1266,7 +1288,7 @@ async function handleEnsureCache(
       assetKey: result.assetKey,
       durationMs: durationMs(startedAt)
     });
-    sendJson(response, 403, { error: "This Cinema Pass is no longer available." });
+    sendJson(response, 403, { error: "This member pass is no longer available." });
     return;
   }
 
@@ -1416,7 +1438,7 @@ async function handlePlayback(
       assetKey,
       durationMs: durationMs(startedAt)
     });
-    sendJson(response, 403, { error: "This Cinema Pass is no longer available." });
+    sendJson(response, 403, { error: "This member pass is no longer available." });
     return;
   }
 
@@ -1544,6 +1566,74 @@ async function handleListMemberInvitations(response: http.ServerResponse, contex
   sendJson(response, 200, payload);
 }
 
+async function handleListAdminMemberNotices(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 200);
+  const notices = await accessStore.listMemberNotices({ limit });
+  logInfo("api.admin.notices.list", {
+    requestId: context.requestId,
+    count: notices.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, memberNoticePayload(notices));
+}
+
+async function handleCreateAdminMemberNotice(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const body = await readBody<CreateMemberNoticeRequest>(request);
+  const title = body.title?.trim() ?? "";
+  const noticeBody = body.body?.trim() ?? "";
+  const audience = body.audience === "member" ? "member" : "all";
+  const targetMemberId = body.targetMemberId?.trim();
+
+  if (!title || !noticeBody) {
+    sendJson(response, 400, { error: "通知标题和正文不能为空。" });
+    return;
+  }
+
+  if (title.length > 120 || noticeBody.length > 4000) {
+    sendJson(response, 400, { error: "通知内容过长。" });
+    return;
+  }
+
+  if (audience === "member" && !targetMemberId) {
+    sendJson(response, 400, { error: "请选择要发送的成员。" });
+    return;
+  }
+
+  const notice = await accessStore.createMemberNotice({
+    title,
+    body: noticeBody,
+    audience,
+    targetMemberId,
+    ...forumAuthor(identity)
+  });
+  if (!notice) {
+    logWarn("api.admin.notices.create_target_not_found", {
+      requestId: context.requestId,
+      targetMemberId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "成员不存在。" });
+    return;
+  }
+
+  logInfo("api.admin.notices.create", {
+    requestId: context.requestId,
+    noticeId: notice.id,
+    audience: notice.audience,
+    targetMemberId: notice.targetMemberId,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, { notice });
+}
+
 async function handleRegisterMember(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -1554,7 +1644,7 @@ async function handleRegisterMember(
   const inviteCode = body.inviteCode?.trim() ?? "";
 
   if (!inviteCode) {
-    sendJson(response, 400, { error: "请输入家庭邀请码。" });
+    sendJson(response, 400, { error: "请输入邀请码。" });
     return;
   }
 
@@ -1702,7 +1792,7 @@ async function handleResetMemberPasscode(
   const passcodeError = passcodeValidationError(newPasscode);
 
   if (!inviteCode) {
-    sendJson(response, 400, { error: "请输入重置邀请码。" });
+    sendJson(response, 400, { error: "请输入重置码。" });
     return;
   }
 
@@ -1848,6 +1938,213 @@ async function handleListOwnMovieRequests(
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 200, { requests });
+}
+
+function memberNoticePayload(notices: Awaited<ReturnType<typeof accessStore.listMemberNotices>>): MemberNoticeListResponse {
+  return {
+    notices,
+    unreadCount: notices.filter((notice) => !notice.readAt).length
+  };
+}
+
+async function handleListOwnMemberNotices(
+  url: URL,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts have an inbox." });
+    return;
+  }
+
+  const limit = requestLimit(url, 50, 200);
+  const notices = await accessStore.listMemberNotices({
+    memberId: identity.memberId,
+    limit
+  });
+
+  logInfo("api.member.notices.list", {
+    requestId: context.requestId,
+    memberId: identity.memberId,
+    count: notices.length,
+    unreadCount: notices.filter((notice) => !notice.readAt).length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, memberNoticePayload(notices));
+}
+
+async function handleMarkOwnMemberNoticeRead(
+  noticeId: string,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts have an inbox." });
+    return;
+  }
+
+  const notice = await accessStore.markMemberNoticeRead(noticeId, identity.memberId);
+  if (!notice) {
+    logWarn("api.member.notices.read_not_found", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      noticeId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Notice was not found." });
+    return;
+  }
+
+  logInfo("api.member.notices.read", {
+    requestId: context.requestId,
+    memberId: identity.memberId,
+    noticeId,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { notice });
+}
+
+async function handleListForumThreads(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 200);
+  const payload: ForumThreadsResponse = {
+    threads: await accessStore.listForumThreads(limit)
+  };
+
+  logInfo("api.forum.threads.list", {
+    requestId: context.requestId,
+    count: payload.threads.length,
+    limit,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
+async function handleCreateForumThread(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const author = forumAuthor(identity);
+  if (!author.memberId) {
+    sendJson(response, 403, { error: "Only signed-in accounts can post discussions." });
+    return;
+  }
+
+  const body = await readBody<CreateForumThreadRequest>(request);
+  const title = body.title?.trim() ?? "";
+  const threadBody = body.body?.trim() ?? "";
+  if (!title || !threadBody) {
+    sendJson(response, 400, { error: "Title and body are required." });
+    return;
+  }
+
+  if (title.length > 120 || threadBody.length > 5000) {
+    sendJson(response, 400, { error: "Discussion title or body is too long." });
+    return;
+  }
+
+  const thread = await accessStore.createForumThread({
+    title,
+    body: threadBody,
+    ...author
+  });
+
+  logInfo("api.forum.threads.create", {
+    requestId: context.requestId,
+    threadId: thread.id,
+    role: identity.role,
+    memberId: author.memberId,
+    memberName: author.memberName,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, { thread });
+}
+
+async function handleGetForumThread(
+  threadId: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const thread = await accessStore.getForumThread(threadId);
+  if (!thread) {
+    logWarn("api.forum.threads.not_found", {
+      requestId: context.requestId,
+      threadId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Discussion thread was not found." });
+    return;
+  }
+
+  const payload: ForumThreadResponse = { thread };
+  logInfo("api.forum.threads.get", {
+    requestId: context.requestId,
+    threadId,
+    replyCount: thread.replyCount,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
+async function handleCreateForumReply(
+  threadId: string,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const author = forumAuthor(identity);
+  if (!author.memberId) {
+    sendJson(response, 403, { error: "Only signed-in accounts can reply to discussions." });
+    return;
+  }
+
+  const body = await readBody<CreateForumReplyRequest>(request);
+  const replyBody = body.body?.trim() ?? "";
+  if (!replyBody) {
+    sendJson(response, 400, { error: "Reply body is required." });
+    return;
+  }
+
+  if (replyBody.length > 5000) {
+    sendJson(response, 400, { error: "Reply is too long." });
+    return;
+  }
+
+  const result = await accessStore.createForumReply(threadId, {
+    body: replyBody,
+    ...author
+  });
+  if (!result) {
+    logWarn("api.forum.replies.thread_not_found", {
+      requestId: context.requestId,
+      threadId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Discussion thread was not found." });
+    return;
+  }
+
+  logInfo("api.forum.replies.create", {
+    requestId: context.requestId,
+    threadId,
+    replyId: result.reply.id,
+    role: identity.role,
+    memberId: author.memberId,
+    memberName: author.memberName,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, result);
 }
 
 async function handleListMemberCreditUsage(
@@ -2339,6 +2636,39 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/member/notices") {
+      await handleListOwnMemberNotices(url, response, context, identity!);
+      return;
+    }
+
+    const memberNoticeReadMatch = pathname.match(/^\/api\/member\/notices\/([^/]+)\/read$/);
+    if (request.method === "POST" && memberNoticeReadMatch) {
+      await handleMarkOwnMemberNoticeRead(decodeURIComponent(memberNoticeReadMatch[1]), response, context, identity!);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/forum/threads") {
+      await handleListForumThreads(url, response, context);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/forum/threads") {
+      await handleCreateForumThread(request, response, context, identity!);
+      return;
+    }
+
+    const forumThreadMatch = pathname.match(/^\/api\/forum\/threads\/([^/]+)$/);
+    if (request.method === "GET" && forumThreadMatch) {
+      await handleGetForumThread(decodeURIComponent(forumThreadMatch[1]), response, context);
+      return;
+    }
+
+    const forumReplyMatch = pathname.match(/^\/api\/forum\/threads\/([^/]+)\/replies$/);
+    if (request.method === "POST" && forumReplyMatch) {
+      await handleCreateForumReply(decodeURIComponent(forumReplyMatch[1]), request, response, context, identity!);
+      return;
+    }
+
     if (pathname === "/api/admin/login-audit" && !requireAdmin(identity, response, context)) {
       return;
     }
@@ -2367,6 +2697,20 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (pathname === "/api/admin/notices" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/notices") {
+      await handleListAdminMemberNotices(url, response, context);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/notices") {
+      await handleCreateAdminMemberNotice(request, response, context, identity!);
+      return;
+    }
+
     if (pathname === "/api/admin/member-codes" && !requireAdmin(identity, response, context)) {
       return;
     }
@@ -2377,7 +2721,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "POST" && pathname === "/api/admin/member-codes") {
-      sendJson(response, 410, { error: "管理员不再直接创建成员，请改用家庭邀请码。" });
+      sendJson(response, 410, { error: "管理员不再直接创建成员，请改用邀请码。" });
       return;
     }
 

@@ -519,7 +519,7 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
     ratings: ratingsFromProperties(properties),
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
-    description: textFromNamedProperty(properties, descriptionPropertyPattern, 360),
+    description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,
     externalIds: imdbId ? { imdb: imdbId } : undefined
   };

@@ -7,29 +7,10 @@ import type {
   MemberAccessCode,
   SearchResult
 } from "@wwpdw/shared";
+import { cacheMessageLabel, cacheStatusLabel, copy } from "./i18n";
 import type { BadgeVariant } from "./types";
 
-export const cacheStatusText: Record<CacheStatus, string> = {
-  queued: "排队中",
-  fetching: "准备中",
-  downloading: "获取中",
-  processing: "准备播放",
-  uploading: "建立缓存",
-  ready: "可播放",
-  failed: "失败"
-};
-
-export const cacheMessageText: Record<string, string> = {
-  "Waiting for a cache worker.": "等待开始准备。",
-  "Fetching source metadata.": "正在准备片源。",
-  "Resolving the media source.": "正在确认可播放版本。",
-  "Copying the resolved media into the cache lane.": "正在建立播放缓存。",
-  "Publishing the cached asset.": "正在完成播放准备。",
-  "Uploading the resolved media into Blob cache.": "正在建立播放缓存。",
-  "正在检查播放状态。": "正在检查播放状态。",
-  "Ready for playback.": "可以播放。",
-  "Failed to cache the resolved media.": "准备失败。"
-};
+export const cacheStatusText: Record<CacheStatus, string> = copy.cache.status;
 
 export function formatDate(value?: string) {
   if (!value) {
@@ -41,7 +22,7 @@ export function formatDate(value?: string) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
     day: "numeric"
   }).format(date);
@@ -57,7 +38,7 @@ export function formatLongDate(value?: string) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "short",
     day: "numeric"
@@ -74,7 +55,7 @@ export function formatDateTime(value?: string) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -88,10 +69,10 @@ export function creditsLabel(code: MemberAccessCode) {
 
 export function cacheLabel(asset?: CacheAsset) {
   if (!asset) {
-    return "未缓存";
+    return copy.cache.notCached;
   }
 
-  return cacheStatusText[asset.status];
+  return cacheStatusLabel(asset.status);
 }
 
 export function cacheVariant(asset?: CacheAsset): BadgeVariant {
@@ -128,18 +109,18 @@ export function jobVariant(status: CacheJob["status"]): BadgeVariant {
 
 export function historyCacheLabel(status?: CacheAssetLookupResponse) {
   if (!status) {
-    return "检查中";
+    return copy.cache.checking;
   }
 
   if (status.playable) {
-    return "可播放";
+    return cacheStatusLabel("ready");
   }
 
   if (status.asset?.status === "ready") {
-    return "已过期";
+    return copy.cache.expired;
   }
 
-  return status.asset ? cacheStatusText[status.asset.status] : "未缓存";
+  return status.asset ? cacheStatusLabel(status.asset.status) : copy.cache.notCached;
 }
 
 export function historyCacheVariant(status?: CacheAssetLookupResponse): BadgeVariant {
@@ -164,7 +145,7 @@ export function historyCacheVariant(status?: CacheAssetLookupResponse): BadgeVar
 
 export function formatBytes(value?: number) {
   if (!Number.isFinite(value)) {
-    return "unknown";
+    return copy.common.unknown;
   }
 
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -180,29 +161,29 @@ export function formatBytes(value?: number) {
 
 export function booleanLabel(value?: boolean) {
   if (value === undefined) {
-    return "unknown";
+    return copy.common.unknown;
   }
 
-  return value ? "yes" : "no";
+  return value ? copy.common.enabled : copy.common.disabled;
 }
 
 export function mp4StatusLabel(media?: MediaDiagnostics) {
   switch (media?.mp4?.status) {
     case "faststart":
-      return "faststart";
+      return copy.media.seekReady;
     case "late_moov":
-      return "late moov";
+      return copy.media.seekSlow;
     case "not_mp4":
-      return "not mp4";
+      return copy.media.notMp4;
     case "unknown":
-      return "unknown";
+      return copy.common.unknown;
     default:
-      return "not checked";
+      return copy.media.unchecked;
   }
 }
 
 export function offsetLabel(value?: number) {
-  return value === undefined ? "unknown" : value.toLocaleString();
+  return value === undefined ? copy.common.unknown : value.toLocaleString();
 }
 
 export function titleInitial(title: string) {
@@ -224,7 +205,7 @@ export function metadataLine(result: SearchResult) {
 export function visibleTags(tags?: string[]) {
   return (tags ?? [])
     .map((tag) => tag.trim())
-    .filter((tag) => tag && tag !== "闻达");
+    .filter((tag) => tag && tag !== copy.library.ignoredSourceTag);
 }
 
 export function directorLine(result: SearchResult) {
@@ -240,42 +221,56 @@ export function bestSummary(result: SearchResult) {
   return result.metadata?.description ?? result.metadata?.info ?? result.summary;
 }
 
+function looksTruncated(value: string) {
+  return /(?:\.{3}|…)$/u.test(value.trim());
+}
+
+export function bestDetailSummary(result: SearchResult) {
+  const summary = bestSummary(result);
+  const omdbPlot = result.metadata?.external?.omdb?.plot;
+  if (looksTruncated(summary) && omdbPlot && omdbPlot !== "N/A" && omdbPlot.length > summary.length) {
+    return omdbPlot;
+  }
+
+  return summary;
+}
+
 export function mediaQuality(media?: MediaDiagnostics) {
   if (!media) {
-    return "Media not checked";
+    return copy.media.notChecked;
   }
 
   if (media.mp4?.status === "faststart" && media.rangeSupported) {
-    return "Seek ready";
+    return copy.media.seekReady;
   }
 
   if (media.mp4?.status === "late_moov") {
-    return "Seek may be slow";
+    return copy.media.seekSlow;
   }
 
-  return "Playback checked";
+  return copy.media.playbackChecked;
 }
 
 export function jobStatusLabel(status: CacheStatus) {
-  return cacheStatusText[status];
+  return cacheStatusLabel(status);
 }
 
 export function jobMessageLabel(job: CacheJob) {
   if (job.status === "failed") {
-    return "准备失败，可以重新准备。";
+    return copy.cache.failedRetry;
   }
 
-  return cacheMessageText[job.message] ?? job.message;
+  return cacheMessageLabel(job.message);
 }
 
 export function cacheErrorLabel(message: string) {
   if (message.includes("The specified block list is invalid")) {
-    return "缓存写入失败，请重新准备。";
+    return copy.cache.errors.blockListInvalid;
   }
 
   if (message.includes("Asset is not ready for playback")) {
-    return "这条影片还没有准备好播放。";
+    return copy.cache.errors.assetNotReady;
   }
 
-  return cacheMessageText[message] ?? message;
+  return cacheMessageLabel(message);
 }

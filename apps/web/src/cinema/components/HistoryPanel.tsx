@@ -9,6 +9,7 @@ import {
   historyCacheLabel,
   historyCacheVariant
 } from "../format";
+import { copy } from "../i18n";
 import type { HistoryAssetStatusMap, PlaybackHistoryEntry } from "../types";
 import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
@@ -29,14 +30,14 @@ export function HistoryPanel({
   onRecache: (entry: PlaybackHistoryEntry) => void;
 }) {
   if (items.length === 0) {
-    return <EmptyState icon={<History className="h-5 w-5" />} title="No playback history" />;
+    return <EmptyState icon={<History className="h-5 w-5" />} title={copy.history.empty} />;
   }
 
   return (
     <div className="grid gap-3">
       <div className="flex justify-end">
         <Button type="button" variant="outline" size="sm" onClick={onClear}>
-          Clear history
+          {copy.history.clear}
         </Button>
       </div>
       {items.map((item) => (
@@ -50,10 +51,10 @@ export function HistoryPanel({
                 </Badge>
               </div>
               <p className="mt-1 text-sm text-slate-400">
-                {formatLongDate(item.playedAt)} / {item.contentType ?? "unknown"} / {formatBytes(item.contentLength)}
+                {formatLongDate(item.playedAt)} / {item.contentType ?? copy.common.unknown} / {formatBytes(item.contentLength)}
               </p>
               {!statusByAssetKey[item.assetKey]?.playable && !item.result ? (
-                <p className="mt-1 text-xs text-slate-500">需要先重新搜索这条影片，才能再次准备。</p>
+                <p className="mt-1 text-xs text-slate-500">{copy.history.recacheHint}</p>
               ) : null}
             </div>
             <div className="grid gap-2 sm:flex">

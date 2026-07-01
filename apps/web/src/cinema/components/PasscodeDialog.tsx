@@ -11,6 +11,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { copy } from "../i18n";
 
 interface PasscodeDialogProps {
   error: string;
@@ -49,7 +50,7 @@ export function PasscodeDialog({
     const passcodeError = validateMemberPasscode(newValue);
 
     if (!currentValue) {
-      setLocalError("请输入当前通行码。");
+      setLocalError(copy.passcode.errors.currentRequired);
       return;
     }
 
@@ -59,7 +60,7 @@ export function PasscodeDialog({
     }
 
     if (newValue !== confirmValue) {
-      setLocalError("两次输入的新通行码不一致。");
+      setLocalError(copy.passcode.errors.mismatch);
       return;
     }
 
@@ -71,13 +72,13 @@ export function PasscodeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Change passcode</DialogTitle>
-          <DialogDescription>Use exactly 12 half-width characters with at least 1 letter and 1 number.</DialogDescription>
+          <DialogTitle>{copy.passcode.title}</DialogTitle>
+          <DialogDescription>{copy.access.passcodeRule}</DialogDescription>
         </DialogHeader>
 
         <form className="grid gap-4" onSubmit={submit}>
           <div className="grid gap-2">
-            <Label htmlFor="current-passcode">Current passcode</Label>
+            <Label htmlFor="current-passcode">{copy.passcode.current}</Label>
             <Input
               id="current-passcode"
               autoComplete="current-password"
@@ -92,7 +93,7 @@ export function PasscodeDialog({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="new-passcode">New passcode</Label>
+            <Label htmlFor="new-passcode">{copy.passcode.new}</Label>
             <Input
               id="new-passcode"
               autoComplete="new-password"
@@ -107,7 +108,7 @@ export function PasscodeDialog({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="confirm-passcode">Confirm new passcode</Label>
+            <Label htmlFor="confirm-passcode">{copy.passcode.confirmNew}</Label>
             <Input
               id="confirm-passcode"
               autoComplete="new-password"
@@ -125,7 +126,7 @@ export function PasscodeDialog({
 
           <Button type="submit" disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-            Save passcode
+            {copy.passcode.save}
           </Button>
         </form>
       </DialogContent>

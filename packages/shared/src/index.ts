@@ -336,6 +336,97 @@ export interface UpdateMovieRequestStatusResponse {
   request: MovieRequestEntry;
 }
 
+export type ForumAuthorRole = AccessRole;
+
+export interface ForumReplyEntry {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorMemberId?: string;
+  authorMemberName?: string;
+  authorRole: ForumAuthorRole;
+}
+
+export interface ForumThreadSummary {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  authorMemberId?: string;
+  authorMemberName?: string;
+  authorRole: ForumAuthorRole;
+  replyCount: number;
+  lastReplyAt?: string;
+  latestReply?: ForumReplyEntry;
+}
+
+export interface ForumThreadEntry extends ForumThreadSummary {
+  replies: ForumReplyEntry[];
+}
+
+export interface CreateForumThreadRequest {
+  title: string;
+  body: string;
+}
+
+export interface CreateForumThreadResponse {
+  thread: ForumThreadEntry;
+}
+
+export interface ForumThreadsResponse {
+  threads: ForumThreadSummary[];
+}
+
+export interface ForumThreadResponse {
+  thread: ForumThreadEntry;
+}
+
+export interface CreateForumReplyRequest {
+  body: string;
+}
+
+export interface CreateForumReplyResponse {
+  thread: ForumThreadEntry;
+  reply: ForumReplyEntry;
+}
+
+export type MemberNoticeAudience = "all" | "member";
+
+export interface MemberNoticeEntry {
+  id: string;
+  title: string;
+  body: string;
+  audience: MemberNoticeAudience;
+  createdAt: string;
+  createdByRole: AccessRole;
+  createdByMemberId?: string;
+  createdByMemberName?: string;
+  targetMemberId?: string;
+  targetMemberName?: string;
+  readAt?: string;
+}
+
+export interface CreateMemberNoticeRequest {
+  title: string;
+  body: string;
+  audience: MemberNoticeAudience;
+  targetMemberId?: string;
+}
+
+export interface CreateMemberNoticeResponse {
+  notice: MemberNoticeEntry;
+}
+
+export interface MemberNoticeListResponse {
+  notices: MemberNoticeEntry[];
+  unreadCount: number;
+}
+
+export interface MarkMemberNoticeReadResponse {
+  notice: MemberNoticeEntry;
+}
+
 export interface CacheAssetLookupResponse {
   asset?: CacheAsset;
   playable: boolean;

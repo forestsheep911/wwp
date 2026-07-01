@@ -32,7 +32,7 @@ npm run dev:web
 
 The local default cache backend is `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
 
-The frontend does not contain a built-in administrator key. The deployed API reads one static admin key from `WWPDW_ADMIN_KEY`, and the Admin tab sends the user-entered key through `x-wwpdw-access-key`. Regular family members use generated Cinema Passes stored in the member-code table.
+The frontend does not contain a built-in administrator key. The deployed API reads one static admin key from `WWPDW_ADMIN_KEY`, and the Admin tab sends the user-entered key through `x-wwpdw-access-key`. Regular family members use generated member passes stored in the member-code table.
 
 Set `VITE_API_BASE_URL` when building the web app against a remote API. Leave it empty for local `/api`.
 
@@ -111,7 +111,7 @@ Deploy/update:
 
 The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes queue/table state and starts the cache worker Container Apps Job through Azure Resource Manager using managed identity.
 
-The cleanup job removes expired cache assets on a daily schedule. Member Cinema Passes do not expire by date; admins revoke or delete them when needed.
+The cleanup job removes expired cache assets on a daily schedule. Member passes do not expire by date; admins revoke or delete them when needed.
 
 ## Verification
 

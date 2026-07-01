@@ -7,6 +7,7 @@ import {
   mp4StatusLabel,
   offsetLabel
 } from "../format";
+import { copy } from "../i18n";
 
 export function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
   if (!media) {
@@ -16,15 +17,15 @@ export function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
   return (
     <div className="grid gap-3 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase text-slate-500">Media</span>
+        <span className="text-xs font-semibold text-slate-500">{copy.media.title}</span>
         <Badge variant={media.mp4?.status === "late_moov" ? "warning" : "secondary"}>
           {mediaQuality(media)}
         </Badge>
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-        <Metric label="Type" value={media.contentType ?? "unknown"} />
-        <Metric label="Size" value={formatBytes(media.contentLength)} />
-        <Metric label="Range" value={booleanLabel(media.rangeSupported)} />
+        <Metric label={copy.media.type} value={media.contentType ?? copy.common.unknown} />
+        <Metric label={copy.media.size} value={formatBytes(media.contentLength)} />
+        <Metric label={copy.media.range} value={booleanLabel(media.rangeSupported)} />
         <Metric label="MP4" value={mp4StatusLabel(media)} />
       </div>
       {media.mp4 ? (

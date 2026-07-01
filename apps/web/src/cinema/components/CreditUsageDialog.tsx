@@ -9,6 +9,7 @@ import {
 } from "../../components/ui/dialog";
 import { Badge } from "../../components/ui/badge";
 import { formatDateTime } from "../format";
+import { copy, creditReasonLabel } from "../i18n";
 
 interface CreditUsageDialogProps {
   error: string;
@@ -16,18 +17,6 @@ interface CreditUsageDialogProps {
   open: boolean;
   usage?: MemberCreditUsageResponse;
   onOpenChange: (open: boolean) => void;
-}
-
-function creditReasonLabel(reason: string) {
-  if (reason === "cache_reserved") {
-    return "Cache";
-  }
-
-  if (reason === "playback_stream") {
-    return "Play";
-  }
-
-  return reason;
 }
 
 export function CreditUsageDialog({
@@ -47,12 +36,12 @@ export function CreditUsageDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ReceiptText className="h-5 w-5 text-emerald-300" />
-            Spending record
+            {copy.credit.usageTitle}
           </DialogTitle>
           <DialogDescription>
             {usage?.member
-              ? `${usage.member.name} / ${balance?.unitSymbol ?? "🍀"} ${balance?.remaining ?? 0} remaining`
-              : "Recent credit spending for this Cinema Pass."}
+              ? copy.credit.memberUsageDescription(usage.member.name, balance?.remaining ?? 0, balance?.unitSymbol ?? "🍀")
+              : copy.credit.usageDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -61,25 +50,25 @@ export function CreditUsageDialog({
         {loading ? (
           <div className="flex items-center gap-2 rounded border border-slate-800 bg-slate-950/70 px-4 py-6 text-sm font-semibold text-slate-300">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading spending record
+            {copy.credit.loadingUsage}
           </div>
         ) : entries.length === 0 ? (
           <div className="rounded border border-slate-800 bg-slate-950/70 px-4 py-6 text-sm text-slate-400">
-            No spending yet.
+            {copy.credit.noUsage}
           </div>
         ) : (
           <div className="grid gap-3">
             <div className="grid gap-2 sm:grid-cols-3">
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
-                <p className="text-xs font-semibold uppercase text-slate-500">Spent</p>
+                <p className="text-xs font-semibold text-slate-500">{copy.credit.spent}</p>
                 <p className="mt-1 text-lg font-bold text-slate-50">{balance?.unitSymbol ?? "🍀"} {totalSpent}</p>
               </div>
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
-                <p className="text-xs font-semibold uppercase text-slate-500">Remaining</p>
+                <p className="text-xs font-semibold text-slate-500">{copy.credit.remaining}</p>
                 <p className="mt-1 text-lg font-bold text-emerald-200">{balance?.unitSymbol ?? "🍀"} {balance?.remaining ?? 0}</p>
               </div>
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
-                <p className="text-xs font-semibold uppercase text-slate-500">Entries</p>
+                <p className="text-xs font-semibold text-slate-500">{copy.credit.entries}</p>
                 <p className="mt-1 text-lg font-bold text-slate-50">{entries.length}</p>
               </div>
             </div>
@@ -93,7 +82,7 @@ export function CreditUsageDialog({
                       <p className="mt-1 truncate font-mono text-xs text-slate-500" title={entry.assetKey}>{entry.assetKey}</p>
                       <p className="mt-1 text-xs text-slate-400">
                         {formatDateTime(entry.chargedAt)}
-                        {entry.windowExpiresAt ? ` / free replay until ${formatDateTime(entry.windowExpiresAt)}` : ""}
+                        {entry.windowExpiresAt ? copy.credit.freeReplayUntil(formatDateTime(entry.windowExpiresAt)) : ""}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 sm:justify-end">

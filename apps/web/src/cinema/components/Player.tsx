@@ -4,6 +4,7 @@ import { Play } from "lucide-react";
 import type { PlaybackResponse } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
 import { formatLongDate } from "../format";
+import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 
 function ArtPlayerView({ playback }: { playback: PlaybackResponse }) {
@@ -61,11 +62,11 @@ export function Player({
       <div className="mx-auto grid max-w-6xl gap-5">
         <div className="grid gap-3 sm:flex sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-emerald-300">Now Playing</p>
+            <p className="text-xs font-semibold text-emerald-300">{copy.player.nowPlaying}</p>
             <h1 className="mt-1 line-clamp-3 text-xl font-semibold text-slate-50 sm:text-2xl">{playback.title}</h1>
           </div>
           <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={onClose}>
-            Back to cinema
+            {copy.player.back}
           </Button>
         </div>
         <div className="overflow-hidden rounded-lg border border-slate-800 bg-black shadow-2xl">
@@ -83,7 +84,7 @@ export function Player({
           )}
         </div>
         <MediaDiagnosticsView media={playback.media} />
-        <p className="text-xs text-slate-500">Signed URL expires {formatLongDate(playback.expiresAt)}</p>
+        <p className="text-xs text-slate-500">{copy.player.expiresAt(formatLongDate(playback.expiresAt))}</p>
       </div>
     </main>
   );

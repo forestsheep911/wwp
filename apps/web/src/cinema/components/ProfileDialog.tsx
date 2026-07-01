@@ -11,6 +11,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { copy } from "../i18n";
 
 type Member = NonNullable<AuthCheckResponse["member"]>;
 
@@ -52,7 +53,7 @@ export function ProfileDialog({
     const confirmValue = confirmPasscode.trim();
 
     if (!nextName) {
-      setLocalError("请输入显示名称。");
+      setLocalError(copy.profile.errors.nameRequired);
       return;
     }
 
@@ -64,7 +65,7 @@ export function ProfileDialog({
       }
 
       if (nextPasscode !== confirmValue) {
-        setLocalError("两次输入的新通行码不一致。");
+        setLocalError(copy.profile.errors.passcodeMismatch);
         return;
       }
     }
@@ -77,13 +78,13 @@ export function ProfileDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Update your display name and passcode.</DialogDescription>
+          <DialogTitle>{copy.profile.title}</DialogTitle>
+          <DialogDescription>{copy.profile.description}</DialogDescription>
         </DialogHeader>
 
         <form className="grid gap-4" onSubmit={submit}>
           <div className="grid gap-2">
-            <Label htmlFor="profile-name">Display name</Label>
+            <Label htmlFor="profile-name">{copy.profile.displayName}</Label>
             <Input
               id="profile-name"
               autoComplete="name"
@@ -97,7 +98,7 @@ export function ProfileDialog({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="profile-passcode">New passcode</Label>
+            <Label htmlFor="profile-passcode">{copy.profile.newPasscode}</Label>
             <Input
               id="profile-passcode"
               autoComplete="new-password"
@@ -112,7 +113,7 @@ export function ProfileDialog({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="profile-confirm-passcode">Confirm new passcode</Label>
+            <Label htmlFor="profile-confirm-passcode">{copy.profile.confirmNewPasscode}</Label>
             <Input
               id="profile-confirm-passcode"
               autoComplete="new-password"
@@ -130,7 +131,7 @@ export function ProfileDialog({
 
           <Button type="submit" disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCircle className="h-4 w-4" />}
-            Save profile
+            {copy.profile.save}
           </Button>
         </form>
       </DialogContent>

@@ -13,14 +13,24 @@ import type {
   CreateSignupInvitationResponse,
   CreateMovieRequestRequest,
   CreateMovieRequestResponse,
+  CreateForumReplyRequest,
+  CreateForumReplyResponse,
+  CreateForumThreadRequest,
+  CreateForumThreadResponse,
+  CreateMemberNoticeRequest,
+  CreateMemberNoticeResponse,
   CreditPreviewRequest,
   CreditPreviewResponse,
   CreditPolicyResponse,
   DeleteCacheEntryResponse,
   EnsureCacheResponse,
+  ForumThreadResponse,
+  ForumThreadsResponse,
   MemberCodeListResponse,
   MemberCreditUsageResponse,
   MemberInvitationListResponse,
+  MemberNoticeListResponse,
+  MarkMemberNoticeReadResponse,
   MovieRequestsResponse,
   PlaybackResponse,
   RegisterMemberRequest,
@@ -158,6 +168,46 @@ export function listOwnMovieRequests(limit = 50) {
   return request<MovieRequestsResponse>(apiUrl(`/api/member/movie-requests?${params.toString()}`));
 }
 
+export function listOwnNotices(limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MemberNoticeListResponse>(apiUrl(`/api/member/notices?${params.toString()}`));
+}
+
+export function markOwnNoticeRead(id: string) {
+  return request<MarkMemberNoticeReadResponse>(
+    apiUrl(`/api/member/notices/${encodeURIComponent(id)}/read`),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function listForumThreads(limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<ForumThreadsResponse>(apiUrl(`/api/forum/threads?${params.toString()}`));
+}
+
+export function createForumThread(input: CreateForumThreadRequest) {
+  return request<CreateForumThreadResponse>(apiUrl("/api/forum/threads"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function getForumThread(id: string) {
+  return request<ForumThreadResponse>(apiUrl(`/api/forum/threads/${encodeURIComponent(id)}`));
+}
+
+export function createForumReply(id: string, input: CreateForumReplyRequest) {
+  return request<CreateForumReplyResponse>(
+    apiUrl(`/api/forum/threads/${encodeURIComponent(id)}/replies`),
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
 export function searchAssets(query: string) {
   const params = new URLSearchParams({ q: query });
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
@@ -212,6 +262,18 @@ export function listMemberCodes() {
 
 export function listMemberInvitations() {
   return request<MemberInvitationListResponse>(apiUrl("/api/admin/member-invitations"));
+}
+
+export function listAdminNotices(limit = 100) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<MemberNoticeListResponse>(apiUrl(`/api/admin/notices?${params.toString()}`));
+}
+
+export function createAdminNotice(input: CreateMemberNoticeRequest) {
+  return request<CreateMemberNoticeResponse>(apiUrl("/api/admin/notices"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function createSignupInvitation(input: CreateSignupInvitationRequest) {

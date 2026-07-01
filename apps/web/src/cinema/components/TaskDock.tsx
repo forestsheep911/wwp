@@ -5,6 +5,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
 import { jobMessageLabel, jobStatusLabel, jobVariant } from "../format";
+import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
 
 export function TaskDock({
@@ -35,15 +36,15 @@ export function TaskDock({
               className="flex min-w-0 items-center gap-2 text-left"
               type="button"
               onClick={onOpenTasks}
-              title="查看全部任务"
+              title={copy.tasks.viewAllTitle}
             >
               <ListChecks className="h-4 w-4 shrink-0 text-emerald-300" />
-              <span className="truncate text-sm font-semibold text-slate-50">缓存任务</span>
+              <span className="truncate text-sm font-semibold text-slate-50">{copy.tasks.floatingTitle}</span>
               <Badge variant={activeItems.length ? "warning" : "secondary"}>{activeItems.length}</Badge>
             </button>
-            <Button type="button" variant="ghost" size="icon" onClick={() => setOpen(false)} title="收起">
+            <Button type="button" variant="ghost" size="icon" onClick={() => setOpen(false)} title={copy.tasks.collapse}>
               <ChevronDown className="h-4 w-4" />
-              <span className="sr-only">收起任务浮窗</span>
+              <span className="sr-only">{copy.tasks.collapseSr}</span>
             </Button>
           </div>
           <div className="grid max-h-[55vh] gap-2 overflow-y-auto p-2">
@@ -67,7 +68,7 @@ export function TaskDock({
             ))}
             {items.length > 4 ? (
               <Button type="button" variant="outline" size="sm" onClick={onOpenTasks}>
-                查看全部 {items.length} 项
+                {copy.tasks.viewAllCount(items.length)}
               </Button>
             ) : null}
           </div>
@@ -80,7 +81,7 @@ export function TaskDock({
           onClick={() => setOpen(true)}
         >
           {readyItems.length ? <CheckCircle2 className="h-4 w-4 text-emerald-200" /> : <ListChecks className="h-4 w-4 text-emerald-200" />}
-          准备中
+          {copy.tasks.preparing}
           <Badge variant={activeItems.length ? "warning" : "secondary"}>{activeItems.length}</Badge>
         </Button>
       )}

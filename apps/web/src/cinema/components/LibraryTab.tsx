@@ -22,6 +22,7 @@ import { Card, CardContent } from "../../components/ui/card";
 import { Progress } from "../../components/ui/progress";
 import {
   bestSummary,
+  bestDetailSummary,
   cacheLabel,
   cacheVariant,
   directorLine,
@@ -36,6 +37,7 @@ import {
   titleInitial,
   visibleTags
 } from "../format";
+import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
@@ -148,10 +150,10 @@ export function LibraryTab({
               size="sm"
               variant={viewMode === "gallery" ? "secondary" : "ghost"}
               onClick={() => onViewModeChange("gallery")}
-              title="Gallery view"
+              title={copy.library.galleryView}
             >
               <LayoutGrid className="h-4 w-4" />
-              Gallery
+              {copy.library.gallery}
             </Button>
             <Button
               className="flex-1 sm:flex-none"
@@ -159,10 +161,10 @@ export function LibraryTab({
               size="sm"
               variant={viewMode === "list" ? "secondary" : "ghost"}
               onClick={() => onViewModeChange("list")}
-              title="List view"
+              title={copy.library.listView}
             >
               <List className="h-4 w-4" />
-              List
+              {copy.library.list}
             </Button>
           </div>
 
@@ -171,7 +173,7 @@ export function LibraryTab({
               <div className="gallery-results-grid grid gap-4">
                 {results.length === 0 ? (
                   <div className="col-span-full">
-                    <EmptyState icon={<Film className="h-5 w-5" />} title="No titles found" />
+                    <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesFound} />
                   </div>
                 ) : (
                   results.map((result) => (
@@ -223,11 +225,11 @@ const browseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
-  { id: "recent", label: "最近更新", detail: "按目录更新时间排列", icon: CalendarDays },
-  { id: "newGood", label: "近期佳片", detail: "新片优先，兼顾评分", icon: Sparkles },
-  { id: "popular", label: "热门佳片", detail: "播放与评分综合排序", icon: Flame },
-  { id: "topRated", label: "评价最高", detail: "优先展示评分条目", icon: Star },
-  { id: "mostWatched", label: "观看最高", detail: "按家庭播放记录排序", icon: Eye }
+  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
+  { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Flame },
+  { id: "topRated", label: copy.library.browseViews.topRated.label, detail: copy.library.browseViews.topRated.detail, icon: Star },
+  { id: "mostWatched", label: copy.library.browseViews.mostWatched.label, detail: copy.library.browseViews.mostWatched.detail, icon: Eye }
 ];
 
 const movieBrowseViews: Array<{
@@ -236,11 +238,11 @@ const movieBrowseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
-  { id: "doubanRank", label: "豆瓣排名", detail: "按豆瓣评分优先排列", icon: Trophy },
-  { id: "imdbRank", label: "IMDb 排名", detail: "按 IMDb 评分优先排列", icon: Star },
-  { id: "rottenRank", label: "烂番茄排名", detail: "按烂番茄评分优先排列", icon: Flame },
-  { id: "newGood", label: "近期佳片", detail: "新片优先，兼顾评分", icon: Sparkles },
-  { id: "popular", label: "热门佳片", detail: "播放与评分综合排序", icon: Eye }
+  { id: "doubanRank", label: copy.library.browseViews.doubanRank.label, detail: copy.library.browseViews.doubanRank.detail, icon: Trophy },
+  { id: "imdbRank", label: copy.library.browseViews.imdbRank.label, detail: copy.library.browseViews.imdbRank.detail, icon: Star },
+  { id: "rottenRank", label: copy.library.browseViews.rottenRank.label, detail: copy.library.browseViews.rottenRank.detail, icon: Flame },
+  { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Eye }
 ];
 
 function viewsForBrowseChannel(channel: BrowseChannel) {
@@ -420,7 +422,7 @@ function LibraryHome({
           </>
         ) : browseHasMore ? (
           <>
-            <EmptyState icon={<Database className="h-5 w-5" />} title="继续加载更多影片" />
+            <EmptyState icon={<Database className="h-5 w-5" />} title={copy.library.continueLoading} />
             <LazyLoadFooter
               hasMore
               loadMoreRef={loadMoreRef}
@@ -431,7 +433,7 @@ function LibraryHome({
             />
           </>
         ) : (
-          <EmptyState icon={<Database className="h-5 w-5" />} title="暂无可浏览影片" />
+          <EmptyState icon={<Database className="h-5 w-5" />} title={copy.library.emptyBrowse} />
         )}
       </div>
     </section>
@@ -462,11 +464,11 @@ function LazyLoadFooter({
       {hasMore ? (
         <Button type="button" variant="outline" size="sm" onClick={onLoadMore} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
-          {loading ? "加载中" : "加载更多"}
+          {loading ? copy.common.loading : copy.library.loadMore}
           {totalCount > 0 ? <Badge variant="secondary">{shownCount}/{totalCount}{hasMore ? "+" : ""}</Badge> : null}
         </Button>
       ) : (
-        <Badge variant="muted">已显示 {totalCount}</Badge>
+        <Badge variant="muted">{copy.library.loadedAll(totalCount)}</Badge>
       )}
     </div>
   );
@@ -474,7 +476,7 @@ function LazyLoadFooter({
 
 function BrowseLoadingGrid() {
   return (
-    <div className="gallery-results" aria-busy="true" aria-label="正在加载浏览目录">
+    <div className="gallery-results" aria-busy="true" aria-label={copy.library.browseLoadingLabel}>
       <div className="gallery-results-grid grid gap-4">
         {Array.from({ length: 6 }).map((_, index) => (
           <article
@@ -525,6 +527,23 @@ function normalizedMetadataText(result: SearchResult) {
     .toLowerCase();
 }
 
+function explicitBrowseKind(result: SearchResult): "movie" | "tv" | undefined {
+  const type = result.metadata?.type?.trim().toLowerCase();
+  if (!type) {
+    return undefined;
+  }
+
+  if (/\bmovie\b|\bfilm\b|电影/.test(type)) {
+    return "movie";
+  }
+
+  if (/\btv\b|\bseries\b|\bseason\b|\bshow\b|电视|电视剧|剧集|影集/.test(type)) {
+    return "tv";
+  }
+
+  return undefined;
+}
+
 function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel) {
   if (channel === "recommended") {
     return true;
@@ -533,6 +552,11 @@ function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel
   const text = normalizedMetadataText(result);
   if (channel === "animation") {
     return /动画|動漫|anime|animation|animated/.test(text);
+  }
+
+  const explicitKind = explicitBrowseKind(result);
+  if (explicitKind) {
+    return channel === explicitKind;
   }
 
   if (channel === "tv") {
@@ -710,26 +734,26 @@ type RatingSource = "douban" | "imdb" | "rotten" | "metacritic";
 
 const ratingSourceConfig: Record<RatingSource, { label: string; shortLabel: string; match: RegExp; className: string }> = {
   douban: {
-    label: "豆瓣",
-    shortLabel: "豆瓣",
+    label: copy.library.ratingSources.douban,
+    shortLabel: copy.library.ratingSources.douban,
     match: /douban|豆瓣/i,
     className: "border-emerald-300/55 bg-emerald-400/18 text-emerald-50"
   },
   imdb: {
-    label: "IMDb",
-    shortLabel: "IMDb",
+    label: copy.library.ratingSources.imdb,
+    shortLabel: copy.library.ratingSources.imdb,
     match: /imdb/i,
     className: "border-amber-300/65 bg-amber-300/22 text-amber-50"
   },
   rotten: {
-    label: "烂番茄",
-    shortLabel: "烂番茄",
+    label: copy.library.ratingSources.rotten,
+    shortLabel: copy.library.ratingSources.rotten,
     match: /^rt$|rotten|tomato|tomatometer|烂番茄|爛番茄/i,
     className: "border-red-300/60 bg-red-400/20 text-red-50"
   },
   metacritic: {
-    label: "Metacritic",
-    shortLabel: "Meta",
+    label: copy.library.ratingSources.metacritic,
+    shortLabel: copy.library.ratingSources.metaShort,
     match: /^meta$|metacritic|meta\s*critic|metascore|metamatrix|metamatrices/i,
     className: "border-violet-300/60 bg-violet-400/22 text-violet-50"
   }
@@ -864,7 +888,7 @@ function VariantButtons({
   const hiddenVariantCount = Math.max(0, variants.length - visibleVariants.length);
 
   if (variants.length === 0) {
-    return <Badge variant="danger">无规格</Badge>;
+    return <Badge variant="danger">{copy.library.noVariants}</Badge>;
   }
 
   return (
@@ -874,7 +898,7 @@ function VariantButtons({
         const tracked = trackedByAssetKey.get(variant.assetKey);
         const displayAsset = tracked?.asset ?? variant.cache;
         const displayStatus = pending
-          ? "排队中"
+          ? copy.cache.status.queued
           : tracked
             ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
             : !displayAsset
@@ -938,12 +962,12 @@ function VariantButtons({
             variant="outline"
             size="sm"
             onClick={onShowAllVariants}
-            title="查看全部规格"
+            title={copy.library.viewAllVariants}
           >
-            还有 {hiddenVariantCount} 个规格
+            {copy.library.moreVariants(hiddenVariantCount)}
           </Button>
         ) : (
-          <Badge variant="secondary">还有 {hiddenVariantCount} 个规格</Badge>
+          <Badge variant="secondary">{copy.library.moreVariants(hiddenVariantCount)}</Badge>
         )
       ) : null}
     </div>
@@ -976,7 +1000,7 @@ function MovieCard({
         className="overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
         type="button"
         onClick={() => onOpenDetail(result)}
-        title="查看详细信息"
+        title={copy.library.viewDetails}
       >
         <MoviePoster result={result} />
       </button>
@@ -985,7 +1009,7 @@ function MovieCard({
           className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           type="button"
           onClick={() => onOpenDetail(result)}
-          title="查看详细信息"
+          title={copy.library.viewDetails}
         >
           <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
             {result.title}
@@ -1065,7 +1089,7 @@ function MovieListView({
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   if (results.length === 0) {
-    return <EmptyState icon={<Film className="h-5 w-5" />} title="No titles loaded" />;
+    return <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesLoaded} />;
   }
 
   return (
@@ -1073,10 +1097,10 @@ function MovieListView({
       <table className="w-full min-w-[960px] border-collapse text-left">
         <thead className="border-b border-slate-800 bg-slate-950 text-xs font-semibold uppercase text-slate-500">
           <tr>
-            <th className="w-[34%] px-4 py-3">Title</th>
-            <th className="w-[18%] px-4 py-3">Meta</th>
-            <th className="w-[18%] px-4 py-3">People</th>
-            <th className="w-[30%] px-4 py-3">Specs</th>
+            <th className="w-[34%] px-4 py-3">{copy.library.table.title}</th>
+            <th className="w-[18%] px-4 py-3">{copy.library.table.metadata}</th>
+            <th className="w-[18%] px-4 py-3">{copy.library.table.people}</th>
+            <th className="w-[30%] px-4 py-3">{copy.library.table.specs}</th>
           </tr>
         </thead>
         <tbody>
@@ -1091,7 +1115,7 @@ function MovieListView({
                       className="w-14 shrink-0 overflow-hidden rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                       type="button"
                       onClick={() => onOpenDetail(result)}
-                      title="查看详细信息"
+                      title={copy.library.viewDetails}
                     >
                       <MoviePoster result={result} />
                     </button>
@@ -1100,7 +1124,7 @@ function MovieListView({
                         className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                         type="button"
                         onClick={() => onOpenDetail(result)}
-                        title="查看详细信息"
+                        title={copy.library.viewDetails}
                       >
                         <p className="line-clamp-2 font-semibold leading-5 text-slate-50 hover:text-emerald-100">{result.title}</p>
                       </button>
@@ -1111,7 +1135,7 @@ function MovieListView({
                 <td className="px-4 py-4 text-sm">
                   <p className="text-slate-300">{metadataLine(result)}</p>
                   {directorLine(result) ? (
-                    <p className="mt-2 text-xs font-semibold text-slate-400">导演 {directorLine(result)}</p>
+                    <p className="mt-2 text-xs font-semibold text-slate-400">{copy.library.director(directorLine(result))}</p>
                   ) : null}
                 </td>
                 <td className="px-4 py-4">
@@ -1161,7 +1185,7 @@ function MovieDetailView({
   const tags = detailTags(result);
   const ratings = displayRatings(result);
   const directors = directorLine(result);
-  const summary = bestSummary(result);
+  const summary = bestDetailSummary(result);
   const variantCount = result.variants?.length ?? 0;
 
   return (
@@ -1169,9 +1193,9 @@ function MovieDetailView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft className="h-4 w-4" />
-          返回列表
+          {copy.library.backToList}
         </Button>
-        <Badge variant="secondary">{variantCount} 个规格</Badge>
+        <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
@@ -1184,7 +1208,7 @@ function MovieDetailView({
             <h2 className="text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
             <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
             {directors ? (
-              <p className="mt-2 text-sm font-semibold text-slate-300">导演 {directors}</p>
+              <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>
             ) : null}
           </div>
 
@@ -1213,13 +1237,13 @@ function MovieDetailView({
           ) : null}
 
           <div className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/80 p-4">
-            <h3 className="text-sm font-semibold text-slate-200">简介</h3>
+            <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>
             <p className="whitespace-pre-wrap text-sm leading-7 text-slate-300">{summary}</p>
           </div>
 
           <div className="grid gap-3">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-slate-200">全部规格</h3>
+              <h3 className="text-sm font-semibold text-slate-200">{copy.library.allVariants}</h3>
               <Badge variant="muted">{variantCount}</Badge>
             </div>
             <VariantButtons

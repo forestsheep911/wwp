@@ -12,6 +12,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from "../format";
+import { copy } from "../i18n";
 import type { ResultWithCache } from "../types";
 
 interface SearchDialogProps {
@@ -55,10 +56,10 @@ export function SearchDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="top-[8vh] max-h-[86vh] w-[min(96vw,1040px)] translate-y-0 gap-0 overflow-hidden p-0">
+      <DialogContent className="max-h-[86vh] w-[min(96vw,1040px)] gap-0 overflow-hidden p-0">
         <DialogHeader className="sr-only">
-          <DialogTitle>Search collection</DialogTitle>
-          <DialogDescription>Find a title in the private cinema collection.</DialogDescription>
+          <DialogTitle>{copy.search.title}</DialogTitle>
+          <DialogDescription>{copy.search.description}</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit}>
           <div className="flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 pr-12">
@@ -66,7 +67,7 @@ export function SearchDialog({
             <Input
               autoFocus
               className="h-16 border-0 bg-transparent px-0 text-lg shadow-none focus-visible:ring-0"
-              placeholder="搜索电影、剧集、导演或片源"
+              placeholder={copy.search.placeholder}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
             />
@@ -79,13 +80,13 @@ export function SearchDialog({
                 <p className="truncate text-sm font-semibold text-slate-400">
                   {hasQuery
                     ? loading && results.length === 0
-                      ? "正在搜索"
-                      : `${results.length} 个结果`
-                    : "输入关键词开始搜索"}
+                      ? copy.search.searching
+                      : copy.search.resultCount(results.length)
+                    : copy.search.start}
                 </p>
                 {hasQuery && results.length > 0 ? (
                   <Button type="submit" variant="ghost" size="sm" disabled={loading}>
-                    查看全部
+                    {copy.search.viewAll}
                     <ArrowRight className="h-4 w-4" />
                   </Button>
                 ) : null}
@@ -127,7 +128,7 @@ export function SearchDialog({
                     <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-800 bg-slate-900 text-slate-500">
                       <Film className="h-5 w-5" />
                     </div>
-                    <p className="text-sm font-semibold text-slate-400">选择一个结果查看详情</p>
+                    <p className="text-sm font-semibold text-slate-400">{copy.search.chooseResult}</p>
                   </div>
                 </div>
               )}
@@ -171,8 +172,8 @@ function SearchResultRow({
           {genres.map((genre) => (
             <Badge key={`${result.assetKey}-${genre}`} variant="secondary">{genre}</Badge>
           ))}
-          {variantCount > 0 ? <Badge variant="muted">{variantCount} 个规格</Badge> : null}
-          {result.cache?.status === "ready" ? <Badge variant="default">可播放</Badge> : null}
+          {variantCount > 0 ? <Badge variant="muted">{copy.library.variantCount(variantCount)}</Badge> : null}
+          {result.cache?.status === "ready" ? <Badge variant="default">{copy.cache.status.ready}</Badge> : null}
         </span>
       </span>
     </button>
@@ -197,8 +198,8 @@ function SearchPreview({ result }: { result: ResultWithCache }) {
         <p className="line-clamp-5 text-sm leading-6 text-slate-400">{summary}</p>
         {variantCount > 0 ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-slate-800 bg-slate-950 px-3 py-2">
-            <Badge variant="muted">{variantCount} 个规格</Badge>
-            {playableVariantCount > 0 ? <Badge variant="default">{playableVariantCount} 个可播放</Badge> : null}
+            <Badge variant="muted">{copy.library.variantCount(variantCount)}</Badge>
+            {playableVariantCount > 0 ? <Badge variant="default">{copy.library.playableVariantCount(playableVariantCount)}</Badge> : null}
           </div>
         ) : null}
       </div>
@@ -213,7 +214,7 @@ function SearchIdleState() {
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
           <Search className="h-5 w-5" />
         </div>
-        <p className="text-sm font-semibold text-slate-300">可以搜片名、英文名、导演、演员或清晰度关键词。</p>
+        <p className="text-sm font-semibold text-slate-300">{copy.search.idle}</p>
       </div>
     </div>
   );
@@ -226,7 +227,7 @@ function SearchEmptyState({ query }: { query: string }) {
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-800 bg-slate-900 text-slate-500">
           <Film className="h-5 w-5" />
         </div>
-        <p className="text-sm font-semibold text-slate-300">没有找到“{query}”</p>
+        <p className="text-sm font-semibold text-slate-300">{copy.search.empty(query)}</p>
       </div>
     </div>
   );
@@ -234,7 +235,7 @@ function SearchEmptyState({ query }: { query: string }) {
 
 function SearchLoadingRows() {
   return (
-    <div className="grid gap-2 p-2" aria-busy="true" aria-label="正在搜索">
+    <div className="grid gap-2 p-2" aria-busy="true" aria-label={copy.search.searching}>
       {Array.from({ length: 6 }).map((_, index) => (
         <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-3 rounded-md px-3 py-2.5" key={index}>
           <div className="h-16 animate-pulse rounded-md bg-slate-800/70" />

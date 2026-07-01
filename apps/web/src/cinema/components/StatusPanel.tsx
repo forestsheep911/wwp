@@ -11,6 +11,7 @@ import {
   jobStatusLabel,
   jobVariant
 } from "../format";
+import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 
@@ -29,9 +30,9 @@ export function StatusPanel({
         <CardHeader className="shrink-0 pr-16">
           <CardTitle className="flex items-center gap-2 text-base">
             <Database className="h-4 w-4 text-emerald-300" />
-            当前准备任务
+            {copy.tasks.currentTitle}
           </CardTitle>
-          <CardDescription>本次浏览器还没有正在准备的影片</CardDescription>
+          <CardDescription>{copy.tasks.noCurrent}</CardDescription>
         </CardHeader>
       </Card>
     );
@@ -41,10 +42,10 @@ export function StatusPanel({
     <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
       <CardHeader className="shrink-0 pr-16">
         <CardTitle className="flex items-center justify-between gap-3 text-base">
-          <span className="min-w-0 truncate">当前准备任务</span>
-          <Badge className="shrink-0" variant="secondary">{items.length} 项</Badge>
+          <span className="min-w-0 truncate">{copy.tasks.currentTitle}</span>
+          <Badge className="shrink-0" variant="secondary">{items.length} {copy.common.items}</Badge>
         </CardTitle>
-        <CardDescription>本次浏览器发起的准备任务</CardDescription>
+        <CardDescription>{copy.tasks.browserTasks}</CardDescription>
       </CardHeader>
       <CardContent className="grid min-h-0 flex-1 gap-3 overflow-y-auto pr-3">
         {items.map(({ job, asset, result }) => (

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Bell,
   ChevronDown,
-  Film,
   HelpCircle,
   History,
   ListChecks,
   LogOut,
+  MessageCircle,
   MessageSquarePlus,
   ReceiptText,
   Search,
@@ -16,13 +17,14 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsContent } from "../../components/ui/tabs";
+import { copy } from "../i18n";
 import type { AppTab, BrowseChannel } from "../types";
 
 const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
-  { id: "recommended", label: "推荐" },
-  { id: "movie", label: "电影" },
-  { id: "tv", label: "电视" },
-  { id: "animation", label: "动画" }
+  { id: "recommended", label: copy.layout.browseChannels.recommended },
+  { id: "movie", label: copy.layout.browseChannels.movie },
+  { id: "tv", label: copy.layout.browseChannels.tv },
+  { id: "animation", label: copy.layout.browseChannels.animation }
 ];
 
 interface CinemaLayoutProps {
@@ -32,8 +34,10 @@ interface CinemaLayoutProps {
   accountDetail: string;
   canChangePasscode: boolean;
   canRequestMovie: boolean;
+  noticeUnreadCount: number;
   library: ReactNode;
   cached: ReactNode;
+  forum: ReactNode;
   history: ReactNode;
   help: ReactNode;
   tasks?: ReactNode;
@@ -44,8 +48,10 @@ interface CinemaLayoutProps {
   onLock: () => void;
   onOpenHome: () => void;
   onOpenHelp: () => void;
+  onOpenForum: () => void;
   onOpenHistory: () => void;
   onOpenMovieRequest: () => void;
+  onOpenNotices: () => void;
   onOpenProfile: () => void;
   onOpenSpending: () => void;
   onOpenTasks: () => void;
@@ -59,8 +65,10 @@ export function CinemaLayout({
   accountDetail,
   canChangePasscode,
   canRequestMovie,
+  noticeUnreadCount,
   library,
   cached,
+  forum,
   history,
   help,
   tasks,
@@ -71,8 +79,10 @@ export function CinemaLayout({
   onLock,
   onOpenHome,
   onOpenHelp,
+  onOpenForum,
   onOpenHistory,
   onOpenMovieRequest,
+  onOpenNotices,
   onOpenProfile,
   onOpenSpending,
   onOpenTasks,
@@ -87,19 +97,16 @@ export function CinemaLayout({
               className="group flex min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               type="button"
               onClick={onOpenHome}
-              title="返回推荐首页"
+              title={copy.layout.homeTitle}
             >
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200 transition-colors group-hover:border-emerald-300/40">
-                <Film className="h-5 w-5" />
-              </span>
+              <img alt="" className="h-10 w-10 shrink-0 rounded-md" src="/wwp-icon-64.png" />
               <span className="min-w-0">
-                <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">WWP Cinema</h1>
-                <p className="text-xs font-semibold uppercase tracking-normal text-emerald-300">Private household cinema</p>
+                <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">{copy.app.name}</h1>
               </span>
             </button>
 
             <nav
-              aria-label="Browse channels"
+              aria-label={copy.layout.browseLabel}
               className="scrollbar-none order-3 col-span-2 flex min-w-0 items-center gap-5 overflow-x-auto lg:order-2 lg:col-span-1 lg:mx-auto lg:justify-center"
             >
               {browseChannels.map((channel) => {
@@ -129,18 +136,33 @@ export function CinemaLayout({
             </nav>
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
-              <Button type="button" variant="outline" size="icon" onClick={onOpenHelp} title="Help">
+              <Button type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
                 <HelpCircle className="h-4 w-4" />
-                <span className="sr-only">Help</span>
+                <span className="sr-only">{copy.layout.help}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title="Search">
+              <Button type="button" variant="outline" size="icon" onClick={onOpenForum} title={copy.layout.forum}>
+                <MessageCircle className="h-4 w-4" />
+                <span className="sr-only">{copy.layout.forum}</span>
+              </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title={copy.common.search}>
                 <Search className="h-4 w-4" />
-                <span className="sr-only">Search</span>
+                <span className="sr-only">{copy.common.search}</span>
               </Button>
               {canChangePasscode ? (
-                <Button type="button" variant="outline" size="icon" onClick={onOpenSpending} title="Spending">
+                <Button className="relative" type="button" variant="outline" size="icon" onClick={onOpenNotices} title="站内信">
+                  <Bell className="h-4 w-4" />
+                  {noticeUnreadCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">
+                      {noticeUnreadCount}
+                    </span>
+                  ) : null}
+                  <span className="sr-only">站内信</span>
+                </Button>
+              ) : null}
+              {canChangePasscode ? (
+                <Button type="button" variant="outline" size="icon" onClick={onOpenSpending} title={copy.layout.spending}>
                   <ReceiptText className="h-4 w-4" />
-                  <span className="sr-only">Spending</span>
+                  <span className="sr-only">{copy.layout.spending}</span>
                 </Button>
               ) : null}
               <AccountMenu
@@ -148,11 +170,14 @@ export function CinemaLayout({
                 accountLabel={accountLabel}
                 canChangePasscode={canChangePasscode}
                 canRequestMovie={canRequestMovie}
+                noticeUnreadCount={noticeUnreadCount}
                 showAdmin={showAdmin}
                 onOpenAdmin={() => onActiveTabChange("admin")}
+                onOpenForum={onOpenForum}
                 onOpenHelp={onOpenHelp}
                 onOpenHistory={onOpenHistory}
                 onOpenMovieRequest={onOpenMovieRequest}
+                onOpenNotices={onOpenNotices}
                 onOpenProfile={onOpenProfile}
                 onOpenSpending={onOpenSpending}
                 onOpenTasks={onOpenTasks}
@@ -166,6 +191,7 @@ export function CinemaLayout({
           <div className="min-w-0 overflow-hidden">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
+            <TabsContent className="mt-0" value="forum">{forum}</TabsContent>
             <TabsContent className="mt-0" value="history">{history}</TabsContent>
             <TabsContent className="mt-0" value="help">{help}</TabsContent>
             {tasks ? <TabsContent className="mt-0" value="tasks">{tasks}</TabsContent> : null}
@@ -182,11 +208,14 @@ function AccountMenu({
   accountDetail,
   canChangePasscode,
   canRequestMovie,
+  noticeUnreadCount,
   showAdmin,
   onOpenAdmin,
+  onOpenForum,
   onOpenHelp,
   onOpenHistory,
   onOpenMovieRequest,
+  onOpenNotices,
   onOpenProfile,
   onOpenSpending,
   onOpenTasks,
@@ -196,11 +225,14 @@ function AccountMenu({
   accountDetail: string;
   canChangePasscode: boolean;
   canRequestMovie: boolean;
+  noticeUnreadCount: number;
   showAdmin: boolean;
   onOpenAdmin: () => void;
+  onOpenForum: () => void;
   onOpenHelp: () => void;
   onOpenHistory: () => void;
   onOpenMovieRequest: () => void;
+  onOpenNotices: () => void;
   onOpenProfile: () => void;
   onOpenSpending: () => void;
   onOpenTasks: () => void;
@@ -249,7 +281,7 @@ function AccountMenu({
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((current) => !current)}
-        title="Account"
+        title={copy.layout.account}
       >
         <UserCircle className="h-4 w-4" />
         <span className="hidden max-w-[8rem] truncate sm:inline">{accountLabel}</span>
@@ -283,7 +315,7 @@ function AccountMenu({
               }}
             >
               <HelpCircle className="h-4 w-4" />
-              Help
+              {copy.layout.help}
             </button>
             <button
               className="flex items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
@@ -299,7 +331,23 @@ function AccountMenu({
               }}
             >
               <ListChecks className="h-4 w-4" />
-              Cache
+              {copy.layout.tasks}
+            </button>
+            <button
+              className="flex items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+              type="button"
+              role="menuitem"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                runAfterMenuClose(onOpenForum);
+              }}
+              onClick={() => {
+                runAfterMenuClose(onOpenForum);
+              }}
+            >
+              <MessageCircle className="h-4 w-4" />
+              {copy.layout.forum}
             </button>
             <button
               className="flex items-center gap-2 rounded px-2.5 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
@@ -315,7 +363,7 @@ function AccountMenu({
               }}
             >
               <History className="h-4 w-4" />
-              History
+              {copy.layout.history}
             </button>
             {showAdmin ? (
               <button
@@ -332,7 +380,7 @@ function AccountMenu({
                 }}
               >
                 <ShieldCheck className="h-4 w-4" />
-                Admin
+                {copy.layout.admin}
               </button>
             ) : null}
             {canRequestMovie ? (
@@ -350,7 +398,28 @@ function AccountMenu({
                 }}
               >
                 <MessageSquarePlus className="h-4 w-4" />
-                Request
+                {copy.layout.request}
+              </button>
+            ) : null}
+            {canChangePasscode ? (
+              <button
+                className="flex items-center justify-between gap-2 rounded px-2.5 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+                type="button"
+                role="menuitem"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  runAfterMenuClose(onOpenNotices);
+                }}
+                onClick={() => {
+                  runAfterMenuClose(onOpenNotices);
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Bell className="h-4 w-4" />
+                  站内信
+                </span>
+                {noticeUnreadCount > 0 ? <Badge variant="warning">{noticeUnreadCount}</Badge> : null}
               </button>
             ) : null}
             {canChangePasscode ? (
@@ -368,7 +437,7 @@ function AccountMenu({
                 }}
               >
                 <ReceiptText className="h-4 w-4" />
-                Spending
+                {copy.layout.spending}
               </button>
             ) : null}
             {canChangePasscode ? (
@@ -386,7 +455,7 @@ function AccountMenu({
                 }}
               >
                 <SlidersHorizontal className="h-4 w-4" />
-                Settings
+                {copy.layout.settings}
               </button>
             ) : null}
             <button
@@ -399,7 +468,7 @@ function AccountMenu({
               }}
             >
               <LogOut className="h-4 w-4" />
-              Logout
+              {copy.layout.logout}
             </button>
           </div>
         </div>

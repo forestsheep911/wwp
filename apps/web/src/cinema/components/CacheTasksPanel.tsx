@@ -14,6 +14,7 @@ import {
   jobVariant,
   mediaQuality
 } from "../format";
+import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
@@ -60,22 +61,22 @@ export function CacheTasksPanel({
     <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-xl font-semibold text-slate-50">缓存任务</h2>
-          <p className="mt-1 text-sm text-slate-400">准备中的任务和可播放的缓存内容</p>
+          <h2 className="text-xl font-semibold text-slate-50">{copy.tasks.title}</h2>
+          <p className="mt-1 text-sm text-slate-400">{copy.tasks.description}</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefreshCached} disabled={loadingCached}>
           <RefreshCw className={`h-4 w-4 ${loadingCached ? "animate-spin" : ""}`} />
-          刷新
+          {copy.common.refresh}
         </Button>
       </div>
 
       <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
         <TaskTabButton active={mainTab === "preparing"} onClick={() => setMainTab("preparing")}>
-          准备中
+          {copy.tasks.preparing}
           <Badge variant={preparingItems.length ? "warning" : "secondary"}>{preparingItems.length}</Badge>
         </TaskTabButton>
         <TaskTabButton active={mainTab === "ready"} onClick={() => setMainTab("ready")}>
-          已缓存
+          {copy.tasks.cached}
           <Badge variant="secondary">{readyAssets.length}</Badge>
         </TaskTabButton>
       </div>
@@ -90,11 +91,11 @@ export function CacheTasksPanel({
         <div className="grid gap-4">
           <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
             <TaskTabButton active={readyTab === "mine"} onClick={() => setReadyTab("mine")}>
-              我的
+              {copy.tasks.mine}
               <Badge variant="secondary">{myAssets.length}</Badge>
             </TaskTabButton>
             <TaskTabButton active={readyTab === "public"} onClick={() => setReadyTab("public")}>
-              公共池
+              {copy.tasks.publicPool}
               <Badge variant="secondary">{publicAssets.length}</Badge>
             </TaskTabButton>
           </div>
@@ -142,7 +143,7 @@ function PreparingList({
   onOpenPlayer: (assetKey: string, result?: SearchResult) => void;
 }) {
   if (items.length === 0) {
-    return <EmptyState icon={<Database className="h-5 w-5" />} title="没有准备中的任务" />;
+    return <EmptyState icon={<Database className="h-5 w-5" />} title={copy.tasks.noPreparing} />;
   }
 
   return (
@@ -189,11 +190,11 @@ function ReadyAssetList({
   onOpen: (assetKey: string) => void;
 }) {
   if (assets.length === 0 && loading) {
-    return <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title="正在加载已缓存内容" />;
+    return <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title={copy.tasks.loadingCached} />;
   }
 
   if (assets.length === 0) {
-    return <EmptyState icon={<Database className="h-5 w-5" />} title="这里还没有已缓存内容" />;
+    return <EmptyState icon={<Database className="h-5 w-5" />} title={copy.tasks.emptyCached} />;
   }
 
   return (

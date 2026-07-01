@@ -9,7 +9,10 @@ import type {
   CreditPolicyResponse,
   CreditPreviewResponse,
   MediaVariant,
+  ForumThreadEntry,
+  ForumThreadSummary,
   MemberCreditUsageResponse,
+  MemberNoticeEntry,
   MovieRequestEntry,
   MovieRequestStatus,
   PlaybackResponse,
@@ -20,6 +23,9 @@ import {
   browseAssets,
   checkAccess,
   clearAccessKey,
+  createAdminNotice,
+  createForumReply,
+  createForumThread,
   createResetInvitation,
   createSignupInvitation,
   createMovieRequest,
@@ -31,18 +37,23 @@ import {
   getAccessKey,
   getCacheAsset,
   getCacheStatus,
+  getForumThread,
   getCreditPolicy,
   getPlayback,
   isUnauthorizedError,
   listCachedAssets,
   listCacheJobs,
+  listForumThreads,
   listMemberInvitations,
   listLoginAudit,
   listMemberCodes,
   listMemberCreditUsage,
+  listAdminNotices,
   listMovieRequests,
   listOwnMovieRequests,
+  listOwnNotices,
   listOwnCreditUsage,
+  markOwnNoticeRead,
   previewCredit,
   revokeMemberAccessCode,
   retryCacheJob,
@@ -59,15 +70,19 @@ import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditConfirmDialog } from "./cinema/components/CreditConfirmDialog";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
+import { ForumPanel } from "./cinema/components/ForumPanel";
 import { HelpPanel } from "./cinema/components/HelpPanel";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
+import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
+import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
+import { copy } from "./cinema/i18n";
 import { historyStorageKey, readJsonStorage, writeJsonStorage } from "./cinema/storage";
 import type {
   AppTab,
@@ -107,7 +122,7 @@ type PendingCreditAction =
     options?: { syncHistory?: boolean };
   };
 
-const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks"];
+const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks", "forum"];
 const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
 const browsePageLimit = 48;
 
@@ -188,7 +203,8 @@ function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
   );
 }
 
-export default function App() {
+function CinemaApp() {
+  const { showToast } = useToast();
   const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
   const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
   const [role, setRole] = useState<AccessRole | undefined>();
@@ -228,6 +244,24 @@ export default function App() {
   const [movieRequestError, setMovieRequestError] = useState("");
   const [ownMovieRequests, setOwnMovieRequests] = useState<MovieRequestEntry[]>([]);
   const [ownMovieRequestsLoaded, setOwnMovieRequestsLoaded] = useState(false);
+  const [noticeInboxOpen, setNoticeInboxOpen] = useState(false);
+  const [noticeLoading, setNoticeLoading] = useState(false);
+  const [noticeError, setNoticeError] = useState("");
+  const [ownNotices, setOwnNotices] = useState<MemberNoticeEntry[]>([]);
+  const [ownNoticesLoaded, setOwnNoticesLoaded] = useState(false);
+  const [adminNotices, setAdminNotices] = useState<MemberNoticeEntry[]>([]);
+  const [adminNoticesLoading, setAdminNoticesLoading] = useState(false);
+  const [forumThreads, setForumThreads] = useState<ForumThreadSummary[]>([]);
+  const [forumThread, setForumThread] = useState<ForumThreadEntry | undefined>();
+  const [forumThreadsLoaded, setForumThreadsLoaded] = useState(false);
+  const [forumLoading, setForumLoading] = useState(false);
+  const [forumThreadLoading, setForumThreadLoading] = useState(false);
+  const [forumSubmitting, setForumSubmitting] = useState(false);
+  const [forumReplySubmitting, setForumReplySubmitting] = useState(false);
+  const [forumError, setForumError] = useState("");
+  const [forumDraftTitle, setForumDraftTitle] = useState("");
+  const [forumDraftBody, setForumDraftBody] = useState("");
+  const [forumReplyText, setForumReplyText] = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
@@ -257,9 +291,11 @@ export default function App() {
   const adminCacheJobLimit = 100;
   const loginAuditLimit = 100;
   const movieRequestLimit = 100;
+  const forumThreadLimit = 80;
   const historyInitializedRef = useRef(false);
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
+  const forumThreadsAutoLoadRef = useRef(false);
 
   const trackedPollKey = useMemo(
     () =>
@@ -421,7 +457,7 @@ export default function App() {
         setActiveTab("library");
       }
     } catch (searchError) {
-      handleRequestError(searchError, "Search failed.");
+      handleRequestError(searchError, copy.fallbackErrors.searchFailed);
     } finally {
       if (options.showLoading) {
         setSearchLoading(false);
@@ -530,7 +566,7 @@ export default function App() {
       setCreditPreview(preview);
       setCreditConfirmOpen(true);
     } catch (previewError) {
-      handleRequestError(previewError, "Could not check credit cost.");
+      handleRequestError(previewError, copy.fallbackErrors.checkCredit);
     }
   }
 
@@ -546,7 +582,7 @@ export default function App() {
       setCreditPreview(undefined);
       setPendingCreditAction(undefined);
     } catch (confirmError) {
-      handleRequestError(confirmError, "Credit action failed.");
+      handleRequestError(confirmError, copy.fallbackErrors.creditAction);
     } finally {
       setCreditConfirmLoading(false);
     }
@@ -603,7 +639,7 @@ export default function App() {
         await refreshHistoryAssetStatus();
       }
     } catch (cacheError) {
-      handleRequestError(cacheError, "Cache request failed.");
+      handleRequestError(cacheError, copy.fallbackErrors.cacheRequest);
     } finally {
       setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
     }
@@ -662,7 +698,7 @@ export default function App() {
         }), "push");
       }
     } catch (playbackError) {
-      handleRequestError(playbackError, "Playback is not ready.");
+      handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
     }
   }
 
@@ -692,7 +728,7 @@ export default function App() {
       );
       setHistoryAssetStatus(Object.fromEntries(statuses));
     } catch (historyStatusError) {
-      handleRequestError(historyStatusError, "Could not refresh history cache status.");
+      handleRequestError(historyStatusError, copy.fallbackErrors.historyStatus);
     }
   }
 
@@ -702,7 +738,7 @@ export default function App() {
       const response = await listCachedAssets(100);
       setCachedAssets(response.items.map((item) => item.asset));
     } catch (cachedAssetsError) {
-      handleRequestError(cachedAssetsError, "Could not load cached titles.");
+      handleRequestError(cachedAssetsError, copy.fallbackErrors.cachedTitles);
     } finally {
       setCachedAssetsLoading(false);
     }
@@ -733,7 +769,7 @@ export default function App() {
       setBrowseHasMore(Boolean(response.hasMore));
       setBrowseNextOffset(response.nextOffset ?? 0);
     } catch (browseError) {
-      handleRequestError(browseError, "Could not load browse titles.");
+      handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {
       if (append) {
         setBrowseLoadingMore(false);
@@ -745,7 +781,7 @@ export default function App() {
 
   async function recacheHistoryEntry(entry: PlaybackHistoryEntry) {
     if (!entry.result) {
-      setError("Search this title again before re-caching it.");
+      setError(copy.history.recacheHint);
       return;
     }
 
@@ -797,7 +833,7 @@ export default function App() {
       }));
       setAdminError("");
     } catch (adminListError) {
-      setAdminError(errorMessage(adminListError, "Could not load member access."));
+      setAdminError(errorMessage(adminListError, copy.fallbackErrors.memberAccess));
     }
   }
 
@@ -812,7 +848,7 @@ export default function App() {
       setLoginAudit(response.events);
       setAdminError("");
     } catch (auditError) {
-      setAdminError(errorMessage(auditError, "Could not load login audit."));
+      setAdminError(errorMessage(auditError, copy.fallbackErrors.loginAudit));
     } finally {
       setLoginAuditLoading(false);
     }
@@ -829,9 +865,26 @@ export default function App() {
       setAdminMovieRequests(response.requests);
       setAdminError("");
     } catch (requestError) {
-      setAdminError(errorMessage(requestError, "Could not load movie requests."));
+      setAdminError(errorMessage(requestError, copy.fallbackErrors.movieRequests));
     } finally {
       setAdminMovieRequestsLoading(false);
+    }
+  }
+
+  async function refreshAdminNotices() {
+    if (!adminUnlocked) {
+      return;
+    }
+
+    setAdminNoticesLoading(true);
+    try {
+      const response = await listAdminNotices(100);
+      setAdminNotices(response.notices);
+      setAdminError("");
+    } catch (noticeListError) {
+      setAdminError(errorMessage(noticeListError, "无法加载站内信。"));
+    } finally {
+      setAdminNoticesLoading(false);
     }
   }
 
@@ -846,7 +899,7 @@ export default function App() {
       setCacheJobs(response.jobs);
       setAdminError("");
     } catch (cacheJobError) {
-      setAdminError(errorMessage(cacheJobError, "Could not load cache jobs."));
+      setAdminError(errorMessage(cacheJobError, copy.fallbackErrors.cacheJobs));
     } finally {
       setCacheJobsLoading(false);
     }
@@ -863,7 +916,7 @@ export default function App() {
       });
       await refreshCacheJobs();
     } catch (retryError) {
-      setAdminError(errorMessage(retryError, "Could not retry cache job."));
+      setAdminError(errorMessage(retryError, copy.fallbackErrors.retryCacheJob));
     } finally {
       setCacheJobsLoading(false);
     }
@@ -883,7 +936,7 @@ export default function App() {
       await refreshCacheJobs();
       await refreshCachedAssets();
     } catch (deleteError) {
-      setAdminError(errorMessage(deleteError, "Could not delete cache entry."));
+      setAdminError(errorMessage(deleteError, copy.fallbackErrors.deleteCacheEntry));
     } finally {
       setCacheJobsLoading(false);
     }
@@ -903,7 +956,7 @@ export default function App() {
       await refreshCacheJobs();
       await refreshCachedAssets();
     } catch (deleteError) {
-      setAdminError(errorMessage(deleteError, "Could not delete cached video."));
+      setAdminError(errorMessage(deleteError, copy.fallbackErrors.deleteCachedVideo));
     } finally {
       setCachedAssetsLoading(false);
     }
@@ -918,7 +971,28 @@ export default function App() {
         request.id === id ? response.request : request
       )));
     } catch (requestError) {
-      setAdminError(errorMessage(requestError, "Could not update movie request."));
+      setAdminError(errorMessage(requestError, copy.fallbackErrors.updateMovieRequest));
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function createMemberNotice(input: Parameters<typeof createAdminNotice>[0]) {
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await createAdminNotice(input);
+      setAdminNotices((currentNotices) => [
+        response.notice,
+        ...currentNotices.filter((notice) => notice.id !== response.notice.id)
+      ]);
+      showToast({
+        title: "站内信已发送",
+        description: response.notice.audience === "all" ? "所有成员都会看到这条公告。" : "目标成员会在站内信里看到它。",
+        variant: "success"
+      });
+    } catch (noticeError) {
+      setAdminError(errorMessage(noticeError, "无法发送站内信。"));
     } finally {
       setAdminLoading(false);
     }
@@ -927,7 +1001,7 @@ export default function App() {
   async function unlockAdmin() {
     const candidate = adminKeyInput.trim();
     if (!candidate) {
-      setAdminError("Enter an administrator key.");
+      setAdminError(copy.admin.errors.enterAdminKey);
       return;
     }
 
@@ -939,7 +1013,7 @@ export default function App() {
       const auth = await checkAccess();
       if (auth.role !== "admin") {
         setAccessKey(previousKey);
-        setAdminError("This key is valid, but it is not an administrator key.");
+        setAdminError(copy.admin.errors.notAdminKey);
         return;
       }
 
@@ -956,29 +1030,38 @@ export default function App() {
         const jobsResponse = await listCacheJobs(adminCacheJobLimit);
         setCacheJobs(jobsResponse.jobs);
       } catch (cacheJobError) {
-        setAdminError(errorMessage(cacheJobError, "Could not load cache jobs."));
+        setAdminError(errorMessage(cacheJobError, copy.fallbackErrors.cacheJobs));
       }
       try {
         setAdminMovieRequestsLoading(true);
         const requestsResponse = await listMovieRequests(movieRequestLimit);
         setAdminMovieRequests(requestsResponse.requests);
       } catch (requestError) {
-        setAdminError(errorMessage(requestError, "Could not load movie requests."));
+        setAdminError(errorMessage(requestError, copy.fallbackErrors.movieRequests));
       } finally {
         setAdminMovieRequestsLoading(false);
+      }
+      try {
+        setAdminNoticesLoading(true);
+        const noticesResponse = await listAdminNotices(100);
+        setAdminNotices(noticesResponse.notices);
+      } catch (noticeError) {
+        setAdminError(errorMessage(noticeError, "无法加载站内信。"));
+      } finally {
+        setAdminNoticesLoading(false);
       }
       try {
         setLoginAuditLoading(true);
         const auditResponse = await listLoginAudit(loginAuditLimit);
         setLoginAudit(auditResponse.events);
       } catch (auditError) {
-        setAdminError(errorMessage(auditError, "Could not load login audit."));
+        setAdminError(errorMessage(auditError, copy.fallbackErrors.loginAudit));
       } finally {
         setLoginAuditLoading(false);
       }
     } catch (adminAccessError) {
       setAccessKey(previousKey);
-      setAdminError(errorMessage(adminAccessError, "Admin key did not match."));
+      setAdminError(errorMessage(adminAccessError, copy.fallbackErrors.adminKey));
     } finally {
       setAdminLoading(false);
     }
@@ -996,8 +1079,13 @@ export default function App() {
         ...currentInvitations.filter((invitation) => invitation.id !== response.invitation.id)
       ]);
       setMemberCredits(20);
+      showToast({
+        title: copy.toast.signupInviteCreated.title,
+        description: copy.toast.signupInviteCreated.description,
+        variant: "success"
+      });
     } catch (generateError) {
-      setAdminError(errorMessage(generateError, "Could not generate invitation."));
+      setAdminError(errorMessage(generateError, copy.fallbackErrors.generateInvitation));
     } finally {
       setAdminLoading(false);
     }
@@ -1014,7 +1102,7 @@ export default function App() {
     const currentCode = memberCodes.find((code) => code.id === id);
     const credits = memberCreditEdits[id] ?? currentCode?.credits.remaining ?? 0;
     if (!Number.isFinite(credits) || credits < 0) {
-      setAdminError("Credit balance must be zero or greater.");
+      setAdminError(copy.admin.errors.creditNonNegative);
       return;
     }
 
@@ -1029,7 +1117,7 @@ export default function App() {
       )));
       setMemberCreditEdit(id, response.code.credits.remaining);
     } catch (creditUpdateError) {
-      setAdminError(errorMessage(creditUpdateError, "Could not update credits."));
+      setAdminError(errorMessage(creditUpdateError, copy.fallbackErrors.updateCredits));
     } finally {
       setAdminLoading(false);
     }
@@ -1038,7 +1126,7 @@ export default function App() {
   async function adjustMemberCredits(delta: number) {
     const normalizedDelta = Math.trunc(delta);
     if (!Number.isFinite(normalizedDelta) || normalizedDelta === 0) {
-      setAdminError("Credit adjustment must be a non-zero number.");
+      setAdminError(copy.admin.errors.creditAdjustment);
       return;
     }
 
@@ -1055,7 +1143,7 @@ export default function App() {
       }));
       setMemberCreditEdits({});
     } catch (creditUpdateError) {
-      setAdminError(errorMessage(creditUpdateError, "Could not adjust member credits."));
+      setAdminError(errorMessage(creditUpdateError, copy.fallbackErrors.adjustCredits));
     } finally {
       setAdminLoading(false);
     }
@@ -1070,8 +1158,13 @@ export default function App() {
         response.invitation,
         ...currentInvitations.filter((invitation) => invitation.id !== response.invitation.id)
       ]);
+      showToast({
+        title: copy.toast.resetInviteCreated.title,
+        description: copy.toast.resetInviteCreated.description,
+        variant: "success"
+      });
     } catch (passcodeUpdateError) {
-      setAdminError(errorMessage(passcodeUpdateError, "Could not create reset invitation."));
+      setAdminError(errorMessage(passcodeUpdateError, copy.fallbackErrors.resetInvitation));
     } finally {
       setAdminLoading(false);
     }
@@ -1088,7 +1181,7 @@ export default function App() {
           : code
       )));
     } catch (revokeError) {
-      setAdminError(errorMessage(revokeError, "Could not revoke member code."));
+      setAdminError(errorMessage(revokeError, copy.fallbackErrors.revokeCode));
     } finally {
       setAdminLoading(false);
     }
@@ -1101,14 +1194,27 @@ export default function App() {
       await deleteMemberAccessCode(id);
       setMemberCodes((currentCodes) => currentCodes.filter((code) => code.id !== id));
     } catch (deleteError) {
-      setAdminError(errorMessage(deleteError, "Could not delete member code."));
+      setAdminError(errorMessage(deleteError, copy.fallbackErrors.deleteCode));
     } finally {
       setAdminLoading(false);
     }
   }
 
   async function copyMemberCode(code: string) {
-    await navigator.clipboard?.writeText(code);
+    try {
+      await navigator.clipboard?.writeText(code);
+      showToast({
+        title: copy.toast.copied.title,
+        description: copy.toast.copied.description,
+        variant: "success"
+      });
+    } catch {
+      showToast({
+        title: copy.toast.copyFailed.title,
+        description: copy.toast.copyFailed.description,
+        variant: "error"
+      });
+    }
   }
 
   async function openOwnCreditUsage() {
@@ -1122,10 +1228,10 @@ export default function App() {
       updateCurrentMemberCredits(response.member?.credits);
     } catch (usageError) {
       if (isUnauthorizedError(usageError)) {
-        handleRequestError(usageError, "Could not load spending record.");
+        handleRequestError(usageError, copy.fallbackErrors.spendingRecord);
         return;
       }
-      setCreditUsageError(errorMessage(usageError, "Could not load spending record."));
+      setCreditUsageError(errorMessage(usageError, copy.fallbackErrors.spendingRecord));
     } finally {
       setCreditUsageLoading(false);
     }
@@ -1166,11 +1272,11 @@ export default function App() {
       await refreshPromise;
     } catch (requestError) {
       if (isUnauthorizedError(requestError)) {
-        handleRequestError(requestError, "Could not load requests.");
+        handleRequestError(requestError, copy.fallbackErrors.movieRequests);
         return;
       }
       if (showLoading || movieRequestOpen) {
-        setMovieRequestError(errorMessage(requestError, "Could not load requests."));
+        setMovieRequestError(errorMessage(requestError, copy.fallbackErrors.movieRequests));
       }
     } finally {
       ownMovieRequestsRefreshRef.current = undefined;
@@ -1185,11 +1291,57 @@ export default function App() {
     void refreshOwnMovieRequests(!ownMovieRequestsLoaded);
   }
 
+  async function refreshOwnNotices(showLoading = false) {
+    if (role !== "member") {
+      return;
+    }
+
+    if (showLoading) {
+      setNoticeLoading(true);
+    }
+    setNoticeError("");
+    try {
+      const response = await listOwnNotices(100);
+      setOwnNotices(response.notices);
+      setOwnNoticesLoaded(true);
+    } catch (noticeListError) {
+      if (isUnauthorizedError(noticeListError)) {
+        handleRequestError(noticeListError, "无法加载站内信。");
+        return;
+      }
+      setNoticeError(errorMessage(noticeListError, "无法加载站内信。"));
+    } finally {
+      if (showLoading) {
+        setNoticeLoading(false);
+      }
+    }
+  }
+
+  function openNoticeInbox() {
+    setNoticeInboxOpen(true);
+    void refreshOwnNotices(true);
+  }
+
+  async function markNoticeRead(id: string) {
+    setNoticeLoading(true);
+    setNoticeError("");
+    try {
+      const response = await markOwnNoticeRead(id);
+      setOwnNotices((currentNotices) => currentNotices.map((notice) => (
+        notice.id === id ? response.notice : notice
+      )));
+    } catch (noticeReadError) {
+      setNoticeError(errorMessage(noticeReadError, "无法标记已读。"));
+    } finally {
+      setNoticeLoading(false);
+    }
+  }
+
   async function submitMovieRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = movieRequestText.trim();
     if (!text) {
-      setMovieRequestError("Describe what you want to watch.");
+      setMovieRequestError(copy.request.errors.describe);
       return;
     }
 
@@ -1203,14 +1355,137 @@ export default function App() {
       ]);
       setOwnMovieRequestsLoaded(true);
       setMovieRequestText("");
+      showToast({
+        title: copy.toast.requestSubmitted.title,
+        description: copy.toast.requestSubmitted.description,
+        variant: "success"
+      });
     } catch (requestError) {
       if (isUnauthorizedError(requestError)) {
-        handleRequestError(requestError, "Could not submit request.");
+        handleRequestError(requestError, copy.fallbackErrors.submitRequest);
         return;
       }
-      setMovieRequestError(errorMessage(requestError, "Could not submit request."));
+      setMovieRequestError(errorMessage(requestError, copy.fallbackErrors.submitRequest));
     } finally {
       setMovieRequestLoading(false);
+    }
+  }
+
+  async function openForumThread(threadId: string, options: { showLoading?: boolean } = {}) {
+    if (options.showLoading ?? true) {
+      setForumThreadLoading(true);
+    }
+    setForumError("");
+    try {
+      const response = await getForumThread(threadId);
+      setForumThread(response.thread);
+      setForumReplyText("");
+    } catch (forumThreadError) {
+      if (isUnauthorizedError(forumThreadError)) {
+        handleRequestError(forumThreadError, copy.fallbackErrors.forum);
+        return;
+      }
+      setForumError(errorMessage(forumThreadError, copy.fallbackErrors.forum));
+    } finally {
+      setForumThreadLoading(false);
+    }
+  }
+
+  async function refreshForumThreads(showLoading = true) {
+    setForumThreadsLoaded(true);
+    if (showLoading) {
+      setForumLoading(true);
+    }
+    setForumError("");
+    try {
+      const response = await listForumThreads(forumThreadLimit);
+      setForumThreads(response.threads);
+      const currentThreadId = forumThread?.id;
+      const nextThreadId = currentThreadId && response.threads.some((thread) => thread.id === currentThreadId)
+        ? currentThreadId
+        : response.threads[0]?.id;
+      if (nextThreadId) {
+        await openForumThread(nextThreadId, { showLoading: false });
+      } else {
+        setForumThread(undefined);
+      }
+    } catch (forumListError) {
+      if (isUnauthorizedError(forumListError)) {
+        handleRequestError(forumListError, copy.fallbackErrors.forum);
+        return;
+      }
+      setForumError(errorMessage(forumListError, copy.fallbackErrors.forum));
+    } finally {
+      setForumLoading(false);
+    }
+  }
+
+  async function submitForumThread(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const title = forumDraftTitle.trim();
+    const body = forumDraftBody.trim();
+    if (!title) {
+      setForumError(copy.forum.errors.titleRequired);
+      return;
+    }
+    if (!body) {
+      setForumError(copy.forum.errors.bodyRequired);
+      return;
+    }
+
+    setForumSubmitting(true);
+    setForumError("");
+    try {
+      const response = await createForumThread({ title, body });
+      setForumThreads((currentThreads) => [
+        response.thread,
+        ...currentThreads.filter((thread) => thread.id !== response.thread.id)
+      ].slice(0, forumThreadLimit));
+      setForumThread(response.thread);
+      setForumThreadsLoaded(true);
+      setForumDraftTitle("");
+      setForumDraftBody("");
+      setForumReplyText("");
+    } catch (forumCreateError) {
+      if (isUnauthorizedError(forumCreateError)) {
+        handleRequestError(forumCreateError, copy.fallbackErrors.submitForumThread);
+        return;
+      }
+      setForumError(errorMessage(forumCreateError, copy.fallbackErrors.submitForumThread));
+    } finally {
+      setForumSubmitting(false);
+    }
+  }
+
+  async function submitForumReply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = forumReplyText.trim();
+    if (!forumThread) {
+      return;
+    }
+    if (!body) {
+      setForumError(copy.forum.errors.replyRequired);
+      return;
+    }
+
+    setForumReplySubmitting(true);
+    setForumError("");
+    try {
+      const response = await createForumReply(forumThread.id, { body });
+      setForumThread(response.thread);
+      setForumThreads((currentThreads) => [
+        response.thread,
+        ...currentThreads.filter((thread) => thread.id !== response.thread.id)
+      ].slice(0, forumThreadLimit));
+      setForumReplyText("");
+    } catch (forumReplyError) {
+      if (isUnauthorizedError(forumReplyError)) {
+        handleRequestError(forumReplyError, copy.fallbackErrors.submitForumReply);
+        return;
+      }
+      setForumError(errorMessage(forumReplyError, copy.fallbackErrors.submitForumReply));
+    } finally {
+      setForumReplySubmitting(false);
     }
   }
 
@@ -1229,10 +1504,10 @@ export default function App() {
       )));
     } catch (usageError) {
       if (isUnauthorizedError(usageError)) {
-        handleRequestError(usageError, "Could not load member spending record.");
+        handleRequestError(usageError, copy.fallbackErrors.memberSpendingRecord);
         return;
       }
-      setCreditUsageError(errorMessage(usageError, "Could not load member spending record."));
+      setCreditUsageError(errorMessage(usageError, copy.fallbackErrors.memberSpendingRecord));
     } finally {
       setCreditUsageLoading(false);
     }
@@ -1255,8 +1530,13 @@ export default function App() {
         credits: response.code.credits
       });
       setProfileOpen(false);
+      showToast({
+        title: copy.toast.profileSaved.title,
+        description: newPasscode ? copy.toast.profileSaved.withPasscode : copy.toast.profileSaved.nameOnly,
+        variant: "success"
+      });
     } catch (profileUpdateError) {
-      setProfileError(errorMessage(profileUpdateError, "Could not update profile."));
+      setProfileError(errorMessage(profileUpdateError, copy.fallbackErrors.updateProfile));
     } finally {
       setProfileLoading(false);
     }
@@ -1281,6 +1561,25 @@ export default function App() {
     setMovieRequestError("");
     setOwnMovieRequests([]);
     setOwnMovieRequestsLoaded(false);
+    setNoticeInboxOpen(false);
+    setNoticeLoading(false);
+    setNoticeError("");
+    setOwnNotices([]);
+    setOwnNoticesLoaded(false);
+    setAdminNotices([]);
+    setAdminNoticesLoading(false);
+    setForumThreads([]);
+    setForumThread(undefined);
+    setForumThreadsLoaded(false);
+    forumThreadsAutoLoadRef.current = false;
+    setForumLoading(false);
+    setForumThreadLoading(false);
+    setForumSubmitting(false);
+    setForumReplySubmitting(false);
+    setForumError("");
+    setForumDraftTitle("");
+    setForumDraftBody("");
+    setForumReplyText("");
     setAdminUnlocked(false);
     setActiveTab("library");
     setBrowseChannel("recommended");
@@ -1360,10 +1659,10 @@ export default function App() {
           return;
         }
         if (isUnauthorizedError(previewError)) {
-          handleRequestError(previewError, "Search failed.");
+          handleRequestError(previewError, copy.fallbackErrors.searchFailed);
           return;
         }
-        setSearchDialogError(cacheErrorLabel(errorMessage(previewError, "Search failed.")));
+        setSearchDialogError(cacheErrorLabel(errorMessage(previewError, copy.fallbackErrors.searchFailed)));
         setSearchPreviewResults([]);
       } finally {
         if (searchPreviewRequestRef.current === requestId) {
@@ -1424,7 +1723,7 @@ export default function App() {
           }
         }
       } catch (statusError) {
-        handleRequestError(statusError, "Status refresh failed.");
+        handleRequestError(statusError, copy.fallbackErrors.statusRefresh);
       }
     }, 1200);
 
@@ -1441,7 +1740,7 @@ export default function App() {
         applyAuth(auth);
       })
       .catch((authError) => {
-        handleRequestError(authError, "Cinema Pass did not match.");
+        handleRequestError(authError, copy.access.errors.passcodeMismatch);
       });
   }, [unlocked, role]);
 
@@ -1519,6 +1818,7 @@ export default function App() {
       void refreshCachedAssets();
       void refreshCacheJobs();
       void refreshAdminMovieRequests();
+      void refreshAdminNotices();
       void refreshLoginAudit();
     }
   }, [activeTab, adminUnlocked]);
@@ -1553,6 +1853,19 @@ export default function App() {
   }, [role, ownMovieRequestsLoaded]);
 
   useEffect(() => {
+    if (role === "member" && !ownNoticesLoaded) {
+      void refreshOwnNotices(false);
+    }
+  }, [role, ownNoticesLoaded]);
+
+  useEffect(() => {
+    if (activeTab === "forum" && !forumThreadsLoaded && !forumThreadsAutoLoadRef.current) {
+      forumThreadsAutoLoadRef.current = true;
+      void refreshForumThreads(true);
+    }
+  }, [activeTab, forumThreadsLoaded]);
+
+  useEffect(() => {
     if (activeTab === "library" && cachedAssets.length === 0 && !cachedAssetsLoading) {
       void refreshCachedAssets();
     }
@@ -1579,12 +1892,13 @@ export default function App() {
   }
 
   const showAdmin = role === "admin";
-  const accountLabel = role === "admin" ? "Admin" : member?.name ?? "Member";
+  const accountLabel = role === "admin" ? copy.common.admin : member?.name ?? copy.common.member;
   const accountDetail = role === "admin"
-    ? "Admin"
+    ? copy.common.admin
     : member?.credits
       ? `${member.credits.remaining}${member.credits.unitSymbol}`
-      : "Cinema member";
+      : copy.common.cinemaMember;
+  const noticeUnreadCount = ownNotices.filter((notice) => !notice.readAt).length;
 
   return (
     <>
@@ -1647,6 +1961,20 @@ export default function App() {
         onRequestTextChange={setMovieRequestText}
         onSubmit={(event) => void submitMovieRequest(event)}
       />
+      <NoticeInboxDialog
+        error={noticeError}
+        loading={noticeLoading}
+        notices={ownNotices}
+        open={noticeInboxOpen}
+        unreadCount={noticeUnreadCount}
+        onMarkRead={(id) => void markNoticeRead(id)}
+        onOpenChange={(open) => {
+          setNoticeInboxOpen(open);
+          if (!open) {
+            setNoticeError("");
+          }
+        }}
+      />
       <CinemaLayout
         activeTab={activeTab}
         activeBrowseChannel={browseChannel}
@@ -1654,14 +1982,17 @@ export default function App() {
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
         canRequestMovie={role === "member" || role === "admin"}
+        noticeUnreadCount={noticeUnreadCount}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
         onBrowseChannelChange={openBrowseChannel}
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
+        onOpenForum={() => navigateToTab("forum")}
         onOpenHelp={() => navigateToTab("help")}
         onOpenHistory={() => navigateToTab("history")}
         onOpenMovieRequest={openMovieRequestDialog}
+        onOpenNotices={openNoticeInbox}
         onOpenProfile={() => setProfileOpen(true)}
         onOpenSpending={() => void openOwnCreditUsage()}
         onOpenTasks={() => navigateToTab("tasks")}
@@ -1710,6 +2041,29 @@ export default function App() {
             onRecache={(entry) => void recacheHistoryEntry(entry)}
           />
         )}
+        forum={(
+          <ForumPanel
+            currentMemberId={member?.id}
+            draftBody={forumDraftBody}
+            draftTitle={forumDraftTitle}
+            error={forumError}
+            loaded={forumThreadsLoaded}
+            loading={forumLoading}
+            replyBody={forumReplyText}
+            replying={forumReplySubmitting}
+            selectedThread={forumThread}
+            submitting={forumSubmitting}
+            threadLoading={forumThreadLoading}
+            threads={forumThreads}
+            onDraftBodyChange={setForumDraftBody}
+            onDraftTitleChange={setForumDraftTitle}
+            onRefresh={() => void refreshForumThreads(true)}
+            onReplyBodyChange={setForumReplyText}
+            onSelectThread={(threadId) => void openForumThread(threadId)}
+            onSubmitReply={(event) => void submitForumReply(event)}
+            onSubmitThread={(event) => void submitForumThread(event)}
+          />
+        )}
         help={<HelpPanel />}
         tasks={(
           <CacheTasksPanel
@@ -1735,6 +2089,8 @@ export default function App() {
             loginAuditLoading={loginAuditLoading}
             movieRequests={adminMovieRequests}
             movieRequestsLoading={adminMovieRequestsLoading}
+            memberNotices={adminNotices}
+            memberNoticesLoading={adminNoticesLoading}
             adminKeyInput={adminKeyInput}
             memberCredits={memberCredits}
             memberBulkCredits={memberBulkCredits}
@@ -1753,6 +2109,8 @@ export default function App() {
             onRefreshCachedAssets={() => void refreshCachedAssets()}
             onRefreshLoginAudit={() => void refreshLoginAudit()}
             onRefreshMovieRequests={() => void refreshAdminMovieRequests()}
+            onRefreshNotices={() => void refreshAdminNotices()}
+            onCreateNotice={(input) => void createMemberNotice(input)}
             onRetryCacheJob={(jobId) => void retryAdminCacheJob(jobId)}
             onDeleteCacheJob={(jobId) => void deleteAdminCacheJob(jobId)}
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
@@ -1774,5 +2132,13 @@ export default function App() {
         />
       ) : null}
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <CinemaApp />
+    </ToastProvider>
   );
 }
