@@ -348,7 +348,7 @@ export const zhCN = {
     initialBalance: "🍀 初始余额",
     generateInvite: "生成邀请码",
     invitationHistory: "邀请历史",
-    invitationDescription: "复制一次性链接，并查看注册和重置码是否已被使用。",
+    invitationDescription: "复制一次性链接，并查看注册和重置码状态。重置码 7 天有效，新的重置码会让旧码失效。",
     unusedCount: (count: number) => `${count} 个未使用`,
     usedCount: (count: number) => `${count} 个已使用`,
     noInvitations: "暂无邀请",

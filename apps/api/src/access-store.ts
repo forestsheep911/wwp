@@ -140,6 +140,7 @@ const defaultAccountName = "stwwcachee9219db7";
 const defaultMemberTableName = "membercodes";
 const memberCreditUnitSymbol = "🍀";
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
+const resetInvitationTtlMs = 7 * 24 * 60 * 60 * 1000;
 const noExpiryAt = "9999-12-31T23:59:59.999Z";
 const loginAuditRetention = 500;
 const movieRequestPartitionKey = "movie-request";
@@ -314,13 +315,14 @@ function storedSignupInvitation(input: { rawCode: string; credits?: number }): S
 }
 
 function storedResetInvitation(input: { rawCode: string; member: StoredMemberCode }): StoredMemberInvitation {
-  const now = new Date().toISOString();
+  const now = new Date();
   return {
     id: randomUUID(),
     type: "reset",
     codeHash: hashCode(input.rawCode),
     codePreview: codePreview(input.rawCode),
-    createdAt: now,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + resetInvitationTtlMs).toISOString(),
     memberId: input.member.id,
     memberName: input.member.name
   };
@@ -636,6 +638,18 @@ function invitationStatus(invitation: StoredMemberInvitation, now = new Date()):
   return "unused";
 }
 
+function shouldRevokeMemberResetInvitation(
+  invitation: StoredMemberInvitation,
+  memberId: string,
+  exceptId?: string,
+  now = new Date()
+) {
+  return invitation.id !== exceptId
+    && invitation.type === "reset"
+    && invitation.memberId === memberId
+    && invitationStatus(invitation, now) === "unused";
+}
+
 function publicCode(code: StoredMemberCode): MemberAccessCode {
   return {
     id: code.id,
@@ -920,6 +934,12 @@ class LocalAccessStore implements AccessStore {
         rawCode = createRawInviteCode();
       }
       const stored = storedResetInvitation({ rawCode, member });
+      const revokedAt = new Date().toISOString();
+      for (const invitation of Object.values(state.invitations ?? {})) {
+        if (shouldRevokeMemberResetInvitation(invitation, member.id, stored.id)) {
+          invitation.revokedAt = revokedAt;
+        }
+      }
       state.invitations![stored.id] = stored;
       return {
         ...publicInvitation(stored),
@@ -1005,6 +1025,12 @@ class LocalAccessStore implements AccessStore {
       code.codePreview = codePreview(input.newPasscode);
       invitation.usedAt = new Date().toISOString();
       invitation.claimedByMemberId = code.id;
+      const revokedAt = new Date().toISOString();
+      for (const otherInvitation of Object.values(state.invitations ?? {})) {
+        if (shouldRevokeMemberResetInvitation(otherInvitation, code.id, invitation.id)) {
+          otherInvitation.revokedAt = revokedAt;
+        }
+      }
       return {
         ok: true as const,
         code: publicCode(code)
@@ -1408,6 +1434,7 @@ class AzureAccessStore implements AccessStore {
       return undefined;
     }
 
+    await this.revokeUnusedResetInvitations(member.id);
     let rawCode = createRawInviteCode();
     for (let attempt = 0; attempt < 10 && await this.accessHashExists(hashCode(rawCode)); attempt += 1) {
       rawCode = createRawInviteCode();
@@ -1524,6 +1551,7 @@ class AzureAccessStore implements AccessStore {
     invitation.claimedByMemberId = stored.id;
     await this.save(stored);
     await this.saveInvitation(invitation);
+    await this.revokeUnusedResetInvitations(stored.id, invitation.id);
     return {
       ok: true as const,
       code: publicCode(stored)
@@ -1969,6 +1997,23 @@ class AzureAccessStore implements AccessStore {
 
   private async accessHashExists(codeHash: string) {
     return Boolean(await this.getStoredByCodeHash(codeHash) || await this.getInvitationByCodeHash(codeHash));
+  }
+
+  private async revokeUnusedResetInvitations(memberId: string, exceptId?: string) {
+    const revokedAt = new Date().toISOString();
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${invitationPartitionKey}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      const invitation = deserialize<StoredMemberInvitation>(entity);
+      if (shouldRevokeMemberResetInvitation(invitation, memberId, exceptId)) {
+        invitation.revokedAt = revokedAt;
+        await this.saveInvitation(invitation);
+      }
+    }
   }
 
   private async save(code: StoredMemberCode) {
