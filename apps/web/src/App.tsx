@@ -84,6 +84,15 @@ import { TaskDock } from "./cinema/components/TaskDock";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
+import { triggerDirectDownload } from "./cinema/download";
+import {
+  cinemaHistoryState,
+  historyStateRoute,
+  routeFromLocation,
+  routeUrl,
+  sameRoute,
+  type CinemaRoute
+} from "./cinema/routing";
 import { historyStorageKey, readJsonStorage, themeStorageKey, writeJsonStorage } from "./cinema/storage";
 import type {
   AppTab,
@@ -99,18 +108,6 @@ import type {
 } from "./cinema/types";
 import { defaultCreditPolicy } from "./cinema/types";
 
-interface CinemaRoute {
-  tab: AppTab;
-  browseChannel: BrowseChannel;
-  query: string;
-  playerAssetKey?: string;
-}
-
-interface CinemaHistoryState {
-  app: "wwpdw-cinema";
-  route: CinemaRoute;
-}
-
 type PendingCreditAction =
   | {
     kind: "cache";
@@ -124,17 +121,7 @@ type PendingCreditAction =
     options?: { syncHistory?: boolean };
   };
 
-const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks", "forum"];
-const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
 const browsePageLimit = 48;
-
-function isAppTab(value: string | null): value is AppTab {
-  return Boolean(value && routeTabs.includes(value as AppTab));
-}
-
-function isBrowseChannel(value: string | null): value is BrowseChannel {
-  return Boolean(value && browseChannels.includes(value as BrowseChannel));
-}
 
 function isAppTheme(value: unknown): value is AppTheme {
   return value === "dark" || value === "light";
@@ -143,75 +130,6 @@ function isAppTheme(value: unknown): value is AppTheme {
 function readStoredTheme(): AppTheme {
   const storedTheme = readJsonStorage<unknown>(themeStorageKey, "dark");
   return isAppTheme(storedTheme) ? storedTheme : "dark";
-}
-
-function routeFromLocation(): CinemaRoute {
-  if (typeof window === "undefined") {
-    return {
-      tab: "library",
-      browseChannel: "recommended",
-      query: ""
-    };
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const tab = isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
-  const browseChannel = isBrowseChannel(params.get("channel")) ? params.get("channel") as BrowseChannel : "recommended";
-  return {
-    tab,
-    browseChannel,
-    query: params.get("q") ?? "",
-    playerAssetKey: params.get("play") ?? undefined
-  };
-}
-
-function historyStateRoute(state: unknown): CinemaRoute | undefined {
-  const candidate = state as Partial<CinemaHistoryState> | undefined;
-  const route = candidate?.route as Partial<CinemaRoute> | undefined;
-  if (candidate?.app !== "wwpdw-cinema" || !route || !route.tab) {
-    return undefined;
-  }
-
-  const rawBrowseChannel = route.browseChannel ?? null;
-  const browseChannel: BrowseChannel = isBrowseChannel(rawBrowseChannel)
-    ? rawBrowseChannel
-    : "recommended";
-
-  return {
-    tab: route.tab,
-    browseChannel,
-    query: route.query ?? "",
-    playerAssetKey: route.playerAssetKey
-  };
-}
-
-function routeUrl(route: CinemaRoute) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  if (route.tab !== "library") {
-    url.searchParams.set("tab", route.tab);
-  }
-  if (route.tab === "library" && route.browseChannel !== "recommended") {
-    url.searchParams.set("channel", route.browseChannel);
-  }
-  if (route.query.trim()) {
-    url.searchParams.set("q", route.query.trim());
-  }
-  if (route.playerAssetKey) {
-    url.searchParams.set("play", route.playerAssetKey);
-  }
-  return `${url.pathname}${url.search}`;
-}
-
-function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
-  return Boolean(
-    left &&
-      left.tab === right.tab &&
-      left.browseChannel === right.browseChannel &&
-      left.query === right.query &&
-      left.playerAssetKey === right.playerAssetKey
-  );
 }
 
 function CinemaApp() {
@@ -347,10 +265,7 @@ function CinemaApp() {
 
   function writeRoute(route: CinemaRoute, mode: "push" | "replace") {
     const nextRoute = permittedRoute(route);
-    const state: CinemaHistoryState = {
-      app: "wwpdw-cinema",
-      route: nextRoute
-    };
+    const state = cinemaHistoryState(nextRoute);
     const url = routeUrl(nextRoute);
     const currentRoute = historyStateRoute(window.history.state);
 
@@ -634,34 +549,16 @@ function CinemaApp() {
     });
   }
 
-  function openDownloadWindow(downloadUrl: string, pendingWindow?: Window | null) {
-    if (pendingWindow && !pendingWindow.closed) {
-      pendingWindow.location.href = downloadUrl;
-      return;
-    }
-
-    const anchor = document.createElement("a");
-    anchor.href = downloadUrl;
-    anchor.target = "_blank";
-    anchor.rel = "noopener noreferrer";
-    anchor.referrerPolicy = "no-referrer";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  }
-
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToResult(result, variant);
     setError("");
     setDownloadRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
-    const pendingWindow = window.open("about:blank", "_blank");
     try {
       const response = await getDirectDownload(target);
-      openDownloadWindow(response.downloadUrl, pendingWindow);
+      triggerDirectDownload(response.downloadUrl);
     } catch (downloadError) {
-      pendingWindow?.close();
       handleRequestError(downloadError, copy.fallbackErrors.directDownload);
     } finally {
       setDownloadRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));

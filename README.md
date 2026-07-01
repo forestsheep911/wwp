@@ -19,6 +19,7 @@ Architecture diagram: `docs/ww-cache-cloud-architecture.png`
 For handoff, operations, data flow, and troubleshooting, start with:
 
 - `docs/HANDOFF.md`
+- `docs/ARCHITECTURE_CHECK.md`
 - `infra/README.md`
 
 ## Local Development
