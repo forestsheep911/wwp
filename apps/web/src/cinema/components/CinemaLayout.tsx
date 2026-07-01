@@ -275,9 +275,9 @@ function AccountMenu({
   return (
     <div ref={menuRef} className="relative">
       <Button
+        className="px-3"
         type="button"
         variant="outline"
-        size="sm"
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((current) => !current)}
