@@ -46,7 +46,7 @@ export const zhCN = {
     resetInvitation: "重置码",
     forgot: "忘记了？",
     resetHelp: "请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。",
-    passcodeRule: "最多 12 个半角字符，至少包含 1 个字母和 1 个数字。",
+    passcodeRule: "通行码为 6 位字符。",
     errors: {
       enterPasscode: "请输入通行码。",
       enterNewPasscode: "请输入新的通行码。",

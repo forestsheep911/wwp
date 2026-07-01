@@ -466,26 +466,50 @@ export interface AuthCheckResponse {
   };
 }
 
-export const memberPasscodeLength = 12;
+export const memberPasscodeLength = 6;
 
 export function validateMemberPasscode(passcode: string) {
   if (passcode.length !== memberPasscodeLength) {
-    return "通行码必须是 12 位半角字符。";
-  }
-
-  if (!/^[\x21-\x7E]+$/.test(passcode)) {
-    return "通行码只能包含半角英数或常用符号，不能包含空格或中文。";
-  }
-
-  if (!/[A-Za-z]/.test(passcode)) {
-    return "通行码至少需要 1 个字母。";
-  }
-
-  if (!/[0-9]/.test(passcode)) {
-    return "通行码至少需要 1 个数字。";
+    return "通行码必须是 6 位字符。";
   }
 
   return undefined;
+}
+
+function isSequentialPasscode(passcode: string) {
+  if (!/^[0-9A-Za-z]+$/.test(passcode)) {
+    return false;
+  }
+
+  const codes = [...passcode.toLowerCase()].map((char) => char.charCodeAt(0));
+  const ascending = codes.every((code, index) => index === 0 || code === codes[index - 1] + 1);
+  const descending = codes.every((code, index) => index === 0 || code === codes[index - 1] - 1);
+  return ascending || descending;
+}
+
+export function memberPasscodeStrengthHint(passcode: string) {
+  if (validateMemberPasscode(passcode)) {
+    return undefined;
+  }
+
+  const normalized = passcode.toLowerCase();
+  const commonWeakPasscodes = new Set([
+    "000000",
+    "111111",
+    "123123",
+    "123456",
+    "654321",
+    "666666",
+    "888888",
+    "abcdef",
+    "qwerty"
+  ]);
+  const repeatedPattern = /^(.{1,3})\1+$/u.test(passcode);
+  if (commonWeakPasscodes.has(normalized) || repeatedPattern || isSequentialPasscode(passcode)) {
+    return "强度较低：请避免连续字符、重复字符、生日或常见组合。";
+  }
+
+  return "6 位通行码强度有限，请避免使用生日、手机号后几位等容易猜到的组合。";
 }
 
 export interface RegisterMemberRequest {

@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { KeyRound, Loader2 } from "lucide-react";
-import { validateMemberPasscode } from "@wwpdw/shared";
+import { memberPasscodeLength, memberPasscodeStrengthHint, validateMemberPasscode } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -32,6 +32,7 @@ export function PasscodeDialog({
   const [newPasscode, setNewPasscode] = useState("");
   const [confirmPasscode, setConfirmPasscode] = useState("");
   const [localError, setLocalError] = useState("");
+  const passcodeStrengthHint = memberPasscodeStrengthHint(newPasscode.trim());
 
   useEffect(() => {
     if (!open) {
@@ -90,6 +91,9 @@ export function PasscodeDialog({
                 setLocalError("");
               }}
             />
+            {passcodeStrengthHint ? (
+              <p className="text-xs leading-5 text-amber-600 dark:text-amber-300">{passcodeStrengthHint}</p>
+            ) : null}
           </div>
 
           <div className="grid gap-2">
@@ -97,7 +101,7 @@ export function PasscodeDialog({
             <Input
               id="new-passcode"
               autoComplete="new-password"
-              maxLength={12}
+              maxLength={memberPasscodeLength}
               type="password"
               value={newPasscode}
               onChange={(event) => {
@@ -112,7 +116,7 @@ export function PasscodeDialog({
             <Input
               id="confirm-passcode"
               autoComplete="new-password"
-              maxLength={12}
+              maxLength={memberPasscodeLength}
               type="password"
               value={confirmPasscode}
               onChange={(event) => {

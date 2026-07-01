@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
-import { type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
+import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
   clearAccessKey,
@@ -67,6 +67,7 @@ export function AccessGate({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
+  const passcodeStrengthHint = mode !== "login" ? memberPasscodeStrengthHint(value.trim()) : undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -249,7 +250,7 @@ export function AccessGate({
                 id="access-key"
                 autoFocus={mode === "login"}
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
-                maxLength={mode === "login" ? undefined : 12}
+                maxLength={mode === "login" ? undefined : memberPasscodeLength}
                 value={value}
                 onChange={(event) => {
                   setValue(event.target.value);
@@ -257,6 +258,9 @@ export function AccessGate({
                 }}
                 type="password"
               />
+              {passcodeStrengthHint ? (
+                <p className="text-xs leading-5 text-amber-600 dark:text-amber-300">{passcodeStrengthHint}</p>
+              ) : null}
               {mode === "login" ? (
                 <button
                   className="w-fit text-xs font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
@@ -283,7 +287,7 @@ export function AccessGate({
                 <Input
                   id="confirm-access-key"
                   autoComplete="new-password"
-                  maxLength={12}
+                  maxLength={memberPasscodeLength}
                   value={confirmValue}
                   onChange={(event) => {
                     setConfirmValue(event.target.value);

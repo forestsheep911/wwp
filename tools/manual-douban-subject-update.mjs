@@ -24,7 +24,21 @@ function cookieHeader() {
 }
 
 function richText(content, href) {
-  return [{ type: "text", text: { content, ...(href ? { link: { url: href } } : {}) } }];
+  const chunks = `${content ?? ""}`.match(/[\s\S]{1,1900}/g) ?? [""];
+  return chunks.map((chunk) => ({ type: "text", text: { content: chunk, ...(href ? { link: { url: href } } : {}) } }));
+}
+
+function looksTruncated(value) {
+  return /(?:\.{3}|…)$/u.test(`${value ?? ""}`.trim());
+}
+
+function bestDescription(jsonLdDescription, summary) {
+  const ldDescription = `${jsonLdDescription ?? ""}`.trim();
+  const pageSummary = `${summary ?? ""}`.trim();
+  if (looksTruncated(ldDescription) && pageSummary.length > ldDescription.length) {
+    return pageSummary;
+  }
+  return ldDescription || pageSummary;
 }
 
 function stripHtml(html) {
@@ -180,8 +194,8 @@ async function updateOne(notion, cookie, item) {
       ? { multi_select: genres.filter((genre) => genreOptions.has(genre)).map((name) => ({ name })) }
       : undefined,
     imdb: imdb ? { rich_text: richText(imdb, `https://www.imdb.com/title/${imdb}/`) } : undefined,
-    "简介": ld.description || summary ? { rich_text: richText((ld.description || summary).slice(0, 1900)) } : undefined,
-    "基本信息": basicInfo ? { rich_text: richText(basicInfo.slice(0, 1900)) } : undefined,
+    "简介": bestDescription(ld.description, summary) ? { rich_text: richText(bestDescription(ld.description, summary)) } : undefined,
+    "基本信息": basicInfo ? { rich_text: richText(basicInfo) } : undefined,
     "海报": { files: [{ name: filename, type: "file_upload", file_upload: { id: sent.id } }] }
   };
   for (const [key, value] of Object.entries(properties)) {
