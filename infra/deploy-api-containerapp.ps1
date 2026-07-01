@@ -10,9 +10,9 @@ param(
     [string]$KeyVaultName = "kv-wwcache-e9219db7",
     [string]$NotionKeyVaultSecretName = "NOTION-READ-ONLY-TOKEN",
     [string]$NotionContainerSecretName = "notion-token",
-    [string]$AccessKeyVaultSecretName = "WWPDW-ACCESS-KEY",
-    [string]$AccessContainerSecretName = "wwpdw-access-key",
-    [string]$AccessKey = $env:WWPDW_ACCESS_KEY,
+    [string]$AdminKeyVaultSecretName = "WWPDW-ADMIN-KEY",
+    [string]$AdminContainerSecretName = "wwpdw-admin-key",
+    [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
     [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
     [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
     [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
@@ -81,9 +81,11 @@ if (-not $NotionLibraryDataSourceId) {
     $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
-if (-not $AccessKey) {
-    $AccessKey = Get-DotEnvValue -Names @("WWPDW_ACCESS_KEY", "VITE_ACCESS_CODE")
+if (-not $AdminKey) {
+    $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
 }
+
+$OmdbApiKey = Get-DotEnvValue -Names @("OMDB_API_KEY")
 
 $workerJob = az2 containerapp job show `
     --name $WorkerJobName `
@@ -118,6 +120,9 @@ $envVars = @(
     "SEARCH_INDEX_WRITE_THROUGH=true",
     "SEARCH_INDEX_REFRESH_ON_CACHE=true",
     "SEARCH_INDEX_RESULT_LIMIT=8",
+    "SEARCH_INDEX_ENTRY_CACHE_TTL_SECONDS=300",
+    "OMDB_REQUEST_TIMEOUT_MS=5000",
+    "OMDB_LIVE_ENRICH_ENABLED=false",
     "POSTER_CACHE_ENABLED=true",
     "POSTER_CACHE_MAX_BYTES=8388608",
     "POSTER_CACHE_MAX_PER_MOVIE=0",
@@ -143,6 +148,7 @@ $envVars = @(
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
+    "CACHE_ASSET_LOOKUP_CACHE_TTL_SECONDS=30",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=60",
     "AZURE_STORAGE_POSTER_SAS_MINUTES=1440",
     "AZURE_SUBSCRIPTION_ID=$subscriptionId",
@@ -161,6 +167,10 @@ if ($NotionLibraryDatabaseId) {
 
 if ($NotionLibraryDataSourceId) {
     $envVars += "NOTION_LIBRARY_DATA_SOURCE_ID=$NotionLibraryDataSourceId"
+}
+
+if ($OmdbApiKey) {
+    $envVars += "OMDB_API_KEY=$OmdbApiKey"
 }
 
 $existingAppName = az2 containerapp list `
@@ -251,48 +261,48 @@ if ($notionSecretId) {
     Write-Host "Notion Key Vault secret was not found; API will use mock search unless NOTION_READ_ONLY_TOKEN is set another way."
 }
 
-$accessSecretId = az2 keyvault secret show `
+$adminSecretId = az2 keyvault secret show `
     --vault-name $KeyVaultName `
-    --name $AccessKeyVaultSecretName `
+    --name $AdminKeyVaultSecretName `
     --query id `
     --output tsv 2>$null
 
-if (-not $accessSecretId -and $AccessKey) {
-    Write-Host "Creating WWPDW access key secret reference in Key Vault."
+if (-not $adminSecretId -and $AdminKey) {
+    Write-Host "Creating WWPDW admin key secret reference in Key Vault."
     $tempSecretPath = New-TemporaryFile
     try {
-        Set-Content -Path $tempSecretPath -Value $AccessKey -NoNewline
+        Set-Content -Path $tempSecretPath -Value $AdminKey -NoNewline
         az2 keyvault secret set `
             --vault-name $KeyVaultName `
-            --name $AccessKeyVaultSecretName `
+            --name $AdminKeyVaultSecretName `
             --file $tempSecretPath `
             --output none
     } finally {
         Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
     }
 
-    $accessSecretId = az2 keyvault secret show `
+    $adminSecretId = az2 keyvault secret show `
         --vault-name $KeyVaultName `
-        --name $AccessKeyVaultSecretName `
+        --name $AdminKeyVaultSecretName `
         --query id `
         --output tsv
 }
 
-if ($accessSecretId) {
-    $accessSecretUri = $accessSecretId -replace "/[0-9a-fA-F]{32}$", ""
-    Write-Host "Attaching WWPDW access key secret reference."
+if ($adminSecretId) {
+    $adminSecretUri = $adminSecretId -replace "/[0-9a-fA-F]{32}$", ""
+    Write-Host "Attaching WWPDW admin key secret reference."
 
     az2 containerapp secret set `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --secrets "$AccessContainerSecretName=keyvaultref:$accessSecretUri,identityref:$($identity.id)" `
+        --secrets "$AdminContainerSecretName=keyvaultref:$adminSecretUri,identityref:$($identity.id)" `
         --output none
 
     az2 containerapp update `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --set-env-vars "WWPDW_ACCESS_KEY=secretref:$AccessContainerSecretName" `
+        --set-env-vars "WWPDW_ADMIN_KEY=secretref:$AdminContainerSecretName" `
         --output none
 } else {
-    Write-Host "WWPDW access key secret was not found; protected API routes will reject requests until WWPDW_ACCESS_KEY is set."
+    Write-Host "WWPDW admin key secret was not found; administrator login will reject requests until WWPDW_ADMIN_KEY is set."
 }

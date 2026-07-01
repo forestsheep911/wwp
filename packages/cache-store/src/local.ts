@@ -227,6 +227,7 @@ export class LocalCacheStore implements CacheStore {
   }
 
   async finalizeReadyAsset(job: CacheJob) {
+    const existingAsset = await this.getAsset(job.assetKey);
     const cachedAt = new Date().toISOString();
     const asset: CacheAsset = {
       assetKey: job.assetKey,
@@ -238,6 +239,8 @@ export class LocalCacheStore implements CacheStore {
       expiresAt: addDays(new Date(cachedAt), cacheAssetTtlDays()).toISOString(),
       cachedAt,
       lastRequestedAt: job.createdAt,
+      requestedByMemberId: existingAsset?.requestedByMemberId,
+      requestedByMemberName: existingAsset?.requestedByMemberName,
       media: {
         checkedAt: new Date().toISOString(),
         contentType: "application/x-wwpdw-mock",

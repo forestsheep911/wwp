@@ -43,7 +43,7 @@ import {
   mediaQuality,
   mp4StatusLabel
 } from "../format";
-import type { BadgeVariant, ManagedMemberCode } from "../types";
+import type { BadgeVariant, ManagedMemberCode, ManagedMemberInvitation } from "../types";
 import { EmptyState } from "./EmptyState";
 import { Metric } from "./MediaDiagnosticsView";
 
@@ -60,18 +60,15 @@ interface AdminPanelProps {
   movieRequests: MovieRequestEntry[];
   movieRequestsLoading: boolean;
   adminKeyInput: string;
-  memberName: string;
   memberCredits: number;
   memberBulkCredits: number;
   memberCreditEdits: Record<string, number>;
-  memberPasscodeEdits: Record<string, string>;
   memberCodes: ManagedMemberCode[];
+  memberInvitations: ManagedMemberInvitation[];
   setAdminKeyInput: (value: string) => void;
-  setMemberName: (value: string) => void;
   setMemberCredits: (value: number) => void;
   setMemberBulkCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
-  setMemberPasscodeEdit: (id: string, value: string) => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onCopy: (code: string) => void;
@@ -85,7 +82,7 @@ interface AdminPanelProps {
   onDeleteCacheJob: (jobId: string) => void;
   onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
-  onUpdatePasscode: (id: string) => void;
+  onCreateResetInvitation: (id: string) => void;
   onUpdateMovieRequestStatus: (id: string, status: MovieRequestStatus) => void;
   onViewCreditUsage: (id: string) => void;
   onRevoke: (id: string) => void;
@@ -104,18 +101,15 @@ export function AdminPanel({
   movieRequests,
   movieRequestsLoading,
   adminKeyInput,
-  memberName,
   memberCredits,
   memberBulkCredits,
   memberCreditEdits,
-  memberPasscodeEdits,
   memberCodes,
+  memberInvitations,
   setAdminKeyInput,
-  setMemberName,
   setMemberCredits,
   setMemberBulkCredits,
   setMemberCreditEdit,
-  setMemberPasscodeEdit,
   onUnlock,
   onGenerate,
   onCopy,
@@ -129,7 +123,7 @@ export function AdminPanel({
   onDeleteCacheJob,
   onDeleteCachedAsset,
   onUpdateCredits,
-  onUpdatePasscode,
+  onCreateResetInvitation,
   onUpdateMovieRequestStatus,
   onViewCreditUsage,
   onRevoke
@@ -197,6 +191,13 @@ export function AdminPanel({
             Members
             <Badge variant="secondary">{memberCodes.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="invites">
+            <KeyRound className="h-4 w-4" />
+            Invites
+            <Badge variant={memberInvitations.some((invitation) => invitation.status === "unused") ? "warning" : "secondary"}>
+              {memberInvitations.length}
+            </Badge>
+          </TabsTrigger>
           <TabsTrigger value="requests">
             <MessageSquarePlus className="h-4 w-4" />
             Requests
@@ -233,27 +234,30 @@ export function AdminPanel({
         </TabsContent>
 
         <TabsContent value="passes">
-          <AdminPassesPanel
+          <AdminMembersPanel
             adminLoading={adminLoading}
             memberCodes={memberCodes}
             memberBulkCredits={memberBulkCredits}
             memberCreditEdits={memberCreditEdits}
-            memberPasscodeEdits={memberPasscodeEdits}
-            memberCredits={memberCredits}
-            memberName={memberName}
-            onCopy={onCopy}
             onAdjustCredits={onAdjustCredits}
             onDelete={onDelete}
-            onGenerate={onGenerate}
             onRevoke={onRevoke}
             onUpdateCredits={onUpdateCredits}
-            onUpdatePasscode={onUpdatePasscode}
+            onCreateResetInvitation={onCreateResetInvitation}
             onViewCreditUsage={onViewCreditUsage}
             setMemberCreditEdit={setMemberCreditEdit}
             setMemberBulkCredits={setMemberBulkCredits}
-            setMemberPasscodeEdit={setMemberPasscodeEdit}
+          />
+        </TabsContent>
+
+        <TabsContent value="invites">
+          <AdminInvitesPanel
+            adminLoading={adminLoading}
+            memberCredits={memberCredits}
+            memberInvitations={memberInvitations}
+            onCopy={onCopy}
+            onGenerate={onGenerate}
             setMemberCredits={setMemberCredits}
-            setMemberName={setMemberName}
           />
         </TabsContent>
 
@@ -457,104 +461,50 @@ function AdminLoginAuditPanel({
   );
 }
 
-function AdminPassesPanel({
+function AdminMembersPanel({
   adminLoading,
   memberCodes,
   memberBulkCredits,
   memberCreditEdits,
-  memberPasscodeEdits,
-  memberCredits,
-  memberName,
   onAdjustCredits,
-  onCopy,
   onDelete,
-  onGenerate,
   onRevoke,
   onUpdateCredits,
-  onUpdatePasscode,
+  onCreateResetInvitation,
   onViewCreditUsage,
   setMemberBulkCredits,
-  setMemberCreditEdit,
-  setMemberPasscodeEdit,
-  setMemberCredits,
-  setMemberName
+  setMemberCreditEdit
 }: {
   adminLoading: boolean;
   memberCodes: ManagedMemberCode[];
   memberBulkCredits: number;
   memberCreditEdits: Record<string, number>;
-  memberPasscodeEdits: Record<string, string>;
-  memberCredits: number;
-  memberName: string;
   onAdjustCredits: (delta: number) => void;
-  onCopy: (code: string) => void;
   onDelete: (id: string) => void;
-  onGenerate: () => void;
   onRevoke: (id: string) => void;
   onUpdateCredits: (id: string) => void;
-  onUpdatePasscode: (id: string) => void;
+  onCreateResetInvitation: (id: string) => void;
   onViewCreditUsage: (id: string) => void;
   setMemberBulkCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
-  setMemberPasscodeEdit: (id: string, value: string) => void;
-  setMemberCredits: (value: number) => void;
-  setMemberName: (value: string) => void;
 }) {
   const activeMemberCount = memberCodes.filter((code) => code.status === "active").length;
   const bulkAmount = Number.isFinite(memberBulkCredits) ? Math.max(0, Math.floor(memberBulkCredits)) : 0;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-      <div className="grid gap-4 self-start">
+    <div className="grid gap-4">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5 text-emerald-300" />
-              New member
-            </CardTitle>
-            <CardDescription>Generate a temporary passcode with a starting 🍀 balance.</CardDescription>
+          <CardHeader className="flex flex-col items-start justify-between gap-4 lg:flex-row">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2">
+                <PlusCircle className="h-5 w-5 text-emerald-300" />
+                Bulk balance
+              </CardTitle>
+              <CardDescription>Adjust all active Cinema Pass balances.</CardDescription>
+            </div>
           </CardHeader>
           <CardContent>
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onGenerate();
-              }}
-            >
-              <div className="grid gap-2">
-                <Label htmlFor="member-name">Member name</Label>
-                <Input id="member-name" value={memberName} onChange={(event) => setMemberName(event.target.value)} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="member-credits">🍀 Balance</Label>
-                <Input
-                  id="member-credits"
-                  min={0}
-                  max={10000}
-                  type="number"
-                  value={memberCredits}
-                  onChange={(event) => setMemberCredits(Number(event.target.value))}
-                />
-              </div>
-              <Button type="submit" disabled={adminLoading}>
-                {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                Generate
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5 text-emerald-300" />
-              Bulk balance
-            </CardTitle>
-            <CardDescription>Adjust all active Cinema Pass balances.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4">
+            <div className="grid gap-4 md:grid-cols-[minmax(0,220px)_auto_1fr] md:items-end">
               <div className="grid gap-2">
                 <Label htmlFor="member-bulk-credits">🍀 Amount</Label>
                 <Input
@@ -586,11 +536,10 @@ function AdminPassesPanel({
                   Subtract all
                 </Button>
               </div>
-              <p className="text-xs text-slate-500">{activeMemberCount} active passes</p>
+              <p className="text-xs text-slate-500 md:pb-2">{activeMemberCount} active passes</p>
             </div>
           </CardContent>
         </Card>
-      </div>
 
       <div className="grid gap-3">
         {memberCodes.length === 0 ? (
@@ -613,11 +562,6 @@ function AdminPassesPanel({
                       <p className="mt-1 font-semibold text-emerald-200">{creditsLabel(code)}</p>
                     </div>
                   </div>
-                  {!code.code ? (
-                    <p className="mt-1 text-xs text-amber-200">
-                      Full passcode is shown only when generated or reset.
-                    </p>
-                  ) : null}
                 </div>
 
                 <div className="grid gap-2 lg:min-w-[360px]">
@@ -640,25 +584,6 @@ function AdminPassesPanel({
                       Set 🍀
                     </Button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                    <Input
-                      className="h-9 w-40 font-mono"
-                      maxLength={12}
-                      placeholder="New passcode"
-                      type="text"
-                      value={memberPasscodeEdits[code.id] ?? ""}
-                      onChange={(event) => setMemberPasscodeEdit(code.id, event.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onUpdatePasscode(code.id)}
-                      disabled={adminLoading || code.status !== "active"}
-                    >
-                      Set passcode
-                    </Button>
-                  </div>
                   <div className="flex flex-wrap gap-2 lg:justify-end">
                     <Button
                       type="button"
@@ -673,12 +598,12 @@ function AdminPassesPanel({
                     <Button
                       type="button"
                       variant="outline"
-                      size="icon"
-                      onClick={() => code.code && onCopy(code.code)}
-                      disabled={!code.code || adminLoading}
+                      size="sm"
+                      onClick={() => onCreateResetInvitation(code.id)}
+                      disabled={adminLoading || code.status !== "active"}
                     >
-                      <Copy className="h-4 w-4" />
-                      <span className="sr-only">Copy</span>
+                      <KeyRound className="h-4 w-4" />
+                      Reset invite
                     </Button>
                     {code.status === "active" ? (
                       <Button
@@ -709,6 +634,129 @@ function AdminPassesPanel({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function AdminInvitesPanel({
+  adminLoading,
+  memberCredits,
+  memberInvitations,
+  onCopy,
+  onGenerate,
+  setMemberCredits
+}: {
+  adminLoading: boolean;
+  memberCredits: number;
+  memberInvitations: ManagedMemberInvitation[];
+  onCopy: (code: string) => void;
+  onGenerate: () => void;
+  setMemberCredits: (value: number) => void;
+}) {
+  const unusedCount = memberInvitations.filter((invitation) => invitation.status === "unused").length;
+  const usedCount = memberInvitations.filter((invitation) => invitation.status === "used").length;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="self-start">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-emerald-300" />
+              Signup invite
+            </CardTitle>
+            <CardDescription>Generate a one-time code; the member chooses their own name when joining.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onGenerate();
+              }}
+            >
+              <div className="grid gap-2">
+                <Label htmlFor="member-credits">🍀 Balance</Label>
+                <Input
+                  id="member-credits"
+                  min={0}
+                  max={10000}
+                  type="number"
+                  value={memberCredits}
+                  onChange={(event) => setMemberCredits(Number(event.target.value))}
+                />
+              </div>
+              <Button type="submit" disabled={adminLoading}>
+                {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                Generate invite
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-emerald-300" />
+              Invitation history
+            </CardTitle>
+            <CardDescription>Tracks whether signup and reset codes are unused or already claimed.</CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="warning">{unusedCount} unused</Badge>
+            <Badge variant="secondary">{usedCount} used</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {memberInvitations.length === 0 ? (
+            <EmptyState icon={<KeyRound className="h-5 w-5" />} title="No invitations" />
+          ) : (
+            <div className="grid gap-3">
+              {memberInvitations.map((invitation) => (
+                <div key={invitation.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-slate-50">
+                          {invitation.type === "signup"
+                            ? invitation.status === "used"
+                              ? `Joined: ${invitation.claimedByMemberName ?? invitation.claimedByMemberId ?? "member"}`
+                              : "Signup invite"
+                            : `Reset for ${invitation.memberName ?? invitation.memberId ?? "member"}`}
+                        </p>
+                        <Badge variant={invitation.status === "unused" ? "secondary" : invitation.status === "used" ? "default" : "danger"}>
+                          {invitation.status}
+                        </Badge>
+                        <Badge variant="muted">{invitation.type}</Badge>
+                      </div>
+                      <p className="mt-1 truncate font-mono text-sm text-slate-300">
+                        {invitation.code ?? invitation.codePreview}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {invitation.type === "signup" && invitation.credits
+                          ? `${invitation.credits.unitSymbol} ${invitation.credits.remaining}${invitation.claimedByMemberName ? ` / claimed by ${invitation.claimedByMemberName}` : ""}`
+                          : `For ${invitation.memberName ?? invitation.memberId ?? "member"}`}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => invitation.code && onCopy(invitation.code)}
+                      disabled={!invitation.code || adminLoading}
+                    >
+                      <Copy className="h-4 w-4" />
+                      <span className="sr-only">Copy invitation</span>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

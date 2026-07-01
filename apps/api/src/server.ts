@@ -18,21 +18,29 @@ import {
   type CacheStatus,
   type CacheAssetLookupResponse,
   type CachedAssetsResponse,
-  type CreateMemberCodeRequest,
+  type CreateResetInvitationResponse,
+  type CreateSignupInvitationRequest,
   type CreateMovieRequestRequest,
   type ChangeMemberPasscodeRequest,
-  type AdminSetMemberPasscodeRequest,
+  type CreditPreviewFreeReason,
+  type CreditPolicyResponse,
+  type CreditPreviewRequest,
+  type CreditPreviewResponse,
   type DeleteCacheEntryResponse,
   type EnsureCacheRequest,
   type MemberAccessCode,
+  type MemberInvitationListResponse,
   type MemberCreditUsageResponse,
   type MediaVariant,
   type MovieRequestsResponse,
   type MovieRequestStatus,
+  type RatingValue,
   type RegisterMemberRequest,
+  type ResetMemberPasscodeRequest,
   type SearchResult,
   type SetMemberCreditsRequest,
   type UpdateMovieRequestStatusRequest,
+  type UpdateMemberProfileRequest,
   validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
@@ -53,6 +61,9 @@ const searchResultCacheLimit = Math.max(1, Number(process.env.SEARCH_RESULT_CACH
 const searchIndexEnabled = (process.env.SEARCH_INDEX_ENABLED ?? "true").toLowerCase() !== "false";
 const searchIndexWriteThrough = (process.env.SEARCH_INDEX_WRITE_THROUGH ?? "true").toLowerCase() !== "false";
 const searchIndexRefreshOnCache = (process.env.SEARCH_INDEX_REFRESH_ON_CACHE ?? "true").toLowerCase() !== "false";
+const omdbApiKey = process.env.OMDB_API_KEY?.trim();
+const omdbRequestTimeoutMs = Math.max(1000, Number(process.env.OMDB_REQUEST_TIMEOUT_MS ?? 5000));
+const omdbLiveEnrichEnabled = (process.env.OMDB_LIVE_ENRICH_ENABLED ?? "false").toLowerCase() === "true";
 const searchIndexResultLimit = Math.min(
   100,
   Math.max(1, Math.floor(Number(process.env.SEARCH_INDEX_RESULT_LIMIT ?? process.env.NOTION_SEARCH_PAGE_SIZE ?? 8)))
@@ -74,6 +85,7 @@ const pendingSearches = new Map<string, Promise<{
   results: SearchResult[];
   cacheStatus: SearchLoadStatus;
 }>>();
+const omdbCache = new Map<string, Promise<RatingValue[]>>();
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
@@ -83,11 +95,7 @@ const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLA
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminMovieRequestMemberId = "admin";
 const adminMovieRequestMemberName = "Admin";
-const adminKey =
-  process.env.WWPDW_ADMIN_KEY ??
-  process.env.WWPDW_ACCESS_KEY ??
-  process.env.ACCESS_KEY ??
-  process.env.VITE_ACCESS_CODE;
+const adminKey = process.env.WWPDW_ADMIN_KEY;
 
 interface RequestContext {
   requestId: string;
@@ -365,6 +373,23 @@ function sendPasscodeUpdateError(
   sendJson(response, 409, { error: "这个通行码已经被使用，请换一个。" });
 }
 
+function sendInvitationClaimError(
+  reason: "duplicate" | "invalid_invite" | "not_found",
+  response: http.ServerResponse
+) {
+  if (reason === "invalid_invite") {
+    sendJson(response, 403, { error: "邀请码无效、已使用或已过期。" });
+    return;
+  }
+
+  if (reason === "not_found") {
+    sendJson(response, 404, { error: "成员不存在，请重新向管理员索取重置邀请码。" });
+    return;
+  }
+
+  sendJson(response, 409, { error: "这个通行码已经被使用，请换一个。" });
+}
+
 function loginAuditEntry(
   request: http.IncomingMessage,
   identity: AccessIdentity,
@@ -472,6 +497,211 @@ function searchCacheKey(query: string) {
 
 function cloneSearchResults(results: SearchResult[]) {
   return JSON.parse(JSON.stringify(results)) as SearchResult[];
+}
+
+function normalizedRatingSource(label: string) {
+  if (/douban|豆瓣/i.test(label)) {
+    return "douban";
+  }
+  if (/imdb|internet movie database/i.test(label)) {
+    return "imdb";
+  }
+  if (/^rt$|rotten|tomato/i.test(label)) {
+    return "rotten";
+  }
+  if (/^meta$|metacritic|metascore/i.test(label)) {
+    return "metacritic";
+  }
+  return label.trim().toLowerCase();
+}
+
+function cleanOmdbRatingValue(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text === "N/A") {
+    return "";
+  }
+  return text
+    .replace(/\/10$/i, "")
+    .replace(/\/100$/i, "")
+    .replace(/%$/, "")
+    .trim();
+}
+
+function omdbRatingLabel(source: string) {
+  if (/internet movie database|imdb/i.test(source)) {
+    return "IMDb";
+  }
+  if (/rotten tomatoes/i.test(source)) {
+    return "RT";
+  }
+  if (/metacritic/i.test(source)) {
+    return "Meta";
+  }
+  return source;
+}
+
+function ratingsFromOmdbPayload(payload: unknown) {
+  const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const ratings: RatingValue[] = [];
+  const sourceRatings = Array.isArray(record.Ratings) ? record.Ratings : [];
+  for (const item of sourceRatings) {
+    const rating = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    const source = typeof rating.Source === "string" ? rating.Source : "";
+    const value = cleanOmdbRatingValue(rating.Value);
+    if (source && value) {
+      ratings.push({
+        label: omdbRatingLabel(source),
+        value
+      });
+    }
+  }
+
+  const imdbRating = cleanOmdbRatingValue(record.imdbRating);
+  if (imdbRating && !ratings.some((rating) => normalizedRatingSource(rating.label) === "imdb")) {
+    ratings.push({ label: "IMDb", value: imdbRating });
+  }
+
+  const metascore = cleanOmdbRatingValue(record.Metascore);
+  if (metascore && !ratings.some((rating) => normalizedRatingSource(rating.label) === "metacritic")) {
+    ratings.push({ label: "Meta", value: metascore });
+  }
+
+  return ratings;
+}
+
+function ratingsFromStoredOmdb(result: SearchResult) {
+  const omdb = result.metadata?.external?.omdb;
+  if (!omdb) {
+    return [];
+  }
+
+  const ratings = (omdb.ratings ?? [])
+    .map((rating) => ({
+      label: omdbRatingLabel(rating.label),
+      value: cleanOmdbRatingValue(rating.value)
+    }))
+    .filter((rating): rating is RatingValue => Boolean(rating.label && rating.value));
+
+  const imdbRating = cleanOmdbRatingValue(omdb.imdbRating);
+  if (imdbRating && !ratings.some((rating) => normalizedRatingSource(rating.label) === "imdb")) {
+    ratings.push({ label: "IMDb", value: imdbRating });
+  }
+
+  const metascore = cleanOmdbRatingValue(omdb.metascore);
+  if (metascore && !ratings.some((rating) => normalizedRatingSource(rating.label) === "metacritic")) {
+    ratings.push({ label: "Meta", value: metascore });
+  }
+
+  return ratings;
+}
+
+async function fetchOmdbPayload(imdbId: string) {
+  if (!omdbApiKey) {
+    return undefined;
+  }
+
+  const url = new URL("https://www.omdbapi.com/");
+  url.searchParams.set("i", imdbId);
+  url.searchParams.set("apikey", omdbApiKey);
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(omdbRequestTimeoutMs)
+  });
+  if (!response.ok) {
+    throw new Error(`OMDb request failed with ${response.status}`);
+  }
+
+  const payload = await response.json() as Record<string, unknown>;
+  return payload.Response === "False" ? undefined : payload;
+}
+
+async function fetchOmdbRatings(imdbId: string): Promise<RatingValue[]> {
+  const payload = await fetchOmdbPayload(imdbId);
+  if (!payload) {
+    return [];
+  }
+
+  const ratings = ratingsFromOmdbPayload(payload);
+  if (ratings.length > 0) {
+    return ratings;
+  }
+
+  const seriesId = typeof payload.seriesID === "string" ? payload.seriesID : "";
+  if (seriesId && seriesId !== imdbId) {
+    const seriesPayload = await fetchOmdbPayload(seriesId);
+    return seriesPayload ? ratingsFromOmdbPayload(seriesPayload) : [];
+  }
+
+  return [];
+}
+
+async function cachedOmdbRatings(imdbId: string) {
+  if (!omdbApiKey || !/^tt\d+/i.test(imdbId)) {
+    return [];
+  }
+
+  if (!omdbCache.has(imdbId)) {
+    omdbCache.set(
+      imdbId,
+      fetchOmdbRatings(imdbId).catch((error) => {
+        logWarn("api.omdb.rating_enrich_failed", {
+          imdbId,
+          ...errorLogFields(error)
+        });
+        return [];
+      })
+    );
+  }
+
+  return omdbCache.get(imdbId) ?? Promise.resolve([]);
+}
+
+async function enrichResultRatings(result: SearchResult): Promise<SearchResult> {
+  const rawRatings = result.metadata?.ratings ?? [];
+  const currentRatings = rawRatings.filter((rating) => rating.label && rating.value);
+  const cleanedResult = currentRatings.length === rawRatings.length
+    ? result
+    : {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        ratings: currentRatings
+      }
+    };
+  const seenSources = new Set(currentRatings.map((rating) => normalizedRatingSource(rating.label)));
+  const mergedRatings = [...currentRatings];
+  const storedOmdbRatings = ratingsFromStoredOmdb(result);
+  for (const rating of storedOmdbRatings) {
+    const source = normalizedRatingSource(rating.label);
+    if (!seenSources.has(source)) {
+      mergedRatings.push(rating);
+      seenSources.add(source);
+    }
+  }
+
+  const imdbId = result.metadata?.imdbId ?? result.metadata?.externalIds?.imdb;
+  if (omdbLiveEnrichEnabled && imdbId) {
+    const omdbRatings = await cachedOmdbRatings(imdbId);
+    for (const rating of omdbRatings) {
+      const source = normalizedRatingSource(rating.label);
+      if (!seenSources.has(source)) {
+        mergedRatings.push(rating);
+        seenSources.add(source);
+      }
+    }
+  }
+
+  if (mergedRatings.length === currentRatings.length) {
+    return cleanedResult;
+  }
+
+  return {
+    ...cleanedResult,
+    metadata: {
+      ...cleanedResult.metadata,
+      ratings: mergedRatings.slice(0, 4)
+    }
+  };
 }
 
 function pruneSearchResultCache(now = Date.now()) {
@@ -767,7 +997,7 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
 
 async function enrichResultsWithCache(searchResults: SearchResult[]) {
   const hydratedResults = await Promise.all(
-    searchResults.map((item) => store.hydrateMoviePosterUrls(item))
+    searchResults.map(async (item) => store.hydrateMoviePosterUrls(await enrichResultRatings(item)))
   );
   const assetKeys = hydratedResults.flatMap((item) => [
     item.assetKey,
@@ -787,12 +1017,14 @@ async function enrichResultsWithCache(searchResults: SearchResult[]) {
 async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 50, 100);
+  const offset = requestOffset(url);
+  const fetchLimit = offset + limit + 1;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
 
   if (searchIndexEnabled) {
     try {
-      searchResults = await searchIndex.search("", limit);
+      searchResults = await searchIndex.search("", fetchLimit);
       browseSource = "index";
     } catch (error) {
       logWarn("api.browse.index_read_failed", {
@@ -803,13 +1035,15 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   }
 
   if (searchResults.length === 0) {
-    searchResults = (await searchSource.search("")).slice(0, limit);
+    searchResults = (await searchSource.search("")).slice(0, fetchLimit);
     void writeSearchResultsToIndex(searchResults, "browse_live");
     browseSource = "live";
   }
 
-  rememberResults(searchResults);
-  const results = await enrichResultsWithCache(searchResults);
+  const pageResults = searchResults.slice(offset, offset + limit);
+  const hasMore = searchResults.length > offset + limit;
+  rememberResults(pageResults);
+  const results = await enrichResultsWithCache(pageResults);
 
   logInfo("api.browse", {
     requestId: context.requestId,
@@ -817,10 +1051,18 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
     browseSource,
     limit,
+    offset,
+    hasMore,
     durationMs: durationMs(startedAt)
   });
 
-  sendJson(response, 200, { results });
+  sendJson(response, 200, {
+    results,
+    offset,
+    limit,
+    hasMore,
+    nextOffset: hasMore ? offset + results.length : undefined
+  });
 }
 
 function creditLimitErrorMessage() {
@@ -833,6 +1075,146 @@ function playbackCreditCost(contentLength: number | undefined) {
   }
 
   return Math.max(1, Math.ceil(contentLength / playbackCreditBytes));
+}
+
+function creditPolicyPayload(): CreditPolicyResponse {
+  return {
+    unitSymbol: "🍀",
+    cacheCredits: cacheCreditCost,
+    playbackCreditBytes,
+    playbackReplayFreeHours
+  };
+}
+
+function previewPayload(input: {
+  action: CreditPreviewResponse["action"];
+  assetKey: string;
+  title: string;
+  credits: number;
+  identity: AccessIdentity;
+  freeReason?: CreditPreviewFreeReason;
+  windowExpiresAt?: string;
+}): CreditPreviewResponse {
+  const remaining = input.identity.credits?.remaining;
+  const chargeable = input.identity.role === "member" && !input.freeReason && input.credits > 0;
+  const remainingAfter = chargeable && remaining !== undefined
+    ? Math.max(0, remaining - input.credits)
+    : remaining;
+
+  return {
+    action: input.action,
+    assetKey: input.assetKey,
+    title: input.title,
+    credits: chargeable ? input.credits : 0,
+    unitSymbol: input.identity.credits?.unitSymbol ?? "🍀",
+    chargeable,
+    canAfford: !chargeable || remaining === undefined || remaining >= input.credits,
+    remaining,
+    remainingAfter,
+    freeReason: input.identity.role === "admin" ? "admin" : input.freeReason,
+    windowHours: input.action === "playback" ? playbackReplayFreeHours : undefined,
+    windowExpiresAt: input.windowExpiresAt
+  };
+}
+
+async function memberCreditUsage(identity: AccessIdentity, limit = 200) {
+  if (identity.role !== "member" || !identity.memberId) {
+    return undefined;
+  }
+
+  return accessStore.listMemberCreditUsage(identity.memberId, limit);
+}
+
+async function handleCreditPreview(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const body = await readBody<CreditPreviewRequest>(request);
+  const assetKey = body.assetKey?.trim();
+  if (!assetKey || (body.action !== "cache" && body.action !== "playback")) {
+    sendJson(response, 400, { error: "Credit preview requires an action and assetKey." });
+    return;
+  }
+
+  if (body.action === "cache") {
+    const candidate = body.result?.assetKey === assetKey
+      ? body.result
+      : recentResults.get(assetKey);
+    if (!candidate) {
+      sendJson(response, 404, { error: "Asset was not found." });
+      return;
+    }
+
+    const existingAsset = await store.getAsset(assetKey);
+    const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
+    const readyHit = isFreshReady(existingAsset);
+    const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
+    const usage = await memberCreditUsage(identity, 1);
+    const preview = previewPayload({
+      action: "cache",
+      assetKey,
+      title: candidate.title,
+      credits: cacheCreditCost,
+      identity: usage?.code
+        ? { ...identity, credits: usage.code.credits }
+        : identity,
+      freeReason: readyHit ? "cache_ready" : activeAssetJobHit ? "cache_active" : undefined
+    });
+
+    logInfo("api.credit.preview", {
+      requestId: context.requestId,
+      action: "cache",
+      assetKey,
+      credits: preview.credits,
+      chargeable: preview.chargeable,
+      freeReason: preview.freeReason,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 200, preview);
+    return;
+  }
+
+  const asset = await store.getAsset(assetKey);
+  if (!asset || !isFreshReady(asset)) {
+    sendJson(response, 409, { error: "Asset is not ready for playback." });
+    return;
+  }
+
+  const usage = await memberCreditUsage(identity, 200);
+  const now = Date.now();
+  const recentPlayback = usage?.entries.find((entry) => {
+    if (entry.reason !== "playback_stream" || entry.assetKey !== assetKey) {
+      return false;
+    }
+
+    const chargedAt = new Date(entry.chargedAt).getTime();
+    return Number.isFinite(chargedAt) && now - chargedAt <= playbackReplayFreeHours * 60 * 60 * 1000;
+  });
+  const preview = previewPayload({
+    action: "playback",
+    assetKey,
+    title: asset.title,
+    credits: playbackCreditCost(asset.media?.contentLength),
+    identity: usage?.code
+      ? { ...identity, credits: usage.code.credits }
+      : identity,
+    freeReason: recentPlayback ? "playback_replay" : undefined,
+    windowExpiresAt: recentPlayback?.windowExpiresAt
+  });
+
+  logInfo("api.credit.preview", {
+    requestId: context.requestId,
+    action: "playback",
+    assetKey,
+    credits: preview.credits,
+    chargeable: preview.chargeable,
+    freeReason: preview.freeReason,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, preview);
 }
 
 function movieRequestStatus(value: unknown): MovieRequestStatus | undefined {
@@ -911,6 +1293,12 @@ async function handleEnsureCache(
   output.job.lastRequestId = context.requestId;
   output.job.lastRequestedAt = requestedAt;
   await store.saveJob(output.job);
+  if (identity.role === "member" && identity.memberId) {
+    output.asset.requestedByMemberId ??= identity.memberId;
+    output.asset.requestedByMemberName ??= identity.memberName;
+    output.asset.lastRequestedAt = requestedAt;
+    await store.saveAsset(output.asset);
+  }
   const shouldStartWorker = !terminalJobStatuses.includes(output.job.status) && activeJobsBefore.length === 0;
   const trigger = shouldStartWorker
     ? await workerTrigger.start(output.job)
@@ -950,6 +1338,15 @@ function requestLimit(url: URL, fallback: number, maximum: number) {
   }
 
   return Math.min(Math.max(Math.floor(raw), 1), maximum);
+}
+
+function requestOffset(url: URL) {
+  const raw = Number(url.searchParams.get("offset") ?? 0);
+  if (!Number.isFinite(raw)) {
+    return 0;
+  }
+
+  return Math.max(Math.floor(raw), 0);
 }
 
 async function handleStatus(jobId: string, response: http.ServerResponse, context: RequestContext) {
@@ -1135,6 +1532,18 @@ async function handleListMemberCodes(response: http.ServerResponse, context: Req
   sendJson(response, 200, { codes });
 }
 
+async function handleListMemberInvitations(response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const invitations = await accessStore.listMemberInvitations();
+  const payload: MemberInvitationListResponse = { invitations };
+  logInfo("api.admin.member_invitations.list", {
+    requestId: context.requestId,
+    count: invitations.length,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
 async function handleRegisterMember(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -1142,31 +1551,23 @@ async function handleRegisterMember(
 ) {
   const startedAt = Date.now();
   const body = await readBody<RegisterMemberRequest>(request);
-  const name = body.name?.trim() ?? "";
-  const passcode = body.passcode ?? "";
-  const passcodeError = passcodeValidationError(passcode);
+  const inviteCode = body.inviteCode?.trim() ?? "";
 
-  if (!name) {
-    sendJson(response, 400, { error: "请输入成员名称。" });
-    return;
-  }
-
-  if (passcodeError) {
-    sendJson(response, 400, { error: passcodeError });
+  if (!inviteCode) {
+    sendJson(response, 400, { error: "请输入家庭邀请码。" });
     return;
   }
 
   const result = await accessStore.registerMember({
-    name,
-    passcode
+    inviteCode
   });
   if (!result.ok) {
-    logWarn("api.auth.register.duplicate", {
+    logWarn("api.auth.register_failed", {
       requestId: context.requestId,
-      name,
+      reason: result.reason,
       durationMs: durationMs(startedAt)
     });
-    sendJson(response, 409, { error: "这个通行码已经被使用，请换一个。" });
+    sendInvitationClaimError(result.reason, response);
     return;
   }
 
@@ -1181,8 +1582,65 @@ async function handleRegisterMember(
   });
   sendJson(response, 201, {
     auth: authPayload(identity),
-    code: result.code
+    code: result.code,
+    passcode: result.passcode
   });
+}
+
+async function handleUpdateMemberProfile(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  if (identity.role !== "member" || !identity.memberId) {
+    sendJson(response, 403, { error: "Only member accounts can update a profile here." });
+    return;
+  }
+
+  const body = await readBody<UpdateMemberProfileRequest>(request);
+  const name = body.name?.trim();
+  const newPasscode = body.newPasscode ?? "";
+  if (!name && !newPasscode) {
+    sendJson(response, 400, { error: "请至少填写一个要更新的资料。" });
+    return;
+  }
+
+  if (name !== undefined && !name) {
+    sendJson(response, 400, { error: "成员名称不能为空。" });
+    return;
+  }
+
+  const passcodeError = newPasscode ? passcodeValidationError(newPasscode) : undefined;
+  if (passcodeError) {
+    sendJson(response, 400, { error: passcodeError });
+    return;
+  }
+
+  const result = await accessStore.updateMemberProfile(identity.memberId, {
+    name,
+    newPasscode: newPasscode || undefined
+  });
+  if (!result.ok) {
+    logWarn("api.member.profile_update_failed", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      reason: result.reason,
+      durationMs: durationMs(startedAt)
+    });
+    sendPasscodeUpdateError(result, response);
+    return;
+  }
+
+  logInfo("api.member.profile_update", {
+    requestId: context.requestId,
+    memberId: result.code.id,
+    nameChanged: Boolean(name),
+    passcodeChanged: Boolean(newPasscode),
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, { code: result.code });
 }
 
 async function handleChangeMemberPasscode(
@@ -1232,37 +1690,43 @@ async function handleChangeMemberPasscode(
   sendJson(response, 200, { code: result.code });
 }
 
-async function handleSetMemberPasscode(
-  codeId: string,
+async function handleResetMemberPasscode(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const body = await readBody<AdminSetMemberPasscodeRequest>(request);
-  const passcode = body.passcode ?? "";
-  const passcodeError = passcodeValidationError(passcode);
+  const body = await readBody<ResetMemberPasscodeRequest>(request);
+  const inviteCode = body.inviteCode?.trim() ?? "";
+  const newPasscode = body.newPasscode ?? "";
+  const passcodeError = passcodeValidationError(newPasscode);
+
+  if (!inviteCode) {
+    sendJson(response, 400, { error: "请输入重置邀请码。" });
+    return;
+  }
+
   if (passcodeError) {
     sendJson(response, 400, { error: passcodeError });
     return;
   }
 
-  const result = await accessStore.setMemberPasscode(codeId, passcode);
+  const result = await accessStore.resetMemberPasscode({ inviteCode, newPasscode });
   if (!result.ok) {
-    logWarn("api.admin.member_codes.passcode_set_failed", {
+    logWarn("api.auth.passcode_reset_failed", {
       requestId: context.requestId,
-      memberCodeId: codeId,
       reason: result.reason,
       durationMs: durationMs(startedAt)
     });
-    sendPasscodeUpdateError(result, response);
+    sendInvitationClaimError(result.reason, response);
     return;
   }
 
-  logInfo("api.admin.member_codes.passcode_set", {
+  const identity = memberIdentityFromCode(result.code);
+  await recordLoginAudit(request, identity, context);
+  logInfo("api.auth.passcode_reset", {
     requestId: context.requestId,
-    memberCodeId: result.code.id,
-    name: result.code.name,
+    memberId: result.code.id,
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 200, { code: result.code });
@@ -1690,26 +2154,50 @@ async function handleDeleteCacheAsset(assetKey: string, response: http.ServerRes
   sendJson(response, 200, result);
 }
 
-async function handleCreateMemberCode(
+async function handleCreateSignupInvitation(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const body = await readBody<CreateMemberCodeRequest>(request);
-  const code = await accessStore.createMemberCode({
-    name: body.name,
+  const body = await readBody<CreateSignupInvitationRequest>(request);
+  const invitation = await accessStore.createSignupInvitation({
     credits: body.credits
   });
-  logInfo("api.admin.member_codes.create", {
+  logInfo("api.admin.member_invitations.signup_create", {
     requestId: context.requestId,
-    memberCodeId: code.id,
-    name: code.name,
-    expiresAt: code.expiresAt,
-    remainingCredits: code.credits.remaining,
+    invitationId: invitation.id,
+    remainingCredits: invitation.credits?.remaining,
     durationMs: durationMs(startedAt)
   });
-  sendJson(response, 201, { code });
+  sendJson(response, 201, { invitation });
+}
+
+async function handleCreateResetInvitation(
+  memberId: string,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  const invitation = await accessStore.createResetInvitation(memberId);
+  if (!invitation) {
+    logWarn("api.admin.member_invitations.reset_create_not_found", {
+      requestId: context.requestId,
+      memberId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 404, { error: "Member was not found." });
+    return;
+  }
+
+  const payload: CreateResetInvitationResponse = { invitation };
+  logInfo("api.admin.member_invitations.reset_create", {
+    requestId: context.requestId,
+    invitationId: invitation.id,
+    memberId,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 201, payload);
 }
 
 async function handleRevokeMemberCode(
@@ -1802,6 +2290,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "POST" && pathname === "/api/auth/reset-passcode") {
+      await handleResetMemberPasscode(request, response, context);
+      return;
+    }
+
     let identity: AccessIdentity | undefined;
     if (pathname.startsWith("/api/")) {
       identity = await requireAccess(request, response, context);
@@ -1823,6 +2316,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "POST" && pathname === "/api/auth/passcode") {
       await handleChangeMemberPasscode(request, response, context, identity!);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/member/profile") {
+      await handleUpdateMemberProfile(request, response, context, identity!);
       return;
     }
 
@@ -1879,7 +2377,21 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "POST" && pathname === "/api/admin/member-codes") {
-      await handleCreateMemberCode(request, response, context);
+      sendJson(response, 410, { error: "管理员不再直接创建成员，请改用家庭邀请码。" });
+      return;
+    }
+
+    if (pathname === "/api/admin/member-invitations" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/member-invitations") {
+      await handleListMemberInvitations(response, context);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/member-invitations") {
+      await handleCreateSignupInvitation(request, response, context);
       return;
     }
 
@@ -1960,13 +2472,13 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
-    const setMemberPasscodeMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/passcode$/);
-    if (setMemberPasscodeMatch && !requireAdmin(identity, response, context)) {
+    const createResetInvitationMatch = pathname.match(/^\/api\/admin\/member-codes\/([^/]+)\/reset-invitation$/);
+    if (createResetInvitationMatch && !requireAdmin(identity, response, context)) {
       return;
     }
 
-    if (request.method === "POST" && setMemberPasscodeMatch) {
-      await handleSetMemberPasscode(decodeURIComponent(setMemberPasscodeMatch[1]), request, response, context);
+    if (request.method === "POST" && createResetInvitationMatch) {
+      await handleCreateResetInvitation(decodeURIComponent(createResetInvitationMatch[1]), response, context);
       return;
     }
 
@@ -2002,6 +2514,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/cached-assets") {
       await handleListCachedAssets(url, response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/credit-policy") {
+      sendJson(response, 200, creditPolicyPayload());
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/credit-preview") {
+      await handleCreditPreview(request, response, context, identity!);
       return;
     }
 

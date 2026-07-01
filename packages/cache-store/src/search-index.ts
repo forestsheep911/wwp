@@ -89,6 +89,10 @@ const defaultSearchIndexTableName = "movieindex";
 const moviePartitionKey = "movie";
 const runPartitionKey = "run";
 const cjkPattern = /[\u3400-\u9fff]/;
+const searchIndexEntryCacheTtlMs = Math.max(
+  0,
+  Number(process.env.SEARCH_INDEX_ENTRY_CACHE_TTL_SECONDS ?? 300)
+) * 1000;
 
 function emptySearchIndexState(): LocalSearchIndexState {
   return {
@@ -234,6 +238,10 @@ function buildSearchText(result: SearchResult) {
 
 function cloneResult(result: SearchResult) {
   return JSON.parse(JSON.stringify(result)) as SearchResult;
+}
+
+function cloneEntry(entry: SearchIndexEntry) {
+  return JSON.parse(JSON.stringify(entry)) as SearchIndexEntry;
 }
 
 function cloneRun(run: SearchIndexRun) {
@@ -500,6 +508,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   private readonly tableClient: TableClient;
   private readonly credential = new DefaultAzureCredential();
   private ready?: Promise<void>;
+  private entriesCache?: { expiresAt: number; entries: SearchIndexEntry[] };
 
   constructor() {
     this.tableClient = this.config.connectionString
@@ -568,6 +577,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
 
   async deleteEntriesNotIn(assetKeys: Set<string>) {
     await this.ensureReady();
+    this.entriesCache = undefined;
     let deleted = 0;
     const entities = this.tableClient.listEntities<PayloadEntity>({
       queryOptions: {
@@ -631,6 +641,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   }
 
   private async saveEntry(entry: SearchIndexEntry) {
+    this.entriesCache = undefined;
     await this.tableClient.upsertEntity<PayloadEntity>(
       {
         partitionKey: moviePartitionKey,
@@ -659,6 +670,11 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   }
 
   private async listEntries() {
+    const now = Date.now();
+    if (this.entriesCache && this.entriesCache.expiresAt > now) {
+      return this.entriesCache.entries.map(cloneEntry);
+    }
+
     const entries: SearchIndexEntry[] = [];
     const entities = this.tableClient.listEntities<PayloadEntity>({
       queryOptions: {
@@ -668,6 +684,13 @@ export class AzureSearchIndexStore implements SearchIndexStore {
 
     for await (const entity of entities) {
       entries.push(deserialize<SearchIndexEntry>(entity));
+    }
+
+    if (searchIndexEntryCacheTtlMs > 0) {
+      this.entriesCache = {
+        expiresAt: now + searchIndexEntryCacheTtlMs,
+        entries: entries.map(cloneEntry)
+      };
     }
 
     return entries;

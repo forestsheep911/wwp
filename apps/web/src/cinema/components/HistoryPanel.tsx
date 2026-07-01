@@ -1,5 +1,5 @@
 import { History, Play, RefreshCw } from "lucide-react";
-import type { SearchResult } from "@wwpdw/shared";
+import type { CreditPolicyResponse, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -10,15 +10,18 @@ import {
   historyCacheVariant
 } from "../format";
 import type { HistoryAssetStatusMap, PlaybackHistoryEntry } from "../types";
+import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
 
 export function HistoryPanel({
+  creditPolicy,
   items,
   statusByAssetKey,
   onClear,
   onPlay,
   onRecache
 }: {
+  creditPolicy: CreditPolicyResponse;
   items: PlaybackHistoryEntry[];
   statusByAssetKey: HistoryAssetStatusMap;
   onClear: () => void;
@@ -57,13 +60,13 @@ export function HistoryPanel({
               {statusByAssetKey[item.assetKey]?.playable ? (
                 <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onPlay(item.assetKey, item.result)}>
                   <Play className="h-4 w-4" />
-                  播放
+                  {formatCreditAmount(playbackCreditCost(statusByAssetKey[item.assetKey]?.asset?.media?.contentLength ?? item.contentLength, creditPolicy), creditPolicy.unitSymbol)}
                 </Button>
               ) : null}
               {!statusByAssetKey[item.assetKey]?.playable && item.result ? (
                 <Button className="w-full sm:w-auto" type="button" size="sm" variant="secondary" onClick={() => onRecache(item)}>
                   <RefreshCw className="h-4 w-4" />
-                  重新准备
+                  {formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)}
                 </Button>
               ) : null}
             </div>

@@ -68,15 +68,15 @@ Do not store or print secrets in this repository. Runtime secrets live in Key Va
 Expected Key Vault secrets:
 
 - `NOTION-READ-ONLY-TOKEN`: read-only Notion integration token
-- `WWPDW-ACCESS-KEY`: private family access key checked by the API
+- `WWPDW-ADMIN-KEY`: static administrator key for the Admin tab
 
 Container environment variables:
 
 - API receives `NOTION_READ_ONLY_TOKEN` from `NOTION-READ-ONLY-TOKEN`
-- API receives `WWPDW_ACCESS_KEY` from `WWPDW-ACCESS-KEY`
+- API receives `WWPDW_ADMIN_KEY` from `WWPDW-ADMIN-KEY`
 - API and worker use managed identity for Azure Storage and Azure Resource Manager
 
-The frontend only stores the user-entered access key in browser `sessionStorage`.
+The frontend only stores the user-entered key in browser `sessionStorage`. Regular family access uses generated Cinema Passes stored in the member-code table.
 
 ## Member Allowances
 
@@ -356,7 +356,7 @@ The frontend includes the request id in most API error messages. Use that reques
 
 Access key fails:
 
-- Check Key Vault secret `WWPDW-ACCESS-KEY`.
+- Check Key Vault secret `WWPDW-ADMIN-KEY` for administrator login.
 - Check API logs for `api.auth.denied` or `api.auth.missing_config`.
 
 Search returns no results:

@@ -162,6 +162,8 @@ export interface CacheAsset {
   cachedAt?: string;
   lastRequestedAt: string;
   lastPlayedAt?: string;
+  requestedByMemberId?: string;
+  requestedByMemberName?: string;
   media?: MediaDiagnostics;
 }
 
@@ -193,6 +195,10 @@ export interface LocalCacheState {
 
 export interface SearchResponse {
   results: Array<SearchResult & { cache?: CacheAsset }>;
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
+  nextOffset?: number;
 }
 
 export interface EnsureCacheRequest {
@@ -259,6 +265,43 @@ export interface MemberCreditUsageResponse {
     credits: MemberCreditSummary;
   };
   entries: MemberCreditUsageEntry[];
+}
+
+export type CreditPreviewAction = "cache" | "playback";
+
+export type CreditPreviewFreeReason =
+  | "admin"
+  | "cache_ready"
+  | "cache_active"
+  | "playback_replay";
+
+export interface CreditPreviewRequest {
+  action: CreditPreviewAction;
+  assetKey: string;
+  title?: string;
+  result?: SearchResult;
+}
+
+export interface CreditPreviewResponse {
+  action: CreditPreviewAction;
+  assetKey: string;
+  title: string;
+  credits: number;
+  unitSymbol: string;
+  chargeable: boolean;
+  canAfford: boolean;
+  remaining?: number;
+  remainingAfter?: number;
+  freeReason?: CreditPreviewFreeReason;
+  windowHours?: number;
+  windowExpiresAt?: string;
+}
+
+export interface CreditPolicyResponse {
+  unitSymbol: string;
+  cacheCredits: number;
+  playbackCreditBytes: number;
+  playbackReplayFreeHours: number;
 }
 
 export type MovieRequestStatus = "new" | "planned" | "fulfilled" | "dismissed";
@@ -341,13 +384,13 @@ export function validateMemberPasscode(passcode: string) {
 }
 
 export interface RegisterMemberRequest {
-  name: string;
-  passcode: string;
+  inviteCode: string;
 }
 
 export interface RegisterMemberResponse {
   auth: AuthCheckResponse;
   code: MemberAccessCode;
+  passcode: string;
 }
 
 export interface ChangeMemberPasscodeRequest {
@@ -356,6 +399,24 @@ export interface ChangeMemberPasscodeRequest {
 }
 
 export interface ChangeMemberPasscodeResponse {
+  code: MemberAccessCode;
+}
+
+export interface ResetMemberPasscodeRequest {
+  inviteCode: string;
+  newPasscode: string;
+}
+
+export interface ResetMemberPasscodeResponse {
+  code: MemberAccessCode;
+}
+
+export interface UpdateMemberProfileRequest {
+  name?: string;
+  newPasscode?: string;
+}
+
+export interface UpdateMemberProfileResponse {
   code: MemberAccessCode;
 }
 
@@ -370,22 +431,47 @@ export interface MemberAccessCode {
   credits: MemberCreditSummary;
 }
 
-export interface GeneratedMemberAccessCode extends MemberAccessCode {
-  code: string;
-}
-
 export interface MemberCodeListResponse {
   codes: MemberAccessCode[];
 }
 
-export interface CreateMemberCodeRequest {
-  name: string;
-  days?: number;
+export type MemberInvitationType = "signup" | "reset";
+export type MemberInvitationStatus = "unused" | "used" | "expired" | "revoked";
+
+export interface MemberInvitation {
+  id: string;
+  type: MemberInvitationType;
+  codePreview: string;
+  createdAt: string;
+  expiresAt?: string;
+  status: MemberInvitationStatus;
+  name?: string;
+  credits?: MemberCreditSummary;
+  memberId?: string;
+  memberName?: string;
+  usedAt?: string;
+  claimedByMemberId?: string;
+  claimedByMemberName?: string;
+}
+
+export interface GeneratedMemberInvitation extends MemberInvitation {
+  code: string;
+}
+
+export interface MemberInvitationListResponse {
+  invitations: MemberInvitation[];
+}
+
+export interface CreateSignupInvitationRequest {
   credits?: number;
 }
 
-export interface CreateMemberCodeResponse {
-  code: GeneratedMemberAccessCode;
+export interface CreateSignupInvitationResponse {
+  invitation: GeneratedMemberInvitation;
+}
+
+export interface CreateResetInvitationResponse {
+  invitation: GeneratedMemberInvitation;
 }
 
 export interface SetMemberCreditsRequest {
@@ -404,14 +490,6 @@ export interface AdjustMemberCreditsResponse {
   codes: MemberAccessCode[];
   adjustedCount: number;
   delta: number;
-}
-
-export interface AdminSetMemberPasscodeRequest {
-  passcode: string;
-}
-
-export interface AdminSetMemberPasscodeResponse {
-  code: MemberAccessCode;
 }
 
 export interface AdminLoginAuditEntry {

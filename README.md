@@ -32,7 +32,7 @@ npm run dev:web
 
 The local default cache backend is `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
 
-The frontend does not contain a built-in access code. Users enter an access key in the UI, the web app stores it in `sessionStorage`, and every API request sends it through `x-wwpdw-access-key`. The API checks it against the server-side `WWPDW_ACCESS_KEY`.
+The frontend does not contain a built-in administrator key. The deployed API reads one static admin key from `WWPDW_ADMIN_KEY`, and the Admin tab sends the user-entered key through `x-wwpdw-access-key`. Regular family members use generated Cinema Passes stored in the member-code table.
 
 Set `VITE_API_BASE_URL` when building the web app against a remote API. Leave it empty for local `/api`.
 

@@ -12,16 +12,21 @@ import type {
   MemberCreditLimitReason,
   MemberCreditSummary,
   MemberCreditUsageEntry,
-  CreateMemberCodeRequest,
-  GeneratedMemberAccessCode,
+  CreateSignupInvitationRequest,
+  GeneratedMemberInvitation,
   MemberAccessCode,
-  RegisterMemberRequest
+  MemberInvitation,
+  MemberInvitationStatus,
+  ResetMemberPasscodeRequest,
+  RegisterMemberRequest,
+  UpdateMemberProfileRequest
 } from "@wwpdw/shared";
 
 type AccessBackend = "local" | "azure";
 
 interface LocalAccessState {
   codes: Record<string, StoredMemberCode>;
+  invitations?: Record<string, StoredMemberInvitation>;
   audit?: AdminLoginAuditEntry[];
   movieRequests?: StoredMovieRequest[];
 }
@@ -62,6 +67,23 @@ interface StoredMovieRequest {
   requestedByMemberName?: string;
 }
 
+interface StoredMemberInvitation {
+  id: string;
+  type: "signup" | "reset";
+  codeHash: string;
+  codePreview: string;
+  createdAt: string;
+  expiresAt?: string;
+  revokedAt?: string;
+  usedAt?: string;
+  claimedByMemberId?: string;
+  claimedByMemberName?: string;
+  name?: string;
+  creditBalance?: number;
+  memberId?: string;
+  memberName?: string;
+}
+
 type PayloadEntity = {
   partitionKey: string;
   rowKey: string;
@@ -77,6 +99,7 @@ const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
 const noExpiryAt = "9999-12-31T23:59:59.999Z";
 const loginAuditRetention = 500;
 const movieRequestPartitionKey = "movie-request";
+const invitationPartitionKey = "invite";
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 
 function backend(): AccessBackend {
@@ -117,6 +140,10 @@ function createRawMemberCode() {
   }
 
   return `A${Array.from(randomBytes(10)).map((byte) => alphabet[byte % alphabet.length]).join("")}1`;
+}
+
+function createRawInviteCode() {
+  return createRawMemberCode();
 }
 
 function positiveInt(value: unknown, fallback: number, options: { min?: number; max?: number } = {}) {
@@ -210,6 +237,14 @@ function memberName(value: string) {
   return value.trim().slice(0, 80) || "Family member";
 }
 
+function temporaryMemberName() {
+  const suffix = Array.from(randomBytes(3))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+  return `New member ${suffix}`;
+}
+
 function storedMemberCode(input: { name: string; rawCode: string; credits?: number }) {
   const now = new Date().toISOString();
   const stored: StoredMemberCode = {
@@ -223,6 +258,31 @@ function storedMemberCode(input: { name: string; rawCode: string; credits?: numb
     usage: []
   };
   return stored;
+}
+
+function storedSignupInvitation(input: { rawCode: string; credits?: number }): StoredMemberInvitation {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    type: "signup",
+    codeHash: hashCode(input.rawCode),
+    codePreview: codePreview(input.rawCode),
+    createdAt: now,
+    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: 10000 })
+  };
+}
+
+function storedResetInvitation(input: { rawCode: string; member: StoredMemberCode }): StoredMemberInvitation {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    type: "reset",
+    codeHash: hashCode(input.rawCode),
+    codePreview: codePreview(input.rawCode),
+    createdAt: now,
+    memberId: input.member.id,
+    memberName: input.member.name
+  };
 }
 
 function storedMovieRequest(input: CreateMovieRequestInput): StoredMovieRequest {
@@ -378,6 +438,22 @@ function statusFor(code: StoredMemberCode): MemberAccessCode["status"] {
   return "active";
 }
 
+function invitationStatus(invitation: StoredMemberInvitation, now = new Date()): MemberInvitationStatus {
+  if (invitation.revokedAt) {
+    return "revoked";
+  }
+
+  if (invitation.usedAt) {
+    return "used";
+  }
+
+  if (invitation.expiresAt && new Date(invitation.expiresAt).getTime() <= now.getTime()) {
+    return "expired";
+  }
+
+  return "unused";
+}
+
 function publicCode(code: StoredMemberCode): MemberAccessCode {
   return {
     id: code.id,
@@ -391,6 +467,36 @@ function publicCode(code: StoredMemberCode): MemberAccessCode {
   };
 }
 
+function publicInvitation(
+  invitation: StoredMemberInvitation,
+  members: Record<string, StoredMemberCode> = {}
+): MemberInvitation {
+  const claimedMember = invitation.claimedByMemberId ? members[invitation.claimedByMemberId] : undefined;
+  const targetMember = invitation.memberId ? members[invitation.memberId] : undefined;
+  const credits = invitation.creditBalance === undefined
+    ? undefined
+    : {
+      unit: "clover" as const,
+      unitSymbol: memberCreditUnitSymbol,
+      remaining: positiveInt(invitation.creditBalance, defaultCredits(), { min: 0, max: 10000 })
+    };
+  return {
+    id: invitation.id,
+    type: invitation.type,
+    codePreview: invitation.codePreview,
+    createdAt: invitation.createdAt,
+    expiresAt: invitation.expiresAt,
+    status: invitationStatus(invitation),
+    name: invitation.name,
+    credits,
+    memberId: invitation.memberId,
+    memberName: targetMember?.name ?? invitation.memberName,
+    usedAt: invitation.usedAt,
+    claimedByMemberId: invitation.claimedByMemberId,
+    claimedByMemberName: claimedMember?.name ?? invitation.claimedByMemberName
+  };
+}
+
 function serialize<T>(payload: T) {
   return JSON.stringify(payload);
 }
@@ -400,6 +506,7 @@ function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
 }
 
 function normalizeState(state: LocalAccessState): LocalAccessState {
+  state.invitations ??= {};
   state.audit ??= [];
   state.movieRequests ??= [];
   return state;
@@ -464,10 +571,21 @@ export type MemberRegistrationResult =
   | {
     ok: true;
     code: MemberAccessCode;
+    passcode: string;
   }
   | {
     ok: false;
-    reason: "duplicate";
+    reason: "duplicate" | "invalid_invite";
+  };
+
+export type MemberResetPasscodeResult =
+  | {
+    ok: true;
+    code: MemberAccessCode;
+  }
+  | {
+    ok: false;
+    reason: "not_found" | "duplicate" | "invalid_invite";
   };
 
 export type MemberPasscodeUpdateResult =
@@ -522,13 +640,16 @@ export interface ListMovieRequestsInput {
 export interface AccessStore {
   readonly backend: AccessBackend;
   readonly description: string;
-  createMemberCode(input: CreateMemberCodeRequest): Promise<GeneratedMemberAccessCode>;
+  createSignupInvitation(input: CreateSignupInvitationRequest): Promise<GeneratedMemberInvitation>;
+  createResetInvitation(memberId: string): Promise<GeneratedMemberInvitation | undefined>;
+  listMemberInvitations(): Promise<MemberInvitation[]>;
   registerMember(input: RegisterMemberRequest): Promise<MemberRegistrationResult>;
+  resetMemberPasscode(input: ResetMemberPasscodeRequest): Promise<MemberResetPasscodeResult>;
   listMemberCodes(): Promise<MemberAccessCode[]>;
   setMemberCredits(id: string, credits: number): Promise<MemberAccessCode | undefined>;
   adjustMemberCredits(delta: number): Promise<MemberCreditAdjustmentResult>;
-  setMemberPasscode(id: string, passcode: string): Promise<MemberPasscodeUpdateResult>;
   changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string): Promise<MemberPasscodeUpdateResult>;
+  updateMemberProfile(id: string, input: UpdateMemberProfileRequest): Promise<MemberPasscodeUpdateResult>;
   listMemberCreditUsage(id: string, limit: number): Promise<MemberCreditUsageList | undefined>;
   chargeMemberCredits(id: string, input: ChargeMemberCreditsInput): Promise<MemberCreditChargeResult | undefined>;
   chargeMemberPlayback(id: string, input: ChargeMemberPlaybackInput): Promise<MemberPlaybackChargeResult | undefined>;
@@ -562,29 +683,73 @@ class LocalAccessStore implements AccessStore {
     };
   }
 
-  async createMemberCode(input: CreateMemberCodeRequest) {
+  async createSignupInvitation(input: CreateSignupInvitationRequest) {
     return this.updateState((state) => {
-      let rawCode = createRawMemberCode();
-      for (let attempt = 0; attempt < 10 && this.codeHashExists(state, hashCode(rawCode)); attempt += 1) {
-        rawCode = createRawMemberCode();
+      let rawCode = createRawInviteCode();
+      for (let attempt = 0; attempt < 10 && this.accessHashExists(state, hashCode(rawCode)); attempt += 1) {
+        rawCode = createRawInviteCode();
       }
-      const stored = storedMemberCode({
-        name: input.name,
+      const stored = storedSignupInvitation({
         rawCode,
         credits: input.credits
       });
-      state.codes[stored.id] = stored;
+      state.invitations![stored.id] = stored;
       return {
-        ...publicCode(stored),
+        ...publicInvitation(stored),
         code: rawCode
       };
     });
   }
 
+  async createResetInvitation(memberId: string) {
+    return this.updateState((state) => {
+      const member = state.codes[memberId];
+      if (!member) {
+        return undefined;
+      }
+
+      let rawCode = createRawInviteCode();
+      for (let attempt = 0; attempt < 10 && this.accessHashExists(state, hashCode(rawCode)); attempt += 1) {
+        rawCode = createRawInviteCode();
+      }
+      const stored = storedResetInvitation({ rawCode, member });
+      state.invitations![stored.id] = stored;
+      return {
+        ...publicInvitation(stored),
+        code: rawCode
+      };
+    });
+  }
+
+  async listMemberInvitations() {
+    const state = await this.readState();
+    return Object.values(state.invitations ?? {})
+      .map((invitation) => publicInvitation(invitation, state.codes))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
   async registerMember(input: RegisterMemberRequest) {
     return this.updateState((state) => {
-      const codeHash = hashCode(input.passcode);
-      if (this.codeHashExists(state, codeHash)) {
+      if (!input.inviteCode) {
+        return {
+          ok: false as const,
+          reason: "invalid_invite" as const
+        };
+      }
+
+      const invitation = this.findInvitationByRawCode(state, input.inviteCode);
+      if (!invitation || invitation.type !== "signup" || invitationStatus(invitation) !== "unused") {
+        return {
+          ok: false as const,
+          reason: "invalid_invite" as const
+        };
+      }
+
+      let rawPasscode = createRawMemberCode();
+      for (let attempt = 0; attempt < 10 && this.accessHashExists(state, hashCode(rawPasscode)); attempt += 1) {
+        rawPasscode = createRawMemberCode();
+      }
+      if (this.accessHashExists(state, hashCode(rawPasscode))) {
         return {
           ok: false as const,
           reason: "duplicate" as const
@@ -592,13 +757,55 @@ class LocalAccessStore implements AccessStore {
       }
 
       const stored = storedMemberCode({
-        name: input.name,
-        rawCode: input.passcode
+        name: temporaryMemberName(),
+        rawCode: rawPasscode,
+        credits: invitation.creditBalance
       });
       state.codes[stored.id] = stored;
+      invitation.usedAt = new Date().toISOString();
+      invitation.claimedByMemberId = stored.id;
+      invitation.claimedByMemberName = stored.name;
       return {
         ok: true as const,
-        code: publicCode(stored)
+        code: publicCode(stored),
+        passcode: rawPasscode
+      };
+    });
+  }
+
+  async resetMemberPasscode(input: ResetMemberPasscodeRequest) {
+    return this.updateState((state) => {
+      const invitation = this.findInvitationByRawCode(state, input.inviteCode);
+      if (!invitation || invitation.type !== "reset" || invitationStatus(invitation) !== "unused" || !invitation.memberId) {
+        return {
+          ok: false as const,
+          reason: "invalid_invite" as const
+        };
+      }
+
+      const code = state.codes[invitation.memberId];
+      if (!code) {
+        return {
+          ok: false as const,
+          reason: "not_found" as const
+        };
+      }
+
+      const codeHash = hashCode(input.newPasscode);
+      if (this.codeHashExists(state, codeHash, code.id) || this.invitationHashExists(state, codeHash, invitation.id)) {
+        return {
+          ok: false as const,
+          reason: "duplicate" as const
+        };
+      }
+
+      code.codeHash = codeHash;
+      code.codePreview = codePreview(input.newPasscode);
+      invitation.usedAt = new Date().toISOString();
+      invitation.claimedByMemberId = code.id;
+      return {
+        ok: true as const,
+        code: publicCode(code)
       };
     });
   }
@@ -645,33 +852,6 @@ class LocalAccessStore implements AccessStore {
     });
   }
 
-  async setMemberPasscode(id: string, passcode: string) {
-    return this.updateState((state) => {
-      const code = state.codes[id];
-      if (!code) {
-        return {
-          ok: false as const,
-          reason: "not_found" as const
-        };
-      }
-
-      const codeHash = hashCode(passcode);
-      if (this.codeHashExists(state, codeHash, id)) {
-        return {
-          ok: false as const,
-          reason: "duplicate" as const
-        };
-      }
-
-      code.codeHash = codeHash;
-      code.codePreview = codePreview(passcode);
-      return {
-        ok: true as const,
-        code: publicCode(code)
-      };
-    });
-  }
-
   async changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string) {
     return this.updateState((state) => {
       const code = state.codes[id];
@@ -690,7 +870,7 @@ class LocalAccessStore implements AccessStore {
       }
 
       const newCodeHash = hashCode(newPasscode);
-      if (this.codeHashExists(state, newCodeHash, id)) {
+      if (this.codeHashExists(state, newCodeHash, id) || this.invitationHashExists(state, newCodeHash)) {
         return {
           ok: false as const,
           reason: "duplicate" as const
@@ -699,6 +879,41 @@ class LocalAccessStore implements AccessStore {
 
       code.codeHash = newCodeHash;
       code.codePreview = codePreview(newPasscode);
+      return {
+        ok: true as const,
+        code: publicCode(code)
+      };
+    });
+  }
+
+  async updateMemberProfile(id: string, input: UpdateMemberProfileRequest) {
+    return this.updateState((state) => {
+      const code = state.codes[id];
+      if (!code) {
+        return {
+          ok: false as const,
+          reason: "not_found" as const
+        };
+      }
+
+      const nextName = input.name?.trim();
+      if (nextName) {
+        code.name = memberName(nextName);
+      }
+
+      if (input.newPasscode) {
+        const newCodeHash = hashCode(input.newPasscode);
+        if (this.codeHashExists(state, newCodeHash, id) || this.invitationHashExists(state, newCodeHash)) {
+          return {
+            ok: false as const,
+            reason: "duplicate" as const
+          };
+        }
+
+        code.codeHash = newCodeHash;
+        code.codePreview = codePreview(input.newPasscode);
+      }
+
       return {
         ok: true as const,
         code: publicCode(code)
@@ -832,6 +1047,19 @@ class LocalAccessStore implements AccessStore {
     return Object.values(state.codes).some((item) => item.id !== exceptId && item.codeHash === codeHash);
   }
 
+  private invitationHashExists(state: LocalAccessState, codeHash: string, exceptId?: string) {
+    return Object.values(state.invitations ?? {}).some((item) => item.id !== exceptId && item.codeHash === codeHash);
+  }
+
+  private accessHashExists(state: LocalAccessState, codeHash: string) {
+    return this.codeHashExists(state, codeHash) || this.invitationHashExists(state, codeHash);
+  }
+
+  private findInvitationByRawCode(state: LocalAccessState, code: string) {
+    const codeHash = hashCode(code);
+    return Object.values(state.invitations ?? {}).find((item) => item.codeHash === codeHash);
+  }
+
   private async writeState(state: LocalAccessState) {
     await mkdir(path.dirname(this.statePath), { recursive: true });
     const tempPath = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -882,27 +1110,93 @@ class AzureAccessStore implements AccessStore {
     };
   }
 
-  async createMemberCode(input: CreateMemberCodeRequest) {
+  async createSignupInvitation(input: CreateSignupInvitationRequest) {
     await this.ensureReady();
-    let rawCode = createRawMemberCode();
-    for (let attempt = 0; attempt < 10 && await this.getStoredByCodeHash(hashCode(rawCode)); attempt += 1) {
-      rawCode = createRawMemberCode();
+    let rawCode = createRawInviteCode();
+    for (let attempt = 0; attempt < 10 && await this.accessHashExists(hashCode(rawCode)); attempt += 1) {
+      rawCode = createRawInviteCode();
     }
-    const stored = storedMemberCode({
-      name: input.name,
+    const stored = storedSignupInvitation({
       rawCode,
       credits: input.credits
     });
-    await this.save(stored);
+    await this.saveInvitation(stored);
     return {
-      ...publicCode(stored),
+      ...publicInvitation(stored),
       code: rawCode
     };
   }
 
+  async createResetInvitation(memberId: string) {
+    await this.ensureReady();
+    const member = await this.getStored(memberId);
+    if (!member) {
+      return undefined;
+    }
+
+    let rawCode = createRawInviteCode();
+    for (let attempt = 0; attempt < 10 && await this.accessHashExists(hashCode(rawCode)); attempt += 1) {
+      rawCode = createRawInviteCode();
+    }
+    const stored = storedResetInvitation({ rawCode, member });
+    await this.saveInvitation(stored);
+    return {
+      ...publicInvitation(stored),
+      code: rawCode
+    };
+  }
+
+  async listMemberInvitations() {
+    await this.ensureReady();
+    const invitations: MemberInvitation[] = [];
+    const members: Record<string, StoredMemberCode> = {};
+    const memberEntities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: "PartitionKey eq 'member'"
+      }
+    });
+
+    for await (const entity of memberEntities) {
+      const member = deserialize<StoredMemberCode>(entity);
+      members[member.id] = member;
+    }
+
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${invitationPartitionKey}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      invitations.push(publicInvitation(deserialize<StoredMemberInvitation>(entity), members));
+    }
+
+    return invitations.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
   async registerMember(input: RegisterMemberRequest) {
     await this.ensureReady();
-    if (await this.getStoredByCodeHash(hashCode(input.passcode))) {
+    if (!input.inviteCode) {
+      return {
+        ok: false as const,
+        reason: "invalid_invite" as const
+      };
+    }
+
+    const invitationMatch = await this.getInvitationByCodeHash(hashCode(input.inviteCode));
+    const invitation = invitationMatch?.stored;
+    if (!invitation || invitation.type !== "signup" || invitationStatus(invitation) !== "unused") {
+      return {
+        ok: false as const,
+        reason: "invalid_invite" as const
+      };
+    }
+
+    let rawPasscode = createRawMemberCode();
+    for (let attempt = 0; attempt < 10 && await this.accessHashExists(hashCode(rawPasscode)); attempt += 1) {
+      rawPasscode = createRawMemberCode();
+    }
+    if (await this.accessHashExists(hashCode(rawPasscode))) {
       return {
         ok: false as const,
         reason: "duplicate" as const
@@ -910,10 +1204,57 @@ class AzureAccessStore implements AccessStore {
     }
 
     const stored = storedMemberCode({
-      name: input.name,
-      rawCode: input.passcode
+      name: temporaryMemberName(),
+      rawCode: rawPasscode,
+      credits: invitation.creditBalance
     });
     await this.save(stored);
+    invitation.usedAt = new Date().toISOString();
+    invitation.claimedByMemberId = stored.id;
+    invitation.claimedByMemberName = stored.name;
+    await this.saveInvitation(invitation);
+    return {
+      ok: true as const,
+      code: publicCode(stored),
+      passcode: rawPasscode
+    };
+  }
+
+  async resetMemberPasscode(input: ResetMemberPasscodeRequest) {
+    await this.ensureReady();
+    const invitationMatch = await this.getInvitationByCodeHash(hashCode(input.inviteCode));
+    const invitation = invitationMatch?.stored;
+    if (!invitation || invitation.type !== "reset" || invitationStatus(invitation) !== "unused" || !invitation.memberId) {
+      return {
+        ok: false as const,
+        reason: "invalid_invite" as const
+      };
+    }
+
+    const stored = await this.getStored(invitation.memberId);
+    if (!stored) {
+      return {
+        ok: false as const,
+        reason: "not_found" as const
+      };
+    }
+
+    const codeHash = hashCode(input.newPasscode);
+    const duplicate = await this.getStoredByCodeHash(codeHash);
+    const duplicateInvitation = await this.getInvitationByCodeHash(codeHash);
+    if ((duplicate && duplicate.stored.id !== stored.id) || (duplicateInvitation && duplicateInvitation.stored.id !== invitation.id)) {
+      return {
+        ok: false as const,
+        reason: "duplicate" as const
+      };
+    }
+
+    stored.codeHash = codeHash;
+    stored.codePreview = codePreview(input.newPasscode);
+    invitation.usedAt = new Date().toISOString();
+    invitation.claimedByMemberId = stored.id;
+    await this.save(stored);
+    await this.saveInvitation(invitation);
     return {
       ok: true as const,
       code: publicCode(stored)
@@ -981,34 +1322,6 @@ class AzureAccessStore implements AccessStore {
     };
   }
 
-  async setMemberPasscode(id: string, passcode: string) {
-    await this.ensureReady();
-    const stored = await this.getStored(id);
-    if (!stored) {
-      return {
-        ok: false as const,
-        reason: "not_found" as const
-      };
-    }
-
-    const codeHash = hashCode(passcode);
-    const duplicate = await this.getStoredByCodeHash(codeHash);
-    if (duplicate && duplicate.stored.id !== id) {
-      return {
-        ok: false as const,
-        reason: "duplicate" as const
-      };
-    }
-
-    stored.codeHash = codeHash;
-    stored.codePreview = codePreview(passcode);
-    await this.save(stored);
-    return {
-      ok: true as const,
-      code: publicCode(stored)
-    };
-  }
-
   async changeMemberPasscode(id: string, currentPasscode: string, newPasscode: string) {
     await this.ensureReady();
     const stored = await this.getStored(id);
@@ -1028,7 +1341,8 @@ class AzureAccessStore implements AccessStore {
 
     const newCodeHash = hashCode(newPasscode);
     const duplicate = await this.getStoredByCodeHash(newCodeHash);
-    if (duplicate && duplicate.stored.id !== id) {
+    const duplicateInvitation = await this.getInvitationByCodeHash(newCodeHash);
+    if ((duplicate && duplicate.stored.id !== id) || duplicateInvitation) {
       return {
         ok: false as const,
         reason: "duplicate" as const
@@ -1037,6 +1351,43 @@ class AzureAccessStore implements AccessStore {
 
     stored.codeHash = newCodeHash;
     stored.codePreview = codePreview(newPasscode);
+    await this.save(stored);
+    return {
+      ok: true as const,
+      code: publicCode(stored)
+    };
+  }
+
+  async updateMemberProfile(id: string, input: UpdateMemberProfileRequest) {
+    await this.ensureReady();
+    const stored = await this.getStored(id);
+    if (!stored) {
+      return {
+        ok: false as const,
+        reason: "not_found" as const
+      };
+    }
+
+    const nextName = input.name?.trim();
+    if (nextName) {
+      stored.name = memberName(nextName);
+    }
+
+    if (input.newPasscode) {
+      const newCodeHash = hashCode(input.newPasscode);
+      const duplicate = await this.getStoredByCodeHash(newCodeHash);
+      const duplicateInvitation = await this.getInvitationByCodeHash(newCodeHash);
+      if ((duplicate && duplicate.stored.id !== id) || duplicateInvitation) {
+        return {
+          ok: false as const,
+          reason: "duplicate" as const
+        };
+      }
+
+      stored.codeHash = newCodeHash;
+      stored.codePreview = codePreview(input.newPasscode);
+    }
+
     await this.save(stored);
     return {
       ok: true as const,
@@ -1238,6 +1589,27 @@ class AzureAccessStore implements AccessStore {
     return undefined;
   }
 
+  private async getInvitationByCodeHash(codeHash: string) {
+    const entities = this.table.listEntities<PayloadEntity>({
+      queryOptions: {
+        filter: `PartitionKey eq '${invitationPartitionKey}' and codeHash eq '${codeHash}'`
+      }
+    });
+
+    for await (const entity of entities) {
+      return {
+        id: entity.rowKey,
+        stored: deserialize<StoredMemberInvitation>(entity)
+      };
+    }
+
+    return undefined;
+  }
+
+  private async accessHashExists(codeHash: string) {
+    return Boolean(await this.getStoredByCodeHash(codeHash) || await this.getInvitationByCodeHash(codeHash));
+  }
+
   private async save(code: StoredMemberCode) {
     await this.table.upsertEntity<PayloadEntity>(
       {
@@ -1246,6 +1618,19 @@ class AzureAccessStore implements AccessStore {
         codeHash: code.codeHash,
         status: statusFor(code),
         payload: serialize(code)
+      },
+      "Replace"
+    );
+  }
+
+  private async saveInvitation(invitation: StoredMemberInvitation) {
+    await this.table.upsertEntity<PayloadEntity>(
+      {
+        partitionKey: invitationPartitionKey,
+        rowKey: invitation.id,
+        codeHash: invitation.codeHash,
+        status: invitationStatus(invitation),
+        payload: serialize(invitation)
       },
       "Replace"
     );

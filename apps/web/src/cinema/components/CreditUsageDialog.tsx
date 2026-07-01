@@ -39,6 +39,7 @@ export function CreditUsageDialog({
 }: CreditUsageDialogProps) {
   const entries = usage?.entries ?? [];
   const balance = usage?.member?.credits;
+  const totalSpent = entries.reduce((total, entry) => total + entry.credits, 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -67,27 +68,44 @@ export function CreditUsageDialog({
             No spending yet.
           </div>
         ) : (
-          <div className="max-h-[52vh] overflow-auto rounded border border-slate-800">
-            <div className="grid divide-y divide-slate-800">
-              {entries.map((entry) => (
-                <div key={entry.id} className="grid gap-2 bg-slate-950/50 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-50" title={entry.title}>{entry.title}</p>
-                    <p className="mt-1 truncate font-mono text-xs text-slate-500" title={entry.assetKey}>{entry.assetKey}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {formatDateTime(entry.chargedAt)}
-                      {entry.windowExpiresAt ? ` / free replay until ${formatDateTime(entry.windowExpiresAt)}` : ""}
-                    </p>
+          <div className="grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Spent</p>
+                <p className="mt-1 text-lg font-bold text-slate-50">{balance?.unitSymbol ?? "🍀"} {totalSpent}</p>
+              </div>
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Remaining</p>
+                <p className="mt-1 text-lg font-bold text-emerald-200">{balance?.unitSymbol ?? "🍀"} {balance?.remaining ?? 0}</p>
+              </div>
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Entries</p>
+                <p className="mt-1 text-lg font-bold text-slate-50">{entries.length}</p>
+              </div>
+            </div>
+
+            <div className="max-h-[52vh] overflow-auto rounded border border-slate-800">
+              <div className="grid divide-y divide-slate-800">
+                {entries.map((entry) => (
+                  <div key={entry.id} className="grid gap-2 bg-slate-950/50 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-50" title={entry.title}>{entry.title}</p>
+                      <p className="mt-1 truncate font-mono text-xs text-slate-500" title={entry.assetKey}>{entry.assetKey}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {formatDateTime(entry.chargedAt)}
+                        {entry.windowExpiresAt ? ` / free replay until ${formatDateTime(entry.windowExpiresAt)}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 sm:justify-end">
+                      <Badge variant="secondary">
+                        <Coins className="h-3.5 w-3.5" />
+                        -{entry.credits}
+                      </Badge>
+                      <Badge variant="muted">{creditReasonLabel(entry.reason)}</Badge>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 sm:justify-end">
-                    <Badge variant="secondary">
-                      <Coins className="h-3.5 w-3.5" />
-                      -{entry.credits}
-                    </Badge>
-                    <Badge variant="muted">{creditReasonLabel(entry.reason)}</Badge>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         )}

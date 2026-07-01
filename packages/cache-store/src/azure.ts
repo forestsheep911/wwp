@@ -53,6 +53,10 @@ const defaultUploadBlockBytes = 8 * 1024 * 1024;
 const uploadProgressStart = 24;
 const uploadProgressEnd = 90;
 const playbackCheckProgress = 96;
+const assetLookupCacheTtlMs = Math.max(
+  0,
+  Number(process.env.CACHE_ASSET_LOOKUP_CACHE_TTL_SECONDS ?? 30)
+) * 1000;
 
 interface AzureStoreConfig {
   accountName: string;
@@ -136,6 +140,10 @@ function serialize<T>(payload: T) {
 
 function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
   return JSON.parse(entity.payload) as T;
+}
+
+function cloneAsset(asset: CacheAsset) {
+  return JSON.parse(JSON.stringify(asset)) as CacheAsset;
 }
 
 function mediaExtension(sourceUrl?: string) {
@@ -449,6 +457,12 @@ export class AzureCacheStore implements CacheStore {
   private readonly sharedKeyCredential?: StorageSharedKeyCredential;
   private readonly credential = new DefaultAzureCredential();
   private ready?: Promise<void>;
+  private readonly assetLookupCache = new Map<string, { expiresAt: number; asset?: CacheAsset }>();
+  private userDelegationKeyCache?: {
+    key: UserDelegationKey;
+    startsOn: Date;
+    expiresOn: Date;
+  };
 
   constructor() {
     if (this.config.connectionString) {
@@ -544,14 +558,22 @@ export class AzureCacheStore implements CacheStore {
 
   async getAsset(assetKey: string) {
     await this.ensureReady();
+    const cached = this.assetLookupCache.get(assetKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.asset ? cloneAsset(cached.asset) : undefined;
+    }
+
     try {
       const entity = await this.assetTable.getEntity<PayloadEntity>(
         "asset",
         encodeRowKey(assetKey)
       );
-      return deserialize<CacheAsset>(entity);
+      const asset = deserialize<CacheAsset>(entity);
+      this.cacheAssetLookup(assetKey, asset);
+      return cloneAsset(asset);
     } catch (error) {
       if (isNotFound(error)) {
+        this.cacheAssetLookup(assetKey, undefined);
         return undefined;
       }
       throw error;
@@ -763,6 +785,7 @@ export class AzureCacheStore implements CacheStore {
 
   async saveAsset(asset: CacheAsset) {
     await this.ensureReady();
+    this.cacheAssetLookup(asset.assetKey, asset);
     await this.assetTable.upsertEntity<PayloadEntity>(
       {
         partitionKey: "asset",
@@ -865,6 +888,7 @@ export class AzureCacheStore implements CacheStore {
       throw error;
     }
 
+    const existingAsset = await this.getAsset(job.assetKey);
     const cachedAt = new Date();
     const asset: CacheAsset = {
       assetKey: job.assetKey,
@@ -876,6 +900,8 @@ export class AzureCacheStore implements CacheStore {
       expiresAt: addDays(cachedAt, cacheAssetTtlDays()).toISOString(),
       cachedAt: cachedAt.toISOString(),
       lastRequestedAt: job.createdAt,
+      requestedByMemberId: existingAsset?.requestedByMemberId,
+      requestedByMemberName: existingAsset?.requestedByMemberName,
       media
     };
 
@@ -1341,6 +1367,7 @@ export class AzureCacheStore implements CacheStore {
 
     try {
       await this.assetTable.deleteEntity("asset", rowKey);
+      this.assetLookupCache.delete(asset.assetKey);
       result.deletedAsset = true;
       logInfo("cache.delete.asset_deleted", {
         assetKey: asset.assetKey,
@@ -1383,6 +1410,18 @@ export class AzureCacheStore implements CacheStore {
     }
   }
 
+  private cacheAssetLookup(assetKey: string, asset: CacheAsset | undefined) {
+    if (assetLookupCacheTtlMs <= 0) {
+      this.assetLookupCache.delete(assetKey);
+      return;
+    }
+
+    this.assetLookupCache.set(assetKey, {
+      expiresAt: Date.now() + assetLookupCacheTtlMs,
+      asset: asset ? cloneAsset(asset) : undefined
+    });
+  }
+
   private async createBlobReadUrl(blobName: string, expiresOn: Date) {
     const blockBlob = this.containerClient.getBlockBlobClient(blobName);
     const startsOn = new Date(Date.now() - 5 * 60 * 1000);
@@ -1420,6 +1459,28 @@ export class AzureCacheStore implements CacheStore {
   }
 
   private async getUserDelegationKey(startsOn: Date, expiresOn: Date): Promise<UserDelegationKey> {
-    return this.blobService.getUserDelegationKey(startsOn, expiresOn);
+    const cached = this.userDelegationKeyCache;
+    const refreshBeforeMs = 5 * 60 * 1000;
+    if (
+      cached &&
+      cached.startsOn.getTime() <= startsOn.getTime() &&
+      cached.expiresOn.getTime() >= expiresOn.getTime() + refreshBeforeMs
+    ) {
+      return cached.key;
+    }
+
+    const now = Date.now();
+    const keyStartsOn = new Date(now - 5 * 60 * 1000);
+    const minimumKeyExpiry = new Date(now + 25 * 60 * 60 * 1000);
+    const keyExpiresOn = expiresOn.getTime() > minimumKeyExpiry.getTime()
+      ? expiresOn
+      : minimumKeyExpiry;
+    const key = await this.blobService.getUserDelegationKey(keyStartsOn, keyExpiresOn);
+    this.userDelegationKeyCache = {
+      key,
+      startsOn: keyStartsOn,
+      expiresOn: keyExpiresOn
+    };
+    return key;
   }
 }

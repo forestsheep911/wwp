@@ -1,5 +1,5 @@
 import { Database, Play } from "lucide-react";
-import type { SearchResult } from "@wwpdw/shared";
+import type { CreditPolicyResponse, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -11,13 +11,15 @@ import {
   jobStatusLabel,
   jobVariant
 } from "../format";
-import type { TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 
 export function StatusPanel({
+  creditPolicy,
   items,
   onOpenPlayer
 }: {
+  creditPolicy: CreditPolicyResponse;
   items: TrackedCacheItem[];
   onOpenPlayer: (assetKey: string, result?: SearchResult) => void;
 }) {
@@ -68,7 +70,7 @@ export function StatusPanel({
             {asset?.status === "ready" ? (
               <Button type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
-                播放
+                {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
               </Button>
             ) : null}
           </div>

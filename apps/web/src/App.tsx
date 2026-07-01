@@ -6,6 +6,8 @@ import type {
   AuthCheckResponse,
   CacheAsset,
   CacheJob,
+  CreditPolicyResponse,
+  CreditPreviewResponse,
   MediaVariant,
   MemberCreditUsageResponse,
   MovieRequestEntry,
@@ -17,9 +19,9 @@ import {
   adjustMemberCredits as adjustMemberCreditsApi,
   browseAssets,
   checkAccess,
-  changeMemberPasscode,
   clearAccessKey,
-  createMemberAccessCode,
+  createResetInvitation,
+  createSignupInvitation,
   createMovieRequest,
   deleteCachedAsset,
   deleteCacheJob,
@@ -29,37 +31,42 @@ import {
   getAccessKey,
   getCacheAsset,
   getCacheStatus,
+  getCreditPolicy,
   getPlayback,
   isUnauthorizedError,
   listCachedAssets,
   listCacheJobs,
+  listMemberInvitations,
   listLoginAudit,
   listMemberCodes,
   listMemberCreditUsage,
   listMovieRequests,
   listOwnMovieRequests,
   listOwnCreditUsage,
+  previewCredit,
   revokeMemberAccessCode,
   retryCacheJob,
   searchAssets,
   setMemberCredits as setMemberCreditsApi,
-  setMemberPasscode as setMemberPasscodeApi,
+  updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
   setAccessKey
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
+import { CacheTasksPanel } from "./cinema/components/CacheTasksPanel";
 import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
+import { CreditConfirmDialog } from "./cinema/components/CreditConfirmDialog";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
 import { HelpPanel } from "./cinema/components/HelpPanel";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { Player } from "./cinema/components/Player";
-import { PasscodeDialog } from "./cinema/components/PasscodeDialog";
+import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
-import { StatusPanel } from "./cinema/components/StatusPanel";
+import { TaskDock } from "./cinema/components/TaskDock";
 import { cacheErrorLabel } from "./cinema/format";
 import { historyStorageKey, readJsonStorage, writeJsonStorage } from "./cinema/storage";
 import type {
@@ -68,13 +75,16 @@ import type {
   HistoryAssetStatusMap,
   LibraryViewMode,
   ManagedMemberCode,
+  ManagedMemberInvitation,
   PlaybackHistoryEntry,
   ResultWithCache,
   TrackedCacheItem
 } from "./cinema/types";
+import { defaultCreditPolicy } from "./cinema/types";
 
 interface CinemaRoute {
   tab: AppTab;
+  browseChannel: BrowseChannel;
   query: string;
   playerAssetKey?: string;
 }
@@ -84,24 +94,46 @@ interface CinemaHistoryState {
   route: CinemaRoute;
 }
 
+type PendingCreditAction =
+  | {
+    kind: "cache";
+    target: SearchResult;
+    after?: "historyRecache";
+  }
+  | {
+    kind: "playback";
+    assetKey: string;
+    result?: SearchResult;
+    options?: { syncHistory?: boolean };
+  };
+
 const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks"];
+const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
+const browsePageLimit = 48;
 
 function isAppTab(value: string | null): value is AppTab {
   return Boolean(value && routeTabs.includes(value as AppTab));
+}
+
+function isBrowseChannel(value: string | null): value is BrowseChannel {
+  return Boolean(value && browseChannels.includes(value as BrowseChannel));
 }
 
 function routeFromLocation(): CinemaRoute {
   if (typeof window === "undefined") {
     return {
       tab: "library",
+      browseChannel: "recommended",
       query: ""
     };
   }
 
   const params = new URLSearchParams(window.location.search);
   const tab = isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
+  const browseChannel = isBrowseChannel(params.get("channel")) ? params.get("channel") as BrowseChannel : "recommended";
   return {
     tab,
+    browseChannel,
     query: params.get("q") ?? "",
     playerAssetKey: params.get("play") ?? undefined
   };
@@ -109,9 +141,22 @@ function routeFromLocation(): CinemaRoute {
 
 function historyStateRoute(state: unknown): CinemaRoute | undefined {
   const candidate = state as Partial<CinemaHistoryState> | undefined;
-  return candidate?.app === "wwpdw-cinema" && candidate.route
-    ? candidate.route
-    : undefined;
+  const route = candidate?.route as Partial<CinemaRoute> | undefined;
+  if (candidate?.app !== "wwpdw-cinema" || !route || !route.tab) {
+    return undefined;
+  }
+
+  const rawBrowseChannel = route.browseChannel ?? null;
+  const browseChannel: BrowseChannel = isBrowseChannel(rawBrowseChannel)
+    ? rawBrowseChannel
+    : "recommended";
+
+  return {
+    tab: route.tab,
+    browseChannel,
+    query: route.query ?? "",
+    playerAssetKey: route.playerAssetKey
+  };
 }
 
 function routeUrl(route: CinemaRoute) {
@@ -120,6 +165,9 @@ function routeUrl(route: CinemaRoute) {
   url.hash = "";
   if (route.tab !== "library") {
     url.searchParams.set("tab", route.tab);
+  }
+  if (route.tab === "library" && route.browseChannel !== "recommended") {
+    url.searchParams.set("channel", route.browseChannel);
   }
   if (route.query.trim()) {
     url.searchParams.set("q", route.query.trim());
@@ -134,6 +182,7 @@ function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
   return Boolean(
     left &&
       left.tab === right.tab &&
+      left.browseChannel === right.browseChannel &&
       left.query === right.query &&
       left.playerAssetKey === right.playerAssetKey
   );
@@ -145,30 +194,45 @@ export default function App() {
   const [role, setRole] = useState<AccessRole | undefined>();
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
-  const [browseChannel, setBrowseChannel] = useState<BrowseChannel>("recommended");
+  const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [browseResults, setBrowseResults] = useState<ResultWithCache[]>([]);
-  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(
+    () => initialRoute.tab === "library" && initialRoute.query.trim().length === 0
+  );
+  const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
+  const [browseHasMore, setBrowseHasMore] = useState(false);
+  const [browseNextOffset, setBrowseNextOffset] = useState(0);
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [passcodeOpen, setPasscodeOpen] = useState(false);
-  const [passcodeLoading, setPasscodeLoading] = useState(false);
-  const [passcodeError, setPasscodeError] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const [creditUsageOpen, setCreditUsageOpen] = useState(false);
   const [creditUsageLoading, setCreditUsageLoading] = useState(false);
   const [creditUsageError, setCreditUsageError] = useState("");
   const [creditUsage, setCreditUsage] = useState<MemberCreditUsageResponse | undefined>();
+  const [creditConfirmOpen, setCreditConfirmOpen] = useState(false);
+  const [creditConfirmLoading, setCreditConfirmLoading] = useState(false);
+  const [creditPreview, setCreditPreview] = useState<CreditPreviewResponse | undefined>();
+  const [pendingCreditAction, setPendingCreditAction] = useState<PendingCreditAction | undefined>();
+  const [creditPolicy, setCreditPolicy] = useState<CreditPolicyResponse>(defaultCreditPolicy);
   const [movieRequestOpen, setMovieRequestOpen] = useState(false);
   const [movieRequestText, setMovieRequestText] = useState("");
   const [movieRequestLoading, setMovieRequestLoading] = useState(false);
   const [movieRequestError, setMovieRequestError] = useState("");
   const [ownMovieRequests, setOwnMovieRequests] = useState<MovieRequestEntry[]>([]);
+  const [ownMovieRequestsLoaded, setOwnMovieRequestsLoaded] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
+  const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
+  const [searchDialogError, setSearchDialogError] = useState("");
+  const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<PlaybackHistoryEntry[]>(() => readJsonStorage(historyStorageKey, []));
@@ -180,12 +244,11 @@ export default function App() {
   const [adminLoading, setAdminLoading] = useState(false);
   const [cacheJobsLoading, setCacheJobsLoading] = useState(false);
   const [adminKeyInput, setAdminKeyInput] = useState("");
-  const [memberName, setMemberName] = useState("");
   const [memberCredits, setMemberCredits] = useState(20);
   const [memberBulkCredits, setMemberBulkCredits] = useState(1);
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
-  const [memberPasscodeEdits, setMemberPasscodeEdits] = useState<Record<string, string>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
+  const [memberInvitations, setMemberInvitations] = useState<ManagedMemberInvitation[]>([]);
   const [cacheJobs, setCacheJobs] = useState<AdminCacheJobEntry[]>([]);
   const [loginAudit, setLoginAudit] = useState<AdminLoginAuditEntry[]>([]);
   const [loginAuditLoading, setLoginAuditLoading] = useState(false);
@@ -195,6 +258,8 @@ export default function App() {
   const loginAuditLimit = 100;
   const movieRequestLimit = 100;
   const historyInitializedRef = useRef(false);
+  const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
+  const searchPreviewRequestRef = useRef(0);
 
   const trackedPollKey = useMemo(
     () =>
@@ -245,6 +310,7 @@ export default function App() {
   function routeForCurrentView(overrides: Partial<CinemaRoute> = {}): CinemaRoute {
     return {
       tab: activeTab,
+      browseChannel,
       query,
       playerAssetKey: playback?.assetKey,
       ...overrides
@@ -270,6 +336,7 @@ export default function App() {
     setActiveTab("library");
     writeRoute({
       tab: "library",
+      browseChannel: nextChannel,
       query: "",
       playerAssetKey: undefined
     }, "push");
@@ -349,6 +416,7 @@ export default function App() {
     try {
       const response = await searchAssets(normalizedQuery);
       setResults(response.results);
+      setFocusedLibraryAssetKey(undefined);
       if (options.activateLibrary) {
         setActiveTab("library");
       }
@@ -367,6 +435,7 @@ export default function App() {
     await refreshResults({ showLoading: true, activateLibrary: true }, normalizedQuery);
     writeRoute({
       tab: "library",
+      browseChannel,
       query: normalizedQuery
     }, "push");
   }
@@ -378,18 +447,144 @@ export default function App() {
     }
   }
 
+  function openSearchDialog() {
+    setSearchDialogError("");
+    if (query.trim() && results.length > 0) {
+      setSearchPreviewResults(results);
+    }
+    setSearchOpen(true);
+  }
+
+  function openSearchResult(result: ResultWithCache) {
+    const normalizedQuery = query.trim() || result.title;
+    setError("");
+    setSearchDialogError("");
+    setResults((currentResults) => {
+      const sourceResults = searchPreviewResults.length > 0 ? searchPreviewResults : currentResults;
+      return sourceResults.some((item) => item.assetKey === result.assetKey)
+        ? sourceResults
+        : [result, ...sourceResults];
+    });
+    setQuery(normalizedQuery);
+    setActiveTab("library");
+    setPlayback(undefined);
+    setFocusedLibraryAssetKey(result.assetKey);
+    setSearchOpen(false);
+    writeRoute({
+      tab: "library",
+      browseChannel,
+      query: normalizedQuery,
+      playerAssetKey: undefined
+    }, "push");
+  }
+
   async function refreshResultsInBackground() {
     await refreshResults({ showLoading: false, activateLibrary: false });
   }
 
+  function updateCurrentMemberCreditsFromPreview(preview: CreditPreviewResponse) {
+    if (preview.remaining === undefined) {
+      return;
+    }
+
+    updateCurrentMemberCredits({
+      unit: "clover",
+      unitSymbol: preview.unitSymbol,
+      remaining: preview.remaining
+    });
+  }
+
+  async function previewCreditAction(action: PendingCreditAction) {
+    const request = action.kind === "cache"
+      ? {
+        action: "cache" as const,
+        assetKey: action.target.assetKey,
+        title: action.target.title,
+        result: action.target
+      }
+      : {
+        action: "playback" as const,
+        assetKey: action.assetKey
+      };
+
+    const preview = await previewCredit(request);
+    updateCurrentMemberCreditsFromPreview(preview);
+    return preview;
+  }
+
+  function closeCreditConfirm() {
+    if (creditConfirmLoading) {
+      return;
+    }
+
+    setCreditConfirmOpen(false);
+    setCreditPreview(undefined);
+    setPendingCreditAction(undefined);
+  }
+
+  async function requestCreditAction(action: PendingCreditAction) {
+    setError("");
+    try {
+      const preview = await previewCreditAction(action);
+      setPendingCreditAction(action);
+      setCreditPreview(preview);
+      setCreditConfirmOpen(true);
+    } catch (previewError) {
+      handleRequestError(previewError, "Could not check credit cost.");
+    }
+  }
+
+  async function confirmCreditAction() {
+    if (!pendingCreditAction) {
+      return;
+    }
+
+    setCreditConfirmLoading(true);
+    try {
+      await executeCreditAction(pendingCreditAction);
+      setCreditConfirmOpen(false);
+      setCreditPreview(undefined);
+      setPendingCreditAction(undefined);
+    } catch (confirmError) {
+      handleRequestError(confirmError, "Credit action failed.");
+    } finally {
+      setCreditConfirmLoading(false);
+    }
+  }
+
+  async function executeCreditAction(action: PendingCreditAction) {
+    if (action.kind === "cache") {
+      await executeCache(action.target, action.after);
+      return;
+    }
+
+    await executeOpenPlayer(action.assetKey, action.result, action.options);
+  }
+
   async function selectResult(result: ResultWithCache, variant: MediaVariant) {
+    const target = variantToResult(result, variant);
+    if (variant.cache?.status === "ready") {
+      await requestCreditAction({
+        kind: "playback",
+        assetKey: variant.assetKey,
+        result: target
+      });
+      return;
+    }
+
+    await requestCreditAction({
+      kind: "cache",
+      target
+    });
+  }
+
+  async function executeCache(target: SearchResult, after?: "historyRecache") {
     setError("");
     setPlayback(undefined);
     setCacheRequestAssetKeys((currentKeys) => (
-      currentKeys.includes(variant.assetKey) ? currentKeys : [...currentKeys, variant.assetKey]
+      currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
     try {
-      const target = variantToResult(result, variant);
       const response = await ensureCache(target);
       updateCurrentMemberCredits(response.memberCredits);
       setJob(response.job);
@@ -403,10 +598,14 @@ export default function App() {
         await openPlayer(response.asset.assetKey, target);
       }
       await refreshResultsInBackground();
+      if (after === "historyRecache") {
+        navigateToTab("library");
+        await refreshHistoryAssetStatus();
+      }
     } catch (cacheError) {
       handleRequestError(cacheError, "Cache request failed.");
     } finally {
-      setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== variant.assetKey));
+      setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
     }
   }
 
@@ -427,6 +626,23 @@ export default function App() {
   }
 
   async function openPlayer(
+    assetKey = asset?.assetKey,
+    result?: SearchResult,
+    options: { syncHistory?: boolean } = {}
+  ) {
+    if (!assetKey) {
+      return;
+    }
+
+    await requestCreditAction({
+      kind: "playback",
+      assetKey,
+      result,
+      options
+    });
+  }
+
+  async function executeOpenPlayer(
     assetKey = asset?.assetKey,
     result?: SearchResult,
     options: { syncHistory?: boolean } = {}
@@ -492,15 +708,38 @@ export default function App() {
     }
   }
 
-  async function refreshBrowseAssets() {
-    setBrowseLoading(true);
+  async function refreshBrowseAssets(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    if (append) {
+      if (browseLoadingMore || !browseHasMore) {
+        return;
+      }
+      setBrowseLoadingMore(true);
+    } else {
+      setBrowseLoading(true);
+    }
+
     try {
-      const response = await browseAssets(60);
-      setBrowseResults(response.results);
+      const response = await browseAssets(browsePageLimit, append ? browseNextOffset : 0);
+      setBrowseResults((currentResults) => {
+        if (!append) {
+          return response.results;
+        }
+
+        const currentKeys = new Set(currentResults.map((result) => result.assetKey));
+        const nextResults = response.results.filter((result) => !currentKeys.has(result.assetKey));
+        return [...currentResults, ...nextResults];
+      });
+      setBrowseHasMore(Boolean(response.hasMore));
+      setBrowseNextOffset(response.nextOffset ?? 0);
     } catch (browseError) {
       handleRequestError(browseError, "Could not load browse titles.");
     } finally {
-      setBrowseLoading(false);
+      if (append) {
+        setBrowseLoadingMore(false);
+      } else {
+        setBrowseLoading(false);
+      }
     }
   }
 
@@ -510,28 +749,11 @@ export default function App() {
       return;
     }
 
-    setError("");
-    setPlayback(undefined);
-    setCacheRequestAssetKeys((currentKeys) => (
-      currentKeys.includes(entry.assetKey) ? currentKeys : [...currentKeys, entry.assetKey]
-    ));
-    try {
-      const response = await ensureCache(entry.result);
-      updateCurrentMemberCredits(response.memberCredits);
-      setJob(response.job);
-      setAsset(response.asset);
-      upsertTrackedItem({
-        job: response.job,
-        asset: response.asset,
-        result: entry.result
-      });
-      navigateToTab("library");
-      await refreshHistoryAssetStatus();
-    } catch (cacheError) {
-      handleRequestError(cacheError, "Cache request failed.");
-    } finally {
-      setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== entry.assetKey));
-    }
+    await requestCreditAction({
+      kind: "cache",
+      target: entry.result,
+      after: "historyRecache"
+    });
   }
 
   function applyAuth(auth: AuthCheckResponse) {
@@ -561,11 +783,21 @@ export default function App() {
     }
 
     try {
-      const response = await listMemberCodes();
-      setMemberCodes(response.codes);
+      const [codesResponse, invitationsResponse] = await Promise.all([
+        listMemberCodes(),
+        listMemberInvitations()
+      ]);
+      setMemberCodes(codesResponse.codes);
+      setMemberInvitations((currentInvitations) => invitationsResponse.invitations.map((invitation) => {
+        const currentInvitation = currentInvitations.find((item) => item.id === invitation.id);
+        return {
+          ...invitation,
+          code: currentInvitation?.code
+        };
+      }));
       setAdminError("");
     } catch (adminListError) {
-      setAdminError(errorMessage(adminListError, "Could not load member codes."));
+      setAdminError(errorMessage(adminListError, "Could not load member access."));
     }
   }
 
@@ -713,8 +945,12 @@ export default function App() {
 
       applyAuth(auth);
       setAdminKeyInput("");
-      const response = await listMemberCodes();
-      setMemberCodes(response.codes);
+      const [codesResponse, invitationsResponse] = await Promise.all([
+        listMemberCodes(),
+        listMemberInvitations()
+      ]);
+      setMemberCodes(codesResponse.codes);
+      setMemberInvitations(invitationsResponse.invitations);
       await refreshCachedAssets();
       try {
         const jobsResponse = await listCacheJobs(adminCacheJobLimit);
@@ -748,22 +984,20 @@ export default function App() {
     }
   }
 
-  async function generateMemberCode() {
+  async function generateSignupInvitation() {
     setAdminLoading(true);
     setAdminError("");
     try {
-      const response = await createMemberAccessCode({
-        name: memberName.trim() || "Family member",
+      const response = await createSignupInvitation({
         credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20
       });
-      setMemberCodes((currentCodes) => [
-        response.code,
-        ...currentCodes.filter((code) => code.id !== response.code.id)
+      setMemberInvitations((currentInvitations) => [
+        response.invitation,
+        ...currentInvitations.filter((invitation) => invitation.id !== response.invitation.id)
       ]);
-      setMemberName("");
       setMemberCredits(20);
     } catch (generateError) {
-      setAdminError(errorMessage(generateError, "Could not generate member code."));
+      setAdminError(errorMessage(generateError, "Could not generate invitation."));
     } finally {
       setAdminLoading(false);
     }
@@ -772,13 +1006,6 @@ export default function App() {
   function setMemberCreditEdit(id: string, value: number) {
     setMemberCreditEdits((currentCredits) => ({
       ...currentCredits,
-      [id]: value
-    }));
-  }
-
-  function setMemberPasscodeEdit(id: string, value: string) {
-    setMemberPasscodeEdits((currentPasscodes) => ({
-      ...currentPasscodes,
       [id]: value
     }));
   }
@@ -834,25 +1061,17 @@ export default function App() {
     }
   }
 
-  async function updateMemberPasscode(id: string) {
-    const passcode = memberPasscodeEdits[id]?.trim() ?? "";
-    if (!passcode) {
-      setAdminError("Enter a new passcode.");
-      return;
-    }
-
+  async function generateResetInvitation(id: string) {
     setAdminLoading(true);
     setAdminError("");
     try {
-      const response = await setMemberPasscodeApi(id, { passcode });
-      setMemberCodes((currentCodes) => currentCodes.map((code) => (
-        code.id === id
-          ? { ...response.code, code: passcode }
-          : code
-      )));
-      setMemberPasscodeEdit(id, "");
+      const response = await createResetInvitation(id);
+      setMemberInvitations((currentInvitations) => [
+        response.invitation,
+        ...currentInvitations.filter((invitation) => invitation.id !== response.invitation.id)
+      ]);
     } catch (passcodeUpdateError) {
-      setAdminError(errorMessage(passcodeUpdateError, "Could not update passcode."));
+      setAdminError(errorMessage(passcodeUpdateError, "Could not create reset invitation."));
     } finally {
       setAdminLoading(false);
     }
@@ -913,7 +1132,21 @@ export default function App() {
   }
 
   async function refreshOwnMovieRequests(showLoading = false) {
-    if (role !== "member") {
+    if (role !== "member" && role !== "admin") {
+      return;
+    }
+
+    if (ownMovieRequestsRefreshRef.current) {
+      if (showLoading && !ownMovieRequestsLoaded) {
+        setMovieRequestLoading(true);
+      }
+      try {
+        await ownMovieRequestsRefreshRef.current;
+      } finally {
+        if (showLoading) {
+          setMovieRequestLoading(false);
+        }
+      }
       return;
     }
 
@@ -921,16 +1154,26 @@ export default function App() {
       setMovieRequestLoading(true);
     }
     setMovieRequestError("");
-    try {
+
+    const refreshPromise = (async () => {
       const response = await listOwnMovieRequests(movieRequestLimit);
       setOwnMovieRequests(response.requests);
+      setOwnMovieRequestsLoaded(true);
+    })();
+    ownMovieRequestsRefreshRef.current = refreshPromise;
+
+    try {
+      await refreshPromise;
     } catch (requestError) {
       if (isUnauthorizedError(requestError)) {
-        handleRequestError(requestError, "Could not load movie requests.");
+        handleRequestError(requestError, "Could not load requests.");
         return;
       }
-      setMovieRequestError(errorMessage(requestError, "Could not load movie requests."));
+      if (showLoading || movieRequestOpen) {
+        setMovieRequestError(errorMessage(requestError, "Could not load requests."));
+      }
     } finally {
+      ownMovieRequestsRefreshRef.current = undefined;
       if (showLoading) {
         setMovieRequestLoading(false);
       }
@@ -939,7 +1182,7 @@ export default function App() {
 
   function openMovieRequestDialog() {
     setMovieRequestOpen(true);
-    void refreshOwnMovieRequests(true);
+    void refreshOwnMovieRequests(!ownMovieRequestsLoaded);
   }
 
   async function submitMovieRequest(event: FormEvent<HTMLFormElement>) {
@@ -958,13 +1201,14 @@ export default function App() {
         response.request,
         ...currentRequests.filter((request) => request.id !== response.request.id)
       ]);
+      setOwnMovieRequestsLoaded(true);
       setMovieRequestText("");
     } catch (requestError) {
       if (isUnauthorizedError(requestError)) {
-        handleRequestError(requestError, "Could not submit movie request.");
+        handleRequestError(requestError, "Could not submit request.");
         return;
       }
-      setMovieRequestError(errorMessage(requestError, "Could not submit movie request."));
+      setMovieRequestError(errorMessage(requestError, "Could not submit request."));
     } finally {
       setMovieRequestLoading(false);
     }
@@ -994,25 +1238,27 @@ export default function App() {
     }
   }
 
-  async function changeOwnPasscode(currentPasscode: string, newPasscode: string) {
-    setPasscodeLoading(true);
-    setPasscodeError("");
+  async function saveOwnProfile(name: string, newPasscode?: string) {
+    setProfileLoading(true);
+    setProfileError("");
     try {
-      const response = await changeMemberPasscode({
-        currentPasscode,
+      const response = await updateMemberProfile({
+        name,
         newPasscode
       });
-      setAccessKey(newPasscode);
+      if (newPasscode) {
+        setAccessKey(newPasscode);
+      }
       setMember({
         id: response.code.id,
         name: response.code.name,
         credits: response.code.credits
       });
-      setPasscodeOpen(false);
-    } catch (changeError) {
-      setPasscodeError(errorMessage(changeError, "Could not change passcode."));
+      setProfileOpen(false);
+    } catch (profileUpdateError) {
+      setProfileError(errorMessage(profileUpdateError, "Could not update profile."));
     } finally {
-      setPasscodeLoading(false);
+      setProfileLoading(false);
     }
   }
 
@@ -1021,15 +1267,20 @@ export default function App() {
     setUnlocked(false);
     setRole(undefined);
     setMember(undefined);
-    setPasscodeOpen(false);
-    setPasscodeError("");
+    setProfileOpen(false);
+    setProfileError("");
     setCreditUsageOpen(false);
     setCreditUsageError("");
     setCreditUsage(undefined);
+    setCreditConfirmOpen(false);
+    setCreditConfirmLoading(false);
+    setCreditPreview(undefined);
+    setPendingCreditAction(undefined);
     setMovieRequestOpen(false);
     setMovieRequestText("");
     setMovieRequestError("");
     setOwnMovieRequests([]);
+    setOwnMovieRequestsLoaded(false);
     setAdminUnlocked(false);
     setActiveTab("library");
     setBrowseChannel("recommended");
@@ -1037,11 +1288,14 @@ export default function App() {
     setResults([]);
     setBrowseResults([]);
     setBrowseLoading(false);
+    setBrowseLoadingMore(false);
+    setBrowseHasMore(false);
+    setBrowseNextOffset(0);
     setPlayback(undefined);
     setJob(undefined);
     setAsset(undefined);
     setMemberCodes([]);
-    setMemberPasscodeEdits({});
+    setMemberInvitations([]);
     setMemberBulkCredits(1);
     setCacheJobs([]);
     setLoginAudit([]);
@@ -1052,6 +1306,7 @@ export default function App() {
     historyInitializedRef.current = false;
     writeRoute({
       tab: "library",
+      browseChannel: "recommended",
       query: ""
     }, "replace");
   }
@@ -1064,12 +1319,72 @@ export default function App() {
     function handleSearchShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
+        openSearchDialog();
       }
     }
 
     window.addEventListener("keydown", handleSearchShortcut);
     return () => window.removeEventListener("keydown", handleSearchShortcut);
+  }, [unlocked]);
+
+  useEffect(() => {
+    if (!searchOpen) {
+      searchPreviewRequestRef.current += 1;
+      setSearchDialogError("");
+      setSearchPreviewLoading(false);
+      return;
+    }
+
+    const normalizedQuery = query.trim();
+    const requestId = searchPreviewRequestRef.current + 1;
+    searchPreviewRequestRef.current = requestId;
+
+    if (!normalizedQuery) {
+      setSearchPreviewResults([]);
+      setSearchDialogError("");
+      setSearchPreviewLoading(false);
+      return;
+    }
+
+    setSearchDialogError("");
+    setSearchPreviewLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await searchAssets(normalizedQuery);
+        if (searchPreviewRequestRef.current !== requestId) {
+          return;
+        }
+        setSearchPreviewResults(response.results);
+      } catch (previewError) {
+        if (searchPreviewRequestRef.current !== requestId) {
+          return;
+        }
+        if (isUnauthorizedError(previewError)) {
+          handleRequestError(previewError, "Search failed.");
+          return;
+        }
+        setSearchDialogError(cacheErrorLabel(errorMessage(previewError, "Search failed.")));
+        setSearchPreviewResults([]);
+      } finally {
+        if (searchPreviewRequestRef.current === requestId) {
+          setSearchPreviewLoading(false);
+        }
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [query, searchOpen]);
+
+  useEffect(() => {
+    if (!unlocked) {
+      return;
+    }
+
+    getCreditPolicy()
+      .then(setCreditPolicy)
+      .catch(() => {
+        setCreditPolicy(defaultCreditPolicy);
+      });
   }, [unlocked]);
 
   useEffect(() => {
@@ -1138,10 +1453,12 @@ export default function App() {
     historyInitializedRef.current = true;
     const initialPermittedRoute = permittedRoute({
       tab: activeTab,
+      browseChannel: initialRoute.browseChannel,
       query,
       playerAssetKey: initialRoute.playerAssetKey
     });
     setActiveTab(initialPermittedRoute.tab);
+    setBrowseChannel(initialPermittedRoute.browseChannel);
     setQuery(initialPermittedRoute.query);
     writeRoute(initialPermittedRoute, "replace");
 
@@ -1166,6 +1483,7 @@ export default function App() {
 
       setError("");
       setActiveTab(nextRoute.tab);
+      setBrowseChannel(nextRoute.browseChannel);
       setQuery(nextRoute.query);
 
       if (!nextRoute.playerAssetKey) {
@@ -1223,10 +1541,16 @@ export default function App() {
   }, [activeTab, history.length]);
 
   useEffect(() => {
-    if (activeTab === "cached") {
+    if (activeTab === "cached" || activeTab === "tasks") {
       void refreshCachedAssets();
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if ((role === "member" || role === "admin") && !ownMovieRequestsLoaded) {
+      void refreshOwnMovieRequests(false);
+    }
+  }, [role, ownMovieRequestsLoaded]);
 
   useEffect(() => {
     if (activeTab === "library" && cachedAssets.length === 0 && !cachedAssetsLoading) {
@@ -1235,15 +1559,18 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === "library" && query.trim().length === 0 && browseResults.length === 0 && !browseLoading) {
+    if (activeTab === "library" && query.trim().length === 0 && browseResults.length === 0) {
       void refreshBrowseAssets();
     }
   }, [activeTab, query]);
 
   if (!unlocked) {
-    return <AccessGate onUnlock={(auth) => {
+    return <AccessGate onUnlock={(auth, options) => {
       setUnlocked(true);
       applyAuth(auth);
+      if (options?.openProfile) {
+        setProfileOpen(true);
+      }
     }} />;
   }
 
@@ -1251,38 +1578,39 @@ export default function App() {
     return <Player playback={playback} onClose={closePlayer} />;
   }
 
-  const showStatusPanel = activeTab === "library" || activeTab === "tasks" || trackedItems.length > 0;
   const showAdmin = role === "admin";
-  const librarySearchMode = activeTab === "library" && (query.trim().length > 0 || results.length > 0);
   const accountLabel = role === "admin" ? "Admin" : member?.name ?? "Member";
   const accountDetail = role === "admin"
-    ? "Administrator"
+    ? "Admin"
     : member?.credits
-      ? `${member.credits.unitSymbol} ${member.credits.remaining}`
+      ? `${member.credits.remaining}${member.credits.unitSymbol}`
       : "Cinema member";
 
   return (
     <>
       <SearchDialog
-        error={error}
-        loading={searchLoading}
+        error={searchDialogError}
+        loading={searchPreviewLoading || searchLoading}
         open={searchOpen}
         query={query}
+        results={searchPreviewResults}
         onOpenChange={setSearchOpen}
         onQueryChange={setQuery}
         onSearch={(event) => void runDialogSearch(event)}
+        onSelectResult={openSearchResult}
       />
-      <PasscodeDialog
-        error={passcodeError}
-        loading={passcodeLoading}
-        open={passcodeOpen}
+      <ProfileDialog
+        error={profileError}
+        loading={profileLoading}
+        member={member}
+        open={profileOpen}
         onOpenChange={(open) => {
-          setPasscodeOpen(open);
+          setProfileOpen(open);
           if (!open) {
-            setPasscodeError("");
+            setProfileError("");
           }
         }}
-        onSubmit={(currentPasscode, newPasscode) => void changeOwnPasscode(currentPasscode, newPasscode)}
+        onSubmit={(name, newPasscode) => void saveOwnProfile(name, newPasscode)}
       />
       <CreditUsageDialog
         error={creditUsageError}
@@ -1295,6 +1623,14 @@ export default function App() {
             setCreditUsageError("");
           }
         }}
+      />
+      <CreditConfirmDialog
+        policy={creditPolicy}
+        loading={creditConfirmLoading}
+        open={creditConfirmOpen}
+        preview={creditPreview}
+        onCancel={closeCreditConfirm}
+        onConfirm={() => void confirmCreditAction()}
       />
       <MovieRequestDialog
         error={movieRequestError}
@@ -1318,43 +1654,39 @@ export default function App() {
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
         canRequestMovie={role === "member" || role === "admin"}
-        statusCount={trackedItems.length}
-        statusOffset={librarySearchMode ? "librarySearch" : "none"}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
         onBrowseChannelChange={openBrowseChannel}
-        onChangePasscode={() => setPasscodeOpen(true)}
         onLock={lockCinema}
-        onOpenCached={() => navigateToTab("cached")}
+        onOpenHome={() => openBrowseChannel("recommended")}
         onOpenHelp={() => navigateToTab("help")}
         onOpenHistory={() => navigateToTab("history")}
         onOpenMovieRequest={openMovieRequestDialog}
+        onOpenProfile={() => setProfileOpen(true)}
         onOpenSpending={() => void openOwnCreditUsage()}
-        onOpenSearch={() => setSearchOpen(true)}
-        status={showStatusPanel ? (
-          <StatusPanel
-            items={trackedItems}
-            onOpenPlayer={(assetKey) => void openPlayer(assetKey)}
-          />
-        ) : null}
+        onOpenTasks={() => navigateToTab("tasks")}
+        onOpenSearch={openSearchDialog}
         library={(
           <LibraryTab
+            creditPolicy={creditPolicy}
             query={query}
             error={error}
+            focusedAssetKey={focusedLibraryAssetKey}
             viewMode={libraryViewMode}
             results={results}
             browseChannel={browseChannel}
             browseResults={browseResults}
             browseLoading={browseLoading}
+            browseLoadingMore={browseLoadingMore}
+            browseHasMore={browseHasMore}
             cachedAssets={cachedAssets}
             historyItems={history}
             trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
-            onOpenHistoryItem={(assetKey, result) => void openPlayer(assetKey, result)}
-            onRefreshCachedAssets={() => void refreshCachedAssets()}
-            onRefreshBrowseAssets={() => void refreshBrowseAssets()}
+            onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
+            onLoadMoreBrowse={() => void refreshBrowseAssets({ append: true })}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
@@ -1362,6 +1694,7 @@ export default function App() {
         cached={(
           <CachedShelf
             cachedAssets={cachedAssets}
+            creditPolicy={creditPolicy}
             loading={cachedAssetsLoading}
             onOpen={(assetKey) => void openPlayer(assetKey)}
             onRefresh={() => void refreshCachedAssets()}
@@ -1369,6 +1702,7 @@ export default function App() {
         )}
         history={(
           <HistoryPanel
+            creditPolicy={creditPolicy}
             items={history}
             statusByAssetKey={historyAssetStatus}
             onClear={clearHistory}
@@ -1377,6 +1711,17 @@ export default function App() {
           />
         )}
         help={<HelpPanel />}
+        tasks={(
+          <CacheTasksPanel
+            cachedAssets={cachedAssets}
+            creditPolicy={creditPolicy}
+            currentMemberId={member?.id}
+            loadingCached={cachedAssetsLoading}
+            preparingItems={trackedItems}
+            onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
+            onRefreshCached={() => void refreshCachedAssets()}
+          />
+        )}
         admin={showAdmin ? (
           <AdminPanel
             adminUnlocked={adminUnlocked}
@@ -1391,20 +1736,17 @@ export default function App() {
             movieRequests={adminMovieRequests}
             movieRequestsLoading={adminMovieRequestsLoading}
             adminKeyInput={adminKeyInput}
-            memberName={memberName}
             memberCredits={memberCredits}
             memberBulkCredits={memberBulkCredits}
             memberCreditEdits={memberCreditEdits}
-            memberPasscodeEdits={memberPasscodeEdits}
             memberCodes={memberCodes}
+            memberInvitations={memberInvitations}
             setAdminKeyInput={setAdminKeyInput}
-            setMemberName={setMemberName}
             setMemberCredits={setMemberCredits}
             setMemberBulkCredits={setMemberBulkCredits}
             setMemberCreditEdit={setMemberCreditEdit}
-            setMemberPasscodeEdit={setMemberPasscodeEdit}
             onUnlock={unlockAdmin}
-            onGenerate={generateMemberCode}
+            onGenerate={generateSignupInvitation}
             onCopy={(code) => void copyMemberCode(code)}
             onDelete={deleteMemberCode}
             onRefreshJobs={() => void refreshCacheJobs()}
@@ -1416,13 +1758,21 @@ export default function App() {
             onDeleteCachedAsset={(assetKey) => void deleteAdminCachedAsset(assetKey)}
             onUpdateCredits={updateMemberCredits}
             onAdjustCredits={(delta) => void adjustMemberCredits(delta)}
-            onUpdatePasscode={updateMemberPasscode}
+            onCreateResetInvitation={generateResetInvitation}
             onUpdateMovieRequestStatus={(id, status) => void updateAdminMovieRequestStatus(id, status)}
             onViewCreditUsage={(id) => void openMemberCreditUsage(id)}
             onRevoke={revokeMemberCode}
           />
         ) : undefined}
       />
+      {activeTab !== "tasks" ? (
+        <TaskDock
+          creditPolicy={creditPolicy}
+          items={trackedItems}
+          onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
+          onOpenTasks={() => navigateToTab("tasks")}
+        />
+      ) : null}
     </>
   );
 }

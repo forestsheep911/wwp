@@ -1,11 +1,12 @@
 import { type FormEvent, useState } from "react";
-import { Loader2, LockKeyhole, ShieldCheck, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, LockKeyhole, ShieldCheck, UserPlus } from "lucide-react";
 import { type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
   clearAccessKey,
   errorMessage,
   registerMember,
+  resetMemberPasscode,
   setAccessKey
 } from "../../api";
 import { Button } from "../../components/ui/button";
@@ -13,18 +14,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 
-export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
-  const [name, setName] = useState("");
+export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse, options?: { openProfile?: boolean }) => void }) {
+  const [mode, setMode] = useState<"login" | "register" | "reset">("login");
+  const [inviteCode, setInviteCode] = useState("");
   const [value, setValue] = useState("");
+  const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const candidate = value.trim();
-    if (!candidate) {
-      setError("Enter a passcode.");
+    if (mode !== "register" && !candidate) {
+      setError(mode === "login" ? "Enter a passcode." : "Enter your new passcode.");
       return;
     }
 
@@ -32,23 +34,51 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) =
     setError("");
     try {
       if (mode === "register") {
-        const nameValue = name.trim();
+        const inviteValue = inviteCode.trim();
+        if (!inviteValue) {
+          setError("Enter a household invitation code.");
+          return;
+        }
+
+        const response = await registerMember({
+          inviteCode: inviteValue
+        });
+        setAccessKey(response.passcode);
+        onUnlock(response.auth, { openProfile: true });
+        return;
+      }
+
+      if (mode === "reset") {
+        const inviteValue = inviteCode.trim();
+        const confirmCandidate = confirmValue.trim();
         const passcodeError = validateMemberPasscode(candidate);
-        if (!nameValue) {
-          setError("Enter a member name.");
+        if (!inviteValue) {
+          setError("Enter a reset invitation code.");
           return;
         }
         if (passcodeError) {
           setError(passcodeError);
           return;
         }
+        if (candidate !== confirmCandidate) {
+          setError("The two passcodes do not match.");
+          return;
+        }
 
-        const response = await registerMember({
-          name: nameValue,
-          passcode: candidate
+        const response = await resetMemberPasscode({
+          inviteCode: inviteValue,
+          newPasscode: candidate
         });
         setAccessKey(candidate);
-        onUnlock(response.auth);
+        onUnlock({
+          ok: true,
+          role: "member",
+          member: {
+            id: response.code.id,
+            name: response.code.name,
+            credits: response.code.credits
+          }
+        });
         return;
       }
 
@@ -57,7 +87,14 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) =
       onUnlock(auth);
     } catch (accessError) {
       clearAccessKey();
-      setError(errorMessage(accessError, mode === "register" ? "Could not register." : "Passcode did not match."));
+      setError(errorMessage(
+        accessError,
+        mode === "register"
+          ? "Could not register."
+          : mode === "reset"
+            ? "Could not reset passcode."
+            : "Passcode did not match."
+      ));
     } finally {
       setLoading(false);
     }
@@ -85,7 +122,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) =
               }}
             >
               <ShieldCheck className="h-4 w-4" />
-              Login
+              Enter
             </Button>
             <Button
               type="button"
@@ -97,48 +134,86 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) =
               }}
             >
               <UserPlus className="h-4 w-4" />
-              Register
+              Join
             </Button>
           </div>
           <form className="grid gap-4" onSubmit={submit}>
-            {mode === "register" ? (
+            {mode !== "login" ? (
               <div className="grid gap-2">
-                <Label htmlFor="member-name">Member name</Label>
+                <Label htmlFor="invite-code">{mode === "register" ? "Household invitation" : "Reset invitation"}</Label>
                 <Input
-                  id="member-name"
-                  autoFocus
-                  value={name}
+                  id="invite-code"
+                  autoFocus={mode === "register"}
+                  autoComplete="one-time-code"
+                  value={inviteCode}
                   onChange={(event) => {
-                    setName(event.target.value);
+                    setInviteCode(event.target.value);
                     setError("");
                   }}
                 />
               </div>
             ) : null}
-            <div className="grid gap-2">
-              <Label htmlFor="access-key">Passcode</Label>
-              <Input
-                id="access-key"
-                autoFocus={mode === "login"}
-                autoComplete={mode === "register" ? "new-password" : "current-password"}
-                maxLength={mode === "register" ? 12 : undefined}
-                value={value}
-                onChange={(event) => {
-                  setValue(event.target.value);
-                  setError("");
-                }}
-                type="password"
-              />
-              {mode === "register" ? (
-                <p className="text-xs leading-5 text-slate-500">
-                  12 half-width characters, with at least 1 letter and 1 number.
-                </p>
-              ) : null}
-            </div>
+            {mode !== "register" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="access-key">{mode === "login" ? "Passcode" : "New passcode"}</Label>
+                <Input
+                  id="access-key"
+                  autoFocus={mode === "login"}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  maxLength={mode === "login" ? undefined : 12}
+                  value={value}
+                  onChange={(event) => {
+                    setValue(event.target.value);
+                    setError("");
+                  }}
+                  type="password"
+                />
+                {mode === "reset" ? (
+                  <p className="text-xs leading-5 text-slate-500">
+                    12 half-width characters, with at least 1 letter and 1 number.
+                  </p>
+                ) : null}
+                {mode === "login" ? (
+                  <button
+                    className="w-fit text-xs font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    type="button"
+                    onClick={() => {
+                      setMode("reset");
+                      setError("");
+                      setInviteCode("");
+                      setValue("");
+                    }}
+                  >
+                    忘记了？
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {mode === "reset" ? (
+              <p className="rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs leading-5 text-slate-400">
+                请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。
+              </p>
+            ) : null}
+            {mode === "reset" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="confirm-access-key">Confirm passcode</Label>
+                <Input
+                  id="confirm-access-key"
+                  autoComplete="new-password"
+                  maxLength={12}
+                  value={confirmValue}
+                  onChange={(event) => {
+                    setConfirmValue(event.target.value);
+                    setError("");
+                  }}
+                  type="password"
+                />
+              </div>
+            ) : null}
             {error ? <p className="text-sm font-semibold text-rose-300">{error}</p> : null}
             <Button type="submit" disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "register" ? <UserPlus className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-              {mode === "register" ? "Create account" : "Enter"}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "register" ? <UserPlus className="h-4 w-4" /> : mode === "reset" ? <KeyRound className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+              {mode === "register" ? "Join household" : mode === "reset" ? "Reset pass" : "Enter"}
             </Button>
           </form>
         </CardContent>

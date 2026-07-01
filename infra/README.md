@@ -41,6 +41,18 @@ API image/app and Static Web App:
 .\infra\deploy-web-staticapp.ps1
 ```
 
+Static administrator key bootstrap/rotation:
+
+```powershell
+# Reads WWPDW_ADMIN_KEY from .env or the current process environment.
+.\infra\set-admin-key.ps1
+
+# Or pass a value explicitly.
+.\infra\set-admin-key.ps1 -AdminKey "replace-me"
+```
+
+The API uses `WWPDW_ADMIN_KEY` for the Admin tab. Regular family members use generated Cinema Passes.
+
 Manual worker trigger:
 
 ```powershell

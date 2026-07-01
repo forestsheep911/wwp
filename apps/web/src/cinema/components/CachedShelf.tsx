@@ -1,18 +1,21 @@
 import { CheckCircle2, Database, Loader2, Play, RefreshCw } from "lucide-react";
-import type { CacheAsset } from "@wwpdw/shared";
+import type { CacheAsset, CreditPolicyResponse } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { formatBytes, formatDateTime, mediaQuality } from "../format";
+import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
 
 export function CachedShelf({
   cachedAssets,
+  creditPolicy,
   loading,
   onOpen,
   onRefresh
 }: {
   cachedAssets: CacheAsset[];
+  creditPolicy: CreditPolicyResponse;
   loading: boolean;
   onOpen: (assetKey: string) => void;
   onRefresh: () => void;
@@ -59,7 +62,7 @@ export function CachedShelf({
               </div>
               <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
                 <Play className="h-4 w-4" />
-                Play
+                {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
               </Button>
             </CardContent>
           </Card>

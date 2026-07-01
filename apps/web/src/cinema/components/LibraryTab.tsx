@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   Database,
   Eye,
@@ -10,12 +11,11 @@ import {
   List,
   Loader2,
   Play,
-  RefreshCw,
   Sparkles,
   Star,
   Trophy
 } from "lucide-react";
-import type { CacheAsset, MediaVariant, SearchResult } from "@wwpdw/shared";
+import type { CacheAsset, CreditPolicyResponse, MediaVariant, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -36,47 +36,53 @@ import {
   titleInitial,
   visibleTags
 } from "../format";
-import type { BrowseChannel, LibraryViewMode, PlaybackHistoryEntry, ResultWithCache, TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryTabProps {
+  creditPolicy: CreditPolicyResponse;
   query: string;
   error: string;
+  focusedAssetKey?: string;
   viewMode: LibraryViewMode;
   results: ResultWithCache[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
   browseLoading: boolean;
+  browseLoadingMore: boolean;
+  browseHasMore: boolean;
   cachedAssets: CacheAsset[];
   historyItems: PlaybackHistoryEntry[];
   trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
-  onOpenHistoryItem: (assetKey: string, result?: SearchResult) => void;
-  onRefreshCachedAssets: () => void;
-  onRefreshBrowseAssets: () => void;
+  onFocusedAssetHandled?: () => void;
+  onLoadMoreBrowse: () => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }
 
 export function LibraryTab({
+  creditPolicy,
   query,
   error,
+  focusedAssetKey,
   viewMode,
   results,
   browseChannel,
   browseResults,
   browseLoading,
+  browseLoadingMore,
+  browseHasMore,
   cachedAssets,
   historyItems,
   trackedItems,
   pendingAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
-  onOpenHistoryItem,
-  onRefreshCachedAssets,
-  onRefreshBrowseAssets,
+  onFocusedAssetHandled,
+  onLoadMoreBrowse,
   onViewModeChange,
   onSelect
 }: LibraryTabProps) {
@@ -86,6 +92,18 @@ export function LibraryTab({
   useEffect(() => {
     setDetailResult(undefined);
   }, [browseChannel, query]);
+
+  useEffect(() => {
+    if (!focusedAssetKey) {
+      return;
+    }
+
+    const focusedResult = [...results, ...browseResults].find((result) => result.assetKey === focusedAssetKey);
+    if (focusedResult) {
+      setDetailResult(focusedResult);
+      onFocusedAssetHandled?.();
+    }
+  }, [browseResults, focusedAssetKey, onFocusedAssetHandled, results]);
 
   return (
     <div className="grid gap-5">
@@ -97,6 +115,7 @@ export function LibraryTab({
 
       {detailResult ? (
         <MovieDetailView
+          creditPolicy={creditPolicy}
           result={detailResult}
           pendingAssetKeys={pendingAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
@@ -105,17 +124,18 @@ export function LibraryTab({
         />
       ) : !hasQuery && results.length === 0 ? (
         <LibraryHome
+          creditPolicy={creditPolicy}
           cachedAssets={cachedAssets}
           browseChannel={browseChannel}
           browseResults={browseResults}
           browseLoading={browseLoading}
+          browseLoadingMore={browseLoadingMore}
+          browseHasMore={browseHasMore}
           historyItems={historyItems}
           pendingAssetKeys={pendingAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onOpenCachedAsset={onOpenCachedAsset}
-          onOpenHistoryItem={onOpenHistoryItem}
-          onRefreshCachedAssets={onRefreshCachedAssets}
-          onRefreshBrowseAssets={onRefreshBrowseAssets}
+          onLoadMoreBrowse={onLoadMoreBrowse}
           onOpenDetail={setDetailResult}
           onSelect={onSelect}
         />
@@ -156,6 +176,7 @@ export function LibraryTab({
                 ) : (
                   results.map((result) => (
                     <MovieCard
+                      creditPolicy={creditPolicy}
                       key={result.assetKey}
                       result={result}
                       pendingAssetKeys={pendingAssetKeys}
@@ -169,6 +190,7 @@ export function LibraryTab({
             </div>
           ) : (
             <MovieListView
+              creditPolicy={creditPolicy}
               results={results}
               pendingAssetKeys={pendingAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
@@ -191,6 +213,9 @@ type BrowseViewId =
   | "doubanRank"
   | "imdbRank"
   | "rottenRank";
+
+const browseInitialCount = 12;
+const browseLoadStep = 12;
 
 const browseViews: Array<{
   id: BrowseViewId;
@@ -223,84 +248,105 @@ function viewsForBrowseChannel(channel: BrowseChannel) {
 }
 
 function LibraryHome({
+  creditPolicy,
   cachedAssets,
   browseChannel,
   browseResults,
   browseLoading,
+  browseLoadingMore,
+  browseHasMore,
   historyItems,
   pendingAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
-  onOpenHistoryItem,
-  onRefreshCachedAssets,
-  onRefreshBrowseAssets,
+  onLoadMoreBrowse,
   onOpenDetail,
   onSelect
 }: {
+  creditPolicy: CreditPolicyResponse;
   cachedAssets: CacheAsset[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
   browseLoading: boolean;
+  browseLoadingMore: boolean;
+  browseHasMore: boolean;
   historyItems: PlaybackHistoryEntry[];
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
-  onOpenHistoryItem: (assetKey: string, result?: SearchResult) => void;
-  onRefreshCachedAssets: () => void;
-  onRefreshBrowseAssets: () => void;
+  onLoadMoreBrowse: () => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>("recent");
+  const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const channelViews = viewsForBrowseChannel(browseChannel);
-  const activeViewConfig = channelViews.find((view) => view.id === activeView) ?? channelViews[0];
-  const activeSortView = activeViewConfig.id;
+  const activeSortView = (channelViews.find((view) => view.id === activeView) ?? channelViews[0]).id;
   const browsableResults = useMemo(
     () => browseResults.filter((result) => (result.variants?.length ?? 0) > 0 && resultMatchesBrowseChannel(result, browseChannel)),
     [browseChannel, browseResults]
   );
   const historyStats = useMemo(() => historyStatsByAssetKey(historyItems), [historyItems]);
-  const visibleResults = useMemo(
-    () => rankBrowseResults(activeSortView, browsableResults, historyStats).slice(0, 12),
+  const rankedResults = useMemo(
+    () => rankBrowseResults(activeSortView, browsableResults, historyStats),
     [activeSortView, browsableResults, historyStats]
   );
-  const visibleAssets = useMemo(
-    () => rankCachedAssets(activeSortView, cachedAssets).slice(0, 12),
+  const rankedAssets = useMemo(
+    () => rankCachedAssets(activeSortView, cachedAssets),
     [activeSortView, cachedAssets]
   );
-  const channelLabel = browseChannelLabel(browseChannel);
-  const catalogCount = browsableResults.length || cachedAssets.length;
+  const browsingResults = rankedResults.length > 0;
+  const totalVisibleItems = browsingResults ? rankedResults.length : rankedAssets.length;
+  const visibleResults = useMemo(
+    () => rankedResults.slice(0, visibleItemCount),
+    [rankedResults, visibleItemCount]
+  );
+  const visibleAssets = useMemo(
+    () => rankedAssets.slice(0, visibleItemCount),
+    [rankedAssets, visibleItemCount]
+  );
+  const hasMoreItems = visibleItemCount < totalVisibleItems;
+  const browseInitialLoading = browseLoading && rankedResults.length === 0;
+
+  function showMoreItems() {
+    if (!hasMoreItems) {
+      if (browseHasMore && !browseLoadingMore) {
+        onLoadMoreBrowse();
+      }
+      return;
+    }
+
+    setVisibleItemCount((currentCount) => Math.min(currentCount + browseLoadStep, totalVisibleItems));
+  }
 
   useEffect(() => {
     setActiveView(viewsForBrowseChannel(browseChannel)[0].id);
   }, [browseChannel]);
 
+  useEffect(() => {
+    setVisibleItemCount(browseInitialCount);
+  }, [activeSortView, browseChannel]);
+
+  useEffect(() => {
+    if ((!hasMoreItems && !browseHasMore) || !loadMoreRef.current) {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        showMoreItems();
+      }
+    }, {
+      rootMargin: "360px 0px"
+    });
+
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [browseHasMore, browseLoadingMore, hasMoreItems, totalVisibleItems, visibleItemCount]);
+
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Film className="h-5 w-5 text-emerald-300" />
-            <h2 className="text-lg font-semibold text-slate-50">{channelLabel}</h2>
-            <Badge variant="secondary">{catalogCount}</Badge>
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={() => {
-            onRefreshBrowseAssets();
-            onRefreshCachedAssets();
-          }}
-          disabled={browseLoading}
-          title="Refresh browse titles"
-        >
-          <RefreshCw className={`h-4 w-4 ${browseLoading ? "animate-spin" : ""}`} />
-          <span className="sr-only">Refresh browse titles</span>
-        </Button>
-      </div>
-
       <div className="scrollbar-none flex gap-2 overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1">
         {channelViews.map((view) => {
           const Icon = view.icon;
@@ -322,47 +368,68 @@ function LibraryHome({
       </div>
 
       <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-base font-semibold text-slate-50">{activeViewConfig.label}</h3>
-            <p className="mt-1 text-sm text-slate-500">{activeViewConfig.detail}</p>
-          </div>
-          {historyItems.length ? (
-            <Button type="button" variant="secondary" size="sm" onClick={() => onOpenHistoryItem(historyItems[0].assetKey, historyItems[0].result)}>
-              <Play className="h-4 w-4" />
-              继续观看
-            </Button>
-          ) : null}
-        </div>
-
-        {browseLoading && visibleResults.length === 0 && visibleAssets.length === 0 ? (
-          <EmptyState icon={<Loader2 className="h-5 w-5 animate-spin" />} title="正在加载浏览目录" />
-        ) : visibleResults.length ? (
-          <div className="gallery-results">
-            <div className="gallery-results-grid grid gap-4">
-              {visibleResults.map((result) => (
-                <MovieCard
-                  key={result.assetKey}
-                  result={result}
-                  pendingAssetKeys={pendingAssetKeys}
-                  trackedByAssetKey={trackedByAssetKey}
-                  onOpenDetail={onOpenDetail}
-                  onSelect={onSelect}
-                  variantLimit={3}
+        {browseInitialLoading ? (
+          <BrowseLoadingGrid />
+        ) : browsingResults ? (
+          <>
+            <div className="gallery-results">
+              <div className="gallery-results-grid grid gap-4">
+                {visibleResults.map((result) => (
+                  <MovieCard
+                    creditPolicy={creditPolicy}
+                    key={result.assetKey}
+                    result={result}
+                    pendingAssetKeys={pendingAssetKeys}
+                    trackedByAssetKey={trackedByAssetKey}
+                    onOpenDetail={onOpenDetail}
+                    onSelect={onSelect}
+                    variantLimit={3}
+                  />
+                ))}
+              </div>
+            </div>
+            <LazyLoadFooter
+              hasMore={hasMoreItems || browseHasMore}
+              loadMoreRef={loadMoreRef}
+              loading={browseLoadingMore}
+              shownCount={visibleResults.length}
+              totalCount={rankedResults.length}
+              onLoadMore={showMoreItems}
+            />
+          </>
+        ) : visibleAssets.length ? (
+          <>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {visibleAssets.map((asset) => (
+                <BrowseAssetCard
+                  key={asset.assetKey}
+                  asset={asset}
+                  creditPolicy={creditPolicy}
+                  onOpen={onOpenCachedAsset}
                 />
               ))}
             </div>
-          </div>
-        ) : visibleAssets.length ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {visibleAssets.map((asset) => (
-              <BrowseAssetCard
-                key={asset.assetKey}
-                asset={asset}
-                onOpen={onOpenCachedAsset}
-              />
-            ))}
-          </div>
+            <LazyLoadFooter
+              hasMore={hasMoreItems || browseHasMore}
+              loadMoreRef={loadMoreRef}
+              loading={browseLoadingMore}
+              shownCount={visibleAssets.length}
+              totalCount={rankedAssets.length}
+              onLoadMore={showMoreItems}
+            />
+          </>
+        ) : browseHasMore ? (
+          <>
+            <EmptyState icon={<Database className="h-5 w-5" />} title="继续加载更多影片" />
+            <LazyLoadFooter
+              hasMore
+              loadMoreRef={loadMoreRef}
+              loading={browseLoadingMore}
+              shownCount={0}
+              totalCount={0}
+              onLoadMore={showMoreItems}
+            />
+          </>
         ) : (
           <EmptyState icon={<Database className="h-5 w-5" />} title="暂无可浏览影片" />
         )}
@@ -371,17 +438,77 @@ function LibraryHome({
   );
 }
 
-function browseChannelLabel(channel: BrowseChannel) {
-  switch (channel) {
-    case "movie":
-      return "电影";
-    case "tv":
-      return "电视";
-    case "animation":
-      return "动画";
-    default:
-      return "推荐";
+function LazyLoadFooter({
+  hasMore,
+  loadMoreRef,
+  loading,
+  shownCount,
+  totalCount,
+  onLoadMore
+}: {
+  hasMore: boolean;
+  loadMoreRef: React.RefObject<HTMLDivElement | null>;
+  loading: boolean;
+  shownCount: number;
+  totalCount: number;
+  onLoadMore: () => void;
+}) {
+  if (!hasMore && totalCount <= browseInitialCount) {
+    return null;
   }
+
+  return (
+    <div ref={loadMoreRef} className="flex justify-center pt-1">
+      {hasMore ? (
+        <Button type="button" variant="outline" size="sm" onClick={onLoadMore} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+          {loading ? "加载中" : "加载更多"}
+          {totalCount > 0 ? <Badge variant="secondary">{shownCount}/{totalCount}{hasMore ? "+" : ""}</Badge> : null}
+        </Button>
+      ) : (
+        <Badge variant="muted">已显示 {totalCount}</Badge>
+      )}
+    </div>
+  );
+}
+
+function BrowseLoadingGrid() {
+  return (
+    <div className="gallery-results" aria-busy="true" aria-label="正在加载浏览目录">
+      <div className="gallery-results-grid grid gap-4">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <article
+            className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4"
+            key={index}
+          >
+            <div className="aspect-[2/3] animate-pulse rounded-md bg-slate-800/70" />
+            <div className="grid min-w-0 content-start gap-3">
+              <div className="h-5 w-4/5 animate-pulse rounded bg-slate-800/70" />
+              <div className="flex gap-2">
+                <div className="h-6 w-12 animate-pulse rounded-full bg-slate-800/70" />
+                <div className="h-6 w-14 animate-pulse rounded-full bg-slate-800/70" />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <div className="h-6 w-14 animate-pulse rounded-full bg-slate-800/60" />
+                <div className="h-6 w-16 animate-pulse rounded-full bg-slate-800/60" />
+              </div>
+            </div>
+            <div className="col-span-2 grid min-w-0 gap-3">
+              <div className="space-y-2">
+                <div className="h-4 w-full animate-pulse rounded bg-slate-800/60" />
+                <div className="h-4 w-11/12 animate-pulse rounded bg-slate-800/50" />
+                <div className="h-4 w-2/3 animate-pulse rounded bg-slate-800/40" />
+              </div>
+              <div className="grid gap-2">
+                <div className="h-10 animate-pulse rounded-md bg-slate-800/70" />
+                <div className="h-10 animate-pulse rounded-md bg-slate-800/50" />
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function normalizedMetadataText(result: SearchResult) {
@@ -437,7 +564,7 @@ function historyStatsByAssetKey(historyItems: PlaybackHistoryEntry[]) {
 }
 
 function numericRating(result: SearchResult) {
-  const ratings = result.metadata?.ratings ?? [];
+  const ratings = ratingCandidates(result);
   const values = ratings
     .map((rating) => Number.parseFloat(rating.value.replace(/[^\d.]/g, "")))
     .filter((value) => Number.isFinite(value));
@@ -445,7 +572,7 @@ function numericRating(result: SearchResult) {
 }
 
 function sourceRating(result: SearchResult, source: "douban" | "imdb" | "rotten") {
-  const rating = result.metadata?.ratings?.find((item) => ratingSourceConfig[source].match.test(item.label));
+  const rating = ratingCandidates(result).find((item) => ratingSourceConfig[source].match.test(item.label));
   const value = Number.parseFloat(rating?.value.replace(/[^\d.]/g, "") ?? "");
   return Number.isFinite(value) ? value : 0;
 }
@@ -551,11 +678,15 @@ function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[]) {
 
 function BrowseAssetCard({
   asset,
+  creditPolicy,
   onOpen
 }: {
   asset: CacheAsset;
+  creditPolicy: CreditPolicyResponse;
   onOpen: (assetKey: string) => void;
 }) {
+  const credits = playbackCreditCost(asset.media?.contentLength, creditPolicy);
+
   return (
     <article className="grid min-w-0 content-between gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-4 shadow-2xl shadow-black/20">
       <div className="min-w-0">
@@ -569,7 +700,7 @@ function BrowseAssetCard({
       </div>
       <Button type="button" size="sm" onClick={() => onOpen(asset.assetKey)}>
         <Play className="h-4 w-4" />
-        Play
+        {formatCreditAmount(credits, creditPolicy.unitSymbol)}
       </Button>
     </article>
   );
@@ -577,42 +708,80 @@ function BrowseAssetCard({
 
 type RatingSource = "douban" | "imdb" | "rotten" | "metacritic";
 
-const ratingSourceConfig: Record<RatingSource, { label: string; match: RegExp; className: string }> = {
+const ratingSourceConfig: Record<RatingSource, { label: string; shortLabel: string; match: RegExp; className: string }> = {
   douban: {
     label: "豆瓣",
+    shortLabel: "豆瓣",
     match: /douban|豆瓣/i,
-    className: "border-emerald-300/30 bg-emerald-300/10 text-emerald-100"
+    className: "border-emerald-300/55 bg-emerald-400/18 text-emerald-50"
   },
   imdb: {
     label: "IMDb",
+    shortLabel: "IMDb",
     match: /imdb/i,
-    className: "border-sky-300/30 bg-sky-300/10 text-sky-100"
+    className: "border-amber-300/65 bg-amber-300/22 text-amber-50"
   },
   rotten: {
     label: "烂番茄",
-    match: /rotten|tomato|tomatometer|烂番茄|爛番茄/i,
-    className: "border-rose-300/30 bg-rose-300/10 text-rose-100"
+    shortLabel: "烂番茄",
+    match: /^rt$|rotten|tomato|tomatometer|烂番茄|爛番茄/i,
+    className: "border-red-300/60 bg-red-400/20 text-red-50"
   },
   metacritic: {
     label: "Metacritic",
-    match: /metacritic|meta\s*critic|metascore|metamatrix|metamatrices/i,
-    className: "border-violet-300/30 bg-violet-300/10 text-violet-100"
+    shortLabel: "Meta",
+    match: /^meta$|metacritic|meta\s*critic|metascore|metamatrix|metamatrices/i,
+    className: "border-violet-300/60 bg-violet-400/22 text-violet-50"
   }
 };
 
-function compactRatings(result: SearchResult) {
-  const ratings = result.metadata?.ratings ?? [];
+type DisplayRating = {
+  source: RatingSource;
+  sourceLabel: string;
+  shortLabel: string;
+  value: string;
+  className: string;
+};
+
+function ratingCandidates(result: SearchResult) {
+  const metadata = result.metadata;
+  const ratings = [
+    ...(metadata?.ratings ?? []),
+    ...(metadata?.external?.omdb?.ratings ?? [])
+  ];
+
+  if (metadata?.external?.omdb?.imdbRating && metadata.external.omdb.imdbRating !== "N/A") {
+    ratings.push({ label: "IMDb", value: metadata.external.omdb.imdbRating });
+  }
+
+  if (metadata?.external?.omdb?.metascore && metadata.external.omdb.metascore !== "N/A") {
+    ratings.push({ label: "Metacritic", value: metadata.external.omdb.metascore });
+  }
+
+  return ratings.filter((rating) => rating.label && rating.value && rating.value !== "N/A");
+}
+
+function displayRatings(result: SearchResult): DisplayRating[] {
+  const ratings = ratingCandidates(result);
   return (Object.keys(ratingSourceConfig) as RatingSource[])
     .map((source) => {
       const config = ratingSourceConfig[source];
       const rating = ratings.find((item) => config.match.test(item.label));
-      return rating ? { source, sourceLabel: config.label, value: rating.value, className: config.className } : undefined;
+      return rating
+        ? {
+          source,
+          sourceLabel: config.label,
+          shortLabel: config.shortLabel,
+          value: rating.value,
+          className: config.className
+        }
+        : undefined;
     })
-    .filter((rating): rating is { source: RatingSource; sourceLabel: string; value: string; className: string } => Boolean(rating));
+    .filter((rating): rating is DisplayRating => Boolean(rating));
 }
 
 function CompactRatingBadges({ result }: { result: SearchResult }) {
-  const ratings = compactRatings(result);
+  const ratings = displayRatings(result);
   if (ratings.length === 0) {
     return null;
   }
@@ -622,7 +791,7 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
       {ratings.map((rating) => (
         <span
           key={`${rating.source}-${rating.value}`}
-          className={`inline-flex min-w-10 justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none ${rating.className}`}
+          className={`inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none ${rating.className}`}
           title={`${rating.sourceLabel} ${rating.value}`}
           aria-label={`${rating.sourceLabel} ${rating.value}`}
         >
@@ -672,6 +841,7 @@ function MoviePoster({ result }: { result: SearchResult }) {
 }
 
 function VariantButtons({
+  creditPolicy,
   result,
   pendingAssetKeys,
   trackedByAssetKey,
@@ -680,6 +850,7 @@ function VariantButtons({
   compact = false,
   variantLimit
 }: {
+  creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
@@ -706,7 +877,9 @@ function VariantButtons({
           ? "排队中"
           : tracked
             ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
-            : cacheLabel(displayAsset);
+            : !displayAsset
+              ? undefined
+              : cacheLabel(displayAsset);
         const progress = tracked?.job.progress ?? 0;
         const progressColor = tracked?.job.status === "failed"
           ? "bg-rose-500/22"
@@ -718,6 +891,13 @@ function VariantButtons({
           : tracked
             ? jobVariant(tracked.job.status)
             : cacheVariant(displayAsset);
+        const isActiveCacheHit = pending || Boolean(tracked && tracked.job.status !== "failed" && tracked.job.status !== "ready");
+        const costLabel = displayAsset?.status === "ready"
+            ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+            : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);
+        const costBadgeClass = displayAsset?.status === "ready" && !isActiveCacheHit
+          ? "border-slate-950/25 bg-slate-950/90 text-emerald-100 shadow-sm shadow-emerald-950/20"
+          : undefined;
 
         return (
           <Button
@@ -726,9 +906,9 @@ function VariantButtons({
             type="button"
             variant={displayAsset?.status === "ready" ? "default" : "secondary"}
             onClick={() => onSelect(result, variant)}
-            disabled={pending}
-            title={`${variant.label} / ${displayStatus}`}
-            aria-label={`${variant.label} / ${displayStatus}`}
+            disabled={isActiveCacheHit}
+            title={displayStatus ? `${variant.label} / ${displayStatus}` : `${variant.label} / ${costLabel}`}
+            aria-label={displayStatus ? `${variant.label} / ${displayStatus}` : `${variant.label} / ${costLabel}`}
           >
             {tracked ? (
               <span
@@ -740,7 +920,12 @@ function VariantButtons({
             <span className="relative z-10 min-w-0 max-w-full truncate">{variant.label}</span>
             <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
               {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              <Badge variant={badgeVariant}>{displayStatus}</Badge>
+              {!isActiveCacheHit ? (
+                <Badge className={costBadgeClass} variant="warning">
+                  {costLabel}
+                </Badge>
+              ) : null}
+              {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
             </span>
           </Button>
         );
@@ -766,6 +951,7 @@ function VariantButtons({
 }
 
 function MovieCard({
+  creditPolicy,
   result,
   pendingAssetKeys,
   trackedByAssetKey,
@@ -773,6 +959,7 @@ function MovieCard({
   onSelect,
   variantLimit
 }: {
+  creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
@@ -781,6 +968,7 @@ function MovieCard({
   variantLimit?: number;
 }) {
   const tags = cardTags(result);
+  const summary = bestSummary(result);
 
   return (
     <article className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4">
@@ -816,8 +1004,9 @@ function MovieCard({
       </div>
 
       <div className="col-span-2 grid min-w-0 gap-3">
-        <p className="line-clamp-3 text-sm leading-6 text-slate-400 sm:line-clamp-4">{bestSummary(result)}</p>
+        <SummaryText summary={summary} />
         <VariantButtons
+          creditPolicy={creditPolicy}
           result={result}
           pendingAssetKeys={pendingAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
@@ -830,13 +1019,45 @@ function MovieCard({
   );
 }
 
+function SummaryText({ summary }: { summary: string }) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipId = useId();
+
+  return (
+    <>
+      <p
+        aria-describedby={tooltipOpen ? tooltipId : undefined}
+        className="line-clamp-3 h-[4.5rem] cursor-help rounded-sm text-sm leading-6 text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 sm:line-clamp-4 sm:h-24"
+        tabIndex={0}
+        onBlur={() => setTooltipOpen(false)}
+        onFocus={() => setTooltipOpen(true)}
+        onMouseEnter={() => setTooltipOpen(true)}
+        onMouseLeave={() => setTooltipOpen(false)}
+      >
+        {summary}
+      </p>
+      {tooltipOpen ? (
+        <div
+          className="fixed bottom-6 left-1/2 z-[200] max-h-[60vh] w-[min(56rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-md border border-slate-600 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-100 shadow-2xl shadow-black/50"
+          id={tooltipId}
+          role="tooltip"
+        >
+          {summary}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function MovieListView({
+  creditPolicy,
   results,
   pendingAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
   onSelect
 }: {
+  creditPolicy: CreditPolicyResponse;
   results: ResultWithCache[];
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
@@ -905,6 +1126,7 @@ function MovieListView({
                 </td>
                 <td className="px-4 py-4">
                   <VariantButtons
+                    creditPolicy={creditPolicy}
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
                     trackedByAssetKey={trackedByAssetKey}
@@ -922,12 +1144,14 @@ function MovieListView({
 }
 
 function MovieDetailView({
+  creditPolicy,
   result,
   pendingAssetKeys,
   trackedByAssetKey,
   onBack,
   onSelect
 }: {
+  creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
   pendingAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
@@ -935,7 +1159,7 @@ function MovieDetailView({
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const tags = detailTags(result);
-  const ratings = result.metadata?.ratings ?? [];
+  const ratings = displayRatings(result);
   const directors = directorLine(result);
   const summary = bestSummary(result);
   const variantCount = result.variants?.length ?? 0;
@@ -967,9 +1191,15 @@ function MovieDetailView({
           {ratings.length ? (
             <div className="flex flex-wrap gap-2">
               {ratings.map((rating) => (
-                <Badge key={`detail-rating-${rating.label}-${rating.value}`} variant="secondary">
-                  {rating.label} <span className="text-slate-50">{rating.value}</span>
-                </Badge>
+                <span
+                  key={`detail-rating-${rating.source}-${rating.value}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-none ${rating.className}`}
+                  title={`${rating.sourceLabel} ${rating.value}`}
+                  aria-label={`${rating.sourceLabel} ${rating.value}`}
+                >
+                  <span className="font-semibold opacity-80">{rating.sourceLabel}</span>
+                  <span>{rating.value}</span>
+                </span>
               ))}
             </div>
           ) : null}
@@ -993,6 +1223,7 @@ function MovieDetailView({
               <Badge variant="muted">{variantCount}</Badge>
             </div>
             <VariantButtons
+              creditPolicy={creditPolicy}
               result={result}
               pendingAssetKeys={pendingAssetKeys}
               trackedByAssetKey={trackedByAssetKey}

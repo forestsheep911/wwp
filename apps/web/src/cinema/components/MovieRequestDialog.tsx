@@ -60,7 +60,7 @@ export function MovieRequestDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageSquarePlus className="h-5 w-5 text-emerald-300" />
-            Request movie
+            Request
           </DialogTitle>
           <DialogDescription>
             Tell the household library what you want to watch.
@@ -71,7 +71,7 @@ export function MovieRequestDialog({
           <textarea
             className="min-h-32 resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
             maxLength={2000}
-            placeholder="Movie title, year, actor, language, edition, or anything you remember..."
+            placeholder="Title, series, episode, year, actor, language, edition, or anything you remember..."
             value={requestText}
             onChange={(event) => onRequestTextChange(event.target.value)}
           />
@@ -103,7 +103,7 @@ export function MovieRequestDialog({
             </div>
           ) : requests.length === 0 ? (
             <div className="rounded border border-slate-800 bg-slate-950/70 px-4 py-5 text-sm text-slate-400">
-              No movie requests yet.
+              No requests yet.
             </div>
           ) : (
             <div className="max-h-[34vh] overflow-auto rounded border border-slate-800">

@@ -1,8 +1,6 @@
 import type {
   AdminCacheJobsResponse,
   AdminLoginAuditResponse,
-  AdminSetMemberPasscodeRequest,
-  AdminSetMemberPasscodeResponse,
   AdjustMemberCreditsRequest,
   AdjustMemberCreditsResponse,
   AuthCheckResponse,
@@ -10,22 +8,31 @@ import type {
   CacheAssetLookupResponse,
   ChangeMemberPasscodeRequest,
   ChangeMemberPasscodeResponse,
-  CreateMemberCodeRequest,
-  CreateMemberCodeResponse,
+  CreateResetInvitationResponse,
+  CreateSignupInvitationRequest,
+  CreateSignupInvitationResponse,
   CreateMovieRequestRequest,
   CreateMovieRequestResponse,
+  CreditPreviewRequest,
+  CreditPreviewResponse,
+  CreditPolicyResponse,
   DeleteCacheEntryResponse,
   EnsureCacheResponse,
   MemberCodeListResponse,
   MemberCreditUsageResponse,
+  MemberInvitationListResponse,
   MovieRequestsResponse,
   PlaybackResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
+  ResetMemberPasscodeRequest,
+  ResetMemberPasscodeResponse,
   SearchResult,
   SearchResponse,
   SetMemberCreditsRequest,
   SetMemberCreditsResponse,
+  UpdateMemberProfileRequest,
+  UpdateMemberProfileResponse,
   UpdateMovieRequestStatusRequest,
   UpdateMovieRequestStatusResponse
 } from "@wwpdw/shared";
@@ -120,6 +127,20 @@ export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
   });
 }
 
+export function updateMemberProfile(input: UpdateMemberProfileRequest) {
+  return request<UpdateMemberProfileResponse>(apiUrl("/api/member/profile"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function resetMemberPasscode(input: ResetMemberPasscodeRequest) {
+  return request<ResetMemberPasscodeResponse>(apiUrl("/api/auth/reset-passcode"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function listOwnCreditUsage(limit = 50) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<MemberCreditUsageResponse>(apiUrl(`/api/member/credit-usage?${params.toString()}`));
@@ -142,9 +163,20 @@ export function searchAssets(query: string) {
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
-export function browseAssets(limit = 60) {
-  const params = new URLSearchParams({ limit: String(limit) });
+export function browseAssets(limit = 60, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
+}
+
+export function previewCredit(input: CreditPreviewRequest) {
+  return request<CreditPreviewResponse>(apiUrl("/api/credit-preview"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function getCreditPolicy() {
+  return request<CreditPolicyResponse>(apiUrl("/api/credit-policy"));
 }
 
 export function ensureCache(result: SearchResult) {
@@ -178,11 +210,24 @@ export function listMemberCodes() {
   return request<MemberCodeListResponse>(apiUrl("/api/admin/member-codes"));
 }
 
-export function createMemberAccessCode(input: CreateMemberCodeRequest) {
-  return request<CreateMemberCodeResponse>(apiUrl("/api/admin/member-codes"), {
+export function listMemberInvitations() {
+  return request<MemberInvitationListResponse>(apiUrl("/api/admin/member-invitations"));
+}
+
+export function createSignupInvitation(input: CreateSignupInvitationRequest) {
+  return request<CreateSignupInvitationResponse>(apiUrl("/api/admin/member-invitations"), {
     method: "POST",
     body: JSON.stringify(input)
   });
+}
+
+export function createResetInvitation(id: string) {
+  return request<CreateResetInvitationResponse>(
+    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/reset-invitation`),
+    {
+      method: "POST"
+    }
+  );
 }
 
 export function revokeMemberAccessCode(id: string) {
@@ -216,16 +261,6 @@ export function setMemberCredits(id: string, input: SetMemberCreditsRequest) {
 export function adjustMemberCredits(input: AdjustMemberCreditsRequest) {
   return request<AdjustMemberCreditsResponse>(
     apiUrl("/api/admin/member-codes/credits/adjust"),
-    {
-      method: "POST",
-      body: JSON.stringify(input)
-    }
-  );
-}
-
-export function setMemberPasscode(id: string, input: AdminSetMemberPasscodeRequest) {
-  return request<AdminSetMemberPasscodeResponse>(
-    apiUrl(`/api/admin/member-codes/${encodeURIComponent(id)}/passcode`),
     {
       method: "POST",
       body: JSON.stringify(input)
