@@ -1,5 +1,4 @@
 import { Clock3, Coins, Film, HeartHandshake, MessageSquarePlus, Play, ShieldCheck } from "lucide-react";
-import { Badge } from "../../components/ui/badge";
 import { copy } from "../i18n";
 
 const rules = [
@@ -18,7 +17,6 @@ export function HelpPanel() {
         <div className="flex flex-wrap items-center gap-2">
           <Film className="h-5 w-5 text-emerald-300" />
           <h2 className="text-lg font-semibold text-slate-50">{copy.help.title}</h2>
-          <Badge variant="secondary">{copy.help.badge}</Badge>
         </div>
         <p className="max-w-3xl text-sm leading-6 text-slate-400">
           {copy.help.intro}
