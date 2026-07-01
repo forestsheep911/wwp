@@ -52,6 +52,7 @@ export interface SearchIndexStore {
   getHealth(): Promise<Record<string, unknown>>;
   getStats(): Promise<SearchIndexStats>;
   search(query: string, limit: number): Promise<SearchResult[]>;
+  sample(limit: number): Promise<SearchResult[]>;
   getResult(assetKey: string): Promise<SearchResult | undefined>;
   upsertResult(result: SearchResult, indexedAt?: string): Promise<SearchIndexEntry>;
   upsertResults(results: SearchResult[], indexedAt?: string): Promise<SearchIndexEntry[]>;
@@ -357,6 +358,17 @@ function searchEntries(entries: SearchIndexEntry[], query: string, limit: number
   return ranked.map(({ entry }) => cloneResult(entry.result));
 }
 
+function sampleEntries(entries: SearchIndexEntry[], limit: number) {
+  const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
+  const pool = [...entries];
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
+  }
+
+  return pool.slice(0, boundedLimit).map((entry) => cloneResult(entry.result));
+}
+
 function createRun(mode: SearchIndexSyncMode): SearchIndexRun {
   const now = new Date().toISOString();
   return {
@@ -400,6 +412,11 @@ export class LocalSearchIndexStore implements SearchIndexStore {
   async search(query: string, limit: number) {
     const state = await this.readState();
     return searchEntries(Object.values(state.entries), query, limit);
+  }
+
+  async sample(limit: number) {
+    const state = await this.readState();
+    return sampleEntries(Object.values(state.entries), limit);
   }
 
   async getResult(assetKey: string) {
@@ -540,6 +557,11 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   async search(query: string, limit: number) {
     await this.ensureReady();
     return searchEntries(await this.listEntries(), query, limit);
+  }
+
+  async sample(limit: number) {
+    await this.ensureReady();
+    return sampleEntries(await this.listEntries(), limit);
   }
 
   async getResult(assetKey: string) {

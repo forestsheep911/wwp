@@ -707,7 +707,9 @@ function CinemaApp() {
     }
 
     try {
-      const response = await browseAssets(browsePageLimit, append ? browseNextOffset : 0);
+      const response = await browseAssets(browsePageLimit, append ? browseNextOffset : 0, {
+        mode: append ? "paged" : "random"
+      });
       setBrowseResults((currentResults) => {
         if (!append) {
           return response.results;

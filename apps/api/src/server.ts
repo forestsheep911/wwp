@@ -1067,7 +1067,8 @@ async function enrichResultsWithCache(searchResults: SearchResult[]) {
 
 async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
-  const limit = requestLimit(url, 50, 100);
+  const mode = url.searchParams.get("mode") === "random" ? "random" : "paged";
+  const limit = requestLimit(url, 50, mode === "random" ? 200 : 100);
   const offset = requestOffset(url);
   const fetchLimit = offset + limit + 1;
   let searchResults: SearchResult[] = [];
@@ -1075,8 +1076,10 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
 
   if (searchIndexEnabled) {
     try {
-      searchResults = await searchIndex.search("", fetchLimit);
-      browseSource = "index";
+      searchResults = mode === "random"
+        ? await searchIndex.sample(limit)
+        : await searchIndex.search("", fetchLimit);
+      browseSource = mode === "random" ? "index_random" : "index";
     } catch (error) {
       logWarn("api.browse.index_read_failed", {
         requestId: context.requestId,
@@ -1086,13 +1089,14 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   }
 
   if (searchResults.length === 0) {
-    searchResults = (await searchSource.search("")).slice(0, fetchLimit);
+    const liveResults = await searchSource.search("");
+    searchResults = mode === "random" ? sampleSearchResults(liveResults, limit) : liveResults.slice(0, fetchLimit);
     void writeSearchResultsToIndex(searchResults, "browse_live");
-    browseSource = "live";
+    browseSource = mode === "random" ? "live_random" : "live";
   }
 
-  const pageResults = searchResults.slice(offset, offset + limit);
-  const hasMore = searchResults.length > offset + limit;
+  const pageResults = mode === "random" ? searchResults.slice(0, limit) : searchResults.slice(offset, offset + limit);
+  const hasMore = mode === "random" ? false : searchResults.length > offset + limit;
   rememberResults(pageResults);
   const results = await enrichResultsWithCache(pageResults);
 
@@ -1101,6 +1105,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     resultCount: results.length,
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
     browseSource,
+    mode,
     limit,
     offset,
     hasMore,
@@ -1109,11 +1114,23 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
 
   sendJson(response, 200, {
     results,
-    offset,
+    offset: mode === "random" ? 0 : offset,
     limit,
     hasMore,
-    nextOffset: hasMore ? offset + results.length : undefined
+    nextOffset: hasMore ? offset + results.length : undefined,
+    mode
   });
+}
+
+function sampleSearchResults(results: SearchResult[], limit: number) {
+  const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
+  const pool = [...results];
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
+  }
+
+  return pool.slice(0, boundedLimit);
 }
 
 function creditLimitErrorMessage() {

@@ -199,6 +199,7 @@ export interface SearchResponse {
   limit?: number;
   hasMore?: boolean;
   nextOffset?: number;
+  mode?: "paged" | "random";
 }
 
 export interface EnsureCacheRequest {

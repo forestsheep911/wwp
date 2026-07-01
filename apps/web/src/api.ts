@@ -214,8 +214,11 @@ export function searchAssets(query: string) {
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
-export function browseAssets(limit = 60, offset = 0) {
+export function browseAssets(limit = 60, offset = 0, options: { mode?: "paged" | "random" } = {}) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (options.mode) {
+    params.set("mode", options.mode);
+  }
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
 }
 
