@@ -105,6 +105,7 @@ export const zhCN = {
       specs: "规格"
     },
     browseViews: {
+      lucky: { label: "幸运之星", detail: "页面刷新时随机换一组" },
       recent: { label: "最近更新", detail: "按目录更新时间排列" },
       newGood: { label: "近期佳片", detail: "新片优先，兼顾评分" },
       popular: { label: "热门佳片", detail: "播放与评分综合排序" },

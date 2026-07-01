@@ -14,6 +14,7 @@ import {
   Play,
   Sparkles,
   Star,
+  Shuffle,
   Trophy
 } from "lucide-react";
 import type { CacheAsset, CreditPolicyResponse, MediaVariant, SearchResult } from "@wwpdw/shared";
@@ -221,6 +222,7 @@ export function LibraryTab({
 }
 
 type BrowseViewId =
+  | "lucky"
   | "recent"
   | "newGood"
   | "popular"
@@ -232,6 +234,7 @@ type BrowseViewId =
 
 const browseInitialCount = 12;
 const browseLoadStep = 12;
+const luckyRanks = new Map<string, number>();
 
 const browseViews: Array<{
   id: BrowseViewId;
@@ -239,6 +242,7 @@ const browseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
+  { id: "lucky", label: copy.library.browseViews.lucky.label, detail: copy.library.browseViews.lucky.detail, icon: Shuffle },
   { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
   { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
   { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Flame },
@@ -298,7 +302,7 @@ function LibraryHome({
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
-  const [activeView, setActiveView] = useState<BrowseViewId>("recent");
+  const [activeView, setActiveView] = useState<BrowseViewId>("lucky");
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const channelViews = viewsForBrowseChannel(browseChannel);
@@ -660,6 +664,17 @@ function resultLastPlayedAt(result: SearchResult, stats: Map<string, { count: nu
   return resultKeys(result).reduce((time, key) => Math.max(time, stats.get(key)?.lastPlayedAt ?? 0), 0);
 }
 
+function luckyRank(key: string) {
+  const existingRank = luckyRanks.get(key);
+  if (existingRank !== undefined) {
+    return existingRank;
+  }
+
+  const nextRank = Math.random();
+  luckyRanks.set(key, nextRank);
+  return nextRank;
+}
+
 function rankBrowseResults(
   view: BrowseViewId,
   results: ResultWithCache[],
@@ -671,6 +686,10 @@ function rankBrowseResults(
   const byRelease = (left: SearchResult, right: SearchResult) => releaseTime(right) - releaseTime(left);
   const byWatch = (left: SearchResult, right: SearchResult) => resultWatchCount(right, stats) - resultWatchCount(left, stats);
   const byLastPlayed = (left: SearchResult, right: SearchResult) => resultLastPlayedAt(right, stats) - resultLastPlayedAt(left, stats);
+
+  if (view === "lucky") {
+    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
+  }
 
   if (view === "doubanRank") {
     return ranked.sort(sourceRatingSort("douban"));
@@ -709,6 +728,10 @@ function assetActivityTime(asset: CacheAsset) {
 
 function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[]) {
   const ranked = [...assets];
+  if (view === "lucky") {
+    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
+  }
+
   if (view === "mostWatched" || view === "popular") {
     return ranked.sort((left, right) => toTime(right.lastPlayedAt) - toTime(left.lastPlayedAt) || assetActivityTime(right) - assetActivityTime(left));
   }
