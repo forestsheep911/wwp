@@ -1,13 +1,16 @@
-import { Clock3, Coins, Film, HeartHandshake, MessageSquarePlus, Play, ShieldCheck } from "lucide-react";
+import { Archive, Clock3, Coins, Film, HeartHandshake, MessageSquarePlus, PiggyBank, Play, Repeat2, Share2 } from "lucide-react";
 import { copy } from "../i18n";
 
 const rules = [
   HeartHandshake,
   Clock3,
   Coins,
+  Archive,
   Play,
+  Repeat2,
+  PiggyBank,
   MessageSquarePlus,
-  ShieldCheck
+  Share2
 ];
 
 export function HelpPanel() {
@@ -18,9 +21,6 @@ export function HelpPanel() {
           <Film className="h-5 w-5 text-emerald-300" />
           <h2 className="text-lg font-semibold text-slate-50">{copy.help.title}</h2>
         </div>
-        <p className="max-w-3xl text-sm leading-6 text-slate-400">
-          {copy.help.intro}
-        </p>
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
