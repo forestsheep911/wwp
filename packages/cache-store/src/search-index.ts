@@ -163,6 +163,8 @@ function metadataText(metadata?: MovieMetadata) {
     return [];
   }
 
+  const omdb = metadata.external?.omdb;
+
   return [
     metadata.type,
     metadata.releaseDate,
@@ -174,7 +176,35 @@ function metadataText(metadata?: MovieMetadata) {
     metadata.ratingLevel?.join(" "),
     metadata.info,
     metadata.description,
-    metadata.imdbId
+    metadata.imdbId,
+    metadata.externalIds?.imdb,
+    metadata.externalIds?.tmdb,
+    metadata.externalIds?.douban,
+    omdb?.title,
+    omdb?.year,
+    omdb?.type,
+    omdb?.rated,
+    omdb?.released,
+    omdb?.runtime,
+    omdb?.genres?.join(" "),
+    omdb?.directors?.join(" "),
+    omdb?.writers?.join(" "),
+    omdb?.actors?.join(" "),
+    omdb?.plot,
+    omdb?.languages?.join(" "),
+    omdb?.countries?.join(" "),
+    omdb?.awards,
+    omdb?.ratings?.map((rating) => `${rating.label} ${rating.value}`).join(" "),
+    omdb?.metascore,
+    omdb?.imdbRating,
+    omdb?.imdbVotes,
+    omdb?.imdbId,
+    omdb?.boxOffice,
+    omdb?.production,
+    omdb?.totalSeasons,
+    omdb?.season,
+    omdb?.episode,
+    omdb?.seriesId
   ].filter((value): value is string => Boolean(value));
 }
 

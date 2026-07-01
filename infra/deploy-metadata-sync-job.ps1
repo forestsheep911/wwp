@@ -15,6 +15,7 @@ param(
     [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
     [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
+    [string]$BlobContainer = "cached-videos",
     [string]$SearchIndexTable = "movieindex",
     [string]$CronExpression = "0 */6 * * *",
     [int]$DelayMs = -1,
@@ -111,11 +112,16 @@ $envVars = @(
     "SEARCH_INDEX_INCREMENTAL_OVERLAP_MINUTES=10",
     "SEARCH_INDEX_INCREMENTAL_BOOTSTRAP_LIMIT=200",
     "SEARCH_INDEX_FULL_DELETE_MISSING=true",
+    "POSTER_CACHE_ENABLED=true",
+    "POSTER_CACHE_MAX_BYTES=8388608",
+    "POSTER_CACHE_MAX_PER_MOVIE=0",
     "NOTION_REQUEST_TIMEOUT_MS=30000",
     "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=60000",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
+    "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
+    "AZURE_STORAGE_POSTER_SAS_MINUTES=1440",
     "NOTION_READ_ONLY_TOKEN=secretref:$NotionContainerSecretName"
 )
 

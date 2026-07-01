@@ -7,7 +7,8 @@ import type {
 } from "@wwpdw/shared";
 
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
-export type AppTab = "library" | "cached" | "history" | "admin" | "tasks";
+export type AppTab = "library" | "cached" | "history" | "help" | "admin" | "tasks";
+export type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 export type LibraryViewMode = "gallery" | "list";
 export type BadgeVariant = "default" | "secondary" | "warning" | "danger" | "muted";
 

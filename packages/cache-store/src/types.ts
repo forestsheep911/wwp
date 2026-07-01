@@ -49,6 +49,8 @@ export interface CacheStore {
   saveJob(job: CacheJob): Promise<void>;
   saveAsset(asset: CacheAsset): Promise<void>;
   finalizeReadyAsset(job: CacheJob): Promise<CacheAsset>;
+  cacheMoviePosters(result: SearchResult): Promise<SearchResult>;
+  hydrateMoviePosterUrls(result: SearchResult): Promise<SearchResult>;
   getPlayback(assetKey: string): Promise<PlaybackResponse | undefined>;
   cleanupExpired(now?: Date): Promise<CleanupExpiredResult>;
 }

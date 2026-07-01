@@ -7,6 +7,7 @@ import {
   logWarn
 } from "@wwpdw/shared";
 import {
+  createCacheStore,
   createSearchIndexStore,
   type SearchIndexRun,
   type SearchIndexSyncMode
@@ -22,6 +23,7 @@ interface SyncOptions {
   incrementalOverlapMinutes: number;
   incrementalBootstrapLimit: number;
   deleteMissingOnFull: boolean;
+  posterCacheEnabled: boolean;
 }
 
 function numberOption(name: string, fallback: number) {
@@ -91,7 +93,8 @@ function syncOptions(): SyncOptions {
     progressEvery: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_PROGRESS_EVERY", 10))),
     incrementalOverlapMinutes: Math.max(0, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_OVERLAP_MINUTES", 10))),
     incrementalBootstrapLimit: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_BOOTSTRAP_LIMIT", 200))),
-    deleteMissingOnFull: booleanOption("SEARCH_INDEX_FULL_DELETE_MISSING", true)
+    deleteMissingOnFull: booleanOption("SEARCH_INDEX_FULL_DELETE_MISSING", true),
+    posterCacheEnabled: booleanOption("POSTER_CACHE_ENABLED", true)
   };
 }
 
@@ -120,6 +123,7 @@ async function updateRunSafely(run: SearchIndexRun) {
 }
 
 const searchIndex = createSearchIndexStore();
+const cacheStore = createCacheStore();
 const notionSource = new NotionSearchSource();
 
 async function runSync() {
@@ -143,6 +147,7 @@ async function runSync() {
     limit,
     delayMs: options.delayMs,
     pageSize: options.pageSize,
+    posterCacheEnabled: options.posterCacheEnabled,
     previousEntryCount: stats.entryCount
   });
 
@@ -169,9 +174,12 @@ async function runSync() {
           errorMessage: item.error
         });
       } else {
-        await searchIndex.upsertResult(item.result);
+        const result = options.posterCacheEnabled
+          ? await cacheStore.cacheMoviePosters(item.result)
+          : item.result;
+        await searchIndex.upsertResult(result);
         run.saved += 1;
-        seenAssetKeys.add(item.result.assetKey);
+        seenAssetKeys.add(result.assetKey);
       }
 
       if (run.scanned % options.progressEvery === 0) {

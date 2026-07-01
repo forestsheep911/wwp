@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Client } from "@notionhq/client";
-import type { MediaVariant, MovieMetadata, RatingValue, SearchResult } from "@wwpdw/shared";
+import type { MediaVariant, MovieMetadata, MoviePoster, RatingValue, SearchResult } from "@wwpdw/shared";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,6 +81,8 @@ const ratingPropertyPattern = /\u8c46\u74e3\u8bc4\u5206|imdb\u8bc4\u5206|metasco
 const cjkPattern = /[\u3400-\u9fff]/;
 const specTitlePattern =
   /\d+(?:\.\d+)?\s*(?:GB|MB)|\b(?:4k|2160p|1080p|720p|480p)\b|\u56fd\u914d|\u666e\u901a\u8bdd|\u7e41\u7b80\u82f1|\u7e41\u7b80|\u7b80\u82f1|\u7b80\u4e2d|\u7e41\u82f1|\u53cc\u8bed|\u4e2d\u5b57|\u5b57\u5e55|\u539f\u76d8|\u84dd\u5149|BD|BluRay|WEB[- ]?DL|HDRip/i;
+const subtitleSpecPagePattern =
+  /(?:\u666e\u901a\u8bdd|\u56fd\u8bed|\u56fd\u914d|\u7b80|\u7e41|\u82f1|chs|cht|eng|gb)(?:[\s/+\-_.]*(?:\u7b80|\u7e41|\u82f1|\u666e\u901a\u8bdd|\u56fd\u8bed|\u56fd\u914d|chs|cht|eng|gb)){1,}/i;
 const sourceGroupTitlePattern = /\u7247\u6e90|\u8d44\u6e90|\bsource\b|\bmedia\b|\bfiles?\b/i;
 const ignoredTitlePrefixPattern = /^(?:\u4ec5\u4f9b\u4e0b\u8f7d|\u656c\u8bf7\u671f\u5f85)$/;
 const metadataLabelPattern =
@@ -450,11 +452,24 @@ function yearFromTitleOrDate(title: string, releaseDate?: string) {
   return releaseDate?.match(/^\d{4}/)?.[0];
 }
 
-function posterUrlFromProperties(page: JsonRecord, properties: JsonRecord) {
-  const coverUrl = mediaUrlFromObject(page.cover);
-  if (coverUrl) {
-    return coverUrl;
+function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | undefined) {
+  if (!url || seen.has(url)) {
+    return;
   }
+
+  seen.add(url);
+  posters.push({
+    url,
+    source: "notion",
+    originalUrl: url
+  });
+}
+
+function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
+  const posters: MoviePoster[] = [];
+  const seen = new Set<string>();
+  const coverUrl = mediaUrlFromObject(page.cover);
+  pushPoster(posters, seen, coverUrl);
 
   for (const [name, rawProperty] of Object.entries(properties)) {
     if (!posterPropertyPattern.test(name)) {
@@ -470,31 +485,31 @@ function posterUrlFromProperties(page: JsonRecord, properties: JsonRecord) {
     if (type === "files") {
       for (const file of asArray(property.files)) {
         const url = mediaUrlFromObject(file);
-        if (url) {
-          return url;
-        }
+        pushPoster(posters, seen, url);
       }
     }
 
     if (type === "url" && asString(property.url)) {
-      return asString(property.url);
+      pushPoster(posters, seen, asString(property.url));
     }
 
     if (type === "rich_text") {
-      const url = plainTextFromRichText(property.rich_text).match(urlPattern)?.[0];
-      if (url) {
-        return normalizeUrl(url);
+      for (const match of plainTextFromRichText(property.rich_text).matchAll(urlPattern)) {
+        pushPoster(posters, seen, normalizeUrl(match[0]));
       }
     }
   }
 
-  return undefined;
+  return posters;
 }
 
 function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: string): MovieMetadata {
   const releaseDate = dateFromNamedProperty(properties, releaseDatePropertyPattern);
+  const imdbId = textFromNamedProperty(properties, imdbPropertyPattern, 40);
+  const posters = postersFromProperties(page, properties);
   const metadata: MovieMetadata = {
-    posterUrl: posterUrlFromProperties(page, properties),
+    posterUrl: posters[0]?.url,
+    posters,
     type: listFromNamedProperty(properties, typePropertyPattern, 1)?.[0],
     releaseDate,
     year: yearFromTitleOrDate(title, releaseDate),
@@ -505,7 +520,8 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 360),
-    imdbId: textFromNamedProperty(properties, imdbPropertyPattern, 40)
+    imdbId,
+    externalIds: imdbId ? { imdb: imdbId } : undefined
   };
 
   return Object.fromEntries(
@@ -731,7 +747,7 @@ function isLikelySpecPage(title: string, movieTitle: string) {
     return true;
   }
 
-  if (specTitlePattern.test(title)) {
+  if (specTitlePattern.test(title) || subtitleSpecPagePattern.test(title)) {
     return true;
   }
 

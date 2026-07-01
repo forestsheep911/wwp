@@ -70,7 +70,7 @@ export function AccessGate({ onUnlock }: { onUnlock: (auth: AuthCheckResponse) =
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-400/15 text-emerald-200">
             <LockKeyhole className="h-6 w-6" />
           </div>
-          <CardTitle className="text-2xl">WW Family Cinema</CardTitle>
+          <CardTitle className="text-2xl">WWP Cinema</CardTitle>
           <CardDescription>Private household screening room</CardDescription>
         </CardHeader>
         <CardContent>

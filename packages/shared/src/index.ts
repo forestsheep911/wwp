@@ -33,8 +33,62 @@ export interface RatingValue {
   value: string;
 }
 
+export interface MoviePoster {
+  url: string;
+  source: "notion" | "omdb" | "external" | "blob";
+  originalUrl?: string;
+  blobName?: string;
+  contentType?: string;
+  cachedAt?: string;
+}
+
+export interface MovieExternalIds {
+  imdb?: string;
+  tmdb?: string;
+  douban?: string;
+}
+
+export interface OmdbMetadata {
+  source: "omdb";
+  fetchedAt: string;
+  title?: string;
+  year?: string;
+  type?: string;
+  rated?: string;
+  released?: string;
+  runtime?: string;
+  genres?: string[];
+  directors?: string[];
+  writers?: string[];
+  actors?: string[];
+  plot?: string;
+  languages?: string[];
+  countries?: string[];
+  awards?: string;
+  posterUrl?: string;
+  ratings?: RatingValue[];
+  metascore?: string;
+  imdbRating?: string;
+  imdbVotes?: string;
+  imdbId?: string;
+  dvd?: string;
+  boxOffice?: string;
+  production?: string;
+  website?: string;
+  totalSeasons?: string;
+  season?: string;
+  episode?: string;
+  seriesId?: string;
+  sourceUrl?: string;
+}
+
+export interface ExternalMovieMetadata {
+  omdb?: OmdbMetadata;
+}
+
 export interface MovieMetadata {
   posterUrl?: string;
+  posters?: MoviePoster[];
   type?: string;
   releaseDate?: string;
   year?: string;
@@ -46,6 +100,8 @@ export interface MovieMetadata {
   info?: string;
   description?: string;
   imdbId?: string;
+  externalIds?: MovieExternalIds;
+  external?: ExternalMovieMetadata;
 }
 
 export interface SearchResult {

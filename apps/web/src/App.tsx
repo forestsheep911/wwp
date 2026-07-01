@@ -15,6 +15,7 @@ import type {
 } from "@wwpdw/shared";
 import {
   adjustMemberCredits as adjustMemberCreditsApi,
+  browseAssets,
   checkAccess,
   changeMemberPasscode,
   clearAccessKey,
@@ -51,6 +52,7 @@ import { AdminPanel } from "./cinema/components/AdminPanel";
 import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
+import { HelpPanel } from "./cinema/components/HelpPanel";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
@@ -62,6 +64,7 @@ import { cacheErrorLabel } from "./cinema/format";
 import { historyStorageKey, readJsonStorage, writeJsonStorage } from "./cinema/storage";
 import type {
   AppTab,
+  BrowseChannel,
   HistoryAssetStatusMap,
   LibraryViewMode,
   ManagedMemberCode,
@@ -81,7 +84,7 @@ interface CinemaHistoryState {
   route: CinemaRoute;
 }
 
-const routeTabs: AppTab[] = ["library", "cached", "history", "admin", "tasks"];
+const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks"];
 
 function isAppTab(value: string | null): value is AppTab {
   return Boolean(value && routeTabs.includes(value as AppTab));
@@ -142,9 +145,12 @@ export default function App() {
   const [role, setRole] = useState<AccessRole | undefined>();
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
+  const [browseChannel, setBrowseChannel] = useState<BrowseChannel>("recommended");
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [results, setResults] = useState<ResultWithCache[]>([]);
+  const [browseResults, setBrowseResults] = useState<ResultWithCache[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
@@ -253,6 +259,20 @@ export default function App() {
     setPlayback(undefined);
     setActiveTab(nextRoute.tab);
     writeRoute(nextRoute, "push");
+  }
+
+  function openBrowseChannel(nextChannel: BrowseChannel) {
+    setBrowseChannel(nextChannel);
+    setError("");
+    setQuery("");
+    setResults([]);
+    setPlayback(undefined);
+    setActiveTab("library");
+    writeRoute({
+      tab: "library",
+      query: "",
+      playerAssetKey: undefined
+    }, "push");
   }
 
   function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
@@ -469,6 +489,18 @@ export default function App() {
       handleRequestError(cachedAssetsError, "Could not load cached titles.");
     } finally {
       setCachedAssetsLoading(false);
+    }
+  }
+
+  async function refreshBrowseAssets() {
+    setBrowseLoading(true);
+    try {
+      const response = await browseAssets(60);
+      setBrowseResults(response.results);
+    } catch (browseError) {
+      handleRequestError(browseError, "Could not load browse titles.");
+    } finally {
+      setBrowseLoading(false);
     }
   }
 
@@ -1000,8 +1032,11 @@ export default function App() {
     setOwnMovieRequests([]);
     setAdminUnlocked(false);
     setActiveTab("library");
+    setBrowseChannel("recommended");
     setQuery("");
     setResults([]);
+    setBrowseResults([]);
+    setBrowseLoading(false);
     setPlayback(undefined);
     setJob(undefined);
     setAsset(undefined);
@@ -1199,6 +1234,12 @@ export default function App() {
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab === "library" && query.trim().length === 0 && browseResults.length === 0 && !browseLoading) {
+      void refreshBrowseAssets();
+    }
+  }, [activeTab, query]);
+
   if (!unlocked) {
     return <AccessGate onUnlock={(auth) => {
       setUnlocked(true);
@@ -1272,6 +1313,7 @@ export default function App() {
       />
       <CinemaLayout
         activeTab={activeTab}
+        activeBrowseChannel={browseChannel}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
@@ -1280,8 +1322,12 @@ export default function App() {
         statusOffset={librarySearchMode ? "librarySearch" : "none"}
         showAdmin={showAdmin}
         onActiveTabChange={navigateToTab}
+        onBrowseChannelChange={openBrowseChannel}
         onChangePasscode={() => setPasscodeOpen(true)}
         onLock={lockCinema}
+        onOpenCached={() => navigateToTab("cached")}
+        onOpenHelp={() => navigateToTab("help")}
+        onOpenHistory={() => navigateToTab("history")}
         onOpenMovieRequest={openMovieRequestDialog}
         onOpenSpending={() => void openOwnCreditUsage()}
         onOpenSearch={() => setSearchOpen(true)}
@@ -1297,6 +1343,9 @@ export default function App() {
             error={error}
             viewMode={libraryViewMode}
             results={results}
+            browseChannel={browseChannel}
+            browseResults={browseResults}
+            browseLoading={browseLoading}
             cachedAssets={cachedAssets}
             historyItems={history}
             trackedItems={trackedItems}
@@ -1304,8 +1353,8 @@ export default function App() {
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onOpenHistoryItem={(assetKey, result) => void openPlayer(assetKey, result)}
-            onOpenTab={navigateToTab}
             onRefreshCachedAssets={() => void refreshCachedAssets()}
+            onRefreshBrowseAssets={() => void refreshBrowseAssets()}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
@@ -1327,6 +1376,7 @@ export default function App() {
             onRecache={(entry) => void recacheHistoryEntry(entry)}
           />
         )}
+        help={<HelpPanel />}
         admin={showAdmin ? (
           <AdminPanel
             adminUnlocked={adminUnlocked}

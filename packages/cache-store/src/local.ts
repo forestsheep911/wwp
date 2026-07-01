@@ -255,6 +255,14 @@ export class LocalCacheStore implements CacheStore {
     return asset;
   }
 
+  async cacheMoviePosters(result: SearchResult) {
+    return result;
+  }
+
+  async hydrateMoviePosterUrls(result: SearchResult) {
+    return result;
+  }
+
   async getPlayback(assetKey: string) {
     const asset = await this.getAsset(assetKey);
     if (!isFreshReady(asset) || !asset?.playbackUrl || !asset.expiresAt) {

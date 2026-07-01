@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Database,
   Film,
+  HelpCircle,
   History,
   KeyRound,
   ListChecks,
@@ -18,11 +19,19 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import type { AppTab } from "../types";
+import { Tabs, TabsContent } from "../../components/ui/tabs";
+import type { AppTab, BrowseChannel } from "../types";
+
+const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
+  { id: "recommended", label: "推荐" },
+  { id: "movie", label: "电影" },
+  { id: "tv", label: "电视" },
+  { id: "animation", label: "动画" }
+];
 
 interface CinemaLayoutProps {
   activeTab: AppTab;
+  activeBrowseChannel: BrowseChannel;
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
@@ -30,14 +39,19 @@ interface CinemaLayoutProps {
   library: ReactNode;
   cached: ReactNode;
   history: ReactNode;
+  help: ReactNode;
   admin?: ReactNode;
   showAdmin: boolean;
   status?: ReactNode;
   statusCount: number;
   statusOffset?: "none" | "librarySearch";
   onActiveTabChange: (value: AppTab) => void;
+  onBrowseChannelChange: (value: BrowseChannel) => void;
   onChangePasscode: () => void;
   onLock: () => void;
+  onOpenCached: () => void;
+  onOpenHelp: () => void;
+  onOpenHistory: () => void;
   onOpenMovieRequest: () => void;
   onOpenSpending: () => void;
   onOpenSearch: () => void;
@@ -45,6 +59,7 @@ interface CinemaLayoutProps {
 
 export function CinemaLayout({
   activeTab,
+  activeBrowseChannel,
   accountLabel,
   accountDetail,
   canChangePasscode,
@@ -52,14 +67,19 @@ export function CinemaLayout({
   library,
   cached,
   history,
+  help,
   admin,
   showAdmin,
   status,
   statusCount,
   statusOffset = "none",
   onActiveTabChange,
+  onBrowseChannelChange,
   onChangePasscode,
   onLock,
+  onOpenCached,
+  onOpenHelp,
+  onOpenHistory,
   onOpenMovieRequest,
   onOpenSpending,
   onOpenSearch
@@ -81,37 +101,46 @@ export function CinemaLayout({
                 <Film className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">WW Family Cinema</h1>
+                <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">WWP Cinema</h1>
                 <p className="text-xs font-semibold uppercase tracking-normal text-emerald-300">Private household cinema</p>
               </div>
             </div>
 
-            <TabsList className="order-3 col-span-2 min-w-0 lg:order-2 lg:col-span-1 lg:mx-auto">
-              <TabsTrigger value="library">
-                <Film className="h-4 w-4" />
-                <span className="sm:hidden">片库</span>
-                <span className="hidden sm:inline">Library</span>
-              </TabsTrigger>
-              <TabsTrigger value="cached">
-                <Database className="h-4 w-4" />
-                <span className="sm:hidden">缓存</span>
-                <span className="hidden sm:inline">Cached</span>
-              </TabsTrigger>
-              <TabsTrigger value="history">
-                <History className="h-4 w-4" />
-                <span className="sm:hidden">历史</span>
-                <span className="hidden sm:inline">History</span>
-              </TabsTrigger>
-              {showAdmin ? (
-                <TabsTrigger value="admin">
-                  <ShieldCheck className="h-4 w-4" />
-                  <span className="sm:hidden">管理</span>
-                  <span className="hidden sm:inline">Admin</span>
-                </TabsTrigger>
-              ) : null}
-            </TabsList>
+            <nav
+              aria-label="Browse channels"
+              className="scrollbar-none order-3 col-span-2 flex min-w-0 items-center gap-5 overflow-x-auto lg:order-2 lg:col-span-1 lg:mx-auto lg:justify-center"
+            >
+              {browseChannels.map((channel) => {
+                const active = activeTab === "library" && activeBrowseChannel === channel.id;
+                return (
+                  <button
+                    className={`relative h-9 flex-none px-0.5 text-sm font-semibold transition-colors ${
+                      active
+                        ? "text-emerald-200"
+                        : "text-slate-400 hover:text-slate-100"
+                    }`}
+                    key={channel.id}
+                    type="button"
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => onBrowseChannelChange(channel.id)}
+                  >
+                    {channel.label}
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-x-0 -bottom-1 h-0.5 rounded-full transition-colors ${
+                        active ? "bg-emerald-300" : "bg-transparent"
+                      }`}
+                    />
+                  </button>
+                );
+              })}
+            </nav>
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
+              <Button type="button" variant="outline" size="icon" onClick={onOpenHelp} title="Help">
+                <HelpCircle className="h-4 w-4" />
+                <span className="sr-only">Help</span>
+              </Button>
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title="Search">
                 <Search className="h-4 w-4" />
                 <span className="sr-only">Search</span>
@@ -124,6 +153,9 @@ export function CinemaLayout({
                 showAdmin={showAdmin}
                 onChangePasscode={onChangePasscode}
                 onOpenAdmin={() => onActiveTabChange("admin")}
+                onOpenCached={onOpenCached}
+                onOpenHelp={onOpenHelp}
+                onOpenHistory={onOpenHistory}
                 onOpenMovieRequest={onOpenMovieRequest}
                 onOpenSpending={onOpenSpending}
                 onLock={onLock}
@@ -155,6 +187,7 @@ export function CinemaLayout({
               <TabsContent className="mt-0" value="library">{library}</TabsContent>
               <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
               <TabsContent className="mt-0" value="history">{history}</TabsContent>
+              <TabsContent className="mt-0" value="help">{help}</TabsContent>
               {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
               {status ? <TabsContent className="mt-0 lg:hidden" value="tasks">{status}</TabsContent> : null}
             </div>
@@ -207,6 +240,9 @@ function AccountMenu({
   showAdmin,
   onChangePasscode,
   onOpenAdmin,
+  onOpenCached,
+  onOpenHelp,
+  onOpenHistory,
   onOpenMovieRequest,
   onOpenSpending,
   onLock
@@ -218,6 +254,9 @@ function AccountMenu({
   showAdmin: boolean;
   onChangePasscode: () => void;
   onOpenAdmin: () => void;
+  onOpenCached: () => void;
+  onOpenHelp: () => void;
+  onOpenHistory: () => void;
   onOpenMovieRequest: () => void;
   onOpenSpending: () => void;
   onLock: () => void;
@@ -283,6 +322,54 @@ function AccountMenu({
             <p className="mt-1 truncate text-xs text-slate-400">{accountDetail}</p>
           </div>
           <div className="grid p-1" role="menu">
+            <button
+              className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+              type="button"
+              role="menuitem"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                runAfterMenuClose(onOpenHelp);
+              }}
+              onClick={() => {
+                runAfterMenuClose(onOpenHelp);
+              }}
+            >
+              <HelpCircle className="h-4 w-4" />
+              Help
+            </button>
+            <button
+              className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+              type="button"
+              role="menuitem"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                runAfterMenuClose(onOpenCached);
+              }}
+              onClick={() => {
+                runAfterMenuClose(onOpenCached);
+              }}
+            >
+              <Database className="h-4 w-4" />
+              Cached
+            </button>
+            <button
+              className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+              type="button"
+              role="menuitem"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                runAfterMenuClose(onOpenHistory);
+              }}
+              onClick={() => {
+                runAfterMenuClose(onOpenHistory);
+              }}
+            >
+              <History className="h-4 w-4" />
+              History
+            </button>
             {showAdmin ? (
               <button
                 className="flex items-center gap-2 rounded px-3 py-2 text-left text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"

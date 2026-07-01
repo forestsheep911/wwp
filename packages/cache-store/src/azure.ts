@@ -23,6 +23,7 @@ import type {
   CacheJob,
   CacheStatus,
   MediaDiagnostics,
+  MoviePoster,
   Mp4Diagnostics,
   SearchResult
 } from "@wwpdw/shared";
@@ -61,6 +62,9 @@ interface AzureStoreConfig {
   assetTableName: string;
   jobTableName: string;
   sasMinutes: number;
+  posterSasMinutes: number;
+  posterMaxBytes: number;
+  posterMaxPerMovie: number;
 }
 
 type PayloadEntity = {
@@ -81,7 +85,10 @@ function readAzureConfig(): AzureStoreConfig {
     queueName: process.env.AZURE_STORAGE_QUEUE_NAME ?? defaultQueueName,
     assetTableName: process.env.AZURE_STORAGE_ASSET_TABLE ?? defaultAssetTableName,
     jobTableName: process.env.AZURE_STORAGE_JOB_TABLE ?? defaultJobTableName,
-    sasMinutes: Number(process.env.AZURE_STORAGE_PLAYBACK_SAS_MINUTES ?? 60)
+    sasMinutes: Number(process.env.AZURE_STORAGE_PLAYBACK_SAS_MINUTES ?? 60),
+    posterSasMinutes: Number(process.env.AZURE_STORAGE_POSTER_SAS_MINUTES ?? 24 * 60),
+    posterMaxBytes: Number(process.env.POSTER_CACHE_MAX_BYTES ?? 8 * 1024 * 1024),
+    posterMaxPerMovie: Number(process.env.POSTER_CACHE_MAX_PER_MOVIE ?? 0)
   };
 }
 
@@ -147,6 +154,58 @@ function mediaExtension(sourceUrl?: string) {
   }
 }
 
+function posterExtension(sourceUrl?: string, responseContentType?: string | null) {
+  if (responseContentType?.includes("webp")) {
+    return ".webp";
+  }
+  if (responseContentType?.includes("png")) {
+    return ".png";
+  }
+  if (responseContentType?.includes("gif")) {
+    return ".gif";
+  }
+  if (responseContentType?.includes("avif")) {
+    return ".avif";
+  }
+  if (responseContentType?.includes("jpeg") || responseContentType?.includes("jpg")) {
+    return ".jpg";
+  }
+
+  if (!sourceUrl) {
+    return ".jpg";
+  }
+
+  try {
+    const parsed = new URL(sourceUrl);
+    const match = parsed.pathname.match(/\.(webp|png|jpe?g|gif|avif)$/i);
+    return match ? `.${match[1].toLowerCase().replace("jpeg", "jpg")}` : ".jpg";
+  } catch {
+    const match = sourceUrl.match(/\.(webp|png|jpe?g|gif|avif)(?:[?#].*)?$/i);
+    return match ? `.${match[1].toLowerCase().replace("jpeg", "jpg")}` : ".jpg";
+  }
+}
+
+function posterContentType(sourceUrl?: string, responseContentType?: string | null) {
+  if (responseContentType?.startsWith("image/")) {
+    return responseContentType.split(";")[0] ?? responseContentType;
+  }
+
+  const extension = posterExtension(sourceUrl, responseContentType);
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  if (extension === ".png") {
+    return "image/png";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  if (extension === ".avif") {
+    return "image/avif";
+  }
+  return "image/jpeg";
+}
+
 function contentTypeFor(sourceUrl?: string, responseContentType?: string | null) {
   if (responseContentType?.startsWith("video/")) {
     return responseContentType;
@@ -166,6 +225,10 @@ function contentTypeFor(sourceUrl?: string, responseContentType?: string | null)
 
 function blobNameForAsset(assetKey: string, sourceUrl?: string) {
   return `assets/${encodeRowKey(assetKey)}/cached${mediaExtension(sourceUrl)}`;
+}
+
+function blobNameForPoster(assetKey: string, index: number, sourceUrl?: string, contentType?: string | null) {
+  return `posters/${encodeRowKey(assetKey)}/${String(index + 1).padStart(2, "0")}${posterExtension(sourceUrl, contentType)}`;
 }
 
 function parseHeaderNumber(value: string | null) {
@@ -818,6 +881,159 @@ export class AzureCacheStore implements CacheStore {
 
     await this.saveAsset(asset);
     return asset;
+  }
+
+  async cacheMoviePosters(result: SearchResult) {
+    await this.ensureReady();
+    const metadata = result.metadata;
+    if (!metadata || !metadata.posters?.length) {
+      return result;
+    }
+
+    const posters = metadata.posters;
+    const maxPosters = Math.max(0, Math.floor(this.config.posterMaxPerMovie));
+    const visiblePosters = maxPosters > 0 ? posters.slice(0, maxPosters) : posters;
+    const cachedPosters = await Promise.all(
+      visiblePosters.map((poster, index) => this.cacheMoviePoster(result.assetKey, poster, index))
+    );
+    await this.deleteStalePosterBlobs(
+      result.assetKey,
+      new Set(cachedPosters.map((poster) => poster.blobName).filter((blobName): blobName is string => Boolean(blobName)))
+    );
+
+    return {
+      ...result,
+      metadata: {
+        ...metadata,
+        posterUrl: cachedPosters[0]?.url ?? metadata.posterUrl,
+        posters: cachedPosters
+      }
+    };
+  }
+
+  async hydrateMoviePosterUrls(result: SearchResult) {
+    await this.ensureReady();
+    const metadata = result.metadata;
+    if (!metadata || !metadata.posters?.length) {
+      return result;
+    }
+
+    const posters = metadata.posters;
+    const expiresOn = new Date(Date.now() + this.config.posterSasMinutes * 60 * 1000);
+    const hydratedPosters = await Promise.all(
+      posters.map(async (poster) => {
+        if (!poster.blobName) {
+          return poster;
+        }
+
+        return {
+          ...poster,
+          source: "blob" as const,
+          url: await this.createBlobReadUrl(poster.blobName, expiresOn)
+        };
+      })
+    );
+
+    return {
+      ...result,
+      metadata: {
+        ...metadata,
+        posterUrl: hydratedPosters[0]?.url ?? metadata.posterUrl,
+        posters: hydratedPosters
+      }
+    };
+  }
+
+  private async cacheMoviePoster(assetKey: string, poster: MoviePoster, index: number): Promise<MoviePoster> {
+    const sourceUrl = poster.originalUrl ?? poster.url;
+    if (!sourceUrl || poster.blobName) {
+      return poster;
+    }
+
+    try {
+      const response = await fetch(sourceUrl, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "wwpdw-poster-cache/0.1"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Poster download failed with HTTP ${response.status}.`);
+      }
+
+      const sourceContentLength = parseHeaderNumber(response.headers.get("content-length"));
+      if (sourceContentLength && sourceContentLength > this.config.posterMaxBytes) {
+        throw new Error(`Poster is too large (${sourceContentLength} bytes).`);
+      }
+
+      const contentType = posterContentType(sourceUrl, response.headers.get("content-type"));
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length <= 0) {
+        throw new Error("Poster download returned an empty file.");
+      }
+      if (buffer.length > this.config.posterMaxBytes) {
+        throw new Error(`Poster is too large (${buffer.length} bytes).`);
+      }
+
+      const blobName = blobNameForPoster(assetKey, index, sourceUrl, contentType);
+      const blockBlob = this.containerClient.getBlockBlobClient(blobName);
+      await blockBlob.uploadData(buffer, {
+        blobHTTPHeaders: {
+          blobContentType: contentType
+        },
+        metadata: {
+          assetkey: encodeRowKey(assetKey),
+          posterindex: String(index + 1),
+          source: poster.source
+        }
+      });
+
+      return {
+        ...poster,
+        source: "blob",
+        originalUrl: sourceUrl,
+        url: sourceUrl,
+        blobName,
+        contentType,
+        cachedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      logWarn("cache.poster.upload_failed", {
+        assetKey,
+        index,
+        source: poster.source,
+        ...errorLogFields(error)
+      });
+      return poster;
+    }
+  }
+
+  private async deleteStalePosterBlobs(assetKey: string, currentBlobNames: Set<string>) {
+    const prefix = `posters/${encodeRowKey(assetKey)}/`;
+    for await (const blob of this.containerClient.listBlobsFlat({ prefix })) {
+      if (currentBlobNames.has(blob.name)) {
+        continue;
+      }
+
+      try {
+        await this.containerClient.deleteBlob(blob.name, {
+          deleteSnapshots: "include"
+        });
+        logInfo("cache.poster.stale_deleted", {
+          assetKey,
+          blobName: blob.name
+        });
+      } catch (error) {
+        if (!isNotFound(error)) {
+          logWarn("cache.poster.stale_delete_failed", {
+            assetKey,
+            blobName: blob.name,
+            ...errorLogFields(error)
+          });
+        }
+      }
+    }
   }
 
   private async uploadSourceToBlockBlob(

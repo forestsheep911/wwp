@@ -142,6 +142,11 @@ export function searchAssets(query: string) {
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
+export function browseAssets(limit = 60) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
+}
+
 export function ensureCache(result: SearchResult) {
   return request<EnsureCacheResponse>(apiUrl("/api/cache"), {
     method: "POST",

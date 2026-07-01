@@ -750,19 +750,7 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
   const searchLoad = await loadSearchResults(query);
   const searchResults = searchLoad.results;
   rememberResults(searchResults);
-  const assetKeys = searchResults.flatMap((item) => [
-    item.assetKey,
-    ...(item.variants?.map((variant) => variant.assetKey) ?? [])
-  ]);
-  const assets = await store.listAssets(assetKeys);
-  const results = searchResults.map((item) => ({
-    ...item,
-    cache: visibleCacheAsset(assets[item.assetKey]),
-    variants: item.variants?.map((variant) => ({
-      ...variant,
-      cache: visibleCacheAsset(assets[variant.assetKey])
-    }))
-  }));
+  const results = await enrichResultsWithCache(searchResults);
 
   logInfo("api.search", {
     requestId: context.requestId,
@@ -771,6 +759,64 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
     searchCache: searchLoad.cacheStatus,
     searchCacheEntries: searchResultCache.size,
+    durationMs: durationMs(startedAt)
+  });
+
+  sendJson(response, 200, { results });
+}
+
+async function enrichResultsWithCache(searchResults: SearchResult[]) {
+  const hydratedResults = await Promise.all(
+    searchResults.map((item) => store.hydrateMoviePosterUrls(item))
+  );
+  const assetKeys = hydratedResults.flatMap((item) => [
+    item.assetKey,
+    ...(item.variants?.map((variant) => variant.assetKey) ?? [])
+  ]);
+  const assets = await store.listAssets(assetKeys);
+  return hydratedResults.map((item) => ({
+    ...item,
+    cache: visibleCacheAsset(assets[item.assetKey]),
+    variants: item.variants?.map((variant) => ({
+      ...variant,
+      cache: visibleCacheAsset(assets[variant.assetKey])
+    }))
+  }));
+}
+
+async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const limit = requestLimit(url, 50, 100);
+  let searchResults: SearchResult[] = [];
+  let browseSource = "live";
+
+  if (searchIndexEnabled) {
+    try {
+      searchResults = await searchIndex.search("", limit);
+      browseSource = "index";
+    } catch (error) {
+      logWarn("api.browse.index_read_failed", {
+        requestId: context.requestId,
+        ...errorLogFields(error)
+      });
+    }
+  }
+
+  if (searchResults.length === 0) {
+    searchResults = (await searchSource.search("")).slice(0, limit);
+    void writeSearchResultsToIndex(searchResults, "browse_live");
+    browseSource = "live";
+  }
+
+  rememberResults(searchResults);
+  const results = await enrichResultsWithCache(searchResults);
+
+  logInfo("api.browse", {
+    requestId: context.requestId,
+    resultCount: results.length,
+    variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
+    browseSource,
+    limit,
     durationMs: durationMs(startedAt)
   });
 
@@ -1946,6 +1992,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/search") {
       await handleSearch(url, response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/browse-assets") {
+      await handleBrowseAssets(url, response, context);
       return;
     }
 
