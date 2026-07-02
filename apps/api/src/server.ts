@@ -54,7 +54,7 @@ import {
 } from "@wwpdw/shared";
 import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
-import { AiSummaryConfigError, summarizeMovie } from "./ai-summary.js";
+import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
@@ -1094,9 +1094,17 @@ async function handleMovieSummary(
       durationMs: durationMs(startedAt),
       ...errorLogFields(error)
     });
-    sendJson(response, error instanceof AiSummaryConfigError ? 503 : 502, {
-      error: error instanceof AiSummaryConfigError ? "AI summary is not configured." : "AI summary failed."
-    });
+    if (error instanceof AiSummaryConfigError) {
+      sendJson(response, 503, { error: "AI summary is not configured." });
+      return;
+    }
+
+    if (error instanceof AiSummaryTimeoutError) {
+      sendJson(response, 504, { error: "AI 摘要超时，请稍后再试。" });
+      return;
+    }
+
+    sendJson(response, 502, { error: "AI summary failed." });
   }
 }
 

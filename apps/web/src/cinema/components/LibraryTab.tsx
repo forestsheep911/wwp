@@ -118,13 +118,12 @@ export function LibraryTab({
   const [summaryDialog, setSummaryDialog] = useState<{
     open: boolean;
     result?: ResultWithCache;
-    mode: MovieSummaryMode;
+    mode?: MovieSummaryMode;
     loading: boolean;
     error: string;
     response?: MovieSummaryResponse;
   }>({
     open: false,
-    mode: "spoiler_free",
     loading: false,
     error: ""
   });
@@ -162,7 +161,14 @@ export function LibraryTab({
   }
 
   function openMovieSummary(result: ResultWithCache) {
-    void loadMovieSummary(result, "spoiler_free");
+    setSummaryDialog({
+      open: true,
+      result,
+      mode: undefined,
+      loading: false,
+      error: "",
+      response: undefined
+    });
   }
 
   useEffect(() => {
@@ -307,7 +313,11 @@ export function LibraryTab({
           }));
         }}
         onModeChange={(mode) => {
-          if (summaryDialog.result && mode !== summaryDialog.mode) {
+          if (
+            summaryDialog.result &&
+            !summaryDialog.loading &&
+            (mode !== summaryDialog.mode || summaryDialog.response?.mode !== mode)
+          ) {
             void loadMovieSummary(summaryDialog.result, mode);
           }
         }}
@@ -1795,7 +1805,7 @@ function MovieSummaryDialog({
   state: {
     open: boolean;
     result?: ResultWithCache;
-    mode: MovieSummaryMode;
+    mode?: MovieSummaryMode;
     loading: boolean;
     error: string;
     response?: MovieSummaryResponse;

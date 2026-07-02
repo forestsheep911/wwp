@@ -139,7 +139,7 @@ export const zhCN = {
     spoilerFree: "非剧透",
     spoiler: "剧透版",
     aiSummaryLoading: "正在生成简介",
-    aiSummaryEmpty: "还没有简介。",
+    aiSummaryEmpty: "选择一个版本后生成简介。",
     moreVariants: (count: number) => `还有 ${count} 个规格`,
     variantCount: (count: number) => `${count} 个规格`,
     playableVariantCount: (count: number) => `${count} 个可播放`,

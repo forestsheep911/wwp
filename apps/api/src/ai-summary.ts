@@ -38,6 +38,13 @@ export class AiSummaryConfigError extends Error {
   }
 }
 
+export class AiSummaryTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiSummaryTimeoutError";
+  }
+}
+
 function normalizePreset(value: string | undefined): AiModelPreset | undefined {
   const normalized = value?.trim().toLowerCase().replace(/_/g, "-");
   if (!normalized) {
@@ -87,7 +94,7 @@ function summaryConfig() {
     model,
     apiUrl: process.env.WWPDW_AI_SUMMARY_API_URL?.trim() || `${baseUrl}/chat/completions`,
     authHeader: (process.env.WWPDW_AI_SUMMARY_AUTH_HEADER ?? "authorization").toLowerCase(),
-    timeoutMs: numberFromEnv("WWPDW_AI_SUMMARY_TIMEOUT_MS", 20_000, 1_000, 120_000)
+    timeoutMs: numberFromEnv("WWPDW_AI_SUMMARY_TIMEOUT_MS", 45_000, 1_000, 120_000)
   };
 }
 
@@ -129,10 +136,19 @@ function compactResult(result: SearchResult) {
 
 function promptForMode(mode: MovieSummaryMode) {
   if (mode === "spoiler") {
-    return "写一段中文剧情简介，可以包含关键转折、结局和人物命运。语气自然，约 180-260 字。";
+    return [
+      "写一段中文剧透版剧情说明，可以包含关键转折、结局、人物命运和主题落点。",
+      "不要只是改写原始简介，要补足故事推进、人物动机和冲突如何收束。",
+      "目标长度 320-520 字；如果原始资料本来就很短，也要尽量给出比原始简介更完整的信息。"
+    ].join("");
   }
 
-  return "写一段中文剧情简介，不要剧透结局、反转、真凶、死亡或最终选择。语气自然，约 120-180 字。";
+  return [
+    "写一段中文非剧透剧情简介。不要剧透结局、最终选择、真凶、重大反转或最后命运。",
+    "但它必须比原始简介更有信息量，而不是更短的压缩版：补充主角处境、人物关系、心理困境、主要冲突、故事氛围和观看看点。",
+    "可以说明前中段会出现的压力来源和情感拉扯；结尾用开放式表达，但不要用空泛问题收尾。",
+    "目标长度 260-420 字；除非资料极少，不要少于 220 字。"
+  ].join("");
 }
 
 function responseText(payload: unknown) {
@@ -169,38 +185,48 @@ export async function summarizeMovie(input: MovieSummaryRequest): Promise<MovieS
     throw new AiSummaryConfigError("AI summary is not configured.");
   }
 
-  const response = await fetch(config.apiUrl, {
-    method: "POST",
-    signal: AbortSignal.timeout(config.timeoutMs),
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(config)
-    },
-    body: JSON.stringify({
-      model: config.model,
-      response_format: {
-        type: "json_object"
+  let response: Response;
+  try {
+    response = await fetch(config.apiUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(config.timeoutMs),
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(config)
       },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "你是家庭影院片库的中文电影简介助手。",
-            "只返回 JSON，格式为 {\"summary\":\"...\"}。",
-            "不要提模型、接口、片库内部字段或供应商。",
-            "如果资料不足，可以结合常识概括，但不要编造具体版本信息。"
-          ].join("")
+      body: JSON.stringify({
+        model: config.model,
+        response_format: {
+          type: "json_object"
         },
-        {
-          role: "user",
-          content: JSON.stringify({
-            instruction: promptForMode(input.mode),
-            movie: compactResult(input.result)
-          })
-        }
-      ]
-    })
-  });
+        messages: [
+          {
+            role: "system",
+            content: [
+              "你是家庭影院片库的中文电影简介助手。",
+              "只返回 JSON，格式为 {\"summary\":\"...\"}。",
+              "不要提模型、接口、片库内部字段或供应商。",
+              "如果资料里已有原始简介，你的任务是增补和重组织信息，不是缩写它。",
+              "优先使用片名、年份、导演、演员、类型、原始简介和外部 plot。",
+              "如果资料不足，可以结合公开常识概括，但不要编造具体版本信息。"
+            ].join("")
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              instruction: promptForMode(input.mode),
+              movie: compactResult(input.result)
+            })
+          }
+        ]
+      })
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new AiSummaryTimeoutError(`AI summary timed out after ${config.timeoutMs}ms.`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
