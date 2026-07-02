@@ -162,7 +162,14 @@ export function LibraryTab({
   }
 
   function openMovieSummary(result: ResultWithCache) {
-    void loadMovieSummary(result, "spoiler_free");
+    setSummaryDialog({
+      open: true,
+      result,
+      mode: "spoiler_free",
+      loading: false,
+      error: "",
+      response: undefined
+    });
   }
 
   useEffect(() => {
@@ -307,7 +314,11 @@ export function LibraryTab({
           }));
         }}
         onModeChange={(mode) => {
-          if (summaryDialog.result && mode !== summaryDialog.mode) {
+          if (
+            summaryDialog.result &&
+            !summaryDialog.loading &&
+            (mode !== summaryDialog.mode || summaryDialog.response?.mode !== mode)
+          ) {
             void loadMovieSummary(summaryDialog.result, mode);
           }
         }}
