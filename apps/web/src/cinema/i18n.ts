@@ -115,6 +115,7 @@ export const zhCN = {
       popular: { label: "热门佳片", detail: "播放与评分综合排序" },
       topRated: { label: "评价最高", detail: "优先展示评分条目" },
       mostWatched: { label: "观看最高", detail: "按家庭播放记录排序" },
+      tspdtRank: { label: "TSPDT 1000", detail: "按 TSPDT 影史榜顺序排列" },
       doubanRank: { label: "豆瓣排名", detail: "按豆瓣评分优先排列" },
       imdbRank: { label: "IMDb 排名", detail: "按 IMDb 评分优先排列" },
       rottenRank: { label: "烂番茄排名", detail: "按烂番茄评分优先排列" }

@@ -342,10 +342,12 @@ function statsFromEntries(
 }
 
 function searchEntries(entries: SearchIndexEntry[], query: string, limit: number) {
-  const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+  const normalizedQuery = query.trim();
+  const maxLimit = normalizedQuery ? 100 : Math.max(100, entries.length);
+  const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), maxLimit);
   const ranked = entries
     .map((entry) => ({ entry, score: scoreEntry(entry, query) }))
-    .filter(({ score }) => !query.trim() || score > 0)
+    .filter(({ score }) => !normalizedQuery || score > 0)
     .sort((left, right) => {
       if (right.score !== left.score) {
         return right.score - left.score;

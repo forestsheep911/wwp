@@ -122,6 +122,8 @@ type PendingCreditAction =
   };
 
 const browsePageLimit = 48;
+const browseCatalogPageLimit = 100;
+type BrowseLoadMode = "paged" | "random";
 
 function isAppTheme(value: unknown): value is AppTheme {
   return value === "dark" || value === "light";
@@ -151,6 +153,7 @@ function CinemaApp() {
   const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
+  const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
@@ -695,8 +698,10 @@ function CinemaApp() {
     }
   }
 
-  async function refreshBrowseAssets(options: { append?: boolean } = {}) {
+  async function refreshBrowseAssets(options: { append?: boolean; mode?: BrowseLoadMode; limit?: number } = {}) {
     const append = options.append === true;
+    const mode = options.mode ?? (append ? "paged" : "random");
+    const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     if (append) {
       if (browseLoadingMore || !browseHasMore) {
         return;
@@ -707,8 +712,8 @@ function CinemaApp() {
     }
 
     try {
-      const response = await browseAssets(browsePageLimit, append ? browseNextOffset : 0, {
-        mode: append ? "paged" : "random"
+      const response = await browseAssets(limit, append ? browseNextOffset : 0, {
+        mode
       });
       setBrowseResults((currentResults) => {
         if (!append) {
@@ -721,6 +726,7 @@ function CinemaApp() {
       });
       setBrowseHasMore(Boolean(response.hasMore));
       setBrowseNextOffset(response.nextOffset ?? 0);
+      setBrowseLoadMode(response.mode ?? mode);
     } catch (browseError) {
       handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {
@@ -1972,6 +1978,7 @@ function CinemaApp() {
             browseLoading={browseLoading}
             browseLoadingMore={browseLoadingMore}
             browseHasMore={browseHasMore}
+            browseLoadMode={browseLoadMode}
             cachedAssets={cachedAssets}
             historyItems={history}
             trackedItems={trackedItems}
@@ -1980,7 +1987,7 @@ function CinemaApp() {
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
-            onLoadMoreBrowse={() => void refreshBrowseAssets({ append: true })}
+            onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
             onDownload={(selectedResult, variant) => void downloadResult(selectedResult, variant)}

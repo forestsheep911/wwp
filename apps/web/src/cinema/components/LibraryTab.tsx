@@ -42,6 +42,8 @@ import {
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
+import { tspdtChineseTitles } from "../tspdt-zh";
+import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
 import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
@@ -57,6 +59,7 @@ interface LibraryTabProps {
   browseLoading: boolean;
   browseLoadingMore: boolean;
   browseHasMore: boolean;
+  browseLoadMode: "paged" | "random";
   cachedAssets: CacheAsset[];
   historyItems: PlaybackHistoryEntry[];
   trackedItems: TrackedCacheItem[];
@@ -65,7 +68,7 @@ interface LibraryTabProps {
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
-  onLoadMoreBrowse: () => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -83,6 +86,7 @@ export function LibraryTab({
   browseLoading,
   browseLoadingMore,
   browseHasMore,
+  browseLoadMode,
   cachedAssets,
   historyItems,
   trackedItems,
@@ -91,7 +95,7 @@ export function LibraryTab({
   trackedByAssetKey,
   onOpenCachedAsset,
   onFocusedAssetHandled,
-  onLoadMoreBrowse,
+  onRefreshBrowse,
   onViewModeChange,
   onSelect,
   onDownload
@@ -143,12 +147,13 @@ export function LibraryTab({
           browseLoading={browseLoading}
           browseLoadingMore={browseLoadingMore}
           browseHasMore={browseHasMore}
+          browseLoadMode={browseLoadMode}
           historyItems={historyItems}
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onOpenCachedAsset={onOpenCachedAsset}
-          onLoadMoreBrowse={onLoadMoreBrowse}
+          onRefreshBrowse={onRefreshBrowse}
           onOpenDetail={setDetailResult}
           onSelect={onSelect}
           onDownload={onDownload}
@@ -229,6 +234,7 @@ type BrowseViewId =
   | "popular"
   | "topRated"
   | "mostWatched"
+  | "tspdtRank"
   | "doubanRank"
   | "imdbRank"
   | "rottenRank";
@@ -257,6 +263,7 @@ const movieBrowseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
+  { id: "tspdtRank", label: copy.library.browseViews.tspdtRank.label, detail: copy.library.browseViews.tspdtRank.detail, icon: Trophy },
   { id: "doubanRank", label: copy.library.browseViews.doubanRank.label, detail: copy.library.browseViews.doubanRank.detail, icon: Trophy },
   { id: "imdbRank", label: copy.library.browseViews.imdbRank.label, detail: copy.library.browseViews.imdbRank.detail, icon: Star },
   { id: "rottenRank", label: copy.library.browseViews.rottenRank.label, detail: copy.library.browseViews.rottenRank.detail, icon: Flame },
@@ -276,12 +283,13 @@ function LibraryHome({
   browseLoading,
   browseLoadingMore,
   browseHasMore,
+  browseLoadMode,
   historyItems,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
-  onLoadMoreBrowse,
+  onRefreshBrowse,
   onOpenDetail,
   onSelect,
   onDownload
@@ -293,12 +301,13 @@ function LibraryHome({
   browseLoading: boolean;
   browseLoadingMore: boolean;
   browseHasMore: boolean;
+  browseLoadMode: "paged" | "random";
   historyItems: PlaybackHistoryEntry[];
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
-  onLoadMoreBrowse: () => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -321,8 +330,17 @@ function LibraryHome({
     () => rankCachedAssets(activeSortView, cachedAssets),
     [activeSortView, cachedAssets]
   );
+  const tspdtItems = useMemo(
+    () => buildTspdtRankItems(browsableResults),
+    [browsableResults]
+  );
+  const showingTspdtRank = activeSortView === "tspdtRank";
   const browsingResults = rankedResults.length > 0;
-  const totalVisibleItems = browsingResults ? rankedResults.length : rankedAssets.length;
+  const totalVisibleItems = showingTspdtRank
+    ? tspdtItems.length
+    : browsingResults
+      ? rankedResults.length
+      : rankedAssets.length;
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
@@ -331,13 +349,17 @@ function LibraryHome({
     () => rankedAssets.slice(0, visibleItemCount),
     [rankedAssets, visibleItemCount]
   );
+  const visibleTspdtItems = useMemo(
+    () => tspdtItems.slice(0, visibleItemCount),
+    [tspdtItems, visibleItemCount]
+  );
   const hasMoreItems = visibleItemCount < totalVisibleItems;
-  const browseInitialLoading = browseLoading && rankedResults.length === 0;
+  const browseInitialLoading = browseLoading && rankedResults.length === 0 && !showingTspdtRank;
 
   function showMoreItems() {
     if (!hasMoreItems) {
       if (browseHasMore && !browseLoadingMore) {
-        onLoadMoreBrowse();
+        onRefreshBrowse({ append: true, mode: "paged", limit: 100 });
       }
       return;
     }
@@ -352,6 +374,21 @@ function LibraryHome({
   useEffect(() => {
     setVisibleItemCount(browseInitialCount);
   }, [activeSortView, browseChannel]);
+
+  useEffect(() => {
+    if (!showingTspdtRank || browseLoading || browseLoadingMore) {
+      return;
+    }
+
+    if (browseLoadMode !== "paged") {
+      onRefreshBrowse({ mode: "paged", limit: 100 });
+      return;
+    }
+
+    if (browseHasMore) {
+      onRefreshBrowse({ append: true, mode: "paged", limit: 100 });
+    }
+  }, [browseHasMore, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, onRefreshBrowse, showingTspdtRank]);
 
   useEffect(() => {
     if ((!hasMoreItems && !browseHasMore) || !loadMoreRef.current) {
@@ -393,7 +430,28 @@ function LibraryHome({
       </div>
 
       <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
-        {browseInitialLoading ? (
+        {showingTspdtRank ? (
+          <>
+            <TspdtRankView
+              creditPolicy={creditPolicy}
+              items={visibleTspdtItems}
+              pendingAssetKeys={pendingAssetKeys}
+              pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+              trackedByAssetKey={trackedByAssetKey}
+              onOpenDetail={onOpenDetail}
+              onSelect={onSelect}
+              onDownload={onDownload}
+            />
+            <LazyLoadFooter
+              hasMore={hasMoreItems}
+              loadMoreRef={loadMoreRef}
+              loading={browseLoadingMore}
+              shownCount={visibleTspdtItems.length}
+              totalCount={tspdtItems.length}
+              onLoadMore={showMoreItems}
+            />
+          </>
+        ) : browseInitialLoading ? (
           <BrowseLoadingGrid />
         ) : browsingResults ? (
           <>
@@ -536,6 +594,270 @@ function BrowseLoadingGrid() {
       </div>
     </div>
   );
+}
+
+interface TspdtRankItem {
+  entry: TspdtEntry;
+  result?: ResultWithCache;
+}
+
+function TspdtRankView({
+  creditPolicy,
+  items,
+  pendingAssetKeys,
+  pendingDownloadAssetKeys,
+  trackedByAssetKey,
+  onOpenDetail,
+  onSelect,
+  onDownload
+}: {
+  creditPolicy: CreditPolicyResponse;
+  items: TspdtRankItem[];
+  pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
+  trackedByAssetKey: Map<string, TrackedCacheItem>;
+  onOpenDetail: (result: ResultWithCache) => void;
+  onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">TSPDT {tspdtEdition}</Badge>
+          <Badge variant="muted">{items.length}/1000</Badge>
+        </div>
+        <a
+          className="text-xs font-semibold text-slate-500 transition-colors hover:text-emerald-200"
+          href={tspdtSourceUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          theyshootpictures.com
+        </a>
+      </div>
+      <div className="grid gap-2">
+        {items.map((item) => (
+          <TspdtRankRow
+            creditPolicy={creditPolicy}
+            item={item}
+            key={item.entry.rank}
+            pendingAssetKeys={pendingAssetKeys}
+            pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+            trackedByAssetKey={trackedByAssetKey}
+            onOpenDetail={onOpenDetail}
+            onSelect={onSelect}
+            onDownload={onDownload}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TspdtRankRow({
+  creditPolicy,
+  item,
+  pendingAssetKeys,
+  pendingDownloadAssetKeys,
+  trackedByAssetKey,
+  onOpenDetail,
+  onSelect,
+  onDownload
+}: {
+  creditPolicy: CreditPolicyResponse;
+  item: TspdtRankItem;
+  pendingAssetKeys: string[];
+  pendingDownloadAssetKeys: string[];
+  trackedByAssetKey: Map<string, TrackedCacheItem>;
+  onOpenDetail: (result: ResultWithCache) => void;
+  onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
+  onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
+}) {
+  const { entry, result } = item;
+  const title = tspdtDisplayTitle(item);
+
+  if (!result) {
+    return (
+      <article className="grid min-h-[4.75rem] grid-cols-[4rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-900 bg-slate-950/45 px-3 py-3 opacity-80 sm:grid-cols-[4.5rem_minmax(0,1fr)_minmax(220px,0.65fr)]">
+        <RankNumber rank={entry.rank} />
+        <h3 className="min-w-0 truncate text-sm font-semibold text-slate-300 sm:text-base">{title}</h3>
+        <div aria-hidden="true" className="hidden sm:block" />
+      </article>
+    );
+  }
+
+  const tags = cardTags(result);
+  return (
+    <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
+      <RankNumber rank={entry.rank} />
+      <button
+        className="hidden overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 lg:block"
+        type="button"
+        onClick={() => onOpenDetail(result)}
+        title={copy.library.viewDetails}
+      >
+        <MoviePoster result={result} />
+      </button>
+      <div className="grid min-w-0 content-start gap-2">
+        <button
+          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          type="button"
+          onClick={() => onOpenDetail(result)}
+          title={copy.library.viewDetails}
+        >
+          <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
+            {title}
+          </h3>
+        </button>
+        <p className="text-xs text-slate-500">{metadataLine(result)}</p>
+        <CompactRatingBadges result={result} />
+        {tags.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {tags.map((tag) => (
+              <Badge className={tag.className} key={`tspdt-${entry.rank}-${tag.key}`} variant={tag.variant}>{tag.tag}</Badge>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <VariantButtons
+        compact
+        creditPolicy={creditPolicy}
+        result={result}
+        pendingAssetKeys={pendingAssetKeys}
+        pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+        trackedByAssetKey={trackedByAssetKey}
+        onSelect={onSelect}
+        onDownload={onDownload}
+      />
+    </article>
+  );
+}
+
+function tspdtDisplayTitle(item: TspdtRankItem) {
+  const chineseTitle = tspdtChineseTitles[item.entry.rank];
+  const resultTitle = item.result?.title;
+  if (resultTitle && hasCjkText(resultTitle)) {
+    return resultTitle;
+  }
+
+  return chineseTitle ?? resultTitle ?? item.entry.title;
+}
+
+function hasCjkText(value: string) {
+  return /[\u3400-\u9fff]/u.test(value);
+}
+
+function RankNumber({ rank }: { rank: number }) {
+  return (
+    <div className="flex items-center">
+      <span className="inline-flex h-10 w-14 items-center justify-center rounded-md border border-amber-300/25 bg-amber-300/10 text-sm font-black tabular-nums text-amber-100">
+        #{rank}
+      </span>
+    </div>
+  );
+}
+
+function buildTspdtRankItems(results: ResultWithCache[]): TspdtRankItem[] {
+  const titleMap = new Map<string, ResultWithCache>();
+  const yearTitleMap = new Map<string, ResultWithCache>();
+
+  for (const result of results) {
+    const years = resultYears(result);
+    for (const key of resultTitleKeys(result)) {
+      if (!titleMap.has(key)) {
+        titleMap.set(key, result);
+      }
+      for (const year of years) {
+        const yearKey = `${key}|${year}`;
+        if (!yearTitleMap.has(yearKey)) {
+          yearTitleMap.set(yearKey, result);
+        }
+      }
+    }
+  }
+
+  return tspdtTop1000.map((entry) => {
+    const keys = uniqueStrings([
+      ...titleKeysFromString(entry.title),
+      ...titleKeysFromString(tspdtChineseTitles[entry.rank])
+    ]);
+    const yearMatch = keys
+      .map((key) => yearTitleMap.get(`${key}|${entry.year}`))
+      .find(Boolean);
+    const titleMatch = keys
+      .map((key) => titleMap.get(key))
+      .find(Boolean);
+
+    return {
+      entry,
+      result: yearMatch ?? titleMatch
+    };
+  });
+}
+
+function resultTitleKeys(result: SearchResult) {
+  return uniqueStrings([
+    ...titleKeysFromString(result.title),
+    ...titleKeysFromString(result.metadata?.external?.omdb?.title),
+    ...titleKeysFromString(result.metadata?.external?.omdb?.seriesId)
+  ]);
+}
+
+function resultYears(result: SearchResult) {
+  const releaseYear = result.metadata?.releaseDate?.match(/\b(\d{4})\b/)?.[1];
+  const omdbYear = result.metadata?.external?.omdb?.year?.match(/\b(\d{4})\b/)?.[1];
+  return uniqueStrings([
+    result.metadata?.year?.match(/\b(\d{4})\b/)?.[1],
+    releaseYear,
+    omdbYear
+  ]);
+}
+
+function titleKeysFromString(value?: string) {
+  if (!value) {
+    return [];
+  }
+
+  const withoutYear = value.replace(/\s*[\[(](?:19|20)\d{2}[\])]\s*$/u, "");
+  const deInverted = deInvertTitle(withoutYear);
+  const normalized = normalizeTitle(withoutYear);
+  const normalizedDeInverted = normalizeTitle(deInverted);
+  return uniqueStrings([
+    normalized,
+    normalizedDeInverted,
+    stripLeadingArticle(normalized),
+    stripLeadingArticle(normalizedDeInverted)
+  ]);
+}
+
+function deInvertTitle(value: string) {
+  const match = value.match(/^(.+),\s*(the|a|an|l'|la|le|les|el|los|las|il|lo|der|die|das)$/iu);
+  if (!match) {
+    return value;
+  }
+
+  return `${match[2]} ${match[1]}`;
+}
+
+function normalizeTitle(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/½/g, "1/2")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function stripLeadingArticle(value: string) {
+  return value.replace(/^(?:the|a|an|l|la|le|les|el|los|las|il|lo|der|die|das)\s+/u, "");
+}
+
+function uniqueStrings(values: Array<string | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function normalizedMetadataText(result: SearchResult) {
