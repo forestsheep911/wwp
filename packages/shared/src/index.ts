@@ -330,6 +330,20 @@ export interface SearchResult {
   variants?: MediaVariant[];
 }
 
+export type MovieSummaryMode = "spoiler_free" | "spoiler";
+
+export interface MovieSummaryRequest {
+  mode: MovieSummaryMode;
+  result: SearchResult;
+}
+
+export interface MovieSummaryResponse {
+  mode: MovieSummaryMode;
+  title: string;
+  summary: string;
+  generatedAt: string;
+}
+
 export interface MediaVariant {
   assetKey: string;
   label: string;

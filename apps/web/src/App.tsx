@@ -72,6 +72,7 @@ import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditConfirmDialog } from "./cinema/components/CreditConfirmDialog";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
+import { FavoritesPanel } from "./cinema/components/FavoritesPanel";
 import { ForumPanel } from "./cinema/components/ForumPanel";
 import { HelpPanel } from "./cinema/components/HelpPanel";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
@@ -95,12 +96,20 @@ import {
   sameRoute,
   type CinemaRoute
 } from "./cinema/routing";
-import { historyStorageKey, readJsonStorage, themeStorageKey, writeJsonStorage } from "./cinema/storage";
+import {
+  favoriteStorageKey,
+  historyStorageKey,
+  memberScopedStorageKey,
+  readJsonStorage,
+  themeStorageKey,
+  writeJsonStorage
+} from "./cinema/storage";
 import type {
   AppTab,
   AppTheme,
   BrowseChannel,
   BrowseViewId,
+  FavoriteEntry,
   HistoryAssetStatusMap,
   LibraryViewMode,
   ManagedMemberCode,
@@ -135,6 +144,10 @@ function isAppTheme(value: unknown): value is AppTheme {
 function readStoredTheme(): AppTheme {
   const storedTheme = readJsonStorage<unknown>(themeStorageKey, "dark");
   return isAppTheme(storedTheme) ? storedTheme : "dark";
+}
+
+function favoriteKeyForIdentity(role?: AccessRole, memberId?: string) {
+  return memberScopedStorageKey(favoriteStorageKey, memberId ?? role ?? "guest");
 }
 
 function CinemaApp() {
@@ -207,6 +220,7 @@ function CinemaApp() {
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<PlaybackHistoryEntry[]>(() => readJsonStorage(historyStorageKey, []));
+  const [favorites, setFavorites] = useState<FavoriteEntry[]>([]);
   const [historyAssetStatus, setHistoryAssetStatus] = useState<HistoryAssetStatusMap>({});
   const [cachedAssets, setCachedAssets] = useState<CacheAsset[]>([]);
   const [cachedAssetsLoading, setCachedAssetsLoading] = useState(false);
@@ -252,6 +266,11 @@ function CinemaApp() {
     }
     return itemsByAssetKey;
   }, [trackedItems]);
+
+  const favoriteAssetKeys = useMemo(
+    () => new Set(favorites.map((item) => item.assetKey)),
+    [favorites]
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -707,6 +726,38 @@ function CinemaApp() {
     setHistoryAssetStatus({});
   }
 
+  function writeFavorites(nextFavorites: FavoriteEntry[]) {
+    const storageKey = favoriteKeyForIdentity(role, member?.id);
+    writeJsonStorage(storageKey, nextFavorites);
+  }
+
+  function toggleFavorite(result: ResultWithCache) {
+    setFavorites((currentFavorites) => {
+      const exists = currentFavorites.some((item) => item.assetKey === result.assetKey);
+      const nextFavorites = exists
+        ? currentFavorites.filter((item) => item.assetKey !== result.assetKey)
+        : [
+          {
+            assetKey: result.assetKey,
+            title: result.title,
+            addedAt: new Date().toISOString(),
+            result
+          },
+          ...currentFavorites
+        ];
+      writeFavorites(nextFavorites);
+      return nextFavorites;
+    });
+  }
+
+  function removeFavorite(assetKey: string) {
+    setFavorites((currentFavorites) => {
+      const nextFavorites = currentFavorites.filter((item) => item.assetKey !== assetKey);
+      writeFavorites(nextFavorites);
+      return nextFavorites;
+    });
+  }
+
   async function refreshHistoryAssetStatus() {
     const assetKeys = Array.from(new Set(history.map((item) => item.assetKey)));
     if (assetKeys.length === 0) {
@@ -814,6 +865,7 @@ function CinemaApp() {
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
+    setFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), []));
   }
 
   function updateCurrentMemberCredits(credits: NonNullable<AuthCheckResponse["member"]>["credits"]) {
@@ -1603,6 +1655,7 @@ function CinemaApp() {
     setBrowseChannel("recommended");
     setQuery("");
     setResults([]);
+    setFavorites([]);
     setBrowseResults([]);
     setBrowseLoading(false);
     setBrowseLoadingMore(false);
@@ -1737,7 +1790,7 @@ function CinemaApp() {
 
         if (responses.some((response) => response.job.status === "ready" || response.job.status === "failed")) {
           await refreshResultsInBackground();
-          if (activeTab === "cached") {
+          if (activeTab === "cached" || activeTab === "favorites" || activeTab === "watchlist") {
             await refreshCachedAssets();
           }
         }
@@ -1860,7 +1913,7 @@ function CinemaApp() {
   }, [activeTab, history.length]);
 
   useEffect(() => {
-    if (activeTab === "cached" || activeTab === "tasks" || activeTab === "watchlist") {
+    if (activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks" || activeTab === "watchlist") {
       void refreshCachedAssets();
     }
   }, [activeTab]);
@@ -1895,6 +1948,12 @@ function CinemaApp() {
       void refreshBrowseAssets();
     }
   }, [activeTab, query]);
+
+  useEffect(() => {
+    if (activeTab === "watchlist" && browseResults.length === 0 && !browseLoading) {
+      void refreshBrowseAssets({ mode: "paged", limit: 100, view: "newGood" });
+    }
+  }, [activeTab, browseLoading, browseResults.length]);
 
   if (!unlocked) {
     return (
@@ -2028,6 +2087,7 @@ function CinemaApp() {
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
         onOpenForum={() => navigateToTab("forum")}
+        onOpenFavorites={() => navigateToTab("favorites")}
         onOpenHelp={() => navigateToTab("help")}
         onOpenHistory={() => navigateToTab("history")}
         onOpenWatchlist={() => navigateToTab("watchlist")}
@@ -2057,9 +2117,11 @@ function CinemaApp() {
             trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
             pendingDownloadAssetKeys={downloadRequestAssetKeys}
+            favoriteAssetKeys={favoriteAssetKeys}
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
+            onToggleFavorite={toggleFavorite}
             onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
@@ -2085,14 +2147,32 @@ function CinemaApp() {
             onRecache={(entry) => void recacheHistoryEntry(entry)}
           />
         )}
-        watchlist={(
-          <WatchlistPanel
+        favorites={(
+          <FavoritesPanel
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
+            favorites={favorites}
+            onRemove={removeFavorite}
+            onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
+          />
+        )}
+        watchlist={(
+          <WatchlistPanel
+            browseHasMore={browseHasMore}
+            browseLoading={browseLoading}
+            browseLoadingMore={browseLoadingMore}
+            browseResults={browseResults}
+            cachedAssets={cachedAssets}
+            creditPolicy={creditPolicy}
+            favoriteAssetKeys={favoriteAssetKeys}
             historyItems={history}
-            loading={cachedAssetsLoading}
-            onOpen={(assetKey) => void openPlayer(assetKey)}
-            onRefresh={() => void refreshCachedAssets()}
+            onLoadMore={() => void refreshBrowseAssets({ append: true, mode: "paged", limit: 100, view: "newGood" })}
+            onRefresh={() => {
+              void refreshCachedAssets();
+              void refreshBrowseAssets({ mode: "paged", limit: 100, view: "newGood" });
+            }}
+            onToggleFavorite={toggleFavorite}
+            onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
         )}
         forum={(

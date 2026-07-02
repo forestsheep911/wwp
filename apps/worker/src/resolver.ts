@@ -3,6 +3,7 @@ import {
   type SearchResult,
   mockSearchResults
 } from "@wwpdw/shared";
+import { resolveWithAiFallback } from "./ai-resolver.js";
 
 const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
@@ -74,7 +75,12 @@ export async function resolveAssetSource(assetKey: string): Promise<ResolveResul
     });
   }
 
-  return resolveByRule(asset);
+  const ruleResult = resolveByRule(asset);
+  if (ruleResult.kind === "needs_browser" || ruleResult.kind === "needs_ai") {
+    return await resolveWithAiFallback(asset, ruleResult) ?? ruleResult;
+  }
+
+  return ruleResult;
 }
 
 export async function resolveJobSource(input: {
@@ -82,7 +88,7 @@ export async function resolveJobSource(input: {
   sourceUrl?: string;
 }): Promise<ResolveResult> {
   if (input.sourceUrl) {
-    return resolveByRule({
+    const asset: SearchResult = {
       assetKey: input.assetKey,
       title: input.assetKey,
       source: "cache job",
@@ -90,7 +96,13 @@ export async function resolveJobSource(input: {
       durationLabel: "",
       updatedAt: new Date().toISOString(),
       summary: ""
-    });
+    };
+    const ruleResult = resolveByRule(asset);
+    if (ruleResult.kind === "needs_browser" || ruleResult.kind === "needs_ai") {
+      return await resolveWithAiFallback(asset, ruleResult) ?? ruleResult;
+    }
+
+    return ruleResult;
   }
 
   return resolveAssetSource(input.assetKey);

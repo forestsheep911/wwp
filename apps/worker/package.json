@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@wwpdw/cache-store": "file:../../packages/cache-store",
-    "@wwpdw/shared": "file:../../packages/shared"
+    "@wwpdw/shared": "file:../../packages/shared",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.4",

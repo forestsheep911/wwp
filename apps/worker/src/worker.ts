@@ -1,3 +1,4 @@
+import "./env.js";
 import { randomUUID } from "node:crypto";
 import {
   durationMs,

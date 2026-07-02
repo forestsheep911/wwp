@@ -17,10 +17,18 @@ import {
   Shuffle,
   Trophy
 } from "lucide-react";
-import type { CacheAsset, CreditPolicyResponse, MediaVariant, SearchResult } from "@wwpdw/shared";
+import type { CacheAsset, CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
+import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from "../../components/ui/dialog";
 import { Progress } from "../../components/ui/progress";
 import {
   bestSummary,
@@ -66,9 +74,11 @@ interface LibraryTabProps {
   trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -93,9 +103,11 @@ export function LibraryTab({
   trackedItems,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
   onFocusedAssetHandled,
+  onToggleFavorite,
   onRefreshBrowse,
   onViewModeChange,
   onSelect,
@@ -103,6 +115,55 @@ export function LibraryTab({
 }: LibraryTabProps) {
   const hasQuery = query.trim().length > 0;
   const [detailResult, setDetailResult] = useState<ResultWithCache | undefined>();
+  const [summaryDialog, setSummaryDialog] = useState<{
+    open: boolean;
+    result?: ResultWithCache;
+    mode: MovieSummaryMode;
+    loading: boolean;
+    error: string;
+    response?: MovieSummaryResponse;
+  }>({
+    open: false,
+    mode: "spoiler_free",
+    loading: false,
+    error: ""
+  });
+
+  async function loadMovieSummary(result: ResultWithCache, mode: MovieSummaryMode) {
+    setSummaryDialog({
+      open: true,
+      result,
+      mode,
+      loading: true,
+      error: "",
+      response: undefined
+    });
+
+    try {
+      const response = await requestMovieSummary({ mode, result });
+      setSummaryDialog({
+        open: true,
+        result,
+        mode,
+        loading: false,
+        error: "",
+        response
+      });
+    } catch (summaryError) {
+      setSummaryDialog({
+        open: true,
+        result,
+        mode,
+        loading: false,
+        error: errorMessage(summaryError, copy.fallbackErrors.movieSummary),
+        response: undefined
+      });
+    }
+  }
+
+  function openMovieSummary(result: ResultWithCache) {
+    void loadMovieSummary(result, "spoiler_free");
+  }
 
   useEffect(() => {
     setDetailResult(undefined);
@@ -134,8 +195,11 @@ export function LibraryTab({
           result={detailResult}
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+          favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onBack={() => setDetailResult(undefined)}
+          onSummarize={openMovieSummary}
+          onToggleFavorite={onToggleFavorite}
           onSelect={onSelect}
           onDownload={onDownload}
         />
@@ -152,10 +216,13 @@ export function LibraryTab({
           historyItems={historyItems}
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+          favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onOpenCachedAsset={onOpenCachedAsset}
           onRefreshBrowse={onRefreshBrowse}
           onOpenDetail={setDetailResult}
+          onSummarize={openMovieSummary}
+          onToggleFavorite={onToggleFavorite}
           onSelect={onSelect}
           onDownload={onDownload}
         />
@@ -201,8 +268,11 @@ export function LibraryTab({
                       result={result}
                       pendingAssetKeys={pendingAssetKeys}
                       pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+                      favoriteAssetKeys={favoriteAssetKeys}
                       trackedByAssetKey={trackedByAssetKey}
                       onOpenDetail={setDetailResult}
+                      onSummarize={openMovieSummary}
+                      onToggleFavorite={onToggleFavorite}
                       onSelect={onSelect}
                       onDownload={onDownload}
                     />
@@ -216,14 +286,32 @@ export function LibraryTab({
               results={results}
               pendingAssetKeys={pendingAssetKeys}
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+              favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
               onOpenDetail={setDetailResult}
+              onSummarize={openMovieSummary}
+              onToggleFavorite={onToggleFavorite}
               onSelect={onSelect}
               onDownload={onDownload}
             />
           )}
         </>
       )}
+
+      <MovieSummaryDialog
+        state={summaryDialog}
+        onOpenChange={(open) => {
+          setSummaryDialog((current) => ({
+            ...current,
+            open
+          }));
+        }}
+        onModeChange={(mode) => {
+          if (summaryDialog.result && mode !== summaryDialog.mode) {
+            void loadMovieSummary(summaryDialog.result, mode);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -233,6 +321,10 @@ const browseLoadStep = 12;
 const browseViewItemLimit = 300;
 const browseRandomLimit = 48;
 const luckyRanks = new Map<string, number>();
+
+function randomBrowseSeed() {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
 
 const browseViews: Array<{
   id: BrowseViewId;
@@ -278,10 +370,13 @@ function LibraryHome({
   historyItems,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
   onRefreshBrowse,
   onOpenDetail,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload
 }: {
@@ -296,14 +391,18 @@ function LibraryHome({
   historyItems: PlaybackHistoryEntry[];
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>("lucky");
+  const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const channelViews = viewsForBrowseChannel(browseChannel);
@@ -314,8 +413,8 @@ function LibraryHome({
   );
   const historyStats = useMemo(() => historyStatsByAssetKey(historyItems), [historyItems]);
   const rankedResults = useMemo(
-    () => rankBrowseResults(activeSortView, browsableResults, historyStats),
-    [activeSortView, browsableResults, historyStats]
+    () => rankBrowseResults(activeSortView, browsableResults, historyStats, viewSeed),
+    [activeSortView, browsableResults, historyStats, viewSeed]
   );
   const rankedAssets = useMemo(
     () => rankCachedAssets(activeSortView, cachedAssets),
@@ -369,6 +468,7 @@ function LibraryHome({
 
   useEffect(() => {
     setActiveView(viewsForBrowseChannel(browseChannel)[0].id);
+    setViewSeed(randomBrowseSeed());
   }, [browseChannel]);
 
   useEffect(() => {
@@ -421,6 +521,7 @@ function LibraryHome({
               variant={activeSortView === view.id ? "secondary" : "ghost"}
               onClick={() => {
                 setActiveView(view.id);
+                setViewSeed(randomBrowseSeed());
                 onRefreshBrowse({
                   mode: view.id === "lucky" ? "random" : "paged",
                   limit: view.id === "lucky" ? browseRandomLimit : 100,
@@ -447,9 +548,12 @@ function LibraryHome({
               matchedCount={tspdtMatchedCount}
               pendingAssetKeys={pendingAssetKeys}
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+              favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
               totalCount={tspdtItems.length}
               onOpenDetail={onOpenDetail}
+              onSummarize={onSummarize}
+              onToggleFavorite={onToggleFavorite}
               onSelect={onSelect}
               onDownload={onDownload}
             />
@@ -476,8 +580,11 @@ function LibraryHome({
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
                     pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+                    favoriteAssetKeys={favoriteAssetKeys}
                     trackedByAssetKey={trackedByAssetKey}
                     onOpenDetail={onOpenDetail}
+                    onSummarize={onSummarize}
+                    onToggleFavorite={onToggleFavorite}
                     onSelect={onSelect}
                     onDownload={onDownload}
                     variantLimit={3}
@@ -626,9 +733,12 @@ function TspdtRankView({
   matchedCount,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   totalCount,
   onOpenDetail,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload
 }: {
@@ -639,9 +749,12 @@ function TspdtRankView({
   matchedCount: number;
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   totalCount: number;
   onOpenDetail: (result: ResultWithCache) => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -670,8 +783,11 @@ function TspdtRankView({
             key={item.entry.rank}
             pendingAssetKeys={pendingAssetKeys}
             pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+            favoriteAssetKeys={favoriteAssetKeys}
             trackedByAssetKey={trackedByAssetKey}
             onOpenDetail={onOpenDetail}
+            onSummarize={onSummarize}
+            onToggleFavorite={onToggleFavorite}
             onSelect={onSelect}
             onDownload={onDownload}
           />
@@ -686,8 +802,11 @@ function TspdtRankRow({
   item,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload
 }: {
@@ -695,8 +814,11 @@ function TspdtRankRow({
   item: TspdtRankItem;
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenDetail: (result: ResultWithCache) => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -726,16 +848,25 @@ function TspdtRankRow({
         <MoviePoster result={result} />
       </button>
       <div className="grid min-w-0 content-start gap-2">
-        <button
-          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-          type="button"
-          onClick={() => onOpenDetail(result)}
-          title={copy.library.viewDetails}
-        >
-          <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
-            {title}
-          </h3>
-        </button>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+          <button
+            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            type="button"
+            onClick={() => onOpenDetail(result)}
+            title={copy.library.viewDetails}
+          >
+            <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
+              {title}
+            </h3>
+          </button>
+          <div className="flex items-center gap-1">
+            <AiSummaryButton onClick={() => onSummarize(result)} />
+            <FavoriteButton
+              active={favoriteAssetKeys.has(result.assetKey)}
+              onClick={() => onToggleFavorite(result)}
+            />
+          </div>
+        </div>
         <p className="text-xs text-slate-500">{metadataLine(result)}</p>
         <CompactRatingBadges result={result} />
         {tags.length ? (
@@ -1065,7 +1196,17 @@ function sourceRating(result: SearchResult, source: "douban" | "imdb" | "rotten"
   return Number.isFinite(value) ? value : 0;
 }
 
-function sourceRatingSort(source: "douban" | "imdb" | "rotten") {
+function seededBrowseRank(seed: number, result: SearchResult) {
+  const key = `${seed}:${result.assetKey}`;
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function sourceRatingSort(source: "douban" | "imdb" | "rotten", seed: number) {
   return (left: SearchResult, right: SearchResult) => {
     const leftRating = sourceRating(left, source);
     const rightRating = sourceRating(right, source);
@@ -1074,7 +1215,7 @@ function sourceRatingSort(source: "douban" | "imdb" | "rotten") {
 
     return rightHasRating - leftHasRating ||
       rightRating - leftRating ||
-      numericRating(right) - numericRating(left) ||
+      seededBrowseRank(seed, left) - seededBrowseRank(seed, right) ||
       toTime(right.updatedAt) - toTime(left.updatedAt);
   };
 }
@@ -1118,7 +1259,8 @@ function luckyRank(key: string) {
 function rankBrowseResults(
   view: BrowseViewId,
   results: ResultWithCache[],
-  stats: Map<string, { count: number; lastPlayedAt: number }>
+  stats: Map<string, { count: number; lastPlayedAt: number }>,
+  seed: number
 ) {
   const ranked = [...results];
   const byUpdated = (left: SearchResult, right: SearchResult) => toTime(right.updatedAt) - toTime(left.updatedAt);
@@ -1132,15 +1274,15 @@ function rankBrowseResults(
   }
 
   if (view === "doubanRank") {
-    return ranked.sort(sourceRatingSort("douban"));
+    return ranked.sort(sourceRatingSort("douban", seed));
   }
 
   if (view === "imdbRank") {
-    return ranked.sort(sourceRatingSort("imdb"));
+    return ranked.sort(sourceRatingSort("imdb", seed));
   }
 
   if (view === "rottenRank") {
-    return ranked.sort(sourceRatingSort("rotten"));
+    return ranked.sort(sourceRatingSort("rotten", seed));
   }
 
   if (view === "newGood") {
@@ -1495,8 +1637,11 @@ function MovieCard({
   result,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload,
   variantLimit
@@ -1505,8 +1650,11 @@ function MovieCard({
   result: ResultWithCache;
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenDetail: (result: ResultWithCache) => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
   variantLimit?: number;
@@ -1525,16 +1673,25 @@ function MovieCard({
         <MoviePoster result={result} />
       </button>
       <div className="grid min-w-0 content-start gap-3">
-        <button
-          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-          type="button"
-          onClick={() => onOpenDetail(result)}
-          title={copy.library.viewDetails}
-        >
-          <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
-            {result.title}
-          </h2>
-        </button>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+          <button
+            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            type="button"
+            onClick={() => onOpenDetail(result)}
+            title={copy.library.viewDetails}
+          >
+            <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
+              {result.title}
+            </h2>
+          </button>
+          <div className="flex items-center gap-1">
+            <AiSummaryButton onClick={() => onSummarize(result)} />
+            <FavoriteButton
+              active={favoriteAssetKeys.has(result.assetKey)}
+              onClick={() => onToggleFavorite(result)}
+            />
+          </div>
+        </div>
 
         <CompactRatingBadges result={result} />
 
@@ -1595,13 +1752,124 @@ function SummaryText({ summary }: { summary: string }) {
   );
 }
 
+function AiSummaryButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button
+      className="h-8 w-8 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800"
+      type="button"
+      variant="outline"
+      size="icon"
+      onClick={onClick}
+      title={copy.library.aiSummary}
+      aria-label={copy.library.aiSummary}
+    >
+      <Sparkles className="h-4 w-4" />
+      <span className="sr-only">{copy.library.aiSummary}</span>
+    </Button>
+  );
+}
+
+function FavoriteButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  const label = active ? copy.favorites.unfavorite : copy.favorites.favorite;
+
+  return (
+    <Button
+      className={active ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""}
+      type="button"
+      variant="outline"
+      size="icon"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      <Star className={`h-4 w-4 ${active ? "fill-amber-300 text-amber-300" : ""}`} />
+    </Button>
+  );
+}
+
+function MovieSummaryDialog({
+  state,
+  onOpenChange,
+  onModeChange
+}: {
+  state: {
+    open: boolean;
+    result?: ResultWithCache;
+    mode: MovieSummaryMode;
+    loading: boolean;
+    error: string;
+    response?: MovieSummaryResponse;
+  };
+  onOpenChange: (open: boolean) => void;
+  onModeChange: (mode: MovieSummaryMode) => void;
+}) {
+  return (
+    <Dialog open={state.open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[min(94vw,720px)]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-emerald-300" />
+            {copy.library.aiSummaryTitle}
+          </DialogTitle>
+          <DialogDescription>
+            {state.result?.title ?? copy.library.aiSummaryDescription}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+          <Button
+            className="flex-1 sm:flex-none"
+            type="button"
+            size="sm"
+            variant={state.mode === "spoiler_free" ? "secondary" : "ghost"}
+            onClick={() => onModeChange("spoiler_free")}
+            disabled={state.loading}
+          >
+            {copy.library.spoilerFree}
+          </Button>
+          <Button
+            className="flex-1 sm:flex-none"
+            type="button"
+            size="sm"
+            variant={state.mode === "spoiler" ? "secondary" : "ghost"}
+            onClick={() => onModeChange("spoiler")}
+            disabled={state.loading}
+          >
+            {copy.library.spoiler}
+          </Button>
+        </div>
+
+        <div className="min-h-[180px] rounded-md border border-slate-800 bg-slate-950/80 p-4">
+          {state.loading ? (
+            <div className="flex min-h-[148px] items-center justify-center gap-2 text-sm font-semibold text-slate-300">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {copy.library.aiSummaryLoading}
+            </div>
+          ) : state.error ? (
+            <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200">
+              {state.error}
+            </div>
+          ) : (
+            <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">
+              {state.response?.summary ?? copy.library.aiSummaryEmpty}
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MovieListView({
   creditPolicy,
   results,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onOpenDetail,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload
 }: {
@@ -1609,8 +1877,11 @@ function MovieListView({
   results: ResultWithCache[];
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenDetail: (result: ResultWithCache) => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -1620,13 +1891,14 @@ function MovieListView({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/70">
-      <table className="w-full min-w-[960px] border-collapse text-left">
+      <table className="w-full min-w-[1020px] border-collapse text-left">
         <thead className="border-b border-slate-800 bg-slate-950 text-xs font-semibold uppercase text-slate-500">
           <tr>
-            <th className="w-[34%] px-4 py-3">{copy.library.table.title}</th>
-            <th className="w-[18%] px-4 py-3">{copy.library.table.metadata}</th>
-            <th className="w-[18%] px-4 py-3">{copy.library.table.people}</th>
-            <th className="w-[30%] px-4 py-3">{copy.library.table.specs}</th>
+            <th className="w-[31%] px-4 py-3">{copy.library.table.title}</th>
+            <th className="w-[17%] px-4 py-3">{copy.library.table.metadata}</th>
+            <th className="w-[17%] px-4 py-3">{copy.library.table.people}</th>
+            <th className="w-[29%] px-4 py-3">{copy.library.table.specs}</th>
+            <th className="w-[6%] px-4 py-3">{copy.favorites.favorite}</th>
           </tr>
         </thead>
         <tbody>
@@ -1645,15 +1917,18 @@ function MovieListView({
                     >
                       <MoviePoster result={result} />
                     </button>
-                    <div className="min-w-0">
-                      <button
-                        className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                        type="button"
-                        onClick={() => onOpenDetail(result)}
-                        title={copy.library.viewDetails}
-                      >
-                        <p className="line-clamp-2 font-semibold leading-5 text-slate-50 hover:text-emerald-100">{result.title}</p>
-                      </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <button
+                          className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                          type="button"
+                          onClick={() => onOpenDetail(result)}
+                          title={copy.library.viewDetails}
+                        >
+                          <p className="line-clamp-2 font-semibold leading-5 text-slate-50 hover:text-emerald-100">{result.title}</p>
+                        </button>
+                        <AiSummaryButton onClick={() => onSummarize(result)} />
+                      </div>
                       <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{bestSummary(result)}</p>
                     </div>
                   </div>
@@ -1686,6 +1961,12 @@ function MovieListView({
                     compact
                   />
                 </td>
+                <td className="px-4 py-4">
+                  <FavoriteButton
+                    active={favoriteAssetKeys.has(result.assetKey)}
+                    onClick={() => onToggleFavorite(result)}
+                  />
+                </td>
               </tr>
             );
           })}
@@ -1700,8 +1981,11 @@ function MovieDetailView({
   result,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
+  favoriteAssetKeys,
   trackedByAssetKey,
   onBack,
+  onSummarize,
+  onToggleFavorite,
   onSelect,
   onDownload
 }: {
@@ -1709,8 +1993,11 @@ function MovieDetailView({
   result: ResultWithCache;
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
+  favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onBack: () => void;
+  onSummarize: (result: ResultWithCache) => void;
+  onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -1727,7 +2014,13 @@ function MovieDetailView({
           <ChevronLeft className="h-4 w-4" />
           {copy.library.backToList}
         </Button>
-        <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
+        <div className="flex items-center gap-2">
+          <FavoriteButton
+            active={favoriteAssetKeys.has(result.assetKey)}
+            onClick={() => onToggleFavorite(result)}
+          />
+          <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
+        </div>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
@@ -1737,7 +2030,10 @@ function MovieDetailView({
 
         <div className="grid min-w-0 content-start gap-4">
           <div className="min-w-0">
-            <h2 className="text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
+            <div className="flex min-w-0 items-start gap-2">
+              <h2 className="min-w-0 flex-1 text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
+              <AiSummaryButton onClick={() => onSummarize(result)} />
+            </div>
             <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
             {directors ? (
               <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>

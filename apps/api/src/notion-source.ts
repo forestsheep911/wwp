@@ -9,6 +9,18 @@ import type {
   RatingValue,
   SearchResult
 } from "@wwpdw/shared";
+import {
+  collectMetadataHintsFromText,
+  createMetadataHints,
+  doubanSubjectUrl,
+  imdbTitleUrl,
+  normalizeDoubanSubjectId,
+  normalizeImdbId,
+  normalizeTmdbId,
+  stableMovieWorkIdFromNotion,
+  tmdbMovieUrl,
+  type NotionMetadataHints
+} from "./notion-metadata-schema.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -167,7 +179,13 @@ function plainTextFromRichText(value: unknown) {
     .join("");
 }
 
-function urlsFromRichText(value: unknown, label: string, candidates: MediaCandidate[], baseScore: number) {
+function urlsFromRichText(
+  value: unknown,
+  label: string,
+  candidates: MediaCandidate[],
+  baseScore: number,
+  metadataHints?: NotionMetadataHints
+) {
   const textParts: string[] = [];
 
   for (const item of asArray(value)) {
@@ -178,6 +196,7 @@ function urlsFromRichText(value: unknown, label: string, candidates: MediaCandid
 
     const href = asString(record.href);
     pushCandidate(candidates, href, `${label} link`, baseScore + 8, "url");
+    collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), href);
     const plainText = asString(record.plain_text);
     if (plainText) {
       textParts.push(plainText);
@@ -187,6 +206,7 @@ function urlsFromRichText(value: unknown, label: string, candidates: MediaCandid
   for (const url of textParts.join(" ").match(urlPattern) ?? []) {
     pushCandidate(candidates, url, `${label} text`, baseScore, "text");
   }
+  collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), textParts.join(" "));
 
   return textParts.join(" ").trim();
 }
@@ -212,16 +232,23 @@ function fileNameFromObject(value: unknown) {
   return asString(asRecord(value)?.name);
 }
 
-function collectPropertyCandidates(properties: JsonRecord, candidates: MediaCandidate[]) {
+function collectPropertyCandidates(
+  properties: JsonRecord,
+  candidates: MediaCandidate[],
+  metadataHints?: NotionMetadataHints
+) {
   for (const [name, rawProperty] of Object.entries(properties)) {
     const property = asRecord(rawProperty);
     if (!property) {
       continue;
     }
 
+    collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), `${name} ${propertyText(property)}`);
+
     const type = asString(property.type);
     if (type === "url") {
       pushCandidate(candidates, asString(property.url), name, 42, "url");
+      collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), asString(property.url));
     }
 
     if (type === "files") {
@@ -238,7 +265,7 @@ function collectPropertyCandidates(properties: JsonRecord, candidates: MediaCand
     }
 
     if (type === "title" || type === "rich_text") {
-      urlsFromRichText(property[type], name, candidates, 32);
+      urlsFromRichText(property[type], name, candidates, 32, metadataHints);
     }
 
     if (type === "formula") {
@@ -247,6 +274,7 @@ function collectPropertyCandidates(properties: JsonRecord, candidates: MediaCand
       for (const url of stringValue.match(urlPattern) ?? []) {
         pushCandidate(candidates, url, `${name} formula`, 30, "text");
       }
+      collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), stringValue);
     }
   }
 }
@@ -488,15 +516,6 @@ function movieWorkKindFromType(type?: string): MovieWorkKind {
   return "unknown";
 }
 
-function stableMovieWorkId(page: JsonRecord, title: string, year?: string) {
-  const sourceId = asString(page.id);
-  const seed = sourceId
-    ? `notion:${sourceId}`
-    : `title:${title.trim().toLowerCase()}|year:${year ?? ""}`;
-  const digest = createHash("sha256").update(seed).digest("base64url").slice(0, 16);
-  return `wwm_${digest}`;
-}
-
 function creditEntries(directors: string[], people: string[]) {
   const credits: MovieCreditEntry[] = [];
 
@@ -574,9 +593,16 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
   return posters;
 }
 
-function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: string): MovieMetadata {
+function movieMetadataFromPage(
+  page: JsonRecord,
+  properties: JsonRecord,
+  title: string,
+  metadataHints = createMetadataHints()
+): MovieMetadata {
   const releaseDate = dateFromNamedProperty(properties, releaseDatePropertyPattern);
-  const imdbId = textFromNamedProperty(properties, imdbPropertyPattern, 40);
+  const imdbId = normalizeImdbId(textFromNamedProperty(properties, imdbPropertyPattern, 120)) ?? metadataHints.externalIds.imdb;
+  const doubanSubjectId = normalizeDoubanSubjectId(metadataHints.externalIds.douban);
+  const tmdbId = normalizeTmdbId(metadataHints.externalIds.tmdb);
   const posters = postersFromProperties(page, properties);
   const type = listFromNamedProperty(properties, typePropertyPattern, 1)?.[0];
   const year = yearFromTitleOrDate(title, releaseDate);
@@ -585,12 +611,19 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
   const people = listFromNamedProperty(properties, peoplePropertyPattern, 4) ?? [];
   const ratings = ratingsFromProperties(properties);
   const credits = creditEntries(directors, people);
-  const workId = stableMovieWorkId(page, title, year);
   const kind = movieWorkKindFromType(type);
   const updatedAt = asString(page.last_edited_time) || new Date().toISOString();
   const pageId = asString(page.id);
   const pageUrl = asString(page.url);
-  const externalIds = imdbId ? { imdb: imdbId } : undefined;
+  const workId = stableMovieWorkIdFromNotion(pageId, title, year);
+  const externalIds = Object.fromEntries(
+    Object.entries({
+      imdb: imdbId,
+      douban: doubanSubjectId,
+      tmdb: tmdbId
+    }).filter(([, value]) => Boolean(value))
+  );
+  const hasExternalIds = Object.keys(externalIds).length > 0;
   const metadata: MovieMetadata = {
     workId,
     kind,
@@ -609,9 +642,9 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
       observedAt: updatedAt
     }],
     dataQuality: {
-      status: imdbId && credits.length > 0 ? "partial" : "draft",
+      status: hasExternalIds && credits.length > 0 ? "partial" : "draft",
       missing: [
-        !imdbId ? "externalIds" : undefined,
+        !hasExternalIds ? "externalIds" : undefined,
         !releaseDate && !year ? "release" : undefined,
         credits.length === 0 ? "credits" : undefined,
         posters.length === 0 ? "poster" : undefined
@@ -633,7 +666,7 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
         date: releaseDate,
         source: "notion"
       },
-      externalIds,
+      externalIds: hasExternalIds ? externalIds : undefined,
       genres,
       credits,
       ratings: ratings.map((rating) => ({ ...rating, source: "notion" })),
@@ -648,9 +681,9 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
         observedAt: updatedAt
       }],
       dataQuality: {
-        status: imdbId && credits.length > 0 ? "partial" : "draft",
+        status: hasExternalIds && credits.length > 0 ? "partial" : "draft",
         missing: [
-          !imdbId ? "externalIds" : undefined,
+          !hasExternalIds ? "externalIds" : undefined,
           !releaseDate && !year ? "release" : undefined,
           credits.length === 0 ? "credits" : undefined,
           posters.length === 0 ? "poster" : undefined
@@ -678,7 +711,7 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,
-    externalIds
+    externalIds: hasExternalIds ? externalIds : undefined
   };
 
   return Object.fromEntries(
@@ -739,7 +772,11 @@ function durationFromProperties(properties: JsonRecord) {
   return "--";
 }
 
-function collectBlockCandidates(block: JsonRecord, candidates: MediaCandidate[]) {
+function collectBlockCandidates(
+  block: JsonRecord,
+  candidates: MediaCandidate[],
+  metadataHints?: NotionMetadataHints
+) {
   const type = asString(block.type);
   const payload = asRecord(block[type]);
   if (!payload) {
@@ -758,15 +795,16 @@ function collectBlockCandidates(block: JsonRecord, candidates: MediaCandidate[])
 
   if (type === "embed" || type === "bookmark" || type === "link_preview") {
     pushCandidate(candidates, asString(payload.url), type, 52, "embed");
+    collectMetadataHintsFromText(metadataHints ?? createMetadataHints(), asString(payload.url));
   }
 
   if ("rich_text" in payload) {
-    urlsFromRichText(payload.rich_text, type, candidates, 34);
+    urlsFromRichText(payload.rich_text, type, candidates, 34, metadataHints);
   }
 
   if (type === "table_row") {
     for (const cell of asArray(payload.cells)) {
-      urlsFromRichText(cell, "table row", candidates, 28);
+      urlsFromRichText(cell, "table row", candidates, 28, metadataHints);
     }
   }
 }
@@ -1442,7 +1480,8 @@ export class NotionSearchSource {
     const properties = asRecord(page.properties) ?? {};
     const candidates: MediaCandidate[] = [];
     const childPages: ChildPageCandidate[] = [];
-    collectPropertyCandidates(properties, candidates);
+    const metadataHints = createMetadataHints();
+    collectPropertyCandidates(properties, candidates, metadataHints);
 
     try {
       const maxDepth = context.libraryMode
@@ -1454,7 +1493,8 @@ export class NotionSearchSource {
         { count: 0 },
         candidates,
         maxDepth,
-        context.libraryMode ? childPages : undefined
+        context.libraryMode ? childPages : undefined,
+        metadataHints
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "block parse failed";
@@ -1469,7 +1509,7 @@ export class NotionSearchSource {
     const unique = uniqueCandidates(candidates);
     const best = unique[0];
     const title = titleFromProperties(properties);
-    const metadata = movieMetadataFromPage(page, properties, title);
+    const metadata = movieMetadataFromPage(page, properties, title, metadataHints);
     const pageUrl = asString(page.url);
     const pageId = asString(page.id);
     const sourceBreadcrumb = [title].filter(Boolean);
@@ -1633,7 +1673,8 @@ export class NotionSearchSource {
     counter: { count: number },
     candidates: MediaCandidate[],
     maxDepth: number,
-    childPages?: ChildPageCandidate[]
+    childPages?: ChildPageCandidate[],
+    metadataHints?: NotionMetadataHints
   ) {
     if (!blockId || depth > maxDepth || counter.count >= this.options.blockLimit) {
       return;
@@ -1658,7 +1699,7 @@ export class NotionSearchSource {
         }
 
         counter.count += 1;
-        collectBlockCandidates(record, candidates);
+        collectBlockCandidates(record, candidates, metadataHints);
 
         const type = asString(record.type);
         if (type === "child_page") {
@@ -1676,7 +1717,8 @@ export class NotionSearchSource {
             counter,
             candidates,
             maxDepth,
-            childPages
+            childPages,
+            metadataHints
           );
         }
       }

@@ -40,6 +40,7 @@ import {
   type MemberCreditUsageResponse,
   type MemberNoticeListResponse,
   type MediaVariant,
+  type MovieSummaryRequest,
   type MovieRequestsResponse,
   type MovieRequestStatus,
   type RatingValue,
@@ -53,6 +54,7 @@ import {
 } from "@wwpdw/shared";
 import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
+import { AiSummaryConfigError, summarizeMovie } from "./ai-summary.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { createSearchSource } from "./search-source.js";
 
@@ -1056,6 +1058,46 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
   });
 
   sendJson(response, 200, { results });
+}
+
+async function handleMovieSummary(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext,
+  identity: AccessIdentity
+) {
+  const startedAt = Date.now();
+  const body = await readBody<MovieSummaryRequest>(request);
+  if ((body.mode !== "spoiler_free" && body.mode !== "spoiler") || !body.result?.assetKey) {
+    sendJson(response, 400, { error: "Movie summary requires a mode and result." });
+    return;
+  }
+
+  try {
+    const summary = await summarizeMovie(body);
+    logInfo("api.movie_summary", {
+      requestId: context.requestId,
+      role: identity.role,
+      memberId: identity.memberId,
+      assetKey: body.result.assetKey,
+      mode: body.mode,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 200, summary);
+  } catch (error) {
+    logWarn("api.movie_summary.failed", {
+      requestId: context.requestId,
+      role: identity.role,
+      memberId: identity.memberId,
+      assetKey: body.result.assetKey,
+      mode: body.mode,
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
+    sendJson(response, error instanceof AiSummaryConfigError ? 503 : 502, {
+      error: error instanceof AiSummaryConfigError ? "AI summary is not configured." : "AI summary failed."
+    });
+  }
 }
 
 async function enrichResultsWithCache(searchResults: SearchResult[]) {
@@ -3241,6 +3283,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/cached-assets") {
       await handleListCachedAssets(url, response, context);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/movie-summary") {
+      await handleMovieSummary(request, response, context, identity!);
       return;
     }
 

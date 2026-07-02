@@ -9,7 +9,7 @@ import type {
 } from "@wwpdw/shared";
 
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
-export type AppTab = "library" | "cached" | "history" | "watchlist" | "help" | "admin" | "tasks" | "forum";
+export type AppTab = "library" | "cached" | "history" | "favorites" | "watchlist" | "help" | "admin" | "tasks" | "forum";
 export type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 export type BrowseViewId =
   | "lucky"
@@ -33,6 +33,13 @@ export interface PlaybackHistoryEntry {
   contentType?: string;
   contentLength?: number;
   result?: SearchResult;
+}
+
+export interface FavoriteEntry {
+  assetKey: string;
+  title: string;
+  addedAt: string;
+  result: ResultWithCache;
 }
 
 export interface TrackedCacheItem {

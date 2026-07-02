@@ -1,5 +1,10 @@
 export const historyStorageKey = "wwpdw-playback-history";
+export const favoriteStorageKey = "wwpdw-favorites";
 export const themeStorageKey = "wwpdw-theme";
+
+export function memberScopedStorageKey(key: string, memberId?: string) {
+  return memberId ? `${key}:${memberId}` : key;
+}
 
 export function readJsonStorage<T>(key: string, fallback: T): T {
   try {

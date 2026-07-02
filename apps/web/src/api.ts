@@ -32,6 +32,8 @@ import type {
   MemberInvitationListResponse,
   MemberNoticeListResponse,
   MarkMemberNoticeReadResponse,
+  MovieSummaryRequest,
+  MovieSummaryResponse,
   MovieRequestsResponse,
   PlaybackResponse,
   RegisterMemberRequest,
@@ -258,6 +260,13 @@ export function browseHomeAssets(
     params.set("view", options.view);
   }
   return request<HomeBrowseResponse>(`/api/home-browse?${params.toString()}`);
+}
+
+export function summarizeMovie(input: MovieSummaryRequest) {
+  return request<MovieSummaryResponse>(apiUrl("/api/movie-summary"), {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function previewCredit(input: CreditPreviewRequest) {

@@ -13,6 +13,7 @@
     "dev:worker": "npm run dev --workspace @wwpdw/worker",
     "sync:catalog": "npm run sync:catalog --workspace @wwpdw/api",
     "sync:tspdt": "npm run sync:tspdt --workspace @wwpdw/api",
+    "notion:metadata": "npm --workspace @wwpdw/api run notion:metadata --",
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
     "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",
     "typecheck": "npm run typecheck --workspace @wwpdw/web && npm run typecheck --workspace @wwpdw/api && npm run typecheck --workspace @wwpdw/worker"

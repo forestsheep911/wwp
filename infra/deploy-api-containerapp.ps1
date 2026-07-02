@@ -12,7 +12,13 @@ param(
     [string]$NotionContainerSecretName = "notion-token",
     [string]$AdminKeyVaultSecretName = "WWPDW-ADMIN-KEY",
     [string]$AdminContainerSecretName = "wwpdw-admin-key",
+    [string]$BailianKeyVaultSecretName = "BAILIAN-API-KEY",
+    [string]$BailianContainerSecretName = "bailian-api-key",
     [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
+    [string]$BailianApiKey = $env:BAILIAN_API_KEY,
+    [string]$AiSummaryModelPreset = $env:WWPDW_AI_SUMMARY_MODEL_PRESET,
+    [string]$AiSummaryModel = $env:WWPDW_AI_SUMMARY_MODEL,
+    [string]$BailianBaseUrl = $env:BAILIAN_BASE_URL,
     [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
     [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
     [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
@@ -89,6 +95,22 @@ if (-not $AdminKey) {
     $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
 }
 
+if (-not $BailianApiKey) {
+    $BailianApiKey = Get-DotEnvValue -Names @("BAILIAN_API_KEY", "DASHSCOPE_API_KEY")
+}
+
+if (-not $AiSummaryModelPreset) {
+    $AiSummaryModelPreset = Get-DotEnvValue -Names @("WWPDW_AI_SUMMARY_MODEL_PRESET")
+}
+
+if (-not $AiSummaryModel) {
+    $AiSummaryModel = Get-DotEnvValue -Names @("WWPDW_AI_SUMMARY_MODEL")
+}
+
+if (-not $BailianBaseUrl) {
+    $BailianBaseUrl = Get-DotEnvValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
+}
+
 $OmdbApiKey = Get-DotEnvValue -Names @("OMDB_API_KEY")
 
 $workerJob = & $AzCli containerapp job show `
@@ -127,6 +149,8 @@ $envVars = @(
     "SEARCH_INDEX_ENTRY_CACHE_TTL_SECONDS=300",
     "OMDB_REQUEST_TIMEOUT_MS=5000",
     "OMDB_LIVE_ENRICH_ENABLED=false",
+    "WWPDW_AI_SUMMARY_MODEL_PRESET=spark",
+    "WWPDW_AI_SUMMARY_TIMEOUT_MS=20000",
     "POSTER_CACHE_ENABLED=true",
     "POSTER_CACHE_MAX_BYTES=8388608",
     "POSTER_CACHE_MAX_PER_MOVIE=0",
@@ -175,6 +199,18 @@ if ($NotionLibraryDataSourceId) {
 
 if ($OmdbApiKey) {
     $envVars += "OMDB_API_KEY=$OmdbApiKey"
+}
+
+if ($AiSummaryModelPreset) {
+    $envVars += "WWPDW_AI_SUMMARY_MODEL_PRESET=$AiSummaryModelPreset"
+}
+
+if ($AiSummaryModel) {
+    $envVars += "WWPDW_AI_SUMMARY_MODEL=$AiSummaryModel"
+}
+
+if ($BailianBaseUrl) {
+    $envVars += "BAILIAN_BASE_URL=$BailianBaseUrl"
 }
 
 $existingAppName = & $AzCli containerapp list `
@@ -263,6 +299,52 @@ if ($notionSecretId) {
         --output none
 } else {
     Write-Host "Notion Key Vault secret was not found; API will use mock search unless NOTION_READ_ONLY_TOKEN is set another way."
+}
+
+$bailianSecretId = & $AzCli keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $BailianKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+
+if (-not $bailianSecretId -and $BailianApiKey) {
+    Write-Host "Creating Bailian API key secret reference in Key Vault."
+    $tempSecretPath = New-TemporaryFile
+    try {
+        Set-Content -Path $tempSecretPath -Value $BailianApiKey -NoNewline
+        & $AzCli keyvault secret set `
+            --vault-name $KeyVaultName `
+            --name $BailianKeyVaultSecretName `
+            --file $tempSecretPath `
+            --output none
+    } finally {
+        Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $bailianSecretId = & $AzCli keyvault secret show `
+        --vault-name $KeyVaultName `
+        --name $BailianKeyVaultSecretName `
+        --query id `
+        --output tsv
+}
+
+if ($bailianSecretId) {
+    $bailianSecretUri = $bailianSecretId -replace "/[0-9a-fA-F]{32}$", ""
+    Write-Host "Attaching Bailian API key secret reference."
+
+    & $AzCli containerapp secret set `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --secrets "$BailianContainerSecretName=keyvaultref:$bailianSecretUri,identityref:$($identity.id)" `
+        --output none
+
+    & $AzCli containerapp update `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --set-env-vars "BAILIAN_API_KEY=secretref:$BailianContainerSecretName" `
+        --output none
+} else {
+    Write-Host "Bailian API key secret was not found; AI movie summaries will stay disabled until an AI key is set."
 }
 
 $adminSecretId = & $AzCli keyvault secret show `

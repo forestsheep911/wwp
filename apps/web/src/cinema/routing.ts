@@ -12,7 +12,7 @@ interface CinemaHistoryState {
   route: CinemaRoute;
 }
 
-export const routeTabs: AppTab[] = ["library", "cached", "history", "watchlist", "help", "admin", "tasks", "forum"];
+export const routeTabs: AppTab[] = ["library", "cached", "history", "favorites", "watchlist", "help", "admin", "tasks", "forum"];
 export const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
 
 export function isAppTab(value: string | null): value is AppTab {

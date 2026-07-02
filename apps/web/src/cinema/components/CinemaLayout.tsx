@@ -14,6 +14,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Star,
   Sun,
   UserCircle
 } from "lucide-react";
@@ -51,6 +52,7 @@ interface CinemaLayoutProps {
   cached: ReactNode;
   forum: ReactNode;
   history: ReactNode;
+  favorites: ReactNode;
   watchlist: ReactNode;
   help: ReactNode;
   tasks?: ReactNode;
@@ -62,6 +64,7 @@ interface CinemaLayoutProps {
   onOpenHome: () => void;
   onOpenHelp: () => void;
   onOpenForum: () => void;
+  onOpenFavorites: () => void;
   onOpenHistory: () => void;
   onOpenWatchlist: () => void;
   onOpenMovieRequest: () => void;
@@ -86,6 +89,7 @@ export function CinemaLayout({
   cached,
   forum,
   history,
+  favorites,
   watchlist,
   help,
   tasks,
@@ -97,6 +101,7 @@ export function CinemaLayout({
   onOpenHome,
   onOpenHelp,
   onOpenForum,
+  onOpenFavorites,
   onOpenHistory,
   onOpenWatchlist,
   onOpenMovieRequest,
@@ -165,6 +170,10 @@ export function CinemaLayout({
                 <MessageCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.forum}</span>
               </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onOpenFavorites} title={copy.layout.favorites}>
+                <Star className="h-4 w-4" />
+                <span className="sr-only">{copy.layout.favorites}</span>
+              </Button>
               <Button type="button" variant="outline" size="icon" onClick={onOpenWatchlist} title={copy.layout.watchlist}>
                 <Clapperboard className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.watchlist}</span>
@@ -202,6 +211,7 @@ export function CinemaLayout({
                 noticeUnreadCount={noticeUnreadCount}
                 showAdmin={showAdmin}
                 onOpenAdmin={() => onActiveTabChange("admin")}
+                onOpenFavorites={onOpenFavorites}
                 onOpenForum={onOpenForum}
                 onOpenHelp={onOpenHelp}
                 onOpenHistory={onOpenHistory}
@@ -223,6 +233,7 @@ export function CinemaLayout({
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
             <TabsContent className="mt-0" value="forum">{forum}</TabsContent>
             <TabsContent className="mt-0" value="history">{history}</TabsContent>
+            <TabsContent className="mt-0" value="favorites">{favorites}</TabsContent>
             <TabsContent className="mt-0" value="watchlist">{watchlist}</TabsContent>
             <TabsContent className="mt-0" value="help">{help}</TabsContent>
             {tasks ? <TabsContent className="mt-0" value="tasks">{tasks}</TabsContent> : null}
@@ -242,6 +253,7 @@ function AccountMenu({
   noticeUnreadCount,
   showAdmin,
   onOpenAdmin,
+  onOpenFavorites,
   onOpenForum,
   onOpenHelp,
   onOpenHistory,
@@ -260,6 +272,7 @@ function AccountMenu({
   noticeUnreadCount: number;
   showAdmin: boolean;
   onOpenAdmin: () => void;
+  onOpenFavorites: () => void;
   onOpenForum: () => void;
   onOpenHelp: () => void;
   onOpenHistory: () => void;
@@ -299,6 +312,10 @@ function AccountMenu({
         <DropdownMenuItem onSelect={onOpenForum}>
           <MessageCircle className="h-4 w-4" />
           {copy.layout.forum}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onOpenFavorites}>
+          <Star className="h-4 w-4" />
+          {copy.layout.favorites}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenHistory}>
           <History className="h-4 w-4" />

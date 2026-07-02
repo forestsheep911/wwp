@@ -70,6 +70,8 @@ Initial movie metadata index fill:
 The API Container App scales to zero and starts the worker Container Apps Job after it queues an Azure cache request.
 
 The worker job runs `WORKER_MODE=oneshot`. It drains queued cache jobs, resolves media URLs, streams media into Blob Storage, and updates Table state.
+If `BAILIAN_API_KEY`, `DASHSCOPE_API_KEY`, or `OPENAI_API_KEY` is configured, the worker can use the AI resolver as a fallback after rule-based URL resolution decides a source needs browser inspection. The default preset is `WWPDW_AI_RESOLVER_MODEL_PRESET=compass` (balanced A). Other presets are `spark` (fast A), `summit` (smart A), `harbor` (balanced B), and `glint` (fast B). The aliases `balanced`, `fast`, `smart`, `balanced-b`, and `fast-b` are also accepted. Override with `WWPDW_AI_RESOLVER_MODEL`, `BAILIAN_BASE_URL`, `BAILIAN_MODEL`, or the generic `WWPDW_AI_RESOLVER_*` variables when needed.
+The API also uses the same AI key for on-demand movie summaries, defaulting to `WWPDW_AI_SUMMARY_MODEL_PRESET=spark` so spoiler-free and spoiler summaries stay on the fast lane.
 
 The cleanup job runs `WORKER_MODE=cleanup` on a daily schedule. It deletes ready cache state/blobs that have not been played for `CACHE_ASSET_IDLE_TTL_DAYS` days. Never-played videos use their initial cached time as the idle reference.
 
