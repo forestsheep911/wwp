@@ -36,6 +36,7 @@ interface MaintenanceOptions {
   dataSourceId?: string;
   databaseId?: string;
   rootPageId?: string;
+  onlyWithExternalIds: boolean;
   limit: number;
   pageSize: number;
   blockDepth: number;
@@ -108,6 +109,7 @@ function parseArgs(): MaintenanceOptions {
     dataSourceId: extractNotionId(value("--data-source-id", "")) ?? undefined,
     databaseId: extractNotionId(value("--database-id", "")) ?? undefined,
     rootPageId: extractNotionId(value("--root-page-id", "")) ?? undefined,
+    onlyWithExternalIds: has("--only-with-external-ids"),
     limit: Math.max(1, Math.floor(Number(value("--limit", "25")))),
     pageSize: Math.min(100, Math.max(1, Math.floor(Number(value("--page-size", "25"))))),
     blockDepth: Math.max(0, Math.floor(Number(value("--block-depth", "1")))),
@@ -169,6 +171,9 @@ function propertyText(value: unknown) {
   }
   if (type === "date") {
     return asString(asRecord(property.date)?.start);
+  }
+  if (type === "checkbox") {
+    return typeof property.checkbox === "boolean" ? String(property.checkbox) : "";
   }
   if (type === "select" || type === "status") {
     return asString(asRecord(property[type])?.name);
@@ -286,6 +291,10 @@ function addUpdate(
 
 function combineSources(pageProperties: JsonRecord, source: string) {
   return [...new Set([...readMultiSelect(pageProperties, "Metadata Source"), source])];
+}
+
+function hasParsedExternalIds(plan: PagePlan) {
+  return Boolean(plan.parsed.imdb || plan.parsed.douban || plan.parsed.tmdb);
 }
 
 function blockText(block: JsonRecord) {
@@ -557,7 +566,8 @@ async function main() {
     for (const page of pages) {
       const plan = await planPage(notion, page, availableProperties, options);
       plannedPages.push(plan);
-      if (options.apply && Object.keys(plan.updates).length > 0) {
+      const shouldApplyPage = !options.onlyWithExternalIds || hasParsedExternalIds(plan);
+      if (options.apply && shouldApplyPage && Object.keys(plan.updates).length > 0) {
         await notion.pages.update({
           page_id: plan.pageId,
           properties: plan.updates
@@ -574,6 +584,7 @@ async function main() {
     dataSourceId: library.dataSourceId,
     query: options.query,
     pageId: options.pageId,
+    onlyWithExternalIds: options.onlyWithExternalIds,
     schema: {
       managedPropertyCount: notionManagedProperties.length,
       missingCount: Object.keys(missingSchema).length,
@@ -582,6 +593,13 @@ async function main() {
     pages: {
       scanned: plannedPages.length,
       withUpdates: plannedPages.filter((page) => Object.keys(page.updates).length > 0).length,
+      applyEligible: plannedPages.filter((page) => (
+        Object.keys(page.updates).length > 0 &&
+        (!options.onlyWithExternalIds || hasParsedExternalIds(page))
+      )).length,
+      applySkippedByExternalIdGate: options.onlyWithExternalIds
+        ? plannedPages.filter((page) => Object.keys(page.updates).length > 0 && !hasParsedExternalIds(page)).length
+        : 0,
       withExternalIds: plannedPages.filter((page) => page.parsed.imdb || page.parsed.douban || page.parsed.tmdb).length,
       conflicts: plannedPages.filter((page) => page.conflicts.length > 0).length,
       withoutExternalIds: plannedPages
@@ -627,7 +645,33 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
+function formatFatalError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = asString(asRecord(error)?.code);
+  if (code === "object_not_found" || /Make sure the relevant pages and databases are shared/i.test(message)) {
+    return [
+      message,
+      "",
+      "Notion permission check:",
+      "- Dry-run uses NOTION_READ_ONLY_TOKEN first.",
+      "- --apply uses NOTION_WRITE_TOKEN first, then legacy NOTION_TOKEN.",
+      "- The write integration must be shared with the target Notion library database or its parent page.",
+      "- After sharing, rerun schema-only apply before writing page metadata."
+    ].join("\n");
+  }
+
+  if (/unauthorized|invalid token/i.test(message)) {
+    return [
+      message,
+      "",
+      "Set NOTION_WRITE_TOKEN to a Notion integration token with insert/update content capability for --apply."
+    ].join("\n");
+  }
+
+  return message;
+}
+
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(formatFatalError(error));
   process.exitCode = 1;
 });

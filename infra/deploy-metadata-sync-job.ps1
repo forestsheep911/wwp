@@ -23,6 +23,8 @@ param(
     [int]$Limit = 0,
     [int]$NotionRequestTimeoutMs = 120000,
     [int]$NotionScanPageParseTimeoutMs = 120000,
+    [int]$NotionScanPageParseRetries = 3,
+    [int]$NotionScanPageParseRetryDelayMs = 60000,
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
@@ -62,7 +64,7 @@ if (-not $JobName) {
 }
 
 if ($DelayMs -lt 0) {
-    $DelayMs = if ($Mode -eq "full") { 1500 } else { 500 }
+    $DelayMs = if ($Mode -eq "full") { 2500 } else { 500 }
 }
 
 if (-not $NotionLibraryRootPageId -and $env:PAGE_ID) {
@@ -123,6 +125,8 @@ $envVars = @(
     "POSTER_CACHE_MAX_PER_MOVIE=0",
     "NOTION_REQUEST_TIMEOUT_MS=$NotionRequestTimeoutMs",
     "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=$NotionScanPageParseTimeoutMs",
+    "NOTION_SCAN_PAGE_PARSE_RETRIES=$NotionScanPageParseRetries",
+    "NOTION_SCAN_PAGE_PARSE_RETRY_DELAY_MS=$NotionScanPageParseRetryDelayMs",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",

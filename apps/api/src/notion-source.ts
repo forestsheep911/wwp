@@ -53,6 +53,8 @@ interface ParseOptions {
   variantLimit: number;
   requestTimeoutMs: number;
   scanPageParseTimeoutMs: number;
+  scanPageParseRetries: number;
+  scanPageParseRetryDelayMs: number;
 }
 
 export interface NotionLibraryScanOptions {
@@ -80,7 +82,9 @@ const defaultOptions: ParseOptions = {
   libraryQueryLimit: Number(process.env.NOTION_LIBRARY_QUERY_LIMIT ?? 300),
   variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 8),
   requestTimeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000),
-  scanPageParseTimeoutMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS ?? 60000)
+  scanPageParseTimeoutMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS ?? 60000),
+  scanPageParseRetries: Number(process.env.NOTION_SCAN_PAGE_PARSE_RETRIES ?? 2),
+  scanPageParseRetryDelayMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_RETRY_DELAY_MS ?? 2000)
 };
 
 const urlPattern = /https?:\/\/[^\s<>"']+/gi;
@@ -1003,6 +1007,20 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
+function isTransientNotionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = asString(asRecord(error)?.code);
+  const status = Number(asRecord(error)?.status);
+  return code === "notionhq_client_response_error" ||
+    code === "rate_limited" ||
+    status === 429 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    /^Timed out while parsing Notion page\b/.test(message) ||
+    /\b(?:429|502|503|504)\b/.test(message);
+}
+
 export class NotionSearchSource {
   readonly description: string;
   private readonly notion: Client;
@@ -1087,11 +1105,7 @@ export class NotionSearchSource {
             pageId: asString(page.id),
             title,
             lastEditedTime,
-            result: await withTimeout(
-              this.pageToSearchResult(page, { libraryMode: true }),
-              this.options.scanPageParseTimeoutMs,
-              `Timed out while parsing Notion page ${asString(page.id)}.`
-            )
+            result: await this.pageToSearchResultWithRetry(page, { libraryMode: true })
           };
         } catch (error) {
           yield {
@@ -1471,6 +1485,32 @@ export class NotionSearchSource {
       const rightExact = textMatches(right.title, query) ? 1 : 0;
       return rightExact - leftExact;
     });
+  }
+
+  private async pageToSearchResultWithRetry(
+    page: JsonRecord,
+    context: { libraryMode?: boolean } = {}
+  ) {
+    const pageId = asString(page.id);
+    const retries = Math.max(0, Math.floor(this.options.scanPageParseRetries));
+    const baseDelayMs = Math.max(0, Math.floor(this.options.scanPageParseRetryDelayMs));
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await withTimeout(
+          this.pageToSearchResult(page, context),
+          this.options.scanPageParseTimeoutMs,
+          `Timed out while parsing Notion page ${pageId}.`
+        );
+      } catch (error) {
+        if (attempt >= retries || !isTransientNotionError(error)) {
+          throw error;
+        }
+        attempt += 1;
+        await sleep(baseDelayMs * attempt);
+      }
+    }
   }
 
   private async pageToSearchResult(
