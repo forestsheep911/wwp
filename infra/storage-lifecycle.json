@@ -1,7 +1,7 @@
 {
   "rules": [
     {
-      "enabled": true,
+      "enabled": false,
       "name": "expireCachedVideos",
       "type": "Lifecycle",
       "definition": {

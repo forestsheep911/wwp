@@ -9,8 +9,19 @@ import type {
 } from "@wwpdw/shared";
 
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
-export type AppTab = "library" | "cached" | "history" | "help" | "admin" | "tasks" | "forum";
+export type AppTab = "library" | "cached" | "history" | "watchlist" | "help" | "admin" | "tasks" | "forum";
 export type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
+export type BrowseViewId =
+  | "lucky"
+  | "recent"
+  | "newGood"
+  | "popular"
+  | "topRated"
+  | "mostWatched"
+  | "doubanRank"
+  | "imdbRank"
+  | "rottenRank"
+  | "tspdtRank";
 export type LibraryViewMode = "gallery" | "list";
 export type BadgeVariant = "default" | "secondary" | "warning" | "danger" | "muted";
 export type AppTheme = "dark" | "light";

@@ -2,11 +2,15 @@ param(
     [string]$ExpectedSubscriptionId = "e9219db7-f600-43c5-8d42-9c63aae09138",
     [string]$ResourceGroup = "rg-ww-player-cache-dev",
     [string]$Location = "eastasia",
-    [string]$Suffix = "e9219db7"
+    [string]$Suffix = "e9219db7",
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
 $Names = [ordered]@{
     StorageAccount = "stwwcache$Suffix"
     Acr            = "acrwwcache$Suffix"
@@ -29,7 +33,7 @@ $Tags = @(
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LifecyclePolicyPath = Join-Path $ScriptRoot "storage-lifecycle.json"
 
-function Invoke-Az2 {
+function Invoke-AzCli {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$AzArgs
@@ -44,47 +48,47 @@ function Invoke-Az2 {
         }
     }
 
-    Write-Host "az2 $($displayArgs -join ' ')"
-    & az2 @AzArgs
+    Write-Host "$AzCli $($displayArgs -join ' ')"
+    & $AzCli @AzArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "az2 command failed: $($AzArgs -join ' ')"
+        throw "$AzCli command failed: $($AzArgs -join ' ')"
     }
 }
 
-function Get-Az2Json {
+function Get-AzCliJson {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$AzArgs
     )
 
-    $output = & az2 @AzArgs
+    $output = & $AzCli @AzArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "az2 command failed: $($AzArgs -join ' ')"
+        throw "$AzCli command failed: $($AzArgs -join ' ')"
     }
 
     return $output | ConvertFrom-Json
 }
 
-function Get-Az2Text {
+function Get-AzCliText {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$AzArgs
     )
 
-    $output = & az2 @AzArgs
+    $output = & $AzCli @AzArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "az2 command failed: $($AzArgs -join ' ')"
+        throw "$AzCli command failed: $($AzArgs -join ' ')"
     }
 
     return (($output | Out-String).Trim())
 }
 
-function Test-Az2 {
+function Test-AzCli {
     param(
         [string[]]$AzArgs
     )
 
-    & az2 @AzArgs 1>$null 2>$null
+    & $AzCli @AzArgs 1>$null 2>$null
     return $LASTEXITCODE -eq 0
 }
 
@@ -96,7 +100,7 @@ function Ensure-RoleAssignment {
         [string]$Scope
     )
 
-    $existing = Get-Az2Text role assignment list `
+    $existing = Get-AzCliText role assignment list `
         --assignee-object-id $AssigneeObjectId `
         --role $Role `
         --scope $Scope `
@@ -109,7 +113,7 @@ function Ensure-RoleAssignment {
         return
     }
 
-    Invoke-Az2 role assignment create `
+    Invoke-AzCli role assignment create `
         --assignee-object-id $AssigneeObjectId `
         --assignee-principal-type $PrincipalType `
         --role $Role `
@@ -117,25 +121,25 @@ function Ensure-RoleAssignment {
         --output none
 }
 
-if (-not (Get-Command az2 -ErrorAction SilentlyContinue)) {
-    throw "az2 was not found on PATH."
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "$AzCli was not found on PATH."
 }
 
-$account = Get-Az2Json account show --output json
+$account = Get-AzCliJson account show --output json
 if ($account.id -ne $ExpectedSubscriptionId) {
-    throw "az2 is using subscription $($account.name) ($($account.id)); expected $ExpectedSubscriptionId."
+    throw "$AzCli is using subscription $($account.name) ($($account.id)); expected $ExpectedSubscriptionId."
 }
 
 Write-Host "Using subscription: $($account.name) ($($account.id))"
 
-Invoke-Az2 group create `
+Invoke-AzCli group create `
     --name $ResourceGroup `
     --location $Location `
     --tags @Tags `
     --output none
 
-if (-not (Test-Az2 @("storage", "account", "show", "--name", $Names.StorageAccount, "--resource-group", $ResourceGroup))) {
-    Invoke-Az2 storage account create `
+if (-not (Test-AzCli @("storage", "account", "show", "--name", $Names.StorageAccount, "--resource-group", $ResourceGroup))) {
+    Invoke-AzCli storage account create `
         --name $Names.StorageAccount `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -147,7 +151,7 @@ if (-not (Test-Az2 @("storage", "account", "show", "--name", $Names.StorageAccou
         --tags @Tags `
         --output none
 } else {
-    Invoke-Az2 storage account update `
+    Invoke-AzCli storage account update `
         --name $Names.StorageAccount `
         --resource-group $ResourceGroup `
         --min-tls-version TLS1_2 `
@@ -156,35 +160,35 @@ if (-not (Test-Az2 @("storage", "account", "show", "--name", $Names.StorageAccou
         --output none
 }
 
-Invoke-Az2 storage container create `
+Invoke-AzCli storage container create `
     --account-name $Names.StorageAccount `
     --name $Names.BlobContainer `
     --public-access off `
     --output none
 
-Invoke-Az2 storage queue create `
+Invoke-AzCli storage queue create `
     --account-name $Names.StorageAccount `
     --name $Names.Queue `
     --output none
 
-Invoke-Az2 storage table create `
+Invoke-AzCli storage table create `
     --account-name $Names.StorageAccount `
     --name $Names.CacheIndex `
     --output none
 
-Invoke-Az2 storage table create `
+Invoke-AzCli storage table create `
     --account-name $Names.StorageAccount `
     --name $Names.CacheJobs `
     --output none
 
-Invoke-Az2 storage account management-policy create `
+Invoke-AzCli storage account management-policy create `
     --account-name $Names.StorageAccount `
     --resource-group $ResourceGroup `
     --policy "@$LifecyclePolicyPath" `
     --output none
 
-if (-not (Test-Az2 @("acr", "show", "--name", $Names.Acr, "--resource-group", $ResourceGroup))) {
-    Invoke-Az2 acr create `
+if (-not (Test-AzCli @("acr", "show", "--name", $Names.Acr, "--resource-group", $ResourceGroup))) {
+    Invoke-AzCli acr create `
         --name $Names.Acr `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -194,8 +198,8 @@ if (-not (Test-Az2 @("acr", "show", "--name", $Names.Acr, "--resource-group", $R
         --output none
 }
 
-if (-not (Test-Az2 @("monitor", "log-analytics", "workspace", "show", "--workspace-name", $Names.Workspace, "--resource-group", $ResourceGroup))) {
-    Invoke-Az2 monitor log-analytics workspace create `
+if (-not (Test-AzCli @("monitor", "log-analytics", "workspace", "show", "--workspace-name", $Names.Workspace, "--resource-group", $ResourceGroup))) {
+    Invoke-AzCli monitor log-analytics workspace create `
         --workspace-name $Names.Workspace `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -203,20 +207,20 @@ if (-not (Test-Az2 @("monitor", "log-analytics", "workspace", "show", "--workspa
         --output none
 }
 
-if (-not (Test-Az2 @("containerapp", "env", "show", "--name", $Names.ContainerEnv, "--resource-group", $ResourceGroup))) {
-    $workspaceId = Get-Az2Text monitor log-analytics workspace show `
+if (-not (Test-AzCli @("containerapp", "env", "show", "--name", $Names.ContainerEnv, "--resource-group", $ResourceGroup))) {
+    $workspaceId = Get-AzCliText monitor log-analytics workspace show `
         --workspace-name $Names.Workspace `
         --resource-group $ResourceGroup `
         --query customerId `
         --output tsv
 
-    $workspaceKey = Get-Az2Text monitor log-analytics workspace get-shared-keys `
+    $workspaceKey = Get-AzCliText monitor log-analytics workspace get-shared-keys `
         --workspace-name $Names.Workspace `
         --resource-group $ResourceGroup `
         --query primarySharedKey `
         --output tsv
 
-    Invoke-Az2 containerapp env create `
+    Invoke-AzCli containerapp env create `
         --name $Names.ContainerEnv `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -226,8 +230,8 @@ if (-not (Test-Az2 @("containerapp", "env", "show", "--name", $Names.ContainerEn
         --output none
 }
 
-if (-not (Test-Az2 @("keyvault", "show", "--name", $Names.KeyVault, "--resource-group", $ResourceGroup))) {
-    Invoke-Az2 keyvault create `
+if (-not (Test-AzCli @("keyvault", "show", "--name", $Names.KeyVault, "--resource-group", $ResourceGroup))) {
+    Invoke-AzCli keyvault create `
         --name $Names.KeyVault `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -237,15 +241,15 @@ if (-not (Test-Az2 @("keyvault", "show", "--name", $Names.KeyVault, "--resource-
         --tags @Tags `
         --output none
 } else {
-    Invoke-Az2 keyvault update `
+    Invoke-AzCli keyvault update `
         --name $Names.KeyVault `
         --resource-group $ResourceGroup `
         --enable-rbac-authorization true `
         --output none
 }
 
-if (-not (Test-Az2 @("identity", "show", "--name", $Names.Identity, "--resource-group", $ResourceGroup))) {
-    Invoke-Az2 identity create `
+if (-not (Test-AzCli @("identity", "show", "--name", $Names.Identity, "--resource-group", $ResourceGroup))) {
+    Invoke-AzCli identity create `
         --name $Names.Identity `
         --resource-group $ResourceGroup `
         --location $Location `
@@ -253,24 +257,24 @@ if (-not (Test-Az2 @("identity", "show", "--name", $Names.Identity, "--resource-
         --output none
 }
 
-$identity = Get-Az2Json identity show `
+$identity = Get-AzCliJson identity show `
     --name $Names.Identity `
     --resource-group $ResourceGroup `
     --output json
 
-$storageId = Get-Az2Text storage account show `
+$storageId = Get-AzCliText storage account show `
     --name $Names.StorageAccount `
     --resource-group $ResourceGroup `
     --query id `
     --output tsv
 
-$acrId = Get-Az2Text acr show `
+$acrId = Get-AzCliText acr show `
     --name $Names.Acr `
     --resource-group $ResourceGroup `
     --query id `
     --output tsv
 
-$keyVaultId = Get-Az2Text keyvault show `
+$keyVaultId = Get-AzCliText keyvault show `
     --name $Names.KeyVault `
     --resource-group $ResourceGroup `
     --query id `
@@ -307,7 +311,7 @@ Ensure-RoleAssignment `
     -Scope $acrId
 
 try {
-    $signedInUser = Get-Az2Json ad signed-in-user show --output json
+    $signedInUser = Get-AzCliJson ad signed-in-user show --output json
     Ensure-RoleAssignment `
         -AssigneeObjectId $signedInUser.id `
         -PrincipalType User `

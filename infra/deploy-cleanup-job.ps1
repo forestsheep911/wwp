@@ -12,19 +12,22 @@ param(
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
-    [int]$CacheAssetTtlDays = 30,
-    [int]$CacheAssetIdleTtlDays = 7
+    [int]$CacheAssetIdleTtlDays = 7,
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
-$loginServer = az2 acr show `
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
+$loginServer = & $AzCli acr show `
     --name $RegistryName `
     --resource-group $ResourceGroup `
     --query loginServer `
     --output tsv
 
-$identity = az2 identity show `
+$identity = & $AzCli identity show `
     --name $IdentityName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
@@ -33,7 +36,6 @@ $image = "$loginServer/$ImageName`:$ImageTag"
 $envVars = @(
     "CACHE_BACKEND=azure",
     "WORKER_MODE=cleanup",
-    "CACHE_ASSET_TTL_DAYS=$CacheAssetTtlDays",
     "CACHE_ASSET_IDLE_TTL_DAYS=$CacheAssetIdleTtlDays",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
@@ -41,11 +43,11 @@ $envVars = @(
     "AZURE_STORAGE_QUEUE_NAME=$QueueName",
     "AZURE_STORAGE_ASSET_TABLE=$AssetTable",
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
-    "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=60"
+    "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=720"
 )
 
 $exists = $false
-az2 containerapp job show `
+& $AzCli containerapp job show `
     --name $JobName `
     --resource-group $ResourceGroup `
     --output none 2>$null
@@ -55,7 +57,7 @@ if ($LASTEXITCODE -eq 0) {
 
 if (-not $exists) {
     Write-Host "Creating cleanup Container Apps Job: $JobName"
-    az2 containerapp job create `
+    & $AzCli containerapp job create `
         --name $JobName `
         --resource-group $ResourceGroup `
         --environment $ContainerEnv `
@@ -76,7 +78,7 @@ if (-not $exists) {
         --output none
 } else {
     Write-Host "Updating cleanup Container Apps Job: $JobName"
-    az2 containerapp job update `
+    & $AzCli containerapp job update `
         --name $JobName `
         --resource-group $ResourceGroup `
         --cron-expression $CronExpression `
@@ -93,7 +95,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Cleanup Container Apps Job deployment failed."
 }
 
-az2 containerapp job show `
+& $AzCli containerapp job show `
     --name $JobName `
     --resource-group $ResourceGroup `
     --query "{name:name,provisioningState:properties.provisioningState,triggerType:properties.configuration.triggerType,cronExpression:properties.configuration.scheduleTriggerConfig.cronExpression,image:properties.template.containers[0].image,identityType:identity.type}" `

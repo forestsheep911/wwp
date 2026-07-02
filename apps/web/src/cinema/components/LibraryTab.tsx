@@ -42,9 +42,10 @@ import {
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
+import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
-import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type BrowseViewId, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryTabProps {
@@ -68,7 +69,7 @@ interface LibraryTabProps {
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number }) => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -227,20 +228,10 @@ export function LibraryTab({
   );
 }
 
-type BrowseViewId =
-  | "lucky"
-  | "recent"
-  | "newGood"
-  | "popular"
-  | "topRated"
-  | "mostWatched"
-  | "tspdtRank"
-  | "doubanRank"
-  | "imdbRank"
-  | "rottenRank";
-
 const browseInitialCount = 12;
 const browseLoadStep = 12;
+const browseViewItemLimit = 300;
+const browseRandomLimit = 48;
 const luckyRanks = new Map<string, number>();
 
 const browseViews: Array<{
@@ -263,12 +254,12 @@ const movieBrowseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
-  { id: "tspdtRank", label: copy.library.browseViews.tspdtRank.label, detail: copy.library.browseViews.tspdtRank.detail, icon: Trophy },
+  { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Eye },
   { id: "doubanRank", label: copy.library.browseViews.doubanRank.label, detail: copy.library.browseViews.doubanRank.detail, icon: Trophy },
   { id: "imdbRank", label: copy.library.browseViews.imdbRank.label, detail: copy.library.browseViews.imdbRank.detail, icon: Star },
   { id: "rottenRank", label: copy.library.browseViews.rottenRank.label, detail: copy.library.browseViews.rottenRank.detail, icon: Flame },
-  { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
-  { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Eye }
+  { id: "tspdtRank", label: copy.library.browseViews.tspdtRank.label, detail: copy.library.browseViews.tspdtRank.detail, icon: Trophy }
 ];
 
 function viewsForBrowseChannel(channel: BrowseChannel) {
@@ -307,7 +298,7 @@ function LibraryHome({
   pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number }) => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -334,13 +325,22 @@ function LibraryHome({
     () => buildTspdtRankItems(browsableResults),
     [browsableResults]
   );
+  const tspdtMatchedCount = useMemo(
+    () => tspdtItems.filter((item) => Boolean(item.result)).length,
+    [tspdtItems]
+  );
   const showingTspdtRank = activeSortView === "tspdtRank";
+  const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browsingResults = rankedResults.length > 0;
-  const totalVisibleItems = showingTspdtRank
+  const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
     : browsingResults
       ? rankedResults.length
       : rankedAssets.length;
+  const totalVisibleItems = Math.min(totalRankedItems, browseViewItemLimit);
+  const loadedBrowseItemCount = showingTspdtRank ? browsableResults.length : totalRankedItems;
+  const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseViewItemLimit;
+  const reachedBrowseViewLimit = totalVisibleItems >= browseViewItemLimit && (totalRankedItems > browseViewItemLimit || browseHasMore);
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
@@ -358,8 +358,8 @@ function LibraryHome({
 
   function showMoreItems() {
     if (!hasMoreItems) {
-      if (browseHasMore && !browseLoadingMore) {
-        onRefreshBrowse({ append: true, mode: "paged", limit: 100 });
+      if (canLoadMoreFromServer && !browseLoadingMore) {
+        onRefreshBrowse({ append: true, mode: "paged", limit: 100, view: activeSortView });
       }
       return;
     }
@@ -376,22 +376,22 @@ function LibraryHome({
   }, [activeSortView, browseChannel]);
 
   useEffect(() => {
-    if (!showingTspdtRank || browseLoading || browseLoadingMore) {
+    if (!needsFullBrowseResults || browseLoading || browseLoadingMore || loadedBrowseItemCount >= browseViewItemLimit) {
       return;
     }
 
     if (browseLoadMode !== "paged") {
-      onRefreshBrowse({ mode: "paged", limit: 100 });
+      onRefreshBrowse({ mode: "paged", limit: 100, view: activeSortView });
       return;
     }
 
-    if (browseHasMore) {
-      onRefreshBrowse({ append: true, mode: "paged", limit: 100 });
+    if (canLoadMoreFromServer) {
+      onRefreshBrowse({ append: true, mode: "paged", limit: 100, view: activeSortView });
     }
-  }, [browseHasMore, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, onRefreshBrowse, showingTspdtRank]);
+  }, [activeSortView, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults, onRefreshBrowse]);
 
   useEffect(() => {
-    if ((!hasMoreItems && !browseHasMore) || !loadMoreRef.current) {
+    if ((!hasMoreItems && !canLoadMoreFromServer) || !loadMoreRef.current) {
       return;
     }
 
@@ -405,7 +405,7 @@ function LibraryHome({
 
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
-  }, [browseHasMore, browseLoadingMore, hasMoreItems, totalVisibleItems, visibleItemCount]);
+  }, [browseLoadingMore, canLoadMoreFromServer, hasMoreItems, totalVisibleItems, visibleItemCount]);
 
   return (
     <section className="grid gap-4">
@@ -419,7 +419,14 @@ function LibraryHome({
               type="button"
               size="sm"
               variant={activeSortView === view.id ? "secondary" : "ghost"}
-              onClick={() => setActiveView(view.id)}
+              onClick={() => {
+                setActiveView(view.id);
+                onRefreshBrowse({
+                  mode: view.id === "lucky" ? "random" : "paged",
+                  limit: view.id === "lucky" ? browseRandomLimit : 100,
+                  view: view.id
+                });
+              }}
               title={view.label}
             >
               <Icon className="h-4 w-4" />
@@ -434,20 +441,25 @@ function LibraryHome({
           <>
             <TspdtRankView
               creditPolicy={creditPolicy}
+              catalogLoadedCount={browsableResults.length}
+              hasMoreCatalogItems={browseHasMore}
               items={visibleTspdtItems}
+              matchedCount={tspdtMatchedCount}
               pendingAssetKeys={pendingAssetKeys}
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
+              totalCount={tspdtItems.length}
               onOpenDetail={onOpenDetail}
               onSelect={onSelect}
               onDownload={onDownload}
             />
             <LazyLoadFooter
-              hasMore={hasMoreItems}
+              capped={reachedBrowseViewLimit}
+              hasMore={hasMoreItems || canLoadMoreFromServer}
               loadMoreRef={loadMoreRef}
               loading={browseLoadingMore}
               shownCount={visibleTspdtItems.length}
-              totalCount={tspdtItems.length}
+              totalCount={totalRankedItems}
               onLoadMore={showMoreItems}
             />
           </>
@@ -474,11 +486,12 @@ function LibraryHome({
               </div>
             </div>
             <LazyLoadFooter
-              hasMore={hasMoreItems || browseHasMore}
+              capped={reachedBrowseViewLimit}
+              hasMore={hasMoreItems || canLoadMoreFromServer}
               loadMoreRef={loadMoreRef}
               loading={browseLoadingMore}
               shownCount={visibleResults.length}
-              totalCount={rankedResults.length}
+              totalCount={totalRankedItems}
               onLoadMore={showMoreItems}
             />
           </>
@@ -495,18 +508,20 @@ function LibraryHome({
               ))}
             </div>
             <LazyLoadFooter
-              hasMore={hasMoreItems || browseHasMore}
+              capped={reachedBrowseViewLimit}
+              hasMore={hasMoreItems || canLoadMoreFromServer}
               loadMoreRef={loadMoreRef}
               loading={browseLoadingMore}
               shownCount={visibleAssets.length}
-              totalCount={rankedAssets.length}
+              totalCount={totalRankedItems}
               onLoadMore={showMoreItems}
             />
           </>
-        ) : browseHasMore ? (
+        ) : canLoadMoreFromServer ? (
           <>
             <EmptyState icon={<Database className="h-5 w-5" />} title={copy.library.continueLoading} />
             <LazyLoadFooter
+              capped={false}
               hasMore
               loadMoreRef={loadMoreRef}
               loading={browseLoadingMore}
@@ -524,6 +539,7 @@ function LibraryHome({
 }
 
 function LazyLoadFooter({
+  capped,
   hasMore,
   loadMoreRef,
   loading,
@@ -531,6 +547,7 @@ function LazyLoadFooter({
   totalCount,
   onLoadMore
 }: {
+  capped: boolean;
   hasMore: boolean;
   loadMoreRef: React.RefObject<HTMLDivElement | null>;
   loading: boolean;
@@ -551,7 +568,7 @@ function LazyLoadFooter({
           {totalCount > 0 ? <Badge variant="secondary">{shownCount}/{totalCount}{hasMore ? "+" : ""}</Badge> : null}
         </Button>
       ) : (
-        <Badge variant="muted">{copy.library.loadedAll(totalCount)}</Badge>
+        <Badge variant="muted">{capped ? copy.library.loadedLimit(shownCount) : copy.library.loadedAll(totalCount)}</Badge>
       )}
     </div>
   );
@@ -603,19 +620,27 @@ interface TspdtRankItem {
 
 function TspdtRankView({
   creditPolicy,
+  catalogLoadedCount,
+  hasMoreCatalogItems,
   items,
+  matchedCount,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   trackedByAssetKey,
+  totalCount,
   onOpenDetail,
   onSelect,
   onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
+  catalogLoadedCount: number;
+  hasMoreCatalogItems: boolean;
   items: TspdtRankItem[];
+  matchedCount: number;
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  totalCount: number;
   onOpenDetail: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -625,7 +650,8 @@ function TspdtRankView({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">TSPDT {tspdtEdition}</Badge>
-          <Badge variant="muted">{items.length}/1000</Badge>
+          <Badge variant="muted">{copy.library.tspdtMatched(matchedCount, totalCount)}</Badge>
+          <Badge variant="muted">{copy.library.tspdtCatalogLoaded(catalogLoadedCount, hasMoreCatalogItems)}</Badge>
         </div>
         <a
           className="text-xs font-semibold text-slate-500 transition-colors hover:text-emerald-200"
@@ -759,10 +785,17 @@ function RankNumber({ rank }: { rank: number }) {
 }
 
 function buildTspdtRankItems(results: ResultWithCache[]): TspdtRankItem[] {
+  const externalIdMap = new Map<string, ResultWithCache>();
   const titleMap = new Map<string, ResultWithCache>();
   const yearTitleMap = new Map<string, ResultWithCache>();
 
   for (const result of results) {
+    for (const idKey of resultExternalIdKeys(result)) {
+      if (!externalIdMap.has(idKey)) {
+        externalIdMap.set(idKey, result);
+      }
+    }
+
     const years = resultYears(result);
     for (const key of resultTitleKeys(result)) {
       if (!titleMap.has(key)) {
@@ -778,6 +811,9 @@ function buildTspdtRankItems(results: ResultWithCache[]): TspdtRankItem[] {
   }
 
   return tspdtTop1000.map((entry) => {
+    const idMatch = tspdtExternalIdKeys(entry)
+      .map((key) => externalIdMap.get(key))
+      .find(Boolean);
     const keys = uniqueStrings([
       ...titleKeysFromString(entry.title),
       ...titleKeysFromString(tspdtChineseTitles[entry.rank])
@@ -791,14 +827,64 @@ function buildTspdtRankItems(results: ResultWithCache[]): TspdtRankItem[] {
 
     return {
       entry,
-      result: yearMatch ?? titleMatch
+      result: idMatch ?? yearMatch ?? titleMatch
     };
   });
+}
+
+function tspdtExternalIdKeys(entry: TspdtEntry) {
+  return uniqueStrings([
+    workIdKey(entry.workId),
+    imdbIdKey(entry.imdbId ?? tspdtImdbIds[entry.rank]),
+    doubanSubjectIdKey(entry.doubanSubjectId)
+  ]);
+}
+
+function resultExternalIdKeys(result: SearchResult) {
+  const metadata = result.metadata;
+  return uniqueStrings([
+    workIdKey(metadata?.workId),
+    workIdKey(metadata?.work?.workId),
+    imdbIdKey(metadata?.imdbId),
+    imdbIdKey(metadata?.externalIds?.imdb),
+    imdbIdKey(metadata?.work?.externalIds?.imdb),
+    imdbIdKey(metadata?.external?.omdb?.imdbId),
+    imdbIdKey(extractImdbId(result.sourceUrl)),
+    doubanSubjectIdKey(metadata?.externalIds?.douban),
+    doubanSubjectIdKey(metadata?.work?.externalIds?.douban),
+    doubanSubjectIdKey(extractDoubanSubjectId(result.sourceUrl))
+  ]);
+}
+
+function workIdKey(value?: string) {
+  return value ? `work:${value}` : undefined;
+}
+
+function imdbIdKey(value?: string) {
+  const id = extractImdbId(value);
+  return id ? `imdb:${id.toLowerCase()}` : undefined;
+}
+
+function doubanSubjectIdKey(value?: string) {
+  const id = extractDoubanSubjectId(value);
+  return id ? `douban:${id}` : undefined;
+}
+
+function extractImdbId(value?: string) {
+  return value?.match(/\btt\d+\b/i)?.[0];
+}
+
+function extractDoubanSubjectId(value?: string) {
+  return value?.match(/(?:^|\/subject\/)(\d{4,})(?:\/|$|\?)/i)?.[1] ?? (value?.match(/^\d{4,}$/)?.[0]);
 }
 
 function resultTitleKeys(result: SearchResult) {
   return uniqueStrings([
     ...titleKeysFromString(result.title),
+    ...titleKeysFromString(result.metadata?.display?.title),
+    ...titleKeysFromString(result.metadata?.work?.display?.title),
+    ...(result.metadata?.titles ?? []).flatMap((title) => titleKeysFromString(title.title)),
+    ...(result.metadata?.work?.titles ?? []).flatMap((title) => titleKeysFromString(title.title)),
     ...titleKeysFromString(result.metadata?.external?.omdb?.title),
     ...titleKeysFromString(result.metadata?.external?.omdb?.seriesId)
   ]);
@@ -806,9 +892,17 @@ function resultTitleKeys(result: SearchResult) {
 
 function resultYears(result: SearchResult) {
   const releaseYear = result.metadata?.releaseDate?.match(/\b(\d{4})\b/)?.[1];
+  const structuredYear = result.metadata?.release?.year?.match(/\b(\d{4})\b/)?.[1];
+  const structuredDateYear = result.metadata?.release?.date?.match(/\b(\d{4})\b/)?.[1];
+  const workYear = result.metadata?.work?.release?.year?.match(/\b(\d{4})\b/)?.[1];
+  const workDateYear = result.metadata?.work?.release?.date?.match(/\b(\d{4})\b/)?.[1];
   const omdbYear = result.metadata?.external?.omdb?.year?.match(/\b(\d{4})\b/)?.[1];
   return uniqueStrings([
     result.metadata?.year?.match(/\b(\d{4})\b/)?.[1],
+    structuredYear,
+    structuredDateYear,
+    workYear,
+    workDateYear,
     releaseYear,
     omdbYear
   ]);
@@ -862,12 +956,27 @@ function uniqueStrings(values: Array<string | undefined>) {
 
 function normalizedMetadataText(result: SearchResult) {
   const metadata = result.metadata;
+  const work = metadata?.work;
   return [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    metadata?.kind,
+    work?.kind,
     metadata?.type,
     metadata?.ratingLevel?.join(" "),
     metadata?.genres?.join(" "),
+    work?.genres?.join(" "),
+    metadata?.display?.title,
+    metadata?.display?.subtitle,
+    work?.display?.title,
+    work?.display?.subtitle,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
     metadata?.info,
-    metadata?.description
+    metadata?.description,
+    metadata?.external?.omdb?.type,
+    metadata?.external?.omdb?.genres?.join(" "),
+    metadata?.external?.omdb?.plot
   ]
     .filter(Boolean)
     .join(" ")
@@ -875,6 +984,14 @@ function normalizedMetadataText(result: SearchResult) {
 }
 
 function explicitBrowseKind(result: SearchResult): "movie" | "tv" | undefined {
+  const kind = result.metadata?.work?.kind ?? result.metadata?.kind;
+  if (kind === "series" || kind === "season" || kind === "episode") {
+    return "tv";
+  }
+  if (kind === "movie" || kind === "short" || kind === "special") {
+    return "movie";
+  }
+
   const type = result.metadata?.type?.trim().toLowerCase();
   if (!type) {
     return undefined;
@@ -898,7 +1015,7 @@ function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel
 
   const text = normalizedMetadataText(result);
   if (channel === "animation") {
-    return /动画|動漫|anime|animation|animated/.test(text);
+    return /动画|動畫|动漫|動漫|番剧|番劇|anime|animation|animated/.test(text);
   }
 
   const explicitKind = explicitBrowseKind(result);

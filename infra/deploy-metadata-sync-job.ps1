@@ -20,11 +20,17 @@ param(
     [string]$CronExpression = "0 */6 * * *",
     [int]$DelayMs = -1,
     [int]$PageSize = 25,
-    [int]$Limit = 0
+    [int]$Limit = 0,
+    [int]$NotionRequestTimeoutMs = 120000,
+    [int]$NotionScanPageParseTimeoutMs = 120000,
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
 function Get-DotEnvValue {
     param(
         [string[]]$Names
@@ -75,18 +81,18 @@ if (-not $NotionLibraryDataSourceId) {
     $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
-$loginServer = az2 acr show `
+$loginServer = & $AzCli acr show `
     --name $RegistryName `
     --resource-group $ResourceGroup `
     --query loginServer `
     --output tsv
 
-$identity = az2 identity show `
+$identity = & $AzCli identity show `
     --name $IdentityName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
 
-$notionSecretId = az2 keyvault secret show `
+$notionSecretId = & $AzCli keyvault secret show `
     --vault-name $KeyVaultName `
     --name $NotionKeyVaultSecretName `
     --query id `
@@ -115,8 +121,8 @@ $envVars = @(
     "POSTER_CACHE_ENABLED=true",
     "POSTER_CACHE_MAX_BYTES=8388608",
     "POSTER_CACHE_MAX_PER_MOVIE=0",
-    "NOTION_REQUEST_TIMEOUT_MS=30000",
-    "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=60000",
+    "NOTION_REQUEST_TIMEOUT_MS=$NotionRequestTimeoutMs",
+    "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=$NotionScanPageParseTimeoutMs",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",
@@ -138,7 +144,7 @@ if ($NotionLibraryDataSourceId) {
 }
 
 $exists = $false
-az2 containerapp job show `
+& $AzCli containerapp job show `
     --name $JobName `
     --resource-group $ResourceGroup `
     --output none 2>$null
@@ -177,10 +183,10 @@ if (-not $exists) {
         $createArgs += @("--cron-expression", $CronExpression)
     }
 
-    az2 @createArgs
+    & $AzCli @createArgs
 } else {
     Write-Host "Updating metadata sync Container Apps Job: $JobName ($Mode)"
-    az2 containerapp job secret set `
+    & $AzCli containerapp job secret set `
         --name $JobName `
         --resource-group $ResourceGroup `
         --secrets "$NotionContainerSecretName=keyvaultref:$notionSecretUri,identityref:$($identity.id)" `
@@ -204,14 +210,14 @@ if (-not $exists) {
         $updateArgs += @("--cron-expression", $CronExpression)
     }
 
-    az2 @updateArgs
+    & $AzCli @updateArgs
 }
 
 if ($LASTEXITCODE -ne 0) {
     throw "Metadata sync job deployment failed."
 }
 
-az2 containerapp job show `
+& $AzCli containerapp job show `
     --name $JobName `
     --resource-group $ResourceGroup `
     --query "{name:name,provisioningState:properties.provisioningState,triggerType:properties.configuration.triggerType,cronExpression:properties.configuration.scheduleTriggerConfig.cronExpression,image:properties.template.containers[0].image,mode:properties.template.containers[0].env[?name=='META_SYNC_MODE'].value | [0]}" `

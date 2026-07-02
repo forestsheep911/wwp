@@ -5,6 +5,9 @@ export interface TspdtEntry {
   director: string;
   year: string;
   country: string;
+  workId?: string;
+  imdbId?: string;
+  doubanSubjectId?: string;
 }
 
 export const tspdtEdition = "2026";

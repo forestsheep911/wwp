@@ -109,17 +109,17 @@ credit events into a separate ledger table with optimistic concurrency.
 ## Cache Retention
 
 Ready cached videos track both `cachedAt` and `lastPlayedAt`. The playback API
-refreshes `lastPlayedAt` whenever it issues a playback URL.
+refreshes `lastPlayedAt` whenever it issues a playback URL. The cache
+`expiresAt` value represents the current idle-expiry timestamp, not an absolute
+lifetime cap.
 
-The cleanup job deletes Blob media and cache state when either condition is met:
+The cleanup job deletes Blob media and cache state when the video has not been
+played for `CACHE_ASSET_IDLE_TTL_DAYS` days. The default is 7 days; never-played
+videos use `cachedAt` as the idle reference.
 
-- `expiresAt` has passed.
-- The video has not been played for `CACHE_ASSET_IDLE_TTL_DAYS` days. The
-  default is 7 days; never-played videos use `cachedAt` as the idle reference.
-
-Azure Storage may also have a coarse lifecycle rule as a safety net, but the
-application-level cleanup job is authoritative because it updates Table state and
-deletes the matching cache job record.
+The application-level cleanup job is authoritative because it updates Table
+state and deletes the matching cache job record. Azure Storage lifecycle rules
+should not impose a separate absolute retention cap on cached videos.
 
 Admins can also delete a ready cache entry manually from the Admin tab. That path
 uses the same cache-store deletion flow as cleanup: remove Blob media first,
@@ -279,7 +279,7 @@ Manual worker run:
 API logs:
 
 ```powershell
-az2 containerapp logs show `
+az containerapp logs show `
   --name ca-ww-player-api `
   --resource-group rg-ww-player-cache-dev `
   --container ca-ww-player-api `
@@ -290,7 +290,7 @@ az2 containerapp logs show `
 Latest worker job logs:
 
 ```powershell
-az2 containerapp job logs show `
+az containerapp job logs show `
   --name job-ww-cache-worker `
   --resource-group rg-ww-player-cache-dev `
   --container job-ww-cache-worker `
@@ -301,7 +301,7 @@ az2 containerapp job logs show `
 Latest cleanup job logs:
 
 ```powershell
-az2 containerapp job logs show `
+az containerapp job logs show `
   --name job-ww-cache-cleanup `
   --resource-group rg-ww-player-cache-dev `
   --container job-ww-cache-cleanup `
@@ -312,7 +312,7 @@ az2 containerapp job logs show `
 Latest metadata sync job logs:
 
 ```powershell
-az2 containerapp job logs show `
+az containerapp job logs show `
   --name job-ww-meta-index-full `
   --resource-group rg-ww-player-cache-dev `
   --container job-ww-meta-index-full `
@@ -323,7 +323,7 @@ az2 containerapp job logs show `
 List job executions:
 
 ```powershell
-az2 containerapp job execution list `
+az containerapp job execution list `
   --name job-ww-cache-worker `
   --resource-group rg-ww-player-cache-dev `
   --output table

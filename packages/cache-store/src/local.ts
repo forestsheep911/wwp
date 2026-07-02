@@ -10,7 +10,7 @@ import {
 } from "@wwpdw/shared";
 import {
   addDays,
-  cacheAssetTtlDays,
+  cacheAssetIdleTtlDays,
   createJob,
   isFreshReady,
   isIdleReadyAsset
@@ -27,17 +27,7 @@ function cacheAssetActivityTime(asset: CacheAsset) {
   return asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt;
 }
 
-function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
-  return asset.status === "ready" &&
-    Boolean(asset.expiresAt) &&
-    new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
-}
-
 function cacheRemovalReason(asset: CacheAsset, now: Date) {
-  if (isExpiredReadyAsset(asset, now)) {
-    return "expired";
-  }
-
   if (isIdleReadyAsset(asset, now)) {
     return "idle";
   }
@@ -236,7 +226,7 @@ export class LocalCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `mock://cached-videos/${encodeURIComponent(job.assetKey)}`,
-      expiresAt: addDays(new Date(cachedAt), cacheAssetTtlDays()).toISOString(),
+      expiresAt: addDays(new Date(cachedAt), cacheAssetIdleTtlDays()).toISOString(),
       cachedAt,
       lastRequestedAt: job.createdAt,
       requestedByMemberId: existingAsset?.requestedByMemberId,
@@ -268,13 +258,13 @@ export class LocalCacheStore implements CacheStore {
 
   async getPlayback(assetKey: string) {
     const asset = await this.getAsset(assetKey);
-    if (!isFreshReady(asset) || !asset?.playbackUrl || !asset.expiresAt) {
+    if (!isFreshReady(asset) || !asset?.playbackUrl) {
       return undefined;
     }
 
     const playedAt = new Date();
     asset.lastPlayedAt = playedAt.toISOString();
-    asset.expiresAt = addDays(playedAt, cacheAssetTtlDays()).toISOString();
+    asset.expiresAt = addDays(playedAt, cacheAssetIdleTtlDays()).toISOString();
     await this.saveAsset(asset);
 
     return {

@@ -22,11 +22,15 @@ param(
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
     [string]$MemberTable = "membercodes",
-    [string]$SearchIndexTable = "movieindex"
+    [string]$SearchIndexTable = "movieindex",
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
 function Get-DotEnvValue {
     param(
         [string[]]$Names
@@ -53,14 +57,14 @@ function Get-DotEnvValue {
     return $null
 }
 
-$subscriptionId = az2 account show --query id --output tsv
-$loginServer = az2 acr show `
+$subscriptionId = & $AzCli account show --query id --output tsv
+$loginServer = & $AzCli acr show `
     --name $RegistryName `
     --resource-group $ResourceGroup `
     --query loginServer `
     --output tsv
 
-$identity = az2 identity show `
+$identity = & $AzCli identity show `
     --name $IdentityName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
@@ -87,12 +91,12 @@ if (-not $AdminKey) {
 
 $OmdbApiKey = Get-DotEnvValue -Names @("OMDB_API_KEY")
 
-$workerJob = az2 containerapp job show `
+$workerJob = & $AzCli containerapp job show `
     --name $WorkerJobName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
 
-$assignment = az2 role assignment list `
+$assignment = & $AzCli role assignment list `
     --assignee $identity.principalId `
     --role "Contributor" `
     --scope $workerJob.id `
@@ -101,7 +105,7 @@ $assignment = az2 role assignment list `
 
 if (-not $assignment) {
     Write-Host "Granting API identity permission to start worker job."
-    az2 role assignment create `
+    & $AzCli role assignment create `
         --assignee-object-id $identity.principalId `
         --assignee-principal-type ServicePrincipal `
         --role "Contributor" `
@@ -149,7 +153,7 @@ $envVars = @(
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
     "CACHE_ASSET_LOOKUP_CACHE_TTL_SECONDS=30",
-    "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=60",
+    "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=720",
     "AZURE_STORAGE_POSTER_SAS_MINUTES=1440",
     "AZURE_SUBSCRIPTION_ID=$subscriptionId",
     "AZURE_RESOURCE_GROUP=$ResourceGroup",
@@ -173,7 +177,7 @@ if ($OmdbApiKey) {
     $envVars += "OMDB_API_KEY=$OmdbApiKey"
 }
 
-$existingAppName = az2 containerapp list `
+$existingAppName = & $AzCli containerapp list `
     --resource-group $ResourceGroup `
     --query "[?name=='$ApiAppName'].name | [0]" `
     --output tsv
@@ -182,7 +186,7 @@ $exists = [bool]$existingAppName
 
 if (-not $exists) {
     Write-Host "Creating API Container App: $ApiAppName"
-    az2 containerapp create `
+    & $AzCli containerapp create `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --environment $ContainerEnv `
@@ -201,20 +205,20 @@ if (-not $exists) {
         --output none
 } else {
     Write-Host "Updating API Container App: $ApiAppName"
-    az2 containerapp identity assign `
+    & $AzCli containerapp identity assign `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --user-assigned $identity.id `
         --output none
 
-    az2 containerapp registry set `
+    & $AzCli containerapp registry set `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --server $loginServer `
         --identity $identity.id `
         --output none
 
-    az2 containerapp update `
+    & $AzCli containerapp update `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --image $image `
@@ -230,13 +234,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "API Container App deployment failed."
 }
 
-az2 containerapp show `
+& $AzCli containerapp show `
     --name $ApiAppName `
     --resource-group $ResourceGroup `
     --query "{name:name,provisioningState:properties.provisioningState,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image,identityType:identity.type}" `
     --output json
 
-$notionSecretId = az2 keyvault secret show `
+$notionSecretId = & $AzCli keyvault secret show `
     --vault-name $KeyVaultName `
     --name $NotionKeyVaultSecretName `
     --query id `
@@ -246,13 +250,13 @@ if ($notionSecretId) {
     $notionSecretUri = $notionSecretId -replace "/[0-9a-fA-F]{32}$", ""
     Write-Host "Attaching Notion read-only token secret reference."
 
-    az2 containerapp secret set `
+    & $AzCli containerapp secret set `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --secrets "$NotionContainerSecretName=keyvaultref:$notionSecretUri,identityref:$($identity.id)" `
         --output none
 
-    az2 containerapp update `
+    & $AzCli containerapp update `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --set-env-vars "NOTION_READ_ONLY_TOKEN=secretref:$NotionContainerSecretName" `
@@ -261,7 +265,7 @@ if ($notionSecretId) {
     Write-Host "Notion Key Vault secret was not found; API will use mock search unless NOTION_READ_ONLY_TOKEN is set another way."
 }
 
-$adminSecretId = az2 keyvault secret show `
+$adminSecretId = & $AzCli keyvault secret show `
     --vault-name $KeyVaultName `
     --name $AdminKeyVaultSecretName `
     --query id `
@@ -272,7 +276,7 @@ if (-not $adminSecretId -and $AdminKey) {
     $tempSecretPath = New-TemporaryFile
     try {
         Set-Content -Path $tempSecretPath -Value $AdminKey -NoNewline
-        az2 keyvault secret set `
+        & $AzCli keyvault secret set `
             --vault-name $KeyVaultName `
             --name $AdminKeyVaultSecretName `
             --file $tempSecretPath `
@@ -281,7 +285,7 @@ if (-not $adminSecretId -and $AdminKey) {
         Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
     }
 
-    $adminSecretId = az2 keyvault secret show `
+    $adminSecretId = & $AzCli keyvault secret show `
         --vault-name $KeyVaultName `
         --name $AdminKeyVaultSecretName `
         --query id `
@@ -292,13 +296,13 @@ if ($adminSecretId) {
     $adminSecretUri = $adminSecretId -replace "/[0-9a-fA-F]{32}$", ""
     Write-Host "Attaching WWPDW admin key secret reference."
 
-    az2 containerapp secret set `
+    & $AzCli containerapp secret set `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --secrets "$AdminContainerSecretName=keyvaultref:$adminSecretUri,identityref:$($identity.id)" `
         --output none
 
-    az2 containerapp update `
+    & $AzCli containerapp update `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
         --set-env-vars "WWPDW_ADMIN_KEY=secretref:$AdminContainerSecretName" `

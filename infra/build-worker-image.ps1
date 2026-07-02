@@ -2,11 +2,15 @@ param(
     [string]$ResourceGroup = "rg-ww-player-cache-dev",
     [string]$RegistryName = "acrwwcachee9219db7",
     [string]$ImageName = "wwpdw/worker",
-    [string]$ImageTag = (Get-Date -Format "yyyyMMddHHmmss")
+    [string]$ImageTag = (Get-Date -Format "yyyyMMddHHmmss"),
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $image = "$ImageName`:$ImageTag"
 $latest = "$ImageName`:latest"
@@ -14,7 +18,7 @@ $latest = "$ImageName`:latest"
 Write-Host "Building worker image in ACR: $RegistryName"
 Write-Host "Tags: $image, $latest"
 
-az2 acr build `
+& $AzCli acr build `
     --resource-group $ResourceGroup `
     --registry $RegistryName `
     --file Dockerfile.worker `
@@ -27,7 +31,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "ACR build failed."
 }
 
-$loginServer = az2 acr show `
+$loginServer = & $AzCli acr show `
     --name $RegistryName `
     --resource-group $ResourceGroup `
     --query loginServer `

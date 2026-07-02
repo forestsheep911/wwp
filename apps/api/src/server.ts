@@ -81,6 +81,18 @@ const searchResultCache = new Map<string, {
   lastUsedAt: number;
   results: SearchResult[];
 }>();
+type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
+type BrowseViewId =
+  | "lucky"
+  | "recent"
+  | "newGood"
+  | "popular"
+  | "topRated"
+  | "mostWatched"
+  | "doubanRank"
+  | "imdbRank"
+  | "rottenRank"
+  | "tspdtRank";
 type SearchLoadStatus =
   | "disabled"
   | "hit"
@@ -1065,19 +1077,204 @@ async function enrichResultsWithCache(searchResults: SearchResult[]) {
   }));
 }
 
+function browseMetadataText(result: SearchResult) {
+  const metadata = result.metadata;
+  const work = metadata?.work;
+  return [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    metadata?.kind,
+    work?.kind,
+    metadata?.type,
+    metadata?.ratingLevel?.join(" "),
+    metadata?.genres?.join(" "),
+    work?.genres?.join(" "),
+    metadata?.display?.title,
+    metadata?.display?.subtitle,
+    work?.display?.title,
+    work?.display?.subtitle,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
+    metadata?.info,
+    metadata?.description,
+    metadata?.external?.omdb?.type,
+    metadata?.external?.omdb?.genres?.join(" "),
+    metadata?.external?.omdb?.plot
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function explicitBrowseKind(result: SearchResult): "movie" | "tv" | undefined {
+  const kind = result.metadata?.work?.kind ?? result.metadata?.kind;
+  if (kind === "series" || kind === "season" || kind === "episode") {
+    return "tv";
+  }
+  if (kind === "movie" || kind === "short" || kind === "special") {
+    return "movie";
+  }
+
+  const type = result.metadata?.type?.trim().toLowerCase();
+  if (!type) {
+    return undefined;
+  }
+  if (/\bmovie\b|\bfilm\b|电影/.test(type)) {
+    return "movie";
+  }
+  if (/\btv\b|\bseries\b|\bseason\b|\bshow\b|电视|电视剧|剧集|影集/.test(type)) {
+    return "tv";
+  }
+
+  return undefined;
+}
+
+function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel) {
+  if (channel === "recommended") {
+    return true;
+  }
+
+  const text = browseMetadataText(result);
+  if (channel === "animation") {
+    return /动画|動畫|动漫|動漫|番剧|番劇|anime|animation|animated/.test(text);
+  }
+
+  const explicitKind = explicitBrowseKind(result);
+  if (explicitKind) {
+    return channel === explicitKind;
+  }
+
+  if (channel === "tv") {
+    return /电视|电视剧|剧集|影集|tv|series|season|show/.test(text);
+  }
+
+  return /电影|movie|film/.test(text) && !/电视|电视剧|剧集|影集|tv series|series/.test(text);
+}
+
+function filterBrowseResults(results: SearchResult[], channel: BrowseChannel) {
+  return channel === "recommended" ? results : results.filter((result) => resultMatchesBrowseChannel(result, channel));
+}
+
+function browseRatingCandidates(result: SearchResult) {
+  const metadata = result.metadata;
+  const ratings = [
+    ...(metadata?.ratings ?? []),
+    ...(metadata?.external?.omdb?.ratings ?? [])
+  ];
+
+  if (metadata?.external?.omdb?.imdbRating && metadata.external.omdb.imdbRating !== "N/A") {
+    ratings.push({ label: "IMDb", value: metadata.external.omdb.imdbRating });
+  }
+
+  if (metadata?.external?.omdb?.metascore && metadata.external.omdb.metascore !== "N/A") {
+    ratings.push({ label: "Metacritic", value: metadata.external.omdb.metascore });
+  }
+
+  return ratings.filter((rating) => rating.label && rating.value && rating.value !== "N/A");
+}
+
+function browseNumericRating(result: SearchResult) {
+  return Math.max(
+    0,
+    ...browseRatingCandidates(result).map((rating) => Number.parseFloat(rating.value.replace(/[^\d.]/g, "")) || 0)
+  );
+}
+
+const browseRatingSourcePatterns = {
+  douban: /douban|豆瓣/i,
+  imdb: /imdb/i,
+  rotten: /^rt$|rotten|tomato|tomatometer|烂番茄|爛番茄/i
+};
+
+function browseSourceRating(result: SearchResult, source: keyof typeof browseRatingSourcePatterns) {
+  const rating = browseRatingCandidates(result).find((item) => browseRatingSourcePatterns[source].test(item.label));
+  return Number.parseFloat(rating?.value.replace(/[^\d.]/g, "") ?? "") || 0;
+}
+
+function browseTime(value?: string) {
+  if (!value) {
+    return 0;
+  }
+
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function browseReleaseTime(result: SearchResult) {
+  const structuredYear = result.metadata?.release?.year?.match(/\b(\d{4})\b/)?.[1];
+  const workYear = result.metadata?.work?.release?.year?.match(/\b(\d{4})\b/)?.[1];
+  const omdbYear = result.metadata?.external?.omdb?.year?.match(/\b(\d{4})\b/)?.[1];
+  const year = [
+    result.metadata?.year?.match(/\b(\d{4})\b/)?.[1],
+    result.metadata?.releaseDate?.match(/\b(\d{4})\b/)?.[1],
+    structuredYear,
+    workYear,
+    omdbYear
+  ].find(Boolean);
+  return year ? browseTime(`${year}-01-01`) : 0;
+}
+
+function requestBrowseView(url: URL): BrowseViewId {
+  const value = url.searchParams.get("view");
+  return value === "recent" ||
+    value === "newGood" ||
+    value === "popular" ||
+    value === "topRated" ||
+    value === "mostWatched" ||
+    value === "doubanRank" ||
+    value === "imdbRank" ||
+    value === "rottenRank" ||
+    value === "tspdtRank"
+    ? value
+    : "lucky";
+}
+
+function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {
+  const ranked = [...results];
+  const byUpdated = (left: SearchResult, right: SearchResult) => browseTime(right.updatedAt) - browseTime(left.updatedAt);
+  const byRating = (left: SearchResult, right: SearchResult) => browseNumericRating(right) - browseNumericRating(left);
+  const byRelease = (left: SearchResult, right: SearchResult) => browseReleaseTime(right) - browseReleaseTime(left);
+
+  if (view === "doubanRank") {
+    return ranked.sort((left, right) => browseSourceRating(right, "douban") - browseSourceRating(left, "douban") || byUpdated(left, right));
+  }
+
+  if (view === "imdbRank") {
+    return ranked.sort((left, right) => browseSourceRating(right, "imdb") - browseSourceRating(left, "imdb") || byUpdated(left, right));
+  }
+
+  if (view === "rottenRank") {
+    return ranked.sort((left, right) => browseSourceRating(right, "rotten") - browseSourceRating(left, "rotten") || byUpdated(left, right));
+  }
+
+  if (view === "newGood") {
+    return ranked.sort((left, right) => byRelease(left, right) || byRating(left, right) || byUpdated(left, right));
+  }
+
+  if (view === "topRated") {
+    return ranked.sort((left, right) => byRating(left, right) || byUpdated(left, right));
+  }
+
+  return ranked.sort(byUpdated);
+}
+
 async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const mode = url.searchParams.get("mode") === "random" ? "random" : "paged";
   const limit = requestLimit(url, 50, mode === "random" ? 200 : 100);
   const offset = requestOffset(url);
-  const fetchLimit = offset + limit + 1;
+  const channel = requestBrowseChannel(url);
+  const view = requestBrowseView(url);
+  const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
 
   if (searchIndexEnabled) {
     try {
       searchResults = mode === "random"
-        ? await searchIndex.sample(limit)
+        ? channel === "recommended"
+          ? await searchIndex.sample(limit)
+          : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit)
         : await searchIndex.search("", fetchLimit);
       browseSource = mode === "random" ? "index_random" : "index";
     } catch (error) {
@@ -1090,13 +1287,16 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
 
   if (searchResults.length === 0) {
     const liveResults = await searchSource.search("");
-    searchResults = mode === "random" ? sampleSearchResults(liveResults, limit) : liveResults.slice(0, fetchLimit);
+    const filteredLiveResults = filterBrowseResults(liveResults, channel);
+    searchResults = mode === "random" ? sampleSearchResults(filteredLiveResults, limit) : filteredLiveResults.slice(0, fetchLimit);
     void writeSearchResultsToIndex(searchResults, "browse_live");
     browseSource = mode === "random" ? "live_random" : "live";
   }
 
-  const pageResults = mode === "random" ? searchResults.slice(0, limit) : searchResults.slice(offset, offset + limit);
-  const hasMore = mode === "random" ? false : searchResults.length > offset + limit;
+  const channelResults = mode === "random" ? searchResults : filterBrowseResults(searchResults, channel);
+  const sortedResults = mode === "random" ? channelResults : sortBrowseResults(channelResults, view);
+  const pageResults = mode === "random" ? sortedResults.slice(0, limit) : sortedResults.slice(offset, offset + limit);
+  const hasMore = mode === "random" ? false : sortedResults.length > offset + limit;
   rememberResults(pageResults);
   const results = await enrichResultsWithCache(pageResults);
 
@@ -1105,6 +1305,8 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     resultCount: results.length,
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
     browseSource,
+    channel,
+    view,
     mode,
     limit,
     offset,
@@ -1531,6 +1733,11 @@ function requestOffset(url: URL) {
   }
 
   return Math.max(Math.floor(raw), 0);
+}
+
+function requestBrowseChannel(url: URL): BrowseChannel {
+  const value = url.searchParams.get("channel");
+  return value === "movie" || value === "tv" || value === "animation" ? value : "recommended";
 }
 
 async function handleStatus(jobId: string, response: http.ServerResponse, context: RequestContext) {

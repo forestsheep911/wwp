@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Artplayer from "artplayer";
 import { Play } from "lucide-react";
 import type { PlaybackResponse } from "@wwpdw/shared";
@@ -7,8 +7,69 @@ import { formatLongDate } from "../format";
 import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 
-function ArtPlayerView({ playback }: { playback: PlaybackResponse }) {
+const renewAheadMs = 10 * 60 * 1000;
+
+function expiresInMs(expiresAt: string) {
+  return new Date(expiresAt).getTime() - Date.now();
+}
+
+function ArtPlayerView({
+  playback,
+  onRenewPlayback
+}: {
+  playback: PlaybackResponse;
+  onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const artRef = useRef<Artplayer | null>(null);
+  const playbackRef = useRef(playback);
+  const onRenewPlaybackRef = useRef(onRenewPlayback);
+  const renewPromiseRef = useRef<Promise<PlaybackResponse | undefined> | undefined>(undefined);
+
+  useEffect(() => {
+    playbackRef.current = playback;
+  }, [playback]);
+
+  useEffect(() => {
+    onRenewPlaybackRef.current = onRenewPlayback;
+  }, [onRenewPlayback]);
+
+  const renewPlayback = useCallback(async (force = false) => {
+    const current = playbackRef.current;
+    if (!force && expiresInMs(current.expiresAt) > renewAheadMs) {
+      return current;
+    }
+
+    if (renewPromiseRef.current) {
+      return renewPromiseRef.current;
+    }
+
+    const art = artRef.current;
+    const resumeAt = art?.currentTime ?? 0;
+    const wasPlaying = art?.playing ?? false;
+
+    renewPromiseRef.current = onRenewPlaybackRef.current()
+      .then(async (nextPlayback) => {
+        const currentArt = artRef.current;
+        if (!nextPlayback || !currentArt || currentArt.url === nextPlayback.playbackUrl) {
+          return nextPlayback;
+        }
+
+        await currentArt.switchUrl(nextPlayback.playbackUrl);
+        if (Number.isFinite(resumeAt) && resumeAt > 0) {
+          currentArt.currentTime = Math.max(0, resumeAt - 0.25);
+        }
+        if (wasPlaying) {
+          await currentArt.play().catch(() => undefined);
+        }
+        return nextPlayback;
+      })
+      .finally(() => {
+        renewPromiseRef.current = undefined;
+      });
+
+    return renewPromiseRef.current;
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -39,10 +100,57 @@ function ArtPlayerView({ playback }: { playback: PlaybackResponse }) {
         preload: "metadata"
       }
     });
+    artRef.current = art;
+
+    const renewIfNeeded = () => {
+      void renewPlayback(false);
+    };
+    const renewAfterFailure = () => {
+      void renewPlayback(true);
+    };
+    const renewWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        renewIfNeeded();
+      }
+    };
+
+    art.on("play", renewIfNeeded);
+    art.on("seek", renewIfNeeded);
+    art.on("video:waiting", renewIfNeeded);
+    art.on("video:stalled", renewIfNeeded);
+    art.on("video:error", renewAfterFailure);
+    art.on("error", renewAfterFailure);
+    art.on("document:visibilitychange", renewWhenVisible);
+
+    const renewTimer = window.setInterval(() => {
+      if (art.playing) {
+        renewIfNeeded();
+      }
+    }, 60_000);
 
     return () => {
+      window.clearInterval(renewTimer);
+      artRef.current = null;
       art.destroy(false);
     };
+  }, [playback.assetKey, renewPlayback]);
+
+  useEffect(() => {
+    const art = artRef.current;
+    if (!art || art.url === playback.playbackUrl) {
+      return;
+    }
+
+    const resumeAt = art.currentTime;
+    const wasPlaying = art.playing;
+    void art.switchUrl(playback.playbackUrl).then(async () => {
+      if (Number.isFinite(resumeAt) && resumeAt > 0) {
+        art.currentTime = Math.max(0, resumeAt - 0.25);
+      }
+      if (wasPlaying) {
+        await art.play().catch(() => undefined);
+      }
+    });
   }, [playback.playbackUrl]);
 
   return <div ref={containerRef} className="aspect-video w-full bg-black" />;
@@ -50,10 +158,12 @@ function ArtPlayerView({ playback }: { playback: PlaybackResponse }) {
 
 export function Player({
   playback,
-  onClose
+  onClose,
+  onRenewPlayback
 }: {
   playback: PlaybackResponse;
   onClose: () => void;
+  onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
 }) {
   const isMock = playback.playbackUrl.startsWith("mock://");
 
@@ -80,7 +190,7 @@ export function Player({
               </div>
             </div>
           ) : (
-            <ArtPlayerView playback={playback} />
+            <ArtPlayerView playback={playback} onRenewPlayback={onRenewPlayback} />
           )}
         </div>
         <MediaDiagnosticsView media={playback.media} />

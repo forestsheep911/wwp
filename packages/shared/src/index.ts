@@ -46,6 +46,207 @@ export interface MovieExternalIds {
   imdb?: string;
   tmdb?: string;
   douban?: string;
+  tvdb?: string;
+  letterboxd?: string;
+  wikidata?: string;
+  [source: string]: string | undefined;
+}
+
+export type MovieWorkKind = "movie" | "series" | "season" | "episode" | "short" | "special" | "unknown";
+
+export type MovieMetadataSource =
+  | "manual"
+  | "notion"
+  | "douban"
+  | "imdb"
+  | "tmdb"
+  | "omdb"
+  | "tspdt"
+  | "search-index"
+  | "external";
+
+export type MovieTitleKind = "primary" | "original" | "localized" | "alternate" | "sort" | "list";
+
+export interface MovieTitleEntry {
+  title: string;
+  kind: MovieTitleKind;
+  lang?: string;
+  source?: MovieMetadataSource;
+}
+
+export interface MovieReleaseInfo {
+  year?: string;
+  date?: string;
+  originalDate?: string;
+  countries?: string[];
+  source?: MovieMetadataSource;
+}
+
+export type MovieCreditDepartment =
+  | "directing"
+  | "writing"
+  | "acting"
+  | "production"
+  | "camera"
+  | "music"
+  | "editing"
+  | "art"
+  | "sound"
+  | "visual_effects"
+  | "costume"
+  | "makeup"
+  | "crew"
+  | "other";
+
+export interface MovieCreditEntry {
+  personId?: string;
+  name: string;
+  originalName?: string;
+  department: MovieCreditDepartment;
+  job?: string;
+  character?: string;
+  order?: number;
+  source?: MovieMetadataSource;
+  externalIds?: MovieExternalIds;
+}
+
+export interface MovieRatingEntry extends RatingValue {
+  source?: MovieMetadataSource;
+  normalizedValue?: number;
+  scale?: number;
+  votes?: number;
+  fetchedAt?: string;
+}
+
+export interface MovieMediaAssets {
+  posters?: MoviePoster[];
+  backdropUrl?: string;
+  trailerUrl?: string;
+}
+
+export interface MovieSourceRef {
+  source: MovieMetadataSource;
+  id?: string;
+  url?: string;
+  title?: string;
+  observedAt?: string;
+}
+
+export interface MovieDataQuality {
+  status?: "draft" | "partial" | "verified" | "conflict";
+  missing?: Array<"externalIds" | "release" | "credits" | "poster" | "description" | "ratings">;
+  notes?: string[];
+  updatedAt?: string;
+}
+
+export interface MovieDisplayMetadata {
+  title?: string;
+  subtitle?: string;
+  year?: string;
+  directorLine?: string;
+  castLine?: string;
+}
+
+export interface MovieWorkProfile {
+  workId: string;
+  kind: MovieWorkKind;
+  titles: MovieTitleEntry[];
+  originalLanguage?: string;
+  release?: MovieReleaseInfo;
+  externalIds?: MovieExternalIds;
+  genres?: string[];
+  countries?: string[];
+  runtimeMinutes?: number;
+  credits?: MovieCreditEntry[];
+  ratings?: MovieRatingEntry[];
+  media?: MovieMediaAssets;
+  sourceRefs?: MovieSourceRef[];
+  dataQuality?: MovieDataQuality;
+  display?: MovieDisplayMetadata;
+  createdAt?: string;
+  updatedAt: string;
+}
+
+export interface MovieCatalogEntry {
+  work: MovieWorkProfile;
+  assetKeys: string[];
+  sourcePageIds?: string[];
+  sourceTitles?: string[];
+  mergedWorkIds?: string[];
+  updatedAt: string;
+}
+
+export interface MovieCatalogIssue {
+  kind: "external_id_conflict" | "title_year_candidate";
+  message: string;
+  workIds: string[];
+  externalId?: {
+    source: string;
+    id: string;
+  };
+  titleKey?: string;
+}
+
+export interface MovieCatalogState {
+  schemaVersion: 1;
+  generatedAt: string;
+  source?: {
+    kind: "search-index" | "manual" | "mixed";
+    path?: string;
+    entryCount?: number;
+  };
+  works: Record<string, MovieCatalogEntry>;
+  externalIdIndex: Record<string, Record<string, string>>;
+  titleYearIndex: Record<string, string[]>;
+  issues: MovieCatalogIssue[];
+}
+
+export type TspdtRankingMatchStatus = "matched" | "unmatched" | "ambiguous" | "manual";
+
+export type TspdtRankingMatchMethod =
+  | "workId"
+  | "imdb"
+  | "douban"
+  | "title_year";
+
+export interface TspdtRankingCandidate {
+  workId: string;
+  method: TspdtRankingMatchMethod;
+  confidence: number;
+  title?: string;
+  year?: string;
+}
+
+export interface TspdtRankingEntry {
+  listId: string;
+  rank: number;
+  previousRank: string;
+  title: string;
+  director: string;
+  year: string;
+  country: string;
+  workId?: string;
+  externalIds?: Pick<MovieExternalIds, "imdb" | "douban">;
+  matchStatus: TspdtRankingMatchStatus;
+  matchMethod?: TspdtRankingMatchMethod;
+  matchConfidence?: number;
+  candidates?: TspdtRankingCandidate[];
+}
+
+export interface TspdtRankingState {
+  schemaVersion: 1;
+  generatedAt: string;
+  listId: string;
+  edition: string;
+  sourceUrl: string;
+  entries: TspdtRankingEntry[];
+  summary: {
+    total: number;
+    matched: number;
+    manual: number;
+    ambiguous: number;
+    unmatched: number;
+  };
 }
 
 export interface OmdbMetadata {
@@ -87,6 +288,17 @@ export interface ExternalMovieMetadata {
 }
 
 export interface MovieMetadata {
+  workId?: string;
+  kind?: MovieWorkKind;
+  titles?: MovieTitleEntry[];
+  release?: MovieReleaseInfo;
+  credits?: MovieCreditEntry[];
+  sourceRefs?: MovieSourceRef[];
+  dataQuality?: MovieDataQuality;
+  display?: MovieDisplayMetadata;
+  work?: MovieWorkProfile;
+
+  // Legacy display/search fields. Keep these until callers migrate to `work`.
   posterUrl?: string;
   posters?: MoviePoster[];
   type?: string;

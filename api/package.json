@@ -1,0 +1,10 @@
+{
+  "name": "wwpdw-swa-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@azure/data-tables": "^13.3.2",
+    "@azure/storage-blob": "^12.33.0"
+  }
+}

@@ -29,7 +29,7 @@ import type {
 } from "@wwpdw/shared";
 import {
   addDays,
-  cacheAssetTtlDays,
+  cacheAssetIdleTtlDays,
   createJob,
   isFreshReady,
   isIdleReadyAsset,
@@ -89,7 +89,7 @@ function readAzureConfig(): AzureStoreConfig {
     queueName: process.env.AZURE_STORAGE_QUEUE_NAME ?? defaultQueueName,
     assetTableName: process.env.AZURE_STORAGE_ASSET_TABLE ?? defaultAssetTableName,
     jobTableName: process.env.AZURE_STORAGE_JOB_TABLE ?? defaultJobTableName,
-    sasMinutes: Number(process.env.AZURE_STORAGE_PLAYBACK_SAS_MINUTES ?? 60),
+    sasMinutes: Number(process.env.AZURE_STORAGE_PLAYBACK_SAS_MINUTES ?? 720),
     posterSasMinutes: Number(process.env.AZURE_STORAGE_POSTER_SAS_MINUTES ?? 24 * 60),
     posterMaxBytes: Number(process.env.POSTER_CACHE_MAX_BYTES ?? 8 * 1024 * 1024),
     posterMaxPerMovie: Number(process.env.POSTER_CACHE_MAX_PER_MOVIE ?? 0)
@@ -405,17 +405,7 @@ async function streamToBuffer(stream: NodeJS.ReadableStream | undefined) {
   return Buffer.concat(chunks);
 }
 
-function isExpiredReadyAsset(asset: CacheAsset, now: Date) {
-  return asset.status === "ready" &&
-    Boolean(asset.expiresAt) &&
-    new Date(asset.expiresAt ?? "").getTime() <= now.getTime();
-}
-
 function cacheRemovalReason(asset: CacheAsset, now: Date) {
-  if (isExpiredReadyAsset(asset, now)) {
-    return "expired";
-  }
-
   if (isIdleReadyAsset(asset, now)) {
     return "idle";
   }
@@ -897,7 +887,7 @@ export class AzureCacheStore implements CacheStore {
       status: "ready",
       jobId: job.id,
       playbackUrl: `azure://${this.config.containerName}/${blobName}`,
-      expiresAt: addDays(cachedAt, cacheAssetTtlDays()).toISOString(),
+      expiresAt: addDays(cachedAt, cacheAssetIdleTtlDays()).toISOString(),
       cachedAt: cachedAt.toISOString(),
       lastRequestedAt: job.createdAt,
       requestedByMemberId: existingAsset?.requestedByMemberId,
@@ -1144,7 +1134,7 @@ export class AzureCacheStore implements CacheStore {
 
     const playedAt = new Date();
     asset.lastPlayedAt = playedAt.toISOString();
-    asset.expiresAt = addDays(playedAt, cacheAssetTtlDays()).toISOString();
+    asset.expiresAt = addDays(playedAt, cacheAssetIdleTtlDays()).toISOString();
     await this.saveAsset(asset);
 
     const expiresOn = new Date(Date.now() + this.config.sasMinutes * 60 * 1000);

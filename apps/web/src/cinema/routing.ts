@@ -12,7 +12,7 @@ interface CinemaHistoryState {
   route: CinemaRoute;
 }
 
-export const routeTabs: AppTab[] = ["library", "cached", "history", "help", "admin", "tasks", "forum"];
+export const routeTabs: AppTab[] = ["library", "cached", "history", "watchlist", "help", "admin", "tasks", "forum"];
 export const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
 
 export function isAppTab(value: string | null): value is AppTab {
@@ -57,8 +57,10 @@ export function historyStateRoute(state: unknown): CinemaRoute | undefined {
     ? rawBrowseChannel
     : "recommended";
 
+  const tab: AppTab = isAppTab(route.tab) ? route.tab : "library";
+
   return {
-    tab: route.tab,
+    tab,
     browseChannel,
     query: route.query ?? "",
     playerAssetKey: route.playerAssetKey

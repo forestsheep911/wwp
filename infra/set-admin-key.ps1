@@ -5,19 +5,23 @@ param(
     [string]$AdminKeyVaultSecretName = "WWPDW-ADMIN-KEY",
     [string]$AdminContainerSecretName = "wwpdw-admin-key",
     [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" }),
     [switch]$NoRestart
 )
 
 $ErrorActionPreference = "Stop"
 
-function Invoke-Az2 {
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
+function Invoke-AzCli {
     param(
         [string[]]$Arguments
     )
 
-    $output = & az2 @Arguments
+    $output = & $AzCli @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "az2 $($Arguments -join ' ') failed."
+        throw "$AzCli $($Arguments -join ' ') failed."
     }
 
     return $output
@@ -57,7 +61,7 @@ if (-not $AdminKey) {
     throw "WWPDW_ADMIN_KEY is not set. Pass -AdminKey or add WWPDW_ADMIN_KEY to .env."
 }
 
-$app = (Invoke-Az2 -Arguments @(
+$app = (Invoke-AzCli -Arguments @(
     "containerapp", "show",
     "--name", $ApiAppName,
     "--resource-group", $ResourceGroup,
@@ -72,7 +76,7 @@ if (-not $identityId) {
 $tempSecretPath = New-TemporaryFile
 try {
     Set-Content -Path $tempSecretPath -Value $AdminKey -NoNewline
-    Invoke-Az2 -Arguments @(
+    Invoke-AzCli -Arguments @(
         "keyvault", "secret", "set",
         "--vault-name", $KeyVaultName,
         "--name", $AdminKeyVaultSecretName,
@@ -83,7 +87,7 @@ try {
     Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
 }
 
-$adminSecretId = Invoke-Az2 -Arguments @(
+$adminSecretId = Invoke-AzCli -Arguments @(
     "keyvault", "secret", "show",
     "--vault-name", $KeyVaultName,
     "--name", $AdminKeyVaultSecretName,
@@ -93,7 +97,7 @@ $adminSecretId = Invoke-Az2 -Arguments @(
 
 $adminSecretUri = $adminSecretId -replace "/[0-9a-fA-F]{32}$", ""
 
-Invoke-Az2 -Arguments @(
+Invoke-AzCli -Arguments @(
     "containerapp", "secret", "set",
     "--name", $ApiAppName,
     "--resource-group", $ResourceGroup,
@@ -101,7 +105,7 @@ Invoke-Az2 -Arguments @(
     "--output", "none"
 )
 
-Invoke-Az2 -Arguments @(
+Invoke-AzCli -Arguments @(
     "containerapp", "update",
     "--name", $ApiAppName,
     "--resource-group", $ResourceGroup,
@@ -110,7 +114,7 @@ Invoke-Az2 -Arguments @(
 )
 
 if (-not $NoRestart) {
-    $revisions = (Invoke-Az2 -Arguments @(
+    $revisions = (Invoke-AzCli -Arguments @(
         "containerapp", "revision", "list",
         "--name", $ApiAppName,
         "--resource-group", $ResourceGroup,
@@ -118,7 +122,7 @@ if (-not $NoRestart) {
     )) | ConvertFrom-Json
 
     foreach ($revision in ($revisions | Where-Object { $_.active -or $_.properties.active })) {
-        Invoke-Az2 -Arguments @(
+        Invoke-AzCli -Arguments @(
             "containerapp", "revision", "restart",
             "--name", $ApiAppName,
             "--resource-group", $ResourceGroup,

@@ -79,7 +79,7 @@ Cloud metadata sync jobs:
 - Local: `CACHE_BACKEND=local`
 - Azure: `CACHE_BACKEND=azure` plus the `AZURE_STORAGE_*` values from `.env.example`
 
-For local Azure auth without a connection string, run with `AZURE_CONFIG_DIR=C:\Users\bxu\.azure2` so Azure SDK credentials can reuse the `az2` login profile.
+For local Azure auth without a connection string, sign in with Azure CLI (`az login`) and make sure the active account can access the configured storage resources. If you use a non-default Azure CLI profile directory on your machine, set `AZURE_CONFIG_DIR` in your local shell or `.env` only; do not commit machine-specific profile paths or command aliases.
 
 The Azure backend uses:
 
@@ -112,7 +112,7 @@ Deploy/update:
 
 The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes queue/table state and starts the cache worker Container Apps Job through Azure Resource Manager using managed identity.
 
-The cleanup job removes expired cache assets on a daily schedule. Member passes do not expire by date; admins revoke or delete them when needed.
+The cleanup job removes idle-expired cache assets on a daily schedule. Member passes do not expire by date; admins revoke or delete them when needed.
 
 ## Verification
 

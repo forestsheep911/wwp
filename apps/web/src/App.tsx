@@ -21,6 +21,7 @@ import type {
 import {
   adjustMemberCredits as adjustMemberCreditsApi,
   browseAssets,
+  browseHomeAssets,
   checkAccess,
   clearAccessKey,
   createAdminNotice,
@@ -81,6 +82,7 @@ import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
+import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
@@ -98,6 +100,7 @@ import type {
   AppTab,
   AppTheme,
   BrowseChannel,
+  BrowseViewId,
   HistoryAssetStatusMap,
   LibraryViewMode,
   ManagedMemberCode,
@@ -313,6 +316,7 @@ function CinemaApp() {
       query: "",
       playerAssetKey: undefined
     }, "push");
+    void refreshBrowseAssets({ channel: nextChannel });
   }
 
   function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
@@ -558,10 +562,12 @@ function CinemaApp() {
     setDownloadRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
+    const pendingWindow = window.open("about:blank", "_blank");
     try {
       const response = await getDirectDownload(target);
-      triggerDirectDownload(response.downloadUrl);
+      triggerDirectDownload(response.downloadUrl, pendingWindow);
     } catch (downloadError) {
+      pendingWindow?.close();
       handleRequestError(downloadError, copy.fallbackErrors.directDownload);
     } finally {
       setDownloadRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
@@ -656,6 +662,38 @@ function CinemaApp() {
     }
   }
 
+  async function renewCurrentPlayback(assetKey: string) {
+    try {
+      const preview = await previewCreditAction({
+        kind: "playback",
+        assetKey,
+        options: { syncHistory: false }
+      });
+
+      if (preview.chargeable) {
+        setPendingCreditAction({
+          kind: "playback",
+          assetKey,
+          options: { syncHistory: false }
+        });
+        setCreditPreview(preview);
+        setCreditConfirmOpen(true);
+        return undefined;
+      }
+
+      const response = await getPlayback(assetKey);
+      updateCurrentMemberCredits(response.memberCredits);
+      setPlayback((currentPlayback) => (
+        currentPlayback?.assetKey === assetKey ? response : currentPlayback
+      ));
+      rememberPlayback(response);
+      return response;
+    } catch (renewError) {
+      handleRequestError(renewError, copy.fallbackErrors.playbackNotReady);
+      return undefined;
+    }
+  }
+
   function closePlayer() {
     setPlayback(undefined);
     writeRoute(routeForCurrentView({
@@ -698,10 +736,32 @@ function CinemaApp() {
     }
   }
 
-  async function refreshBrowseAssets(options: { append?: boolean; mode?: BrowseLoadMode; limit?: number } = {}) {
+  function applyBrowseResponse(
+    response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode },
+    append: boolean,
+    mode: BrowseLoadMode
+  ) {
+    setBrowseResults((currentResults) => {
+      if (!append) {
+        return response.results;
+      }
+
+      const currentKeys = new Set(currentResults.map((result) => result.assetKey));
+      const nextResults = response.results.filter((result) => !currentKeys.has(result.assetKey));
+      return [...currentResults, ...nextResults];
+    });
+    setBrowseHasMore(Boolean(response.hasMore));
+    setBrowseNextOffset(response.nextOffset ?? 0);
+    setBrowseLoadMode(response.mode ?? mode);
+  }
+
+  async function refreshBrowseAssets(
+    options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId } = {}
+  ) {
     const append = options.append === true;
     const mode = options.mode ?? (append ? "paged" : "random");
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
+    const requestChannel = options.channel ?? browseChannel;
     if (append) {
       if (browseLoadingMore || !browseHasMore) {
         return;
@@ -712,21 +772,20 @@ function CinemaApp() {
     }
 
     try {
-      const response = await browseAssets(limit, append ? browseNextOffset : 0, {
-        mode
-      });
-      setBrowseResults((currentResults) => {
-        if (!append) {
-          return response.results;
-        }
+      const offset = append ? browseNextOffset : 0;
+      const response = append
+        ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
+        : await browseHomeAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
+          .catch(() => browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view }));
 
-        const currentKeys = new Set(currentResults.map((result) => result.assetKey));
-        const nextResults = response.results.filter((result) => !currentKeys.has(result.assetKey));
-        return [...currentResults, ...nextResults];
-      });
-      setBrowseHasMore(Boolean(response.hasMore));
-      setBrowseNextOffset(response.nextOffset ?? 0);
-      setBrowseLoadMode(response.mode ?? mode);
+      applyBrowseResponse(response, append, mode);
+
+      const homeCache = (response as { homeCache?: { stale?: boolean } }).homeCache;
+      if (!append && homeCache?.stale) {
+        void browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
+          .then((freshResponse) => applyBrowseResponse(freshResponse, false, mode))
+          .catch(() => undefined);
+      }
     } catch (browseError) {
       handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {
@@ -1801,7 +1860,7 @@ function CinemaApp() {
   }, [activeTab, history.length]);
 
   useEffect(() => {
-    if (activeTab === "cached" || activeTab === "tasks") {
+    if (activeTab === "cached" || activeTab === "tasks" || activeTab === "watchlist") {
       void refreshCachedAssets();
     }
   }, [activeTab]);
@@ -1853,8 +1912,28 @@ function CinemaApp() {
     );
   }
 
+  const creditConfirmDialog = (
+    <CreditConfirmDialog
+      policy={creditPolicy}
+      loading={creditConfirmLoading}
+      open={creditConfirmOpen}
+      preview={creditPreview}
+      onCancel={closeCreditConfirm}
+      onConfirm={() => void confirmCreditAction()}
+    />
+  );
+
   if (playback) {
-    return <Player playback={playback} onClose={closePlayer} />;
+    return (
+      <>
+        <Player
+          playback={playback}
+          onClose={closePlayer}
+          onRenewPlayback={() => renewCurrentPlayback(playback.assetKey)}
+        />
+        {creditConfirmDialog}
+      </>
+    );
   }
 
   const showAdmin = role === "admin";
@@ -1904,14 +1983,7 @@ function CinemaApp() {
           }
         }}
       />
-      <CreditConfirmDialog
-        policy={creditPolicy}
-        loading={creditConfirmLoading}
-        open={creditConfirmOpen}
-        preview={creditPreview}
-        onCancel={closeCreditConfirm}
-        onConfirm={() => void confirmCreditAction()}
-      />
+      {creditConfirmDialog}
       <MovieRequestDialog
         error={movieRequestError}
         loading={movieRequestLoading}
@@ -1958,6 +2030,7 @@ function CinemaApp() {
         onOpenForum={() => navigateToTab("forum")}
         onOpenHelp={() => navigateToTab("help")}
         onOpenHistory={() => navigateToTab("history")}
+        onOpenWatchlist={() => navigateToTab("watchlist")}
         onOpenMovieRequest={openMovieRequestDialog}
         onOpenNotices={openNoticeInbox}
         onOpenProfile={() => setProfileOpen(true)}
@@ -2010,6 +2083,16 @@ function CinemaApp() {
             onClear={clearHistory}
             onPlay={(assetKey, result) => void openPlayer(assetKey, result)}
             onRecache={(entry) => void recacheHistoryEntry(entry)}
+          />
+        )}
+        watchlist={(
+          <WatchlistPanel
+            cachedAssets={cachedAssets}
+            creditPolicy={creditPolicy}
+            historyItems={history}
+            loading={cachedAssetsLoading}
+            onOpen={(assetKey) => void openPlayer(assetKey)}
+            onRefresh={() => void refreshCachedAssets()}
           />
         )}
         forum={(

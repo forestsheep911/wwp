@@ -1,11 +1,15 @@
 param(
     [string]$ResourceGroup = "rg-ww-player-cache-dev",
-    [string]$JobName = "job-ww-cache-worker"
+    [string]$JobName = "job-ww-cache-worker",
+    [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
 $ErrorActionPreference = "Stop"
 
-$execution = az2 containerapp job start `
+if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI command was not found on PATH: $AzCli"
+}
+$execution = & $AzCli containerapp job start `
     --name $JobName `
     --resource-group $ResourceGroup `
     --output json | ConvertFrom-Json
@@ -14,7 +18,7 @@ Write-Host "Started execution: $($execution.name)"
 
 for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 3
-    $state = az2 containerapp job execution show `
+    $state = & $AzCli containerapp job execution show `
         --name $JobName `
         --resource-group $ResourceGroup `
         --job-execution-name $execution.name `

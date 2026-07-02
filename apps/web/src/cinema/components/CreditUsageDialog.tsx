@@ -1,4 +1,4 @@
-import { Coins, Loader2, ReceiptText } from "lucide-react";
+import { Loader2, ReceiptText } from "lucide-react";
 import type { MemberCreditUsageResponse } from "@wwpdw/shared";
 import {
   Dialog,
@@ -28,6 +28,7 @@ export function CreditUsageDialog({
 }: CreditUsageDialogProps) {
   const entries = usage?.entries ?? [];
   const balance = usage?.member?.credits;
+  const unitSymbol = balance?.unitSymbol ?? "🍀";
   const totalSpent = entries.reduce((total, entry) => total + entry.credits, 0);
 
   return (
@@ -61,11 +62,11 @@ export function CreditUsageDialog({
             <div className="grid gap-2 sm:grid-cols-3">
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
                 <p className="text-xs font-semibold text-slate-500">{copy.credit.spent}</p>
-                <p className="mt-1 text-lg font-bold text-slate-50">{balance?.unitSymbol ?? "🍀"} {totalSpent}</p>
+                <p className="mt-1 text-lg font-bold text-slate-50">{unitSymbol} {totalSpent}</p>
               </div>
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
                 <p className="text-xs font-semibold text-slate-500">{copy.credit.remaining}</p>
-                <p className="mt-1 text-lg font-bold text-emerald-200">{balance?.unitSymbol ?? "🍀"} {balance?.remaining ?? 0}</p>
+                <p className="mt-1 text-lg font-bold text-emerald-200">{unitSymbol} {balance?.remaining ?? 0}</p>
               </div>
               <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
                 <p className="text-xs font-semibold text-slate-500">{copy.credit.entries}</p>
@@ -87,7 +88,7 @@ export function CreditUsageDialog({
                     </div>
                     <div className="flex items-center gap-2 sm:justify-end">
                       <Badge variant="secondary">
-                        <Coins className="h-3.5 w-3.5" />
+                        <span aria-hidden="true">{unitSymbol}</span>
                         -{entry.credits}
                       </Badge>
                       <Badge variant="muted">{creditReasonLabel(entry.reason)}</Badge>

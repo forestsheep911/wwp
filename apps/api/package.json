@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "sync:meta": "tsx src/meta-sync.ts",
+    "sync:catalog": "tsx src/movie-catalog-sync.ts",
+    "sync:tspdt": "tsx src/tspdt-ranking-sync.ts",
+    "backfill:tspdt-imdb": "tsx src/tspdt-imdb-backfill.ts",
+    "backfill:posters": "tsx src/poster-backfill.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json"
   },

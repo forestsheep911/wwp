@@ -31,8 +31,11 @@ export function isFreshReady(asset?: {
   status: string;
   expiresAt?: string;
   playbackUrl?: string;
+  cachedAt?: string;
+  lastPlayedAt?: string;
+  lastRequestedAt?: string;
 }) {
-  if (!asset || asset.status !== "ready" || !asset.expiresAt) {
+  if (!asset || asset.status !== "ready" || !asset.playbackUrl) {
     return false;
   }
 
@@ -40,18 +43,13 @@ export function isFreshReady(asset?: {
     return false;
   }
 
-  return new Date(asset.expiresAt).getTime() > Date.now();
+  return !isIdleReadyAsset(asset, new Date());
 }
 
 export function addDays(date: Date, days: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
-}
-
-export function cacheAssetTtlDays() {
-  const value = Number(process.env.CACHE_ASSET_TTL_DAYS ?? 30);
-  return Number.isFinite(value) && value > 0 ? value : 30;
 }
 
 export function cacheAssetIdleTtlDays() {
@@ -91,4 +89,22 @@ export function isIdleReadyAsset(
   }
 
   return now.getTime() - referenceTime >= cacheAssetIdleTtlDays() * 24 * 60 * 60 * 1000;
+}
+
+export function readyAssetExpiresAt(asset: {
+  cachedAt?: string;
+  lastPlayedAt?: string;
+  lastRequestedAt?: string;
+}) {
+  const reference = readyAssetIdleReference(asset);
+  if (!reference) {
+    return undefined;
+  }
+
+  const referenceTime = new Date(reference);
+  if (Number.isNaN(referenceTime.getTime())) {
+    return undefined;
+  }
+
+  return addDays(referenceTime, cacheAssetIdleTtlDays()).toISOString();
 }

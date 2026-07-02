@@ -82,13 +82,16 @@ type PayloadEntity = {
   sourceUpdatedAt?: string;
   indexedAt?: string;
   updatedAt?: string;
-  payload: string;
+  payload?: string;
+  payloadChunks?: number;
+  [key: string]: unknown;
 };
 
 const defaultAccountName = "stwwcachee9219db7";
 const defaultSearchIndexTableName = "movieindex";
 const moviePartitionKey = "movie";
 const runPartitionKey = "run";
+const payloadChunkChars = 30_000;
 const cjkPattern = /[\u3400-\u9fff]/;
 const searchIndexEntryCacheTtlMs = Math.max(
   0,
@@ -118,8 +121,48 @@ function serialize<T>(payload: T) {
   return JSON.stringify(payload);
 }
 
-function deserialize<T>(entity: Pick<PayloadEntity, "payload">) {
-  return JSON.parse(entity.payload) as T;
+function payloadProperties(payload: string) {
+  const chunks = payload.match(new RegExp(`[\\s\\S]{1,${payloadChunkChars}}`, "g")) ?? [""];
+  const properties: Record<string, string | number> = {
+    payload: chunks[0]
+  };
+
+  if (chunks.length > 1) {
+    properties.payloadChunks = chunks.length;
+    chunks.slice(1).forEach((chunk, index) => {
+      properties[`payload${String(index + 1).padStart(2, "0")}`] = chunk;
+    });
+  }
+
+  return properties;
+}
+
+function payloadFromEntity(entity: PayloadEntity) {
+  const firstChunk = entity.payload;
+  if (typeof firstChunk !== "string") {
+    throw new Error("Search index entity payload is missing.");
+  }
+
+  const chunkCount = typeof entity.payloadChunks === "number" ? entity.payloadChunks : 1;
+  if (chunkCount <= 1) {
+    return firstChunk;
+  }
+
+  const chunks = [firstChunk];
+  for (let index = 1; index < chunkCount; index += 1) {
+    const propertyName = `payload${String(index).padStart(2, "0")}`;
+    const chunk = entity[propertyName];
+    if (typeof chunk !== "string") {
+      throw new Error(`Search index entity payload chunk is missing: ${propertyName}`);
+    }
+    chunks.push(chunk);
+  }
+
+  return chunks.join("");
+}
+
+function deserialize<T>(entity: PayloadEntity) {
+  return JSON.parse(payloadFromEntity(entity)) as T;
 }
 
 function isConflict(error: unknown) {
@@ -169,8 +212,59 @@ function metadataText(metadata?: MovieMetadata) {
   }
 
   const omdb = metadata.external?.omdb;
+  const work = metadata.work;
+  const credits = [
+    ...(metadata.credits ?? []),
+    ...(work?.credits ?? [])
+  ];
+  const titles = [
+    ...(metadata.titles ?? []),
+    ...(work?.titles ?? [])
+  ];
+  const sourceRefs = [
+    ...(metadata.sourceRefs ?? []),
+    ...(work?.sourceRefs ?? [])
+  ];
 
   return [
+    metadata.workId,
+    metadata.kind,
+    metadata.display?.title,
+    metadata.display?.subtitle,
+    metadata.display?.year,
+    metadata.display?.directorLine,
+    metadata.display?.castLine,
+    metadata.release?.year,
+    metadata.release?.date,
+    titles.map((title) => [title.title, title.kind, title.lang, title.source].filter(Boolean).join(" ")).join(" "),
+    credits.map((credit) => [
+      credit.name,
+      credit.originalName,
+      credit.department,
+      credit.job,
+      credit.character
+    ].filter(Boolean).join(" ")).join(" "),
+    sourceRefs.map((sourceRef) => [
+      sourceRef.source,
+      sourceRef.id,
+      sourceRef.url,
+      sourceRef.title
+    ].filter(Boolean).join(" ")).join(" "),
+    work?.workId,
+    work?.kind,
+    work?.externalIds?.imdb,
+    work?.externalIds?.tmdb,
+    work?.externalIds?.douban,
+    work?.release?.year,
+    work?.release?.date,
+    work?.genres?.join(" "),
+    work?.countries?.join(" "),
+    work?.ratings?.map((rating) => `${rating.label} ${rating.value}`).join(" "),
+    work?.display?.title,
+    work?.display?.subtitle,
+    work?.display?.year,
+    work?.display?.directorLine,
+    work?.display?.castLine,
     metadata.type,
     metadata.releaseDate,
     metadata.year,
@@ -673,7 +767,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
         assetKey: entry.assetKey,
         sourceUpdatedAt: entry.sourceUpdatedAt,
         indexedAt: entry.indexedAt,
-        payload: serialize(entry)
+        ...payloadProperties(serialize(entry))
       },
       "Replace"
     );
@@ -687,7 +781,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
         mode: run.mode,
         status: run.status,
         updatedAt: run.updatedAt,
-        payload: serialize(run)
+        ...payloadProperties(serialize(run))
       },
       "Replace"
     );

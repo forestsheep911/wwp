@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { Client } from "@notionhq/client";
-import type { MediaVariant, MovieMetadata, MoviePoster, RatingValue, SearchResult } from "@wwpdw/shared";
+import type {
+  MediaVariant,
+  MovieCreditEntry,
+  MovieMetadata,
+  MoviePoster,
+  MovieWorkKind,
+  RatingValue,
+  SearchResult
+} from "@wwpdw/shared";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -452,6 +460,69 @@ function yearFromTitleOrDate(title: string, releaseDate?: string) {
   return releaseDate?.match(/^\d{4}/)?.[0];
 }
 
+function movieWorkKindFromType(type?: string): MovieWorkKind {
+  const normalized = type?.trim().toLowerCase();
+  if (!normalized) {
+    return "unknown";
+  }
+
+  if (/episode|\u96c6/.test(normalized)) {
+    return "episode";
+  }
+  if (/season|\u5b63/.test(normalized)) {
+    return "season";
+  }
+  if (/series|tv|\u5267|\u756a/.test(normalized)) {
+    return "series";
+  }
+  if (/short|\u77ed\u7247/.test(normalized)) {
+    return "short";
+  }
+  if (/special|\u7279\u522b/.test(normalized)) {
+    return "special";
+  }
+  if (/movie|film|\u7535\u5f71/.test(normalized)) {
+    return "movie";
+  }
+
+  return "unknown";
+}
+
+function stableMovieWorkId(page: JsonRecord, title: string, year?: string) {
+  const sourceId = asString(page.id);
+  const seed = sourceId
+    ? `notion:${sourceId}`
+    : `title:${title.trim().toLowerCase()}|year:${year ?? ""}`;
+  const digest = createHash("sha256").update(seed).digest("base64url").slice(0, 16);
+  return `wwm_${digest}`;
+}
+
+function creditEntries(directors: string[], people: string[]) {
+  const credits: MovieCreditEntry[] = [];
+
+  directors.forEach((name, index) => {
+    credits.push({
+      name,
+      department: "directing",
+      job: "Director",
+      order: index,
+      source: "notion"
+    });
+  });
+
+  people.forEach((name, index) => {
+    credits.push({
+      name,
+      department: "acting",
+      job: "Actor",
+      order: index,
+      source: "notion"
+    });
+  });
+
+  return credits;
+}
+
 function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | undefined) {
   if (!url || seen.has(url)) {
     return;
@@ -507,21 +578,107 @@ function movieMetadataFromPage(page: JsonRecord, properties: JsonRecord, title: 
   const releaseDate = dateFromNamedProperty(properties, releaseDatePropertyPattern);
   const imdbId = textFromNamedProperty(properties, imdbPropertyPattern, 40);
   const posters = postersFromProperties(page, properties);
+  const type = listFromNamedProperty(properties, typePropertyPattern, 1)?.[0];
+  const year = yearFromTitleOrDate(title, releaseDate);
+  const genres = listFromNamedProperty(properties, genrePropertyPattern, 4) ?? [];
+  const directors = listFromNamedProperty(properties, directorPropertyPattern, 3) ?? [];
+  const people = listFromNamedProperty(properties, peoplePropertyPattern, 4) ?? [];
+  const ratings = ratingsFromProperties(properties);
+  const credits = creditEntries(directors, people);
+  const workId = stableMovieWorkId(page, title, year);
+  const kind = movieWorkKindFromType(type);
+  const updatedAt = asString(page.last_edited_time) || new Date().toISOString();
+  const pageId = asString(page.id);
+  const pageUrl = asString(page.url);
+  const externalIds = imdbId ? { imdb: imdbId } : undefined;
   const metadata: MovieMetadata = {
+    workId,
+    kind,
+    titles: [{ title, kind: "primary", source: "notion" }],
+    release: {
+      year,
+      date: releaseDate,
+      source: "notion"
+    },
+    credits,
+    sourceRefs: [{
+      source: "notion",
+      id: pageId,
+      url: pageUrl,
+      title,
+      observedAt: updatedAt
+    }],
+    dataQuality: {
+      status: imdbId && credits.length > 0 ? "partial" : "draft",
+      missing: [
+        !imdbId ? "externalIds" : undefined,
+        !releaseDate && !year ? "release" : undefined,
+        credits.length === 0 ? "credits" : undefined,
+        posters.length === 0 ? "poster" : undefined
+      ].filter((value): value is "externalIds" | "release" | "credits" | "poster" => Boolean(value)),
+      updatedAt
+    },
+    display: {
+      title,
+      year,
+      directorLine: directors.join(" / ") || undefined,
+      castLine: people.join(" / ") || undefined
+    },
+    work: {
+      workId,
+      kind,
+      titles: [{ title, kind: "primary", source: "notion" }],
+      release: {
+        year,
+        date: releaseDate,
+        source: "notion"
+      },
+      externalIds,
+      genres,
+      credits,
+      ratings: ratings.map((rating) => ({ ...rating, source: "notion" })),
+      media: {
+        posters
+      },
+      sourceRefs: [{
+        source: "notion",
+        id: pageId,
+        url: pageUrl,
+        title,
+        observedAt: updatedAt
+      }],
+      dataQuality: {
+        status: imdbId && credits.length > 0 ? "partial" : "draft",
+        missing: [
+          !imdbId ? "externalIds" : undefined,
+          !releaseDate && !year ? "release" : undefined,
+          credits.length === 0 ? "credits" : undefined,
+          posters.length === 0 ? "poster" : undefined
+        ].filter((value): value is "externalIds" | "release" | "credits" | "poster" => Boolean(value)),
+        updatedAt
+      },
+      display: {
+        title,
+        year,
+        directorLine: directors.join(" / ") || undefined,
+        castLine: people.join(" / ") || undefined
+      },
+      updatedAt
+    },
     posterUrl: posters[0]?.url,
     posters,
-    type: listFromNamedProperty(properties, typePropertyPattern, 1)?.[0],
+    type,
     releaseDate,
-    year: yearFromTitleOrDate(title, releaseDate),
-    genres: listFromNamedProperty(properties, genrePropertyPattern, 4),
-    directors: listFromNamedProperty(properties, directorPropertyPattern, 3),
-    people: listFromNamedProperty(properties, peoplePropertyPattern, 4),
-    ratings: ratingsFromProperties(properties),
+    year,
+    genres,
+    directors,
+    people,
+    ratings,
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,
-    externalIds: imdbId ? { imdb: imdbId } : undefined
+    externalIds
   };
 
   return Object.fromEntries(

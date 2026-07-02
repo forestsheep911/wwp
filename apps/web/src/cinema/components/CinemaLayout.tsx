@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import {
   Bell,
   ChevronDown,
+  Clapperboard,
   HelpCircle,
   History,
   ListChecks,
@@ -50,6 +51,7 @@ interface CinemaLayoutProps {
   cached: ReactNode;
   forum: ReactNode;
   history: ReactNode;
+  watchlist: ReactNode;
   help: ReactNode;
   tasks?: ReactNode;
   admin?: ReactNode;
@@ -61,6 +63,7 @@ interface CinemaLayoutProps {
   onOpenHelp: () => void;
   onOpenForum: () => void;
   onOpenHistory: () => void;
+  onOpenWatchlist: () => void;
   onOpenMovieRequest: () => void;
   onOpenNotices: () => void;
   onOpenProfile: () => void;
@@ -83,6 +86,7 @@ export function CinemaLayout({
   cached,
   forum,
   history,
+  watchlist,
   help,
   tasks,
   admin,
@@ -94,6 +98,7 @@ export function CinemaLayout({
   onOpenHelp,
   onOpenForum,
   onOpenHistory,
+  onOpenWatchlist,
   onOpenMovieRequest,
   onOpenNotices,
   onOpenProfile,
@@ -160,6 +165,10 @@ export function CinemaLayout({
                 <MessageCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.forum}</span>
               </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onOpenWatchlist} title={copy.layout.watchlist}>
+                <Clapperboard className="h-4 w-4" />
+                <span className="sr-only">{copy.layout.watchlist}</span>
+              </Button>
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title={copy.common.search}>
                 <Search className="h-4 w-4" />
                 <span className="sr-only">{copy.common.search}</span>
@@ -196,6 +205,7 @@ export function CinemaLayout({
                 onOpenForum={onOpenForum}
                 onOpenHelp={onOpenHelp}
                 onOpenHistory={onOpenHistory}
+                onOpenWatchlist={onOpenWatchlist}
                 onOpenMovieRequest={onOpenMovieRequest}
                 onOpenNotices={onOpenNotices}
                 onOpenProfile={onOpenProfile}
@@ -213,6 +223,7 @@ export function CinemaLayout({
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
             <TabsContent className="mt-0" value="forum">{forum}</TabsContent>
             <TabsContent className="mt-0" value="history">{history}</TabsContent>
+            <TabsContent className="mt-0" value="watchlist">{watchlist}</TabsContent>
             <TabsContent className="mt-0" value="help">{help}</TabsContent>
             {tasks ? <TabsContent className="mt-0" value="tasks">{tasks}</TabsContent> : null}
             {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
@@ -234,6 +245,7 @@ function AccountMenu({
   onOpenForum,
   onOpenHelp,
   onOpenHistory,
+  onOpenWatchlist,
   onOpenMovieRequest,
   onOpenNotices,
   onOpenProfile,
@@ -251,6 +263,7 @@ function AccountMenu({
   onOpenForum: () => void;
   onOpenHelp: () => void;
   onOpenHistory: () => void;
+  onOpenWatchlist: () => void;
   onOpenMovieRequest: () => void;
   onOpenNotices: () => void;
   onOpenProfile: () => void;
@@ -290,6 +303,10 @@ function AccountMenu({
         <DropdownMenuItem onSelect={onOpenHistory}>
           <History className="h-4 w-4" />
           {copy.layout.history}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onOpenWatchlist}>
+          <Clapperboard className="h-4 w-4" />
+          {copy.layout.watchlist}
         </DropdownMenuItem>
         {showAdmin ? (
           <DropdownMenuItem onSelect={onOpenAdmin}>
