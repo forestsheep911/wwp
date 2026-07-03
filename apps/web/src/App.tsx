@@ -82,6 +82,7 @@ import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
+import { ServiceWakeDialog, serviceWakeDelayMs } from "./cinema/components/ServiceWakeDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
 import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
@@ -135,7 +136,7 @@ type PendingCreditAction =
 
 const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
-const homeBrowseFallbackMs = 2500;
+const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
 
 function isAppTheme(value: unknown): value is AppTheme {
@@ -217,6 +218,7 @@ function CinemaApp() {
   const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
   const [searchDialogError, setSearchDialogError] = useState("");
+  const [showServiceWakeDialog, setShowServiceWakeDialog] = useState(false);
   const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -273,11 +275,32 @@ function CinemaApp() {
     [favorites]
   );
 
+  const serviceWakeActive = unlocked && (
+    !role ||
+    (activeTab === "library" && query.trim().length === 0 && browseLoading && browseResults.length === 0) ||
+    (activeTab === "watchlist" && browseLoading && browseResults.length === 0) ||
+    ((activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks") && cachedAssetsLoading && cachedAssets.length === 0) ||
+    (activeTab === "forum" && forumLoading && forumThreads.length === 0)
+  );
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     writeJsonStorage(themeStorageKey, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!serviceWakeActive) {
+      setShowServiceWakeDialog(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowServiceWakeDialog(true);
+    }, serviceWakeDelayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [serviceWakeActive]);
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
     if (route.tab === "admin" && role && role !== "admin") {
@@ -807,10 +830,35 @@ function CinemaApp() {
     setBrowseLoadMode(response.mode ?? mode);
   }
 
-  function homeBrowseTimeout() {
+  function browseCacheFallbackTimeout() {
     return new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("Home browse cache timed out.")), homeBrowseFallbackMs);
+      window.setTimeout(() => reject(new Error("Browse cache fallback timed out.")), browseCacheFallbackMs);
     });
+  }
+
+  async function browseAssetsWithCacheFallback(
+    limit: number,
+    offset: number,
+    options: { mode: BrowseLoadMode; channel: BrowseChannel; view?: BrowseViewId }
+  ) {
+    try {
+      return await browseAssets(limit, offset, options);
+    } catch (browseError) {
+      if (isUnauthorizedError(browseError)) {
+        throw browseError;
+      }
+
+      const cachedResponse = await Promise.race([
+        browseHomeAssets(limit, offset, options),
+        browseCacheFallbackTimeout()
+      ]).catch(() => undefined);
+
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      throw browseError;
+    }
   }
 
   async function refreshBrowseAssets(
@@ -833,20 +881,9 @@ function CinemaApp() {
       const offset = append ? browseNextOffset : 0;
       const response = append
         ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
-        : await Promise.race([
-          browseHomeAssets(limit, offset, { mode, channel: requestChannel, view: options.view }),
-          homeBrowseTimeout()
-        ])
-          .catch(() => browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view }));
+        : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: options.view });
 
       applyBrowseResponse(response, append, mode);
-
-      const homeCache = (response as { homeCache?: { stale?: boolean } }).homeCache;
-      if (!append && homeCache?.stale) {
-        void browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
-          .then((freshResponse) => applyBrowseResponse(freshResponse, false, mode))
-          .catch(() => undefined);
-      }
     } catch (browseError) {
       handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {
@@ -2016,6 +2053,7 @@ function CinemaApp() {
 
   return (
     <>
+      <ServiceWakeDialog open={showServiceWakeDialog && serviceWakeActive} onOpenChange={setShowServiceWakeDialog} />
       <SearchDialog
         error={searchDialogError}
         loading={searchPreviewLoading || searchLoading}

@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Clapperboard, Film, KeyRound, Loader2, Moon, Projector, ShieldCheck, Sun, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
 import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
@@ -12,14 +12,13 @@ import {
 } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { copy } from "../i18n";
 import type { AppTheme } from "../types";
+import { ServiceWakeDialog, serviceWakeDelayMs } from "./ServiceWakeDialog";
 
 type AccessMode = "login" | "register" | "reset";
-const serviceWakeDelayMs = 1600;
 
 function initialInviteState(): { mode: AccessMode; inviteCode: string } {
   if (typeof window === "undefined") {
@@ -185,38 +184,7 @@ export function AccessGate({
 
   return (
     <main className="relative grid min-h-screen place-items-center px-5 py-10">
-      <Dialog open={showWakeDialog && loading} onOpenChange={setShowWakeDialog}>
-        <DialogContent className="w-[min(92vw,460px)] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Projector className="h-5 w-5 text-emerald-300" />
-              {copy.access.wake.title}
-            </DialogTitle>
-            <DialogDescription>{copy.access.wake.description}</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950 p-3">
-              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
-                <Clapperboard className="h-8 w-8 text-emerald-300" />
-                <div className="grid gap-2">
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full w-2/3 animate-pulse rounded-full bg-emerald-300" />
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {copy.access.wake.frames.map((frame) => (
-                      <span className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-center text-[11px] font-semibold text-slate-300" key={frame}>
-                        {frame}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <Film className="h-8 w-8 animate-spin text-slate-400 [animation-duration:2.4s]" />
-              </div>
-            </div>
-            <p className="text-sm leading-6 text-slate-300">{copy.access.wake.status}</p>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ServiceWakeDialog open={showWakeDialog && loading} onOpenChange={setShowWakeDialog} />
       <Button
         className="absolute right-5 top-5"
         type="button"
