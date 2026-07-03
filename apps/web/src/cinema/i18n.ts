@@ -139,6 +139,7 @@ export const zhCN = {
     viewDetails: "查看详细信息",
     viewAllVariants: "查看全部规格",
     directDownload: "直接下载",
+    summaryTitle: "完整简介",
     aiSummary: "AI 简介",
     aiSummaryTitle: "AI 剧情简介",
     aiSummaryDescription: "用快速档生成一段可读简介。",

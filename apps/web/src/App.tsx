@@ -608,7 +608,7 @@ function CinemaApp() {
     const pendingWindow = window.open("about:blank", "_blank");
     try {
       const response = await getDirectDownload(target);
-      triggerDirectDownload(response.downloadUrl, pendingWindow);
+      triggerDirectDownload(response.downloadUrl, pendingWindow, response.title);
     } catch (downloadError) {
       pendingWindow?.close();
       handleRequestError(downloadError, copy.fallbackErrors.directDownload);

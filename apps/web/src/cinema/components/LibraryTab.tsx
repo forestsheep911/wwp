@@ -879,7 +879,7 @@ function TspdtRankRow({
   return (
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
       <RankNumber rank={entry.rank} />
-      <div className="relative hidden lg:block">
+      <div className="group relative hidden lg:block">
         <button
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           type="button"
@@ -1556,15 +1556,15 @@ function PosterActions({
   className?: string;
 }) {
   return (
-    <div className={`absolute right-2 top-2 z-10 flex flex-col gap-1.5 ${className}`}>
-      <AiSummaryButton
-        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
-        onClick={onSummarize}
-      />
+    <div className={`pointer-events-none absolute right-2 top-2 z-10 flex flex-col gap-1.5 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${className}`}>
       <FavoriteButton
         active={favorite}
         className="h-8 w-8 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
         onClick={onToggleFavorite}
+      />
+      <AiSummaryButton
+        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        onClick={onSummarize}
       />
     </div>
   );
@@ -1598,7 +1598,7 @@ function VariantButtons({
   const hiddenVariantCount = Math.max(0, variants.length - visibleVariants.length);
 
   if (variants.length === 0) {
-    return <Badge variant="danger">{copy.library.noVariants}</Badge>;
+    return <div aria-label={copy.library.noVariants} />;
   }
 
   return (
@@ -1735,7 +1735,7 @@ function MovieCard({
 
   return (
     <article className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4">
-      <div className="relative">
+      <div className="group relative">
         <button
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           type="button"
@@ -1792,31 +1792,35 @@ function MovieCard({
 }
 
 function SummaryText({ summary }: { summary: string }) {
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const closeOnWheel = () => setOpen(false);
+    window.addEventListener("wheel", closeOnWheel, { passive: true });
+    return () => window.removeEventListener("wheel", closeOnWheel);
+  }, [open]);
 
   return (
     <>
-      <p
-        aria-describedby={tooltipOpen ? tooltipId : undefined}
-        className="line-clamp-3 h-[4.5rem] cursor-help rounded-sm text-sm leading-6 text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 sm:line-clamp-4 sm:h-24"
-        tabIndex={0}
-        onBlur={() => setTooltipOpen(false)}
-        onFocus={() => setTooltipOpen(true)}
-        onMouseEnter={() => setTooltipOpen(true)}
-        onMouseLeave={() => setTooltipOpen(false)}
+      <button
+        className="line-clamp-3 h-[4.5rem] w-full cursor-zoom-in rounded-sm text-left text-sm leading-6 text-slate-400 transition-colors hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 sm:line-clamp-4 sm:h-24"
+        type="button"
+        onClick={() => setOpen(true)}
       >
         {summary}
-      </p>
-      {tooltipOpen ? (
-        <div
-          className="fixed bottom-6 left-1/2 z-[200] max-h-[60vh] w-[min(56rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-md border border-slate-600 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-100 shadow-2xl shadow-black/50"
-          id={tooltipId}
-          role="tooltip"
-        >
-          {summary}
-        </div>
-      ) : null}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[72vh] w-[min(92vw,42rem)] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{copy.library.summaryTitle}</DialogTitle>
+          </DialogHeader>
+          <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{summary}</p>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
