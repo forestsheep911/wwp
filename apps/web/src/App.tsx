@@ -140,6 +140,13 @@ const browseCatalogPageLimit = 100;
 const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
 
+interface BrowseViewCacheEntry {
+  results: ResultWithCache[];
+  hasMore: boolean;
+  nextOffset: number;
+  mode: BrowseLoadMode;
+}
+
 function isAppTheme(value: unknown): value is AppTheme {
   return value === "dark" || value === "light";
 }
@@ -173,6 +180,7 @@ function CinemaApp() {
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
   const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
+  const browseViewCacheRef = useRef(new Map<string, BrowseViewCacheEntry>());
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
@@ -812,19 +820,37 @@ function CinemaApp() {
     }
   }
 
+  function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
+    return view === "tspdtRank" ? `${channel}:${view}` : undefined;
+  }
+
+  function applyBrowseCache(entry: BrowseViewCacheEntry) {
+    setBrowseResults(entry.results);
+    setBrowseHasMore(entry.hasMore);
+    setBrowseNextOffset(entry.nextOffset);
+    setBrowseLoadMode(entry.mode);
+  }
+
   function applyBrowseResponse(
     response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode },
     append: boolean,
-    mode: BrowseLoadMode
+    mode: BrowseLoadMode,
+    cacheKey?: string
   ) {
     setBrowseResults((currentResults) => {
-      if (!append) {
-        return response.results;
-      }
-
       const currentKeys = new Set(currentResults.map((result) => result.assetKey));
-      const nextResults = response.results.filter((result) => !currentKeys.has(result.assetKey));
-      return [...currentResults, ...nextResults];
+      const nextResults = append
+        ? [...currentResults, ...response.results.filter((result) => !currentKeys.has(result.assetKey))]
+        : response.results;
+      if (cacheKey) {
+        browseViewCacheRef.current.set(cacheKey, {
+          results: nextResults,
+          hasMore: Boolean(response.hasMore),
+          nextOffset: response.nextOffset ?? 0,
+          mode: response.mode ?? mode
+        });
+      }
+      return nextResults;
     });
     setBrowseHasMore(Boolean(response.hasMore));
     setBrowseNextOffset(response.nextOffset ?? 0);
@@ -869,6 +895,12 @@ function CinemaApp() {
     const mode = options.mode ?? (append ? "paged" : "random");
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     const requestChannel = options.channel ?? browseChannel;
+    const cacheKey = browseViewCacheKey(requestChannel, options.view);
+    const cachedBrowseView = !append && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
+    if (cachedBrowseView) {
+      applyBrowseCache(cachedBrowseView);
+      return;
+    }
     if (append) {
       if (browseLoadingMore || !browseHasMore) {
         return;
@@ -884,7 +916,7 @@ function CinemaApp() {
         ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
         : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: options.view });
 
-      applyBrowseResponse(response, append, mode);
+      applyBrowseResponse(response, append, mode, cacheKey);
     } catch (browseError) {
       handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {

@@ -575,9 +575,7 @@ function LibraryHome({
       </div>
 
       <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
-        {showingTspdtRank && browseFullViewLoading ? (
-          <BrowseLoadingGrid />
-        ) : showingTspdtRank ? (
+        {showingTspdtRank ? (
           <>
             <TspdtRankView
               creditPolicy={creditPolicy}
