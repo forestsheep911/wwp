@@ -14,7 +14,7 @@ const candidatePaths = [
 
 for (const candidatePath of candidatePaths) {
   if (existsSync(candidatePath)) {
-    config({ path: candidatePath, override: false });
+    config({ path: candidatePath, override: true });
     break;
   }
 }

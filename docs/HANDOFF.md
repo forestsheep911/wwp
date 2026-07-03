@@ -172,6 +172,10 @@ TV-series parsing has an extra nested pass:
 - Archive/download bundles such as `.7z`, `.zip`, subtitles, PDFs, and text
   sidecars are filtered out because they are not browser-playable assets.
 
+Operator notes for maintaining the Notion media layout, uploading playable
+movie/TV files, and future encode-to-upload work live in
+`docs/notion-media-workflow-notes.md`.
+
 Cache flow:
 
 ```text

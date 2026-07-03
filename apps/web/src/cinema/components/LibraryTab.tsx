@@ -329,6 +329,7 @@ export function LibraryTab({
 const browseInitialCount = 12;
 const browseLoadStep = 12;
 const browseViewItemLimit = 300;
+const tspdtBrowseCatalogLimit = 2000;
 const browseRandomLimit = 48;
 const luckyRanks = new Map<string, number>();
 
@@ -415,11 +416,17 @@ function LibraryHome({
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const autoLoadRequestRef = useRef("");
+  const onRefreshBrowseRef = useRef(onRefreshBrowse);
   const channelViews = viewsForBrowseChannel(browseChannel);
   const activeSortView = (channelViews.find((view) => view.id === activeView) ?? channelViews[0]).id;
-  const browsableResults = useMemo(
-    () => browseResults.filter((result) => (result.variants?.length ?? 0) > 0 && resultMatchesBrowseChannel(result, browseChannel)),
+  const channelResults = useMemo(
+    () => browseResults.filter((result) => resultMatchesBrowseChannel(result, browseChannel)),
     [browseChannel, browseResults]
+  );
+  const browsableResults = useMemo(
+    () => channelResults.filter((result) => (result.variants?.length ?? 0) > 0),
+    [channelResults]
   );
   const historyStats = useMemo(() => historyStatsByAssetKey(historyItems), [historyItems]);
   const rankedResults = useMemo(
@@ -431,8 +438,8 @@ function LibraryHome({
     [activeSortView, cachedAssets]
   );
   const tspdtItems = useMemo(
-    () => buildTspdtRankItems(browsableResults),
-    [browsableResults]
+    () => buildTspdtRankItems(channelResults),
+    [channelResults]
   );
   const tspdtMatchedCount = useMemo(
     () => tspdtItems.filter((item) => Boolean(item.result)).length,
@@ -440,16 +447,22 @@ function LibraryHome({
   );
   const showingTspdtRank = activeSortView === "tspdtRank";
   const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
+  const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
+  const browseServerItemLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : browseViewItemLimit;
+  const browseRequestLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : 100;
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
     : browsingResults
       ? rankedResults.length
       : rankedAssets.length;
-  const totalVisibleItems = Math.min(totalRankedItems, browseViewItemLimit);
-  const loadedBrowseItemCount = showingTspdtRank ? browsableResults.length : totalRankedItems;
-  const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseViewItemLimit;
-  const reachedBrowseViewLimit = totalVisibleItems >= browseViewItemLimit && (totalRankedItems > browseViewItemLimit || browseHasMore);
+  const totalVisibleItems = Math.min(totalRankedItems, browseDisplayItemLimit);
+  const loadedBrowseItemCount = showingTspdtRank ? channelResults.length : totalRankedItems;
+  const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseServerItemLimit;
+  const reachedBrowseViewLimit = totalVisibleItems >= browseDisplayItemLimit && (totalRankedItems > browseDisplayItemLimit || browseHasMore);
+  const browseFullViewLoading = needsFullBrowseResults &&
+    loadedBrowseItemCount < browseServerItemLimit &&
+    (browseLoading || browseLoadingMore || canLoadMoreFromServer);
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
@@ -468,7 +481,7 @@ function LibraryHome({
   function showMoreItems() {
     if (!hasMoreItems) {
       if (canLoadMoreFromServer && !browseLoadingMore) {
-        onRefreshBrowse({ append: true, mode: "paged", limit: 100, view: activeSortView });
+        onRefreshBrowse({ append: true, mode: "paged", limit: browseRequestLimit, view: activeSortView });
       }
       return;
     }
@@ -482,23 +495,38 @@ function LibraryHome({
   }, [browseChannel]);
 
   useEffect(() => {
+    onRefreshBrowseRef.current = onRefreshBrowse;
+  }, [onRefreshBrowse]);
+
+  useEffect(() => {
     setVisibleItemCount(browseInitialCount);
+    autoLoadRequestRef.current = "";
   }, [activeSortView, browseChannel]);
 
   useEffect(() => {
-    if (!needsFullBrowseResults || browseLoading || browseLoadingMore || loadedBrowseItemCount >= browseViewItemLimit) {
+    if (!needsFullBrowseResults || browseLoading || browseLoadingMore || loadedBrowseItemCount >= browseServerItemLimit) {
       return;
     }
 
     if (browseLoadMode !== "paged") {
-      onRefreshBrowse({ mode: "paged", limit: 100, view: activeSortView });
+      const requestKey = `${browseChannel}:${activeSortView}:reset`;
+      if (autoLoadRequestRef.current === requestKey) {
+        return;
+      }
+      autoLoadRequestRef.current = requestKey;
+      onRefreshBrowseRef.current({ mode: "paged", limit: browseRequestLimit, view: activeSortView });
       return;
     }
 
     if (canLoadMoreFromServer) {
-      onRefreshBrowse({ append: true, mode: "paged", limit: 100, view: activeSortView });
+      const requestKey = `${browseChannel}:${activeSortView}:append:${browseResults.length}:${loadedBrowseItemCount}`;
+      if (autoLoadRequestRef.current === requestKey) {
+        return;
+      }
+      autoLoadRequestRef.current = requestKey;
+      onRefreshBrowseRef.current({ append: true, mode: "paged", limit: browseRequestLimit, view: activeSortView });
     }
-  }, [activeSortView, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults, onRefreshBrowse]);
+  }, [activeSortView, browseChannel, browseLoadMode, browseLoading, browseLoadingMore, browseRequestLimit, browseResults.length, browseServerItemLimit, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults]);
 
   useEffect(() => {
     if ((!hasMoreItems && !canLoadMoreFromServer) || !loadMoreRef.current) {
@@ -534,7 +562,7 @@ function LibraryHome({
                 setViewSeed(randomBrowseSeed());
                 onRefreshBrowse({
                   mode: view.id === "lucky" ? "random" : "paged",
-                  limit: view.id === "lucky" ? browseRandomLimit : 100,
+                  limit: view.id === "lucky" ? browseRandomLimit : view.id === "tspdtRank" ? tspdtBrowseCatalogLimit : 100,
                   view: view.id
                 });
               }}
@@ -548,11 +576,13 @@ function LibraryHome({
       </div>
 
       <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
-        {showingTspdtRank ? (
+        {showingTspdtRank && browseFullViewLoading ? (
+          <BrowseLoadingGrid />
+        ) : showingTspdtRank ? (
           <>
             <TspdtRankView
               creditPolicy={creditPolicy}
-              catalogLoadedCount={browsableResults.length}
+              catalogLoadedCount={channelResults.length}
               hasMoreCatalogItems={browseHasMore}
               items={visibleTspdtItems}
               matchedCount={tspdtMatchedCount}
@@ -577,7 +607,7 @@ function LibraryHome({
               onLoadMore={showMoreItems}
             />
           </>
-        ) : browseInitialLoading ? (
+        ) : browseFullViewLoading || browseInitialLoading ? (
           <BrowseLoadingGrid />
         ) : browsingResults ? (
           <>
@@ -849,35 +879,40 @@ function TspdtRankRow({
   return (
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
       <RankNumber rank={entry.rank} />
-      <button
-        className="hidden overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 lg:block"
-        type="button"
-        onClick={() => onOpenDetail(result)}
-        title={copy.library.viewDetails}
-      >
-        <MoviePoster result={result} />
-      </button>
+      <div className="relative hidden lg:block">
+        <button
+          className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          type="button"
+          onClick={() => onOpenDetail(result)}
+          title={copy.library.viewDetails}
+        >
+          <MoviePoster result={result} />
+        </button>
+        <PosterActions
+          favorite={favoriteAssetKeys.has(result.assetKey)}
+          onSummarize={() => onSummarize(result)}
+          onToggleFavorite={() => onToggleFavorite(result)}
+        />
+      </div>
       <div className="grid min-w-0 content-start gap-2">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-          <button
-            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-            type="button"
-            onClick={() => onOpenDetail(result)}
-            title={copy.library.viewDetails}
-          >
-            <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
-              {title}
-            </h3>
-          </button>
-          <div className="flex items-center gap-1">
-            <AiSummaryButton onClick={() => onSummarize(result)} />
-            <FavoriteButton
-              active={favoriteAssetKeys.has(result.assetKey)}
-              onClick={() => onToggleFavorite(result)}
-            />
-          </div>
-        </div>
+        <button
+          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          type="button"
+          onClick={() => onOpenDetail(result)}
+          title={copy.library.viewDetails}
+        >
+          <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
+            {title}
+          </h3>
+        </button>
         <p className="text-xs text-slate-500">{metadataLine(result)}</p>
+        <div className="flex items-center gap-1 lg:hidden">
+          <AiSummaryButton onClick={() => onSummarize(result)} />
+          <FavoriteButton
+            active={favoriteAssetKeys.has(result.assetKey)}
+            onClick={() => onToggleFavorite(result)}
+          />
+        </div>
         <CompactRatingBadges result={result} />
         {tags.length ? (
           <div className="flex flex-wrap gap-1.5">
@@ -1509,6 +1544,32 @@ function MoviePoster({ result }: { result: SearchResult }) {
   );
 }
 
+function PosterActions({
+  favorite,
+  onSummarize,
+  onToggleFavorite,
+  className = ""
+}: {
+  favorite: boolean;
+  onSummarize: () => void;
+  onToggleFavorite: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={`absolute right-2 top-2 z-10 flex flex-col gap-1.5 ${className}`}>
+      <AiSummaryButton
+        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        onClick={onSummarize}
+      />
+      <FavoriteButton
+        active={favorite}
+        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        onClick={onToggleFavorite}
+      />
+    </div>
+  );
+}
+
 function VariantButtons({
   creditPolicy,
   result,
@@ -1674,34 +1735,32 @@ function MovieCard({
 
   return (
     <article className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4">
-      <button
-        className="overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-        type="button"
-        onClick={() => onOpenDetail(result)}
-        title={copy.library.viewDetails}
-      >
-        <MoviePoster result={result} />
-      </button>
+      <div className="relative">
+        <button
+          className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          type="button"
+          onClick={() => onOpenDetail(result)}
+          title={copy.library.viewDetails}
+        >
+          <MoviePoster result={result} />
+        </button>
+        <PosterActions
+          favorite={favoriteAssetKeys.has(result.assetKey)}
+          onSummarize={() => onSummarize(result)}
+          onToggleFavorite={() => onToggleFavorite(result)}
+        />
+      </div>
       <div className="grid min-w-0 content-start gap-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-          <button
-            className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-            type="button"
-            onClick={() => onOpenDetail(result)}
-            title={copy.library.viewDetails}
-          >
-            <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
-              {result.title}
-            </h2>
-          </button>
-          <div className="flex items-center gap-1">
-            <AiSummaryButton onClick={() => onSummarize(result)} />
-            <FavoriteButton
-              active={favoriteAssetKeys.has(result.assetKey)}
-              onClick={() => onToggleFavorite(result)}
-            />
-          </div>
-        </div>
+        <button
+          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          type="button"
+          onClick={() => onOpenDetail(result)}
+          title={copy.library.viewDetails}
+        >
+          <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
+            {result.title}
+          </h2>
+        </button>
 
         <CompactRatingBadges result={result} />
 
@@ -1762,10 +1821,10 @@ function SummaryText({ summary }: { summary: string }) {
   );
 }
 
-function AiSummaryButton({ onClick }: { onClick: () => void }) {
+function AiSummaryButton({ className = "", onClick }: { className?: string; onClick: () => void }) {
   return (
     <Button
-      className="h-8 w-8 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800"
+      className={`h-8 w-8 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800 ${className}`}
       type="button"
       variant="outline"
       size="icon"
@@ -1779,12 +1838,12 @@ function AiSummaryButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function FavoriteButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+function FavoriteButton({ active, className = "", onClick }: { active: boolean; className?: string; onClick: () => void }) {
   const label = active ? copy.favorites.unfavorite : copy.favorites.favorite;
 
   return (
     <Button
-      className={active ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""}
+      className={`${active ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""} ${className}`}
       type="button"
       variant="outline"
       size="icon"

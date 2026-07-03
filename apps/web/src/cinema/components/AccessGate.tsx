@@ -1,10 +1,11 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
 import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   checkAccess,
   clearAccessKey,
   errorMessage,
+  isUnauthorizedError,
   registerMember,
   resetMemberPasscode,
   setAccessKey
@@ -15,6 +16,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { copy } from "../i18n";
 import type { AppTheme } from "../types";
+import { ServiceWakeDialog, serviceWakeDelayMs } from "./ServiceWakeDialog";
 
 type AccessMode = "login" | "register" | "reset";
 
@@ -66,8 +68,22 @@ export function AccessGate({
   const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showWakeDialog, setShowWakeDialog] = useState(false);
   const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
   const passcodeStrengthHint = mode !== "login" ? memberPasscodeStrengthHint(value.trim()) : undefined;
+
+  useEffect(() => {
+    if (!loading) {
+      setShowWakeDialog(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowWakeDialog(true);
+    }, serviceWakeDelayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -150,7 +166,9 @@ export function AccessGate({
       const auth = await checkAccess();
       onUnlock(auth);
     } catch (accessError) {
-      clearAccessKey();
+      if (isUnauthorizedError(accessError)) {
+        clearAccessKey();
+      }
       setError(errorMessage(
         accessError,
         mode === "register"
@@ -166,6 +184,7 @@ export function AccessGate({
 
   return (
     <main className="relative grid min-h-screen place-items-center px-5 py-10">
+      <ServiceWakeDialog open={showWakeDialog && loading} onOpenChange={setShowWakeDialog} />
       <Button
         className="absolute right-5 top-5"
         type="button"
