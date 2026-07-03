@@ -92,6 +92,7 @@ import { copy } from "./cinema/i18n";
 import { triggerDirectDownload } from "./cinema/download";
 import {
   cinemaHistoryState,
+  defaultBrowseView,
   historyStateRoute,
   routeFromLocation,
   routeUrl,
@@ -137,6 +138,7 @@ type PendingCreditAction =
 
 const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
+const tspdtBrowseCatalogLimit = 2000;
 const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
 
@@ -168,9 +170,11 @@ function CinemaApp() {
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
+  const [browseView, setBrowseView] = useState<BrowseViewId>(initialRoute.browseView);
   const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
+  const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [browseResults, setBrowseResults] = useState<ResultWithCache[]>([]);
   const [browseLoading, setBrowseLoading] = useState(
@@ -259,6 +263,7 @@ function CinemaApp() {
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
   const forumThreadsAutoLoadRef = useRef(false);
+  const browseRouteLoadRef = useRef("");
 
   const trackedPollKey = useMemo(
     () =>
@@ -339,7 +344,9 @@ function CinemaApp() {
     return {
       tab: activeTab,
       browseChannel,
+      browseView,
       query,
+      detailAssetKey,
       playerAssetKey: playback?.assetKey,
       ...overrides
     };
@@ -348,27 +355,86 @@ function CinemaApp() {
   function navigateToTab(nextTab: AppTab) {
     const nextRoute = permittedRoute(routeForCurrentView({
       tab: nextTab,
+      detailAssetKey: undefined,
       playerAssetKey: undefined
     }));
     setPlayback(undefined);
+    setDetailAssetKey(undefined);
     setActiveTab(nextRoute.tab);
     writeRoute(nextRoute, "push");
   }
 
   function openBrowseChannel(nextChannel: BrowseChannel) {
+    const nextBrowseView = defaultBrowseView(nextChannel);
     setBrowseChannel(nextChannel);
+    setBrowseView(nextBrowseView);
+    setDetailAssetKey(undefined);
     setError("");
     setQuery("");
     setResults([]);
     setPlayback(undefined);
     setActiveTab("library");
+    browseRouteLoadRef.current = browseRouteLoadKey(nextChannel, nextBrowseView);
     writeRoute({
       tab: "library",
       browseChannel: nextChannel,
+      browseView: nextBrowseView,
       query: "",
+      detailAssetKey: undefined,
       playerAssetKey: undefined
     }, "push");
-    void refreshBrowseAssets({ channel: nextChannel });
+    void refreshBrowseAssets({ channel: nextChannel, view: nextBrowseView });
+  }
+
+  function browseLoadModeForView(view: BrowseViewId): BrowseLoadMode {
+    return view === "lucky" ? "random" : "paged";
+  }
+
+  function browseLimitForView(view: BrowseViewId) {
+    return view === "lucky" ? browsePageLimit : view === "tspdtRank" ? tspdtBrowseCatalogLimit : browseCatalogPageLimit;
+  }
+
+  function browseRouteLoadKey(channel: BrowseChannel, view: BrowseViewId) {
+    return `${channel}:${view}`;
+  }
+
+  function openBrowseView(nextView: BrowseViewId) {
+    setBrowseView(nextView);
+    setDetailAssetKey(undefined);
+    setPlayback(undefined);
+    browseRouteLoadRef.current = browseRouteLoadKey(browseChannel, nextView);
+    writeRoute({
+      tab: "library",
+      browseChannel,
+      browseView: nextView,
+      query: "",
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }, "push");
+    void refreshBrowseAssets({
+      mode: browseLoadModeForView(nextView),
+      limit: browseLimitForView(nextView),
+      view: nextView
+    });
+  }
+
+  function openLibraryDetail(result: ResultWithCache) {
+    setDetailAssetKey(result.assetKey);
+    setFocusedLibraryAssetKey(result.assetKey);
+    setPlayback(undefined);
+    writeRoute(routeForCurrentView({
+      tab: "library",
+      detailAssetKey: result.assetKey,
+      playerAssetKey: undefined
+    }), "push");
+  }
+
+  function closeLibraryDetail() {
+    setDetailAssetKey(undefined);
+    writeRoute(routeForCurrentView({
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }), "replace");
   }
 
   function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
@@ -462,10 +528,12 @@ function CinemaApp() {
   async function runSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     const normalizedQuery = query.trim();
+    setDetailAssetKey(undefined);
     await refreshResults({ showLoading: true, activateLibrary: true }, normalizedQuery);
     writeRoute({
       tab: "library",
       browseChannel,
+      browseView,
       query: normalizedQuery
     }, "push");
   }
@@ -499,11 +567,14 @@ function CinemaApp() {
     setActiveTab("library");
     setPlayback(undefined);
     setFocusedLibraryAssetKey(result.assetKey);
+    setDetailAssetKey(result.assetKey);
     setSearchOpen(false);
     writeRoute({
       tab: "library",
       browseChannel,
+      browseView,
       query: normalizedQuery,
+      detailAssetKey: result.assetKey,
       playerAssetKey: undefined
     }, "push");
   }
@@ -892,10 +963,11 @@ function CinemaApp() {
     options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId } = {}
   ) {
     const append = options.append === true;
-    const mode = options.mode ?? (append ? "paged" : "random");
+    const requestView = options.view ?? browseView;
+    const mode = options.mode ?? (append || requestView !== "lucky" ? "paged" : "random");
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     const requestChannel = options.channel ?? browseChannel;
-    const cacheKey = browseViewCacheKey(requestChannel, options.view);
+    const cacheKey = browseViewCacheKey(requestChannel, requestView);
     const cachedBrowseView = !append && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
@@ -913,8 +985,8 @@ function CinemaApp() {
     try {
       const offset = append ? browseNextOffset : 0;
       const response = append
-        ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
-        : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: options.view });
+        ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView })
+        : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: requestView });
 
       applyBrowseResponse(response, append, mode, cacheKey);
     } catch (browseError) {
@@ -1755,9 +1827,12 @@ function CinemaApp() {
     setDownloadRequestAssetKeys([]);
     setCachedAssets([]);
     historyInitializedRef.current = false;
+    setBrowseView(defaultBrowseView("recommended"));
+    setDetailAssetKey(undefined);
     writeRoute({
       tab: "library",
       browseChannel: "recommended",
+      browseView: defaultBrowseView("recommended"),
       query: ""
     }, "replace");
   }
@@ -1905,12 +1980,16 @@ function CinemaApp() {
     const initialPermittedRoute = permittedRoute({
       tab: activeTab,
       browseChannel: initialRoute.browseChannel,
+      browseView: initialRoute.browseView,
       query,
+      detailAssetKey: initialRoute.detailAssetKey,
       playerAssetKey: initialRoute.playerAssetKey
     });
     setActiveTab(initialPermittedRoute.tab);
     setBrowseChannel(initialPermittedRoute.browseChannel);
+    setBrowseView(initialPermittedRoute.browseView);
     setQuery(initialPermittedRoute.query);
+    setDetailAssetKey(initialPermittedRoute.detailAssetKey);
     writeRoute(initialPermittedRoute, "replace");
 
     if (initialPermittedRoute.query.trim()) {
@@ -1935,7 +2014,9 @@ function CinemaApp() {
       setError("");
       setActiveTab(nextRoute.tab);
       setBrowseChannel(nextRoute.browseChannel);
+      setBrowseView(nextRoute.browseView);
       setQuery(nextRoute.query);
+      setDetailAssetKey(nextRoute.detailAssetKey);
 
       if (!nextRoute.playerAssetKey) {
         setPlayback(undefined);
@@ -1979,9 +2060,11 @@ function CinemaApp() {
     if (activeTab === "admin" && role && role !== "admin") {
       const nextRoute = routeForCurrentView({
         tab: "library",
+        detailAssetKey: undefined,
         playerAssetKey: undefined
       });
       setActiveTab(nextRoute.tab);
+      setDetailAssetKey(undefined);
       writeRoute(nextRoute, "replace");
     }
   }, [activeTab, role]);
@@ -2024,10 +2107,18 @@ function CinemaApp() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === "library" && query.trim().length === 0 && browseResults.length === 0) {
-      void refreshBrowseAssets();
+    if (activeTab === "library" && query.trim().length === 0) {
+      const loadKey = browseRouteLoadKey(browseChannel, browseView);
+      if (browseResults.length === 0 || browseRouteLoadRef.current !== loadKey) {
+        browseRouteLoadRef.current = loadKey;
+        void refreshBrowseAssets({
+          mode: browseLoadModeForView(browseView),
+          limit: browseLimitForView(browseView),
+          view: browseView
+        });
+      }
     }
-  }, [activeTab, query]);
+  }, [activeTab, browseChannel, browseView, query]);
 
   useEffect(() => {
     if (activeTab === "watchlist" && browseResults.length === 0 && !browseLoading) {
@@ -2190,6 +2281,7 @@ function CinemaApp() {
             results={results}
             browseChannel={browseChannel}
             browseResults={browseResults}
+            browseView={browseView}
             browseLoading={browseLoading}
             browseLoadingMore={browseLoadingMore}
             browseHasMore={browseHasMore}
@@ -2204,6 +2296,10 @@ function CinemaApp() {
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onToggleFavorite={toggleFavorite}
+            onBrowseViewChange={openBrowseView}
+            detailAssetKey={detailAssetKey}
+            onOpenDetail={openLibraryDetail}
+            onCloseDetail={closeLibraryDetail}
             onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}

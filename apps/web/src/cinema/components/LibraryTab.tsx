@@ -64,6 +64,7 @@ interface LibraryTabProps {
   results: ResultWithCache[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
+  browseView: BrowseViewId;
   browseLoading: boolean;
   browseLoadingMore: boolean;
   browseHasMore: boolean;
@@ -78,6 +79,10 @@ interface LibraryTabProps {
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
+  onBrowseViewChange: (view: BrowseViewId) => void;
+  detailAssetKey?: string;
+  onOpenDetail: (result: ResultWithCache) => void;
+  onCloseDetail: () => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -93,6 +98,7 @@ export function LibraryTab({
   results,
   browseChannel,
   browseResults,
+  browseView,
   browseLoading,
   browseLoadingMore,
   browseHasMore,
@@ -107,6 +113,10 @@ export function LibraryTab({
   onOpenCachedAsset,
   onFocusedAssetHandled,
   onToggleFavorite,
+  onBrowseViewChange,
+  detailAssetKey,
+  onOpenDetail,
+  onCloseDetail,
   onRefreshBrowse,
   onViewModeChange,
   onSelect,
@@ -170,9 +180,22 @@ export function LibraryTab({
     });
   }
 
+  function openDetailResult(result: ResultWithCache) {
+    setDetailResult(result);
+    onOpenDetail(result);
+  }
+
   useEffect(() => {
-    setDetailResult(undefined);
-  }, [browseChannel, query]);
+    if (!detailAssetKey) {
+      setDetailResult(undefined);
+      return;
+    }
+
+    const detailCandidate = [...results, ...browseResults].find((result) => result.assetKey === detailAssetKey);
+    if (detailCandidate) {
+      setDetailResult(detailCandidate);
+    }
+  }, [browseResults, detailAssetKey, results]);
 
   useEffect(() => {
     if (!focusedAssetKey) {
@@ -202,7 +225,7 @@ export function LibraryTab({
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
-          onBack={() => setDetailResult(undefined)}
+          onBack={onCloseDetail}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
           onSelect={onSelect}
@@ -224,8 +247,10 @@ export function LibraryTab({
           favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           onOpenCachedAsset={onOpenCachedAsset}
+          browseView={browseView}
+          onBrowseViewChange={onBrowseViewChange}
           onRefreshBrowse={onRefreshBrowse}
-          onOpenDetail={setDetailResult}
+          onOpenDetail={openDetailResult}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
           onSelect={onSelect}
@@ -275,7 +300,7 @@ export function LibraryTab({
                       pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                       favoriteAssetKeys={favoriteAssetKeys}
                       trackedByAssetKey={trackedByAssetKey}
-                      onOpenDetail={setDetailResult}
+                      onOpenDetail={openDetailResult}
                       onSummarize={openMovieSummary}
                       onToggleFavorite={onToggleFavorite}
                       onSelect={onSelect}
@@ -293,7 +318,7 @@ export function LibraryTab({
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
-              onOpenDetail={setDetailResult}
+              onOpenDetail={openDetailResult}
               onSummarize={openMovieSummary}
               onToggleFavorite={onToggleFavorite}
               onSelect={onSelect}
@@ -383,6 +408,8 @@ function LibraryHome({
   favoriteAssetKeys,
   trackedByAssetKey,
   onOpenCachedAsset,
+  browseView,
+  onBrowseViewChange,
   onRefreshBrowse,
   onOpenDetail,
   onSummarize,
@@ -404,6 +431,8 @@ function LibraryHome({
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
+  browseView: BrowseViewId;
+  onBrowseViewChange: (view: BrowseViewId) => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
@@ -411,7 +440,7 @@ function LibraryHome({
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
-  const [activeView, setActiveView] = useState<BrowseViewId>("lucky");
+  const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -489,9 +518,11 @@ function LibraryHome({
   }
 
   useEffect(() => {
-    setActiveView(viewsForBrowseChannel(browseChannel)[0].id);
+    const nextViews = viewsForBrowseChannel(browseChannel);
+    const nextView = nextViews.some((view) => view.id === browseView) ? browseView : nextViews[0].id;
+    setActiveView(nextView);
     setViewSeed(randomBrowseSeed());
-  }, [browseChannel]);
+  }, [browseChannel, browseView]);
 
   useEffect(() => {
     onRefreshBrowseRef.current = onRefreshBrowse;
@@ -559,11 +590,7 @@ function LibraryHome({
               onClick={() => {
                 setActiveView(view.id);
                 setViewSeed(randomBrowseSeed());
-                onRefreshBrowse({
-                  mode: view.id === "lucky" ? "random" : "paged",
-                  limit: view.id === "lucky" ? browseRandomLimit : view.id === "tspdtRank" ? tspdtBrowseCatalogLimit : 100,
-                  view: view.id
-                });
+                onBrowseViewChange(view.id);
               }}
               title={view.label}
             >
