@@ -41,8 +41,14 @@ function requestMode(req) {
   return req.query.mode === "random" ? "random" : "paged";
 }
 
-function requestLimit(req, mode) {
-  const maximum = mode === "random" ? 200 : 100;
+function requestLimit(req, mode, channel, view) {
+  const maximum = mode === "random"
+    ? 200
+    : channel === "movie" && view === "tspdtRank"
+      ? 2000
+      : view === "popular" || view === "mostWatched"
+        ? 300
+        : 100;
   const fallback = 50;
   const raw = Number(req.query.limit ?? fallback);
   return Math.min(maximum, Math.max(1, Number.isFinite(raw) ? Math.floor(raw) : fallback));
@@ -237,12 +243,12 @@ function jsonResponse(status, payload, cacheStatus, cachedAt) {
 module.exports = async function (context, req) {
   const cfg = readConfig();
   const accessKey = req.headers[accessHeaderName];
-    const mode = requestMode(req);
-    const limit = requestLimit(req, mode);
-    const offset = requestOffset(req);
-    const channel = requestChannel(req);
-    const view = requestView(req);
-    const blobName = cacheBlobName(mode, limit, offset, channel, view);
+  const mode = requestMode(req);
+  const offset = requestOffset(req);
+  const channel = requestChannel(req);
+  const view = requestView(req);
+  const limit = requestLimit(req, mode, channel, view);
+  const blobName = cacheBlobName(mode, limit, offset, channel, view);
 
   try {
     if (!await validateAccess(accessKey, cfg)) {

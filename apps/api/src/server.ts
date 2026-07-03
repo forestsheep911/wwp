@@ -1316,7 +1316,11 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const offset = requestOffset(url);
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
-  const pagedLimitMaximum = channel === "movie" && view === "tspdtRank" ? 2000 : 100;
+  const pagedLimitMaximum = channel === "movie" && view === "tspdtRank"
+    ? 2000
+    : view === "popular" || view === "mostWatched"
+      ? 300
+      : 100;
   const limit = requestLimit(url, 50, mode === "random" ? 200 : pagedLimitMaximum);
 
   if (channel === "movie" && view === "tspdtRank" && mode === "paged") {

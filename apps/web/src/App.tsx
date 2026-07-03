@@ -138,6 +138,7 @@ type PendingCreditAction =
 
 const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
+const browseFullViewLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
 const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
@@ -391,7 +392,13 @@ function CinemaApp() {
   }
 
   function browseLimitForView(view: BrowseViewId) {
-    return view === "lucky" ? browsePageLimit : view === "tspdtRank" ? tspdtBrowseCatalogLimit : browseCatalogPageLimit;
+    return view === "lucky"
+      ? browsePageLimit
+      : view === "tspdtRank"
+        ? tspdtBrowseCatalogLimit
+        : view === "popular" || view === "mostWatched"
+          ? browseFullViewLimit
+          : browseCatalogPageLimit;
   }
 
   function browseRouteLoadKey(channel: BrowseChannel, view: BrowseViewId) {
@@ -892,7 +899,7 @@ function CinemaApp() {
   }
 
   function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
-    return view === "tspdtRank" ? `${channel}:${view}` : undefined;
+    return view && view !== "lucky" ? `${channel}:${view}` : undefined;
   }
 
   function applyBrowseCache(entry: BrowseViewCacheEntry) {
