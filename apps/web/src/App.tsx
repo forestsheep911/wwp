@@ -986,6 +986,12 @@ function CinemaApp() {
       }
       setBrowseLoadingMore(true);
     } else {
+      if (requestView === "lucky") {
+        setBrowseResults([]);
+        setBrowseHasMore(false);
+        setBrowseNextOffset(0);
+        setBrowseLoadMode("random");
+      }
       setBrowseLoading(true);
     }
 

@@ -355,7 +355,6 @@ const browseLoadStep = 12;
 const browseViewItemLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
 const browseRandomLimit = 48;
-const luckyRanks = new Map<string, number>();
 
 function randomBrowseSeed() {
   return Math.floor(Math.random() * 0x7fffffff);
@@ -462,8 +461,8 @@ function LibraryHome({
     [activeSortView, browsableResults, historyStats, viewSeed]
   );
   const rankedAssets = useMemo(
-    () => rankCachedAssets(activeSortView, cachedAssets),
-    [activeSortView, cachedAssets]
+    () => rankCachedAssets(activeSortView, cachedAssets, viewSeed),
+    [activeSortView, cachedAssets, viewSeed]
   );
   const tspdtItems = useMemo(
     () => buildTspdtRankItems(channelResults),
@@ -1275,7 +1274,11 @@ function sourceRating(result: SearchResult, source: "douban" | "imdb" | "rotten"
 }
 
 function seededBrowseRank(seed: number, result: SearchResult) {
-  const key = `${seed}:${result.assetKey}`;
+  return seededAssetRank(seed, result.assetKey);
+}
+
+function seededAssetRank(seed: number, assetKey: string) {
+  const key = `${seed}:${assetKey}`;
   let hash = 2166136261;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= key.charCodeAt(index);
@@ -1323,17 +1326,6 @@ function resultLastPlayedAt(result: SearchResult, stats: Map<string, { count: nu
   return resultKeys(result).reduce((time, key) => Math.max(time, stats.get(key)?.lastPlayedAt ?? 0), 0);
 }
 
-function luckyRank(key: string) {
-  const existingRank = luckyRanks.get(key);
-  if (existingRank !== undefined) {
-    return existingRank;
-  }
-
-  const nextRank = Math.random();
-  luckyRanks.set(key, nextRank);
-  return nextRank;
-}
-
 function rankBrowseResults(
   view: BrowseViewId,
   results: ResultWithCache[],
@@ -1348,7 +1340,7 @@ function rankBrowseResults(
   const byLastPlayed = (left: SearchResult, right: SearchResult) => resultLastPlayedAt(right, stats) - resultLastPlayedAt(left, stats);
 
   if (view === "lucky") {
-    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
+    return ranked.sort((left, right) => seededBrowseRank(seed, left) - seededBrowseRank(seed, right));
   }
 
   if (view === "doubanRank") {
@@ -1386,10 +1378,10 @@ function assetActivityTime(asset: CacheAsset) {
   return toTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt);
 }
 
-function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[]) {
+function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[], seed: number) {
   const ranked = [...assets];
   if (view === "lucky") {
-    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
+    return ranked.sort((left, right) => seededAssetRank(seed, left.assetKey) - seededAssetRank(seed, right.assetKey));
   }
 
   if (view === "mostWatched" || view === "popular") {
