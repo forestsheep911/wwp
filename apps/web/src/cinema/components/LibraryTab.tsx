@@ -330,7 +330,7 @@ export function LibraryTab({
 const browseInitialCount = 12;
 const browseLoadStep = 12;
 const browseViewItemLimit = 300;
-const tspdtBrowseItemLimit = 1000;
+const tspdtBrowseCatalogLimit = 2000;
 const browseRandomLimit = 48;
 const luckyRanks = new Map<string, number>();
 
@@ -421,9 +421,13 @@ function LibraryHome({
   const onRefreshBrowseRef = useRef(onRefreshBrowse);
   const channelViews = viewsForBrowseChannel(browseChannel);
   const activeSortView = (channelViews.find((view) => view.id === activeView) ?? channelViews[0]).id;
-  const browsableResults = useMemo(
-    () => browseResults.filter((result) => (result.variants?.length ?? 0) > 0 && resultMatchesBrowseChannel(result, browseChannel)),
+  const channelResults = useMemo(
+    () => browseResults.filter((result) => resultMatchesBrowseChannel(result, browseChannel)),
     [browseChannel, browseResults]
+  );
+  const browsableResults = useMemo(
+    () => channelResults.filter((result) => (result.variants?.length ?? 0) > 0),
+    [channelResults]
   );
   const historyStats = useMemo(() => historyStatsByAssetKey(historyItems), [historyItems]);
   const rankedResults = useMemo(
@@ -435,8 +439,8 @@ function LibraryHome({
     [activeSortView, cachedAssets]
   );
   const tspdtItems = useMemo(
-    () => buildTspdtRankItems(browsableResults),
-    [browsableResults]
+    () => buildTspdtRankItems(channelResults),
+    [channelResults]
   );
   const tspdtMatchedCount = useMemo(
     () => tspdtItems.filter((item) => Boolean(item.result)).length,
@@ -445,8 +449,8 @@ function LibraryHome({
   const showingTspdtRank = activeSortView === "tspdtRank";
   const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
-  const browseServerItemLimit = showingTspdtRank ? tspdtBrowseItemLimit : browseViewItemLimit;
-  const browseRequestLimit = showingTspdtRank ? tspdtBrowseItemLimit : 100;
+  const browseServerItemLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : browseViewItemLimit;
+  const browseRequestLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : 100;
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
@@ -454,7 +458,7 @@ function LibraryHome({
       ? rankedResults.length
       : rankedAssets.length;
   const totalVisibleItems = Math.min(totalRankedItems, browseDisplayItemLimit);
-  const loadedBrowseItemCount = showingTspdtRank ? browsableResults.length : totalRankedItems;
+  const loadedBrowseItemCount = showingTspdtRank ? channelResults.length : totalRankedItems;
   const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseServerItemLimit;
   const reachedBrowseViewLimit = totalVisibleItems >= browseDisplayItemLimit && (totalRankedItems > browseDisplayItemLimit || browseHasMore);
   const browseFullViewLoading = needsFullBrowseResults &&
@@ -559,7 +563,7 @@ function LibraryHome({
                 setViewSeed(randomBrowseSeed());
                 onRefreshBrowse({
                   mode: view.id === "lucky" ? "random" : "paged",
-                  limit: view.id === "lucky" ? browseRandomLimit : view.id === "tspdtRank" ? tspdtBrowseItemLimit : 100,
+                  limit: view.id === "lucky" ? browseRandomLimit : view.id === "tspdtRank" ? tspdtBrowseCatalogLimit : 100,
                   view: view.id
                 });
               }}
@@ -579,7 +583,7 @@ function LibraryHome({
           <>
             <TspdtRankView
               creditPolicy={creditPolicy}
-              catalogLoadedCount={browsableResults.length}
+              catalogLoadedCount={channelResults.length}
               hasMoreCatalogItems={browseHasMore}
               items={visibleTspdtItems}
               matchedCount={tspdtMatchedCount}
