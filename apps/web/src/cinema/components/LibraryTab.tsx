@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   Database,
   Download,
@@ -52,7 +53,7 @@ import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
-import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type BrowseViewId, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryTabProps {
@@ -75,10 +76,12 @@ interface LibraryTabProps {
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
+  collectionMarksByAssetKey: Map<string, FavoriteEntry>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
+  onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   detailAssetKey?: string;
   onOpenDetail: (result: ResultWithCache) => void;
@@ -109,10 +112,12 @@ export function LibraryTab({
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
+  collectionMarksByAssetKey,
   trackedByAssetKey,
   onOpenCachedAsset,
   onFocusedAssetHandled,
   onToggleFavorite,
+  onUpdateCollectionMark,
   onBrowseViewChange,
   detailAssetKey,
   onOpenDetail,
@@ -224,10 +229,12 @@ export function LibraryTab({
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
+          collectionEntry={collectionMarksByAssetKey.get(detailResult.assetKey)}
           trackedByAssetKey={trackedByAssetKey}
           onBack={onCloseDetail}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
+          onUpdateCollectionMark={onUpdateCollectionMark}
           onSelect={onSelect}
           onDownload={onDownload}
         />
@@ -1929,6 +1936,38 @@ function FavoriteButton({ active, className = "", onClick }: { active: boolean; 
   );
 }
 
+function CollectionMarkButton({
+  active,
+  mark,
+  onClick
+}: {
+  active: boolean;
+  mark: Exclude<CollectionMark, "favorite">;
+  onClick: () => void;
+}) {
+  const label = mark === "wantToWatch"
+    ? active ? copy.favorites.unwantToWatch : copy.favorites.wantToWatch
+    : active ? copy.favorites.unwatched : copy.favorites.watched;
+  const Icon = mark === "wantToWatch" ? Eye : CheckCircle2;
+  const activeClass = mark === "wantToWatch"
+    ? "border-sky-300/40 bg-sky-300/10 text-sky-200 hover:bg-sky-300/20"
+    : "border-emerald-300/40 bg-emerald-300/10 text-emerald-200 hover:bg-emerald-300/20";
+
+  return (
+    <Button
+      className={active ? activeClass : ""}
+      type="button"
+      variant="outline"
+      size="icon"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      <Icon className={`h-4 w-4 ${active ? "fill-current" : ""}`} />
+    </Button>
+  );
+}
+
 function MovieSummaryDialog({
   state,
   onOpenChange,
@@ -2124,10 +2163,12 @@ function MovieDetailView({
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
+  collectionEntry,
   trackedByAssetKey,
   onBack,
   onSummarize,
   onToggleFavorite,
+  onUpdateCollectionMark,
   onSelect,
   onDownload
 }: {
@@ -2136,10 +2177,12 @@ function MovieDetailView({
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
+  collectionEntry?: FavoriteEntry;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onBack: () => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
+  onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -2160,6 +2203,16 @@ function MovieDetailView({
           <FavoriteButton
             active={favoriteAssetKeys.has(result.assetKey)}
             onClick={() => onToggleFavorite(result)}
+          />
+          <CollectionMarkButton
+            active={Boolean(collectionEntry?.wantToWatchAt)}
+            mark="wantToWatch"
+            onClick={() => onUpdateCollectionMark(result, "wantToWatch")}
+          />
+          <CollectionMarkButton
+            active={Boolean(collectionEntry?.watchedAt)}
+            mark="watched"
+            onClick={() => onUpdateCollectionMark(result, "watched")}
           />
           <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
         </div>

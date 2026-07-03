@@ -112,6 +112,7 @@ import type {
   AppTheme,
   BrowseChannel,
   BrowseViewId,
+  CollectionMark,
   FavoriteEntry,
   HistoryAssetStatusMap,
   LibraryViewMode,
@@ -143,6 +144,22 @@ const tspdtBrowseCatalogLimit = 2000;
 const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
 
+function canPreviewServiceWakeDialog() {
+  if (!import.meta.env.DEV) {
+    return false;
+  }
+
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+function shouldOpenServiceWakePreview() {
+  if (!canPreviewServiceWakeDialog()) {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).has("wake");
+}
+
 interface BrowseViewCacheEntry {
   results: ResultWithCache[];
   hasMore: boolean;
@@ -161,6 +178,23 @@ function readStoredTheme(): AppTheme {
 
 function favoriteKeyForIdentity(role?: AccessRole, memberId?: string) {
   return memberScopedStorageKey(favoriteStorageKey, memberId ?? role ?? "guest");
+}
+
+function normalizeFavorites(entries: FavoriteEntry[]) {
+  return entries.map((entry) => {
+    if (entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt) {
+      return entry;
+    }
+
+    return {
+      ...entry,
+      favoriteAt: entry.addedAt
+    };
+  });
+}
+
+function hasCollectionMarks(entry: FavoriteEntry) {
+  return Boolean(entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt);
 }
 
 function CinemaApp() {
@@ -233,6 +267,7 @@ function CinemaApp() {
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
   const [searchDialogError, setSearchDialogError] = useState("");
   const [showServiceWakeDialog, setShowServiceWakeDialog] = useState(false);
+  const [serviceWakePreviewOpen, setServiceWakePreviewOpen] = useState(() => shouldOpenServiceWakePreview());
   const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -286,9 +321,15 @@ function CinemaApp() {
   }, [trackedItems]);
 
   const favoriteAssetKeys = useMemo(
-    () => new Set(favorites.map((item) => item.assetKey)),
+    () => new Set(favorites.filter((item) => item.favoriteAt).map((item) => item.assetKey)),
     [favorites]
   );
+
+  const collectionMarksByAssetKey = useMemo(() => {
+    const marks = new Map<string, FavoriteEntry>();
+    favorites.forEach((item) => marks.set(item.assetKey, item));
+    return marks;
+  }, [favorites]);
 
   const serviceWakeActive = unlocked && (
     !role ||
@@ -297,6 +338,15 @@ function CinemaApp() {
     ((activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks") && cachedAssetsLoading && cachedAssets.length === 0) ||
     (activeTab === "forum" && forumLoading && forumThreads.length === 0)
   );
+  const serviceWakePreviewEnabled = canPreviewServiceWakeDialog();
+  const serviceWakeDialogOpen = serviceWakePreviewOpen || (showServiceWakeDialog && serviceWakeActive);
+
+  function handleServiceWakeDialogOpenChange(open: boolean) {
+    setShowServiceWakeDialog(open);
+    if (!open) {
+      setServiceWakePreviewOpen(false);
+    }
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -844,28 +894,67 @@ function CinemaApp() {
     writeJsonStorage(storageKey, nextFavorites);
   }
 
-  function toggleFavorite(result: ResultWithCache) {
+  function updateCollectionMark(result: ResultWithCache, mark: CollectionMark) {
     setFavorites((currentFavorites) => {
-      const exists = currentFavorites.some((item) => item.assetKey === result.assetKey);
-      const nextFavorites = exists
-        ? currentFavorites.filter((item) => item.assetKey !== result.assetKey)
-        : [
-          {
-            assetKey: result.assetKey,
-            title: result.title,
-            addedAt: new Date().toISOString(),
-            result
-          },
-          ...currentFavorites
-        ];
+      const now = new Date().toISOString();
+      const currentEntry = currentFavorites.find((item) => item.assetKey === result.assetKey);
+      const baseEntry: FavoriteEntry = currentEntry ?? {
+        assetKey: result.assetKey,
+        title: result.title,
+        addedAt: now,
+        result
+      };
+      const nextEntry: FavoriteEntry = {
+        ...baseEntry,
+        title: result.title,
+        result
+      };
+
+      if (mark === "favorite") {
+        nextEntry.favoriteAt = nextEntry.favoriteAt ? undefined : now;
+      } else if (mark === "wantToWatch") {
+        const active = Boolean(nextEntry.wantToWatchAt);
+        nextEntry.wantToWatchAt = active ? undefined : now;
+        if (!active) {
+          nextEntry.watchedAt = undefined;
+        }
+      } else {
+        const active = Boolean(nextEntry.watchedAt);
+        nextEntry.watchedAt = active ? undefined : now;
+        if (!active) {
+          nextEntry.wantToWatchAt = undefined;
+        }
+      }
+
+      const withoutCurrent = currentFavorites.filter((item) => item.assetKey !== result.assetKey);
+      const nextFavorites = hasCollectionMarks(nextEntry) ? [nextEntry, ...withoutCurrent] : withoutCurrent;
       writeFavorites(nextFavorites);
       return nextFavorites;
     });
   }
 
-  function removeFavorite(assetKey: string) {
+  function toggleFavorite(result: ResultWithCache) {
+    updateCollectionMark(result, "favorite");
+  }
+
+  function removeCollectionMark(assetKey: string, mark: CollectionMark) {
     setFavorites((currentFavorites) => {
-      const nextFavorites = currentFavorites.filter((item) => item.assetKey !== assetKey);
+      const nextFavorites = currentFavorites.flatMap((item) => {
+        if (item.assetKey !== assetKey) {
+          return [item];
+        }
+
+        const nextItem: FavoriteEntry = { ...item };
+        if (mark === "favorite") {
+          nextItem.favoriteAt = undefined;
+        } else if (mark === "wantToWatch") {
+          nextItem.wantToWatchAt = undefined;
+        } else {
+          nextItem.watchedAt = undefined;
+        }
+
+        return hasCollectionMarks(nextItem) ? [nextItem] : [];
+      });
       writeFavorites(nextFavorites);
       return nextFavorites;
     });
@@ -1032,7 +1121,7 @@ function CinemaApp() {
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
-    setFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), []));
+    setFavorites(normalizeFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), [])));
   }
 
   function updateCurrentMemberCredits(credits: NonNullable<AuthCheckResponse["member"]>["credits"]) {
@@ -2141,19 +2230,41 @@ function CinemaApp() {
     }
   }, [activeTab, browseLoading, browseResults.length]);
 
+  const serviceWakePreviewButton = serviceWakePreviewEnabled ? (
+    <button
+      type="button"
+      className="fixed bottom-4 right-4 z-50 rounded-full border border-emerald-300/30 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-200 hover:bg-slate-900"
+      onClick={() => setServiceWakePreviewOpen(true)}
+    >
+      等待态预览
+    </button>
+  ) : null;
+
+  const serviceWakeDialog = (
+    <ServiceWakeDialog
+      dismissible={serviceWakePreviewOpen && !serviceWakeActive}
+      open={serviceWakeDialogOpen}
+      onOpenChange={handleServiceWakeDialogOpenChange}
+    />
+  );
+
   if (!unlocked) {
     return (
-      <AccessGate
-        theme={theme}
-        onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
-        onUnlock={(auth, options) => {
-          setUnlocked(true);
-          applyAuth(auth);
-          if (options?.openProfile) {
-            setProfileOpen(true);
-          }
-        }}
-      />
+      <>
+        {serviceWakeDialog}
+        <AccessGate
+          theme={theme}
+          onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
+          onUnlock={(auth, options) => {
+            setUnlocked(true);
+            applyAuth(auth);
+            if (options?.openProfile) {
+              setProfileOpen(true);
+            }
+          }}
+        />
+        {serviceWakePreviewButton}
+      </>
     );
   }
 
@@ -2192,7 +2303,8 @@ function CinemaApp() {
 
   return (
     <>
-      <ServiceWakeDialog open={showServiceWakeDialog && serviceWakeActive} onOpenChange={setShowServiceWakeDialog} />
+      {serviceWakeDialog}
+      {serviceWakePreviewButton}
       <SearchDialog
         error={searchDialogError}
         loading={searchPreviewLoading || searchLoading}
@@ -2307,10 +2419,12 @@ function CinemaApp() {
             pendingAssetKeys={cacheRequestAssetKeys}
             pendingDownloadAssetKeys={downloadRequestAssetKeys}
             favoriteAssetKeys={favoriteAssetKeys}
+            collectionMarksByAssetKey={collectionMarksByAssetKey}
             trackedByAssetKey={trackedByAssetKey}
             onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onToggleFavorite={toggleFavorite}
+            onUpdateCollectionMark={updateCollectionMark}
             onBrowseViewChange={openBrowseView}
             detailAssetKey={detailAssetKey}
             onOpenDetail={openLibraryDetail}
@@ -2345,7 +2459,7 @@ function CinemaApp() {
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
             favorites={favorites}
-            onRemove={removeFavorite}
+            onRemove={removeCollectionMark}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
         )}

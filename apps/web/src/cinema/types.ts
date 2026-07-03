@@ -49,8 +49,13 @@ export interface FavoriteEntry {
   assetKey: string;
   title: string;
   addedAt: string;
+  favoriteAt?: string;
+  wantToWatchAt?: string;
+  watchedAt?: string;
   result: ResultWithCache;
 }
+
+export type CollectionMark = "favorite" | "wantToWatch" | "watched";
 
 export interface TrackedCacheItem {
   job: CacheJob;
