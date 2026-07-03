@@ -880,7 +880,7 @@ function TspdtRankRow({
     );
   }
 
-  const tags = cardTags(result);
+  const tags = genreTags(result).slice(0, 3);
   return (
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
       <RankNumber align="top" rank={entry.rank} />
@@ -1506,24 +1506,23 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
 
 function cardTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({
-      key: `genre-${tag}`,
-      tag,
-      variant: "secondary" as const,
-      className: genreBadgeClass(tag)
-    })),
+    ...genreTags(result),
     ...peopleTags(result).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ].slice(0, 3);
 }
 
+function genreTags(result: SearchResult) {
+  return visibleTags(result.metadata?.genres).map((tag) => ({
+    key: `genre-${tag}`,
+    tag,
+    variant: "secondary" as const,
+    className: genreBadgeClass(tag)
+  }));
+}
+
 function detailTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({
-      key: `genre-${tag}`,
-      tag,
-      variant: "secondary" as const,
-      className: genreBadgeClass(tag)
-    })),
+    ...genreTags(result),
     ...visibleTags(result.metadata?.people).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ];
 }
