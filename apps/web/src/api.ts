@@ -34,6 +34,7 @@ import type {
   MarkMemberNoticeReadResponse,
   MovieSummaryRequest,
   MovieSummaryResponse,
+  NowPlayingResponse,
   MovieRequestsResponse,
   PlaybackResponse,
   RegisterMemberRequest,
@@ -260,6 +261,15 @@ export function browseHomeAssets(
     params.set("view", options.view);
   }
   return request<HomeBrowseResponse>(`/api/home-browse?${params.toString()}`);
+}
+
+export function getNowPlaying(options: { refresh?: boolean } = {}) {
+  const params = new URLSearchParams();
+  if (options.refresh) {
+    params.set("refresh", "true");
+  }
+  const query = params.toString();
+  return request<NowPlayingResponse>(apiUrl(`/api/now-playing${query ? `?${query}` : ""}`));
 }
 
 export function summarizeMovie(input: MovieSummaryRequest) {

@@ -79,6 +79,7 @@ import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
 import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
+import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
@@ -2139,6 +2140,7 @@ function CinemaApp() {
         onOpenHelp={() => navigateToTab("help")}
         onOpenHistory={() => navigateToTab("history")}
         onOpenWatchlist={() => navigateToTab("watchlist")}
+        onOpenNowPlaying={() => navigateToTab("nowPlaying")}
         onOpenMovieRequest={openMovieRequestDialog}
         onOpenNotices={openNoticeInbox}
         onOpenProfile={() => setProfileOpen(true)}
@@ -2223,6 +2225,7 @@ function CinemaApp() {
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
         )}
+        nowPlaying={<NowPlayingPanel />}
         forum={(
           <ForumPanel
             currentMemberId={member?.id}

@@ -9,7 +9,17 @@ import type {
 } from "@wwpdw/shared";
 
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
-export type AppTab = "library" | "cached" | "history" | "favorites" | "watchlist" | "help" | "admin" | "tasks" | "forum";
+export type AppTab =
+  | "library"
+  | "cached"
+  | "history"
+  | "favorites"
+  | "watchlist"
+  | "nowPlaying"
+  | "help"
+  | "admin"
+  | "tasks"
+  | "forum";
 export type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 export type BrowseViewId =
   | "lucky"

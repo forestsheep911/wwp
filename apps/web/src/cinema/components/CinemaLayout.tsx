@@ -3,6 +3,7 @@ import {
   Bell,
   ChevronDown,
   Clapperboard,
+  Flame,
   HelpCircle,
   History,
   ListChecks,
@@ -54,6 +55,7 @@ interface CinemaLayoutProps {
   history: ReactNode;
   favorites: ReactNode;
   watchlist: ReactNode;
+  nowPlaying: ReactNode;
   help: ReactNode;
   tasks?: ReactNode;
   admin?: ReactNode;
@@ -67,6 +69,7 @@ interface CinemaLayoutProps {
   onOpenFavorites: () => void;
   onOpenHistory: () => void;
   onOpenWatchlist: () => void;
+  onOpenNowPlaying: () => void;
   onOpenMovieRequest: () => void;
   onOpenNotices: () => void;
   onOpenProfile: () => void;
@@ -91,6 +94,7 @@ export function CinemaLayout({
   history,
   favorites,
   watchlist,
+  nowPlaying,
   help,
   tasks,
   admin,
@@ -104,6 +108,7 @@ export function CinemaLayout({
   onOpenFavorites,
   onOpenHistory,
   onOpenWatchlist,
+  onOpenNowPlaying,
   onOpenMovieRequest,
   onOpenNotices,
   onOpenProfile,
@@ -178,6 +183,10 @@ export function CinemaLayout({
                 <Clapperboard className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.watchlist}</span>
               </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onOpenNowPlaying} title={copy.layout.nowPlaying}>
+                <Flame className="h-4 w-4" />
+                <span className="sr-only">{copy.layout.nowPlaying}</span>
+              </Button>
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title={copy.common.search}>
                 <Search className="h-4 w-4" />
                 <span className="sr-only">{copy.common.search}</span>
@@ -216,6 +225,7 @@ export function CinemaLayout({
                 onOpenHelp={onOpenHelp}
                 onOpenHistory={onOpenHistory}
                 onOpenWatchlist={onOpenWatchlist}
+                onOpenNowPlaying={onOpenNowPlaying}
                 onOpenMovieRequest={onOpenMovieRequest}
                 onOpenNotices={onOpenNotices}
                 onOpenProfile={onOpenProfile}
@@ -235,6 +245,7 @@ export function CinemaLayout({
             <TabsContent className="mt-0" value="history">{history}</TabsContent>
             <TabsContent className="mt-0" value="favorites">{favorites}</TabsContent>
             <TabsContent className="mt-0" value="watchlist">{watchlist}</TabsContent>
+            <TabsContent className="mt-0" value="nowPlaying">{nowPlaying}</TabsContent>
             <TabsContent className="mt-0" value="help">{help}</TabsContent>
             {tasks ? <TabsContent className="mt-0" value="tasks">{tasks}</TabsContent> : null}
             {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
@@ -258,6 +269,7 @@ function AccountMenu({
   onOpenHelp,
   onOpenHistory,
   onOpenWatchlist,
+  onOpenNowPlaying,
   onOpenMovieRequest,
   onOpenNotices,
   onOpenProfile,
@@ -277,6 +289,7 @@ function AccountMenu({
   onOpenHelp: () => void;
   onOpenHistory: () => void;
   onOpenWatchlist: () => void;
+  onOpenNowPlaying: () => void;
   onOpenMovieRequest: () => void;
   onOpenNotices: () => void;
   onOpenProfile: () => void;
@@ -324,6 +337,10 @@ function AccountMenu({
         <DropdownMenuItem onSelect={onOpenWatchlist}>
           <Clapperboard className="h-4 w-4" />
           {copy.layout.watchlist}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onOpenNowPlaying}>
+          <Flame className="h-4 w-4" />
+          {copy.layout.nowPlaying}
         </DropdownMenuItem>
         {showAdmin ? (
           <DropdownMenuItem onSelect={onOpenAdmin}>

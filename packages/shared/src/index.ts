@@ -441,6 +441,68 @@ export interface SearchResponse {
   mode?: "paged" | "random";
 }
 
+export interface NowPlayingMovie {
+  id: string;
+  title: string;
+  releaseInfo?: string;
+  rank: number;
+  boxRate?: string;
+  splitBoxRate?: string;
+  showCount?: number;
+  showCountRate?: string;
+  avgShowView?: string;
+  avgSeatView?: string;
+  totalBoxOffice?: string;
+  totalSplitBoxOffice?: string;
+  sourceUrl: string;
+  ticketUrl?: string;
+  douban?: {
+    subjectId: string;
+    title: string;
+    url: string;
+    rating?: string;
+    voteCount?: number;
+    releaseYear?: string;
+    duration?: string;
+    region?: string;
+    director?: string;
+    actors?: string;
+  };
+}
+
+export interface UpcomingMovie {
+  id: string;
+  title: string;
+  releaseDate: string;
+  genres: string[];
+  region?: string;
+  wishCount?: number;
+  sourceUrl: string;
+  trailerUrl?: string;
+}
+
+export interface NowPlayingResponse {
+  source: "maoyan";
+  sourceUrl: string;
+  douban?: {
+    sourceUrl: string;
+    laterSourceUrl: string;
+    fetchedAt: string;
+    city: "shanghai";
+    nowPlayingCount: number;
+  };
+  fetchedAt: string;
+  observedAt?: string;
+  cache: {
+    status: "hit" | "refresh" | "stale";
+    ttlSeconds: number;
+  };
+  degraded?: boolean;
+  warning?: string;
+  movies: NowPlayingMovie[];
+  upcomingMovies?: UpcomingMovie[];
+}
+
 export interface EnsureCacheRequest {
   assetKey: string;
   result?: SearchResult;

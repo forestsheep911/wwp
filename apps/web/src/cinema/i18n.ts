@@ -76,6 +76,7 @@ export const zhCN = {
     history: "播放历史",
     favorites: "我的收藏",
     watchlist: "今晚看什么",
+    nowPlaying: "热映观察",
     admin: "管理台",
     themeLight: "亮色",
     themeDark: "暗色",
@@ -231,6 +232,68 @@ export const zhCN = {
     cachedAt: (date: string) => `缓存 ${date}`,
     updatedAt: (date: string) => `更新 ${date}`,
     refresh: "刷新片单"
+  },
+  nowPlaying: {
+    title: "热映观察",
+    description: "给出门看电影前看的几件事：现在有什么、哪部适合大屏、哪部先观望、后面有什么。",
+    source: "猫眼专业版",
+    doubanSource: "豆瓣上海",
+    sourceHint: "低频读取公开页面数据，验证阶段使用",
+    refresh: "刷新热映",
+    refreshing: "正在刷新",
+    loading: "正在加载热映数据",
+    empty: "暂时没有热映数据",
+    stale: "正在显示上一次可用数据",
+    observedAt: (date: string) => `观察时间 ${date}`,
+    fetchedAt: (date: string) => `读取 ${date}`,
+    cacheHit: "缓存",
+    cacheRefresh: "已刷新",
+    cacheStale: "旧数据",
+    rank: (rank: number) => `#${rank}`,
+    totalBox: "累计票房",
+    showRate: "排片占比",
+    showCount: "排片场次",
+    avgShow: "场均人次",
+    seatRate: "上座率",
+    boxRate: "票房占比",
+    proData: "专业版",
+    ticket: "购票",
+    doubanRating: "豆瓣",
+    doubanVotes: (count: string) => `${count} 人评分`,
+    doubanWish: (count: string) => `${count} 人想看`,
+    noRating: "暂无评分",
+    guide: {
+      current: {
+        title: "现在热映",
+        detail: "影院正在放什么"
+      },
+      bigScreen: {
+        title: "值得大屏",
+        detail: "热度、排片和转化都更稳"
+      },
+      caution: {
+        title: "避雷观察",
+        detail: "热度和排片不匹配，先看看口碑"
+      },
+      upcoming: {
+        title: "即将上映",
+        detail: "豆瓣想看人数和上映日"
+      }
+    },
+    sections: {
+      bigScreen: "值得出门看",
+      caution: "先观望一下",
+      current: "热映列表",
+      upcoming: "明天 / 下周"
+    },
+    upcomingBody: "固定上海档期，按豆瓣即将上映信息展示上映日、类型和想看人数。",
+    noCaution: "暂时没有明显需要观望的片子。",
+    recommendation: {
+      heat: "市场热度高",
+      efficient: "排片转化好",
+      newRelease: "新上映",
+      stable: "持续观察"
+    }
   },
   tasks: {
     title: "缓存任务",
@@ -729,6 +792,7 @@ export const zhCN = {
     forum: "无法加载讨论。",
     submitForumThread: "无法发布帖子。",
     submitForumReply: "无法发送回复。",
+    nowPlaying: "无法加载热映数据。",
     movieSummary: "无法生成剧情简介。",
     updateProfile: "无法更新个人资料。",
     statusRefresh: "状态刷新失败。"
