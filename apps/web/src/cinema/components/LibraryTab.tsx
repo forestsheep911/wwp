@@ -936,6 +936,9 @@ function TspdtRankRow({
         trackedByAssetKey={trackedByAssetKey}
         onSelect={onSelect}
         onDownload={onDownload}
+        onShowAllVariants={() => onOpenDetail(result)}
+        reserveMoreRow
+        variantLimit={3}
       />
     </article>
   );
@@ -1585,7 +1588,8 @@ function VariantButtons({
   onDownload,
   onShowAllVariants,
   compact = false,
-  variantLimit
+  variantLimit,
+  reserveMoreRow = false
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
@@ -1597,9 +1601,12 @@ function VariantButtons({
   onShowAllVariants?: () => void;
   compact?: boolean;
   variantLimit?: number;
+  reserveMoreRow?: boolean;
 }) {
   const variants = result.variants ?? [];
-  const visibleVariants = variantLimit ? variants.slice(0, variantLimit) : variants;
+  const shouldReserveMoreRow = Boolean(reserveMoreRow && variantLimit && onShowAllVariants && variants.length > variantLimit);
+  const visibleLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreRow ? 1 : 0)) : variants.length;
+  const visibleVariants = variants.slice(0, visibleLimit);
   const hiddenVariantCount = Math.max(0, variants.length - visibleVariants.length);
 
   if (variants.length === 0) {
@@ -1691,7 +1698,7 @@ function VariantButtons({
       {hiddenVariantCount > 0 ? (
         onShowAllVariants ? (
           <Button
-            className="min-h-10 justify-between rounded-full border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
             type="button"
             variant="outline"
             size="sm"
