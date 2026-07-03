@@ -56,6 +56,7 @@ import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/c
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
+import { getNowPlaying } from "./now-playing-source.js";
 import { createSearchSource } from "./search-source.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
@@ -3287,6 +3288,20 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method === "GET" && pathname === "/api/browse-assets") {
       await handleBrowseAssets(url, response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/now-playing") {
+      const forceRefresh = url.searchParams.get("refresh") === "true";
+      const payload = await getNowPlaying({ forceRefresh });
+      logInfo("api.now_playing", {
+        requestId,
+        forceRefresh,
+        cacheStatus: payload.cache.status,
+        movieCount: payload.movies.length,
+        degraded: payload.degraded
+      });
+      sendJson(response, 200, payload);
       return;
     }
 
