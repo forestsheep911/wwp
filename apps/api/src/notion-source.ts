@@ -3,6 +3,7 @@ import { Client } from "@notionhq/client";
 import type {
   MediaVariant,
   MovieCreditEntry,
+  MovieBoxOffice,
   MovieMetadata,
   MoviePoster,
   MovieWorkKind,
@@ -101,6 +102,10 @@ const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
+const boxOfficeDisplayPropertyPattern = /^(?:box\s*office|box\s*office\s*display|\u7968\u623f|\u7968\u623f\u663e\u793a)$/i;
+const boxOfficeAmountPropertyPattern = /box\s*office\s*amount|\u7968\u623f.*(?:amount|\u91d1\u989d|\u6570\u503c)/i;
+const boxOfficeCurrencyPropertyPattern = /box\s*office\s*currency|\u7968\u623f.*(?:currency|\u8d27\u5e01|\u5e01\u79cd)/i;
+const boxOfficeSourcePropertyPattern = /box\s*office\s*source|\u7968\u623f.*(?:source|\u6765\u6e90)/i;
 const ratingPropertyPattern = /\u8c46\u74e3\u8bc4\u5206|imdb\u8bc4\u5206|metascore|\u70c2\u756a\u8304|rating|score/i;
 const cjkPattern = /[\u3400-\u9fff]/;
 const specTitlePattern =
@@ -441,6 +446,74 @@ function dateFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
   return undefined;
 }
 
+function numberFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const number = numberFromProperty(rawProperty);
+    if (number !== undefined) {
+      return number;
+    }
+  }
+
+  return undefined;
+}
+
+function parseBoxOfficeAmount(value?: string) {
+  if (!value || /^N\/A$/i.test(value.trim())) {
+    return undefined;
+  }
+
+  const match = value.match(/(?:[$£€¥]\s*)?([\d,]+(?:\.\d+)?)/);
+  if (!match) {
+    return undefined;
+  }
+
+  const amount = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(amount) ? amount : undefined;
+}
+
+function currencyFromBoxOffice(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  if (/\$|USD|US\$|U\.S\./i.test(value)) {
+    return "USD";
+  }
+  if (/£|GBP/i.test(value)) {
+    return "GBP";
+  }
+  if (/€|EUR/i.test(value)) {
+    return "EUR";
+  }
+  if (/¥|JPY/i.test(value)) {
+    return "JPY";
+  }
+
+  return undefined;
+}
+
+function boxOfficeFromProperties(properties: JsonRecord, updatedAt: string): MovieBoxOffice | undefined {
+  const display = textFromNamedProperty(properties, boxOfficeDisplayPropertyPattern, 120);
+  const amount = numberFromNamedProperty(properties, boxOfficeAmountPropertyPattern) ?? parseBoxOfficeAmount(display);
+  const currency = textFromNamedProperty(properties, boxOfficeCurrencyPropertyPattern, 16) ?? currencyFromBoxOffice(display);
+  const source = textFromNamedProperty(properties, boxOfficeSourcePropertyPattern, 32);
+  if (!display && amount === undefined && !currency && !source) {
+    return undefined;
+  }
+
+  return {
+    display,
+    amount,
+    currency,
+    source: source?.toLowerCase() === "omdb" ? "omdb" : source ? "notion" : undefined,
+    updatedAt
+  };
+}
+
 function ratingLabel(name: string) {
   if (/\u8c46\u74e3/i.test(name)) {
     return "Douban";
@@ -619,6 +692,7 @@ function movieMetadataFromPage(
   const updatedAt = asString(page.last_edited_time) || new Date().toISOString();
   const pageId = asString(page.id);
   const pageUrl = asString(page.url);
+  const boxOffice = boxOfficeFromProperties(properties, updatedAt);
   const workId = stableMovieWorkIdFromNotion(pageId, title, year);
   const externalIds = Object.fromEntries(
     Object.entries({
@@ -638,6 +712,7 @@ function movieMetadataFromPage(
       source: "notion"
     },
     credits,
+    boxOffice,
     sourceRefs: [{
       source: "notion",
       id: pageId,
@@ -674,6 +749,7 @@ function movieMetadataFromPage(
       genres,
       credits,
       ratings: ratings.map((rating) => ({ ...rating, source: "notion" })),
+      boxOffice,
       media: {
         posters
       },
@@ -711,6 +787,9 @@ function movieMetadataFromPage(
     directors,
     people,
     ratings,
+    boxOfficeDisplay: boxOffice?.display,
+    boxOfficeAmount: boxOffice?.amount,
+    boxOfficeCurrency: boxOffice?.currency,
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),

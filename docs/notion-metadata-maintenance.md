@@ -57,7 +57,7 @@ The latest full dry-run scanned 1132 Notion pages:
 - 1119 pages already expose IMDb/Douban/TMDB IDs in existing page content.
 - 13 pages have no parsed external ID.
 - 0 conflicts were detected.
-- 26 managed Notion properties were added on 2026-07-02; the current schema check reports 0 missing managed properties.
+- 30 managed Notion properties are tracked. The identity/display/quality schema was first added on 2026-07-02, and box office fields were added on 2026-07-03; the current schema check reports 0 missing managed properties.
 - A gated write-back on 2026-07-02 applied structured metadata to 1118 pages with parsed external IDs and skipped the 13 pages without external IDs.
 
 The current full report is:

@@ -56,6 +56,10 @@ export const notionManagedProperties = [
   { name: "Writers", type: "rich_text", group: "display" },
   { name: "Cast", type: "rich_text", group: "display" },
   { name: "Poster URL", type: "url", group: "display" },
+  { name: "Box Office", type: "rich_text", group: "display" },
+  { name: "Box Office Amount", type: "number", group: "display" },
+  { name: "Box Office Currency", type: "rich_text", group: "display" },
+  { name: "Box Office Source", type: "rich_text", group: "display" },
 
   {
     name: "Match Status",

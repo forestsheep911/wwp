@@ -124,6 +124,14 @@ export interface MovieMediaAssets {
   trailerUrl?: string;
 }
 
+export interface MovieBoxOffice {
+  display?: string;
+  amount?: number;
+  currency?: string;
+  source?: MovieMetadataSource;
+  updatedAt?: string;
+}
+
 export interface MovieSourceRef {
   source: MovieMetadataSource;
   id?: string;
@@ -159,6 +167,7 @@ export interface MovieWorkProfile {
   runtimeMinutes?: number;
   credits?: MovieCreditEntry[];
   ratings?: MovieRatingEntry[];
+  boxOffice?: MovieBoxOffice;
   media?: MovieMediaAssets;
   sourceRefs?: MovieSourceRef[];
   dataQuality?: MovieDataQuality;
@@ -293,6 +302,7 @@ export interface MovieMetadata {
   titles?: MovieTitleEntry[];
   release?: MovieReleaseInfo;
   credits?: MovieCreditEntry[];
+  boxOffice?: MovieBoxOffice;
   sourceRefs?: MovieSourceRef[];
   dataQuality?: MovieDataQuality;
   display?: MovieDisplayMetadata;
@@ -308,6 +318,9 @@ export interface MovieMetadata {
   directors?: string[];
   people?: string[];
   ratings?: RatingValue[];
+  boxOfficeDisplay?: string;
+  boxOfficeAmount?: number;
+  boxOfficeCurrency?: string;
   ratingLevel?: string[];
   info?: string;
   description?: string;
