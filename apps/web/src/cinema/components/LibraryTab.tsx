@@ -79,11 +79,11 @@ interface LibraryTabProps {
   onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
-  onBrowseViewChange: (view: BrowseViewId) => void;
+  onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   detailAssetKey?: string;
   onOpenDetail: (result: ResultWithCache) => void;
   onCloseDetail: () => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -431,8 +431,8 @@ function LibraryHome({
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onOpenCachedAsset: (assetKey: string) => void;
   browseView: BrowseViewId;
-  onBrowseViewChange: (view: BrowseViewId) => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
+  onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
@@ -520,7 +520,9 @@ function LibraryHome({
     const nextViews = viewsForBrowseChannel(browseChannel);
     const nextView = nextViews.some((view) => view.id === browseView) ? browseView : nextViews[0].id;
     setActiveView(nextView);
-    setViewSeed(randomBrowseSeed());
+    if (nextView !== "lucky") {
+      setViewSeed(randomBrowseSeed());
+    }
   }, [browseChannel, browseView]);
 
   useEffect(() => {
@@ -579,6 +581,43 @@ function LibraryHome({
       <div className="scrollbar-none flex gap-2 overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1">
         {channelViews.map((view) => {
           const Icon = view.icon;
+          if (view.id === "lucky") {
+            return (
+              <div className="flex flex-none overflow-hidden rounded-md border border-slate-800 bg-slate-950" key={view.id}>
+                <Button
+                  className="rounded-none border-r border-slate-800 px-2"
+                  type="button"
+                  size="sm"
+                  variant={activeSortView === view.id ? "secondary" : "ghost"}
+                  onClick={() => {
+                    setActiveView(view.id);
+                    setViewSeed(randomBrowseSeed());
+                    onBrowseViewChange(view.id, { refresh: true });
+                  }}
+                  title={copy.library.browseViews.lucky.detail}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="sr-only">{copy.library.browseViews.lucky.detail}</span>
+                </Button>
+                <Button
+                  className="rounded-none"
+                  type="button"
+                  size="sm"
+                  variant={activeSortView === view.id ? "secondary" : "ghost"}
+                  onClick={() => {
+                    if (activeSortView !== view.id) {
+                      setActiveView(view.id);
+                      onBrowseViewChange(view.id);
+                    }
+                  }}
+                  title={view.label}
+                >
+                  {view.label}
+                </Button>
+              </div>
+            );
+          }
+
           return (
             <Button
               className="flex-none"
@@ -587,9 +626,11 @@ function LibraryHome({
               size="sm"
               variant={activeSortView === view.id ? "secondary" : "ghost"}
               onClick={() => {
-                setActiveView(view.id);
-                setViewSeed(randomBrowseSeed());
-                onBrowseViewChange(view.id);
+                if (activeSortView !== view.id) {
+                  setActiveView(view.id);
+                  setViewSeed(randomBrowseSeed());
+                  onBrowseViewChange(view.id);
+                }
               }}
               title={view.label}
             >

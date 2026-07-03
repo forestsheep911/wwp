@@ -405,7 +405,8 @@ function CinemaApp() {
     return `${channel}:${view}`;
   }
 
-  function openBrowseView(nextView: BrowseViewId) {
+  function openBrowseView(nextView: BrowseViewId, options: { refresh?: boolean } = {}) {
+    const routeMode = options.refresh && nextView === browseView ? "replace" : "push";
     setBrowseView(nextView);
     setDetailAssetKey(undefined);
     setPlayback(undefined);
@@ -417,11 +418,12 @@ function CinemaApp() {
       query: "",
       detailAssetKey: undefined,
       playerAssetKey: undefined
-    }, "push");
+    }, routeMode);
     void refreshBrowseAssets({
       mode: browseLoadModeForView(nextView),
       limit: browseLimitForView(nextView),
-      view: nextView
+      view: nextView,
+      force: options.refresh === true
     });
   }
 
@@ -899,7 +901,7 @@ function CinemaApp() {
   }
 
   function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
-    return view && view !== "lucky" ? `${channel}:${view}` : undefined;
+    return view ? `${channel}:${view}` : undefined;
   }
 
   function applyBrowseCache(entry: BrowseViewCacheEntry) {
@@ -967,7 +969,7 @@ function CinemaApp() {
   }
 
   async function refreshBrowseAssets(
-    options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId } = {}
+    options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId; force?: boolean } = {}
   ) {
     const append = options.append === true;
     const requestView = options.view ?? browseView;
@@ -975,7 +977,7 @@ function CinemaApp() {
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     const requestChannel = options.channel ?? browseChannel;
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
-    const cachedBrowseView = !append && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
+    const cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
       return;
