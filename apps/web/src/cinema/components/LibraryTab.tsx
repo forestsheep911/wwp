@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
-  ChevronDown,
   ChevronLeft,
   Database,
   Download,
@@ -604,7 +603,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={visibleTspdtItems.length}
               totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : browseFullViewLoading || browseInitialLoading ? (
@@ -639,7 +637,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={visibleResults.length}
               totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : visibleAssets.length ? (
@@ -661,7 +658,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={visibleAssets.length}
               totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : canLoadMoreFromServer ? (
@@ -674,7 +670,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={0}
               totalCount={0}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : (
@@ -691,8 +686,7 @@ function LazyLoadFooter({
   loadMoreRef,
   loading,
   shownCount,
-  totalCount,
-  onLoadMore
+  totalCount
 }: {
   capped: boolean;
   hasMore: boolean;
@@ -700,23 +694,34 @@ function LazyLoadFooter({
   loading: boolean;
   shownCount: number;
   totalCount: number;
-  onLoadMore: () => void;
 }) {
   if (!hasMore && totalCount <= browseInitialCount) {
     return null;
   }
 
+  if (hasMore) {
+    return (
+      <div
+        ref={loadMoreRef}
+        aria-busy={loading}
+        aria-label={loading ? copy.common.loading : copy.library.continueLoading}
+        className="flex min-h-12 items-center justify-center pt-1"
+      >
+        {loading ? (
+          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {copy.common.loading}
+          </span>
+        ) : (
+          <span className="sr-only">{copy.library.continueLoading}</span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div ref={loadMoreRef} className="flex justify-center pt-1">
-      {hasMore ? (
-        <Button type="button" variant="outline" size="sm" onClick={onLoadMore} disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
-          {loading ? copy.common.loading : copy.library.loadMore}
-          {totalCount > 0 ? <Badge variant="secondary">{shownCount}/{totalCount}{hasMore ? "+" : ""}</Badge> : null}
-        </Button>
-      ) : (
-        <Badge variant="muted">{capped ? copy.library.loadedLimit(shownCount) : copy.library.loadedAll(totalCount)}</Badge>
-      )}
+      <Badge variant="muted">{capped ? copy.library.loadedLimit(shownCount) : copy.library.loadedAll(totalCount)}</Badge>
     </div>
   );
 }
