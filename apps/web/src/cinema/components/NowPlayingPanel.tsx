@@ -49,6 +49,11 @@ function doubanRatingNumber(movie: NowPlayingMovie) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function releaseDayCount(movie: NowPlayingMovie) {
+  const match = movie.releaseInfo?.match(/上映(\d+)天/);
+  return match ? Number(match[1]) : undefined;
+}
+
 function cacheLabel(status: NowPlayingResponse["cache"]["status"]) {
   switch (status) {
     case "hit":
@@ -95,14 +100,25 @@ function isCautionCandidate(movie: NowPlayingMovie) {
   const seatRate = percentNumber(movie.avgSeatView);
   const doubanRating = doubanRatingNumber(movie);
   const voteCount = movie.douban?.voteCount ?? 0;
+  const releaseDays = releaseDayCount(movie);
+  const hasLowDoubanSignal = doubanRating !== undefined && doubanRating < 6.5 && voteCount >= 500;
+  const hasVeryLowSeatSignal = (seatRate ?? 0) > 0 && (seatRate ?? 0) < 0.6;
+
+  if (hasLowDoubanSignal) {
+    return true;
+  }
+
   if (boxRate === undefined || showRate === undefined) {
-    return doubanRating !== undefined && doubanRating < 6.5 && voteCount >= 500;
+    return false;
+  }
+
+  if (releaseDays !== undefined && releaseDays >= 21) {
+    return hasVeryLowSeatSignal;
   }
 
   return movie.rank > 3 && (
     showRate > boxRate + 2 ||
-    (seatRate ?? 0) < 0.8 ||
-    (doubanRating !== undefined && doubanRating < 6.5 && voteCount >= 500)
+    hasVeryLowSeatSignal
   );
 }
 
