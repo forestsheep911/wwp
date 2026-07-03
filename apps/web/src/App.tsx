@@ -135,6 +135,7 @@ type PendingCreditAction =
 
 const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
+const homeBrowseFallbackMs = 2500;
 type BrowseLoadMode = "paged" | "random";
 
 function isAppTheme(value: unknown): value is AppTheme {
@@ -806,6 +807,12 @@ function CinemaApp() {
     setBrowseLoadMode(response.mode ?? mode);
   }
 
+  function homeBrowseTimeout() {
+    return new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error("Home browse cache timed out.")), homeBrowseFallbackMs);
+    });
+  }
+
   async function refreshBrowseAssets(
     options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId } = {}
   ) {
@@ -826,7 +833,10 @@ function CinemaApp() {
       const offset = append ? browseNextOffset : 0;
       const response = append
         ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
-        : await browseHomeAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
+        : await Promise.race([
+          browseHomeAssets(limit, offset, { mode, channel: requestChannel, view: options.view }),
+          homeBrowseTimeout()
+        ])
           .catch(() => browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view }));
 
       applyBrowseResponse(response, append, mode);

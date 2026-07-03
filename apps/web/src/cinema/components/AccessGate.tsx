@@ -5,6 +5,7 @@ import {
   checkAccess,
   clearAccessKey,
   errorMessage,
+  isUnauthorizedError,
   registerMember,
   resetMemberPasscode,
   setAccessKey
@@ -150,7 +151,9 @@ export function AccessGate({
       const auth = await checkAccess();
       onUnlock(auth);
     } catch (accessError) {
-      clearAccessKey();
+      if (isUnauthorizedError(accessError)) {
+        clearAccessKey();
+      }
       setError(errorMessage(
         accessError,
         mode === "register"
