@@ -47,6 +47,12 @@ export const zhCN = {
     forgot: "忘记了？",
     resetHelp: "请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。",
     passcodeRule: "通行码为 6 位字符。",
+    wake: {
+      title: "正在唤醒放映服务",
+      description: "第一次开场可能要等服务器从后台醒来，请耐心等一下。",
+      frames: ["片头", "开机", "放映"],
+      status: "放映员正在穿过片尾字幕，把机房灯打开。很快就能入场。"
+    },
     errors: {
       enterPasscode: "请输入通行码。",
       enterNewPasscode: "请输入新的通行码。",
