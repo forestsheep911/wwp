@@ -6,6 +6,7 @@ import type {
   MovieBoxOffice,
   MovieMetadata,
   MoviePoster,
+  MovieTitleEntry,
   MovieWorkKind,
   RatingValue,
   SearchResult
@@ -102,6 +103,9 @@ const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
+const chineseTitlePropertyPattern = /^(?:chinese\s*title|\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u4e2d\u6587\u7247\u540d|\u4e2d\u6587\u540d)$/i;
+const originalTitlePropertyPattern = /^(?:original\s*title|\u539f\u540d|\u539f\u7247\u540d|\u539f\u59cb\u7247\u540d)$/i;
+const englishTitlePropertyPattern = /^(?:english\s*title|\u82f1\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u82f1\u6587\u7247\u540d|\u82f1\u6587\u540d)$/i;
 const boxOfficeDisplayPropertyPattern = /^(?:box\s*office|box\s*office\s*display|\u7968\u623f|\u7968\u623f\u663e\u793a)$/i;
 const boxOfficeAmountPropertyPattern = /box\s*office\s*amount|\u7968\u623f.*(?:amount|\u91d1\u989d|\u6570\u503c)/i;
 const boxOfficeCurrencyPropertyPattern = /box\s*office\s*currency|\u7968\u623f.*(?:currency|\u8d27\u5e01|\u5e01\u79cd)/i;
@@ -514,6 +518,46 @@ function boxOfficeFromProperties(properties: JsonRecord, updatedAt: string): Mov
   };
 }
 
+function titleKey(entry: MovieTitleEntry) {
+  return `${entry.kind}:${entry.lang ?? ""}:${cleanText(entry.title).toLowerCase()}`;
+}
+
+function uniqueTitleEntries(entries: MovieTitleEntry[]) {
+  const seen = new Set<string>();
+  const titles: MovieTitleEntry[] = [];
+  for (const entry of entries) {
+    const title = cleanText(entry.title);
+    if (!title) {
+      continue;
+    }
+
+    const next = { ...entry, title };
+    const key = titleKey(next);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    titles.push(next);
+  }
+
+  return titles;
+}
+
+function movieTitleEntriesFromProperties(title: string, properties: JsonRecord) {
+  const chineseTitle = textFromNamedProperty(properties, chineseTitlePropertyPattern, 180);
+  const originalTitle = textFromNamedProperty(properties, originalTitlePropertyPattern, 180);
+  const englishTitle = textFromNamedProperty(properties, englishTitlePropertyPattern, 180);
+  const entries: Array<MovieTitleEntry | undefined> = [
+    { title, kind: "primary", source: "notion" },
+    chineseTitle ? { title: chineseTitle, kind: "localized", lang: "zh", source: "notion" } : undefined,
+    originalTitle ? { title: originalTitle, kind: "original", source: "notion" } : undefined,
+    englishTitle ? { title: englishTitle, kind: "alternate", lang: "en", source: "notion" } : undefined
+  ];
+
+  return uniqueTitleEntries(entries.filter((entry): entry is MovieTitleEntry => Boolean(entry)));
+}
+
 function ratingLabel(name: string) {
   if (/\u8c46\u74e3/i.test(name)) {
     return "Douban";
@@ -693,6 +737,8 @@ function movieMetadataFromPage(
   const pageId = asString(page.id);
   const pageUrl = asString(page.url);
   const boxOffice = boxOfficeFromProperties(properties, updatedAt);
+  const titles = movieTitleEntriesFromProperties(title, properties);
+  const displayTitle = titles.find((entry) => entry.kind === "localized" && entry.lang === "zh")?.title ?? title;
   const workId = stableMovieWorkIdFromNotion(pageId, title, year);
   const externalIds = Object.fromEntries(
     Object.entries({
@@ -705,7 +751,7 @@ function movieMetadataFromPage(
   const metadata: MovieMetadata = {
     workId,
     kind,
-    titles: [{ title, kind: "primary", source: "notion" }],
+    titles,
     release: {
       year,
       date: releaseDate,
@@ -731,7 +777,7 @@ function movieMetadataFromPage(
       updatedAt
     },
     display: {
-      title,
+      title: displayTitle,
       year,
       directorLine: directors.join(" / ") || undefined,
       castLine: people.join(" / ") || undefined
@@ -739,7 +785,7 @@ function movieMetadataFromPage(
     work: {
       workId,
       kind,
-      titles: [{ title, kind: "primary", source: "notion" }],
+      titles,
       release: {
         year,
         date: releaseDate,
@@ -771,7 +817,7 @@ function movieMetadataFromPage(
         updatedAt
       },
       display: {
-        title,
+        title: displayTitle,
         year,
         directorLine: directors.join(" / ") || undefined,
         castLine: people.join(" / ") || undefined
