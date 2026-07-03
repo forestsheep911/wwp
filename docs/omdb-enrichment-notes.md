@@ -1,10 +1,12 @@
 # OMDb enrichment notes
 
-OMDb is planned as website-side metadata enrichment, not as a Notion write-back source.
+OMDb is used as a conservative metadata enrichment source. The Notion write-back tool only fills empty managed fields and should be run in small batches first.
 
 ## Current repository support
 
 - `.env.example` declares `OMDB_API_KEY`.
+- `npm run notion:omdb -- --limit=30 --max-updates=5` previews a small Notion write-back batch.
+- Add `--apply` only after reviewing the dry-run report.
 - `MovieMetadata.external.omdb` stores OMDb-derived fields.
 - `MovieMetadata.externalIds.imdb` gives future enrichment code a stable lookup key.
 - The search index includes OMDb fields in searchable text once they are present.
@@ -22,6 +24,8 @@ OMDb has `BoxOffice`, but not reliable production budget data.
 ## Integration rule
 
 Do not call OMDb from the user-facing search path. Use metadata sync or a slow admin backfill, cache by IMDb id, and merge with Notion metadata before writing the search index.
+
+The Notion write-back path defaults to OMDb `Type=movie` and skips `series`/`episode` rows. Use `--include-non-movies` only after designing separate series/season rules.
 
 Preferred source precedence:
 
