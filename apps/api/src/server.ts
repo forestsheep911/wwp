@@ -1303,10 +1303,11 @@ function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {
 async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const mode = url.searchParams.get("mode") === "random" ? "random" : "paged";
-  const limit = requestLimit(url, 50, mode === "random" ? 200 : 100);
   const offset = requestOffset(url);
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
+  const pagedLimitMaximum = channel === "movie" && view === "tspdtRank" ? 1000 : 100;
+  const limit = requestLimit(url, 50, mode === "random" ? 200 : pagedLimitMaximum);
   const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
