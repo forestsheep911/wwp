@@ -883,7 +883,7 @@ function TspdtRankRow({
   const tags = cardTags(result);
   return (
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
-      <RankNumber rank={entry.rank} />
+      <RankNumber align="top" rank={entry.rank} />
       <div className="group relative hidden lg:block">
         <button
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
@@ -958,9 +958,9 @@ function hasCjkText(value: string) {
   return /[\u3400-\u9fff]/u.test(value);
 }
 
-function RankNumber({ rank }: { rank: number }) {
+function RankNumber({ rank, align = "center" }: { rank: number; align?: "center" | "top" }) {
   return (
-    <div className="flex items-center">
+    <div className={`flex ${align === "top" ? "items-start pt-3 lg:pt-4" : "items-center"}`}>
       <span className="inline-flex h-10 w-14 items-center justify-center rounded-md border border-amber-300/25 bg-amber-300/10 text-sm font-black tabular-nums text-amber-100">
         #{rank}
       </span>
