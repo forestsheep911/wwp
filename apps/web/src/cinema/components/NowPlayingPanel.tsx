@@ -231,25 +231,34 @@ export function NowPlayingPanel() {
               title={copy.nowPlaying.guide.current.title}
               detail={copy.nowPlaying.guide.current.detail}
               value={`${movies.length}`}
+              items={movies.slice(0, 3).map((movie) => movie.title)}
+              href="#now-playing-current"
             />
             <GuideCard
               icon={<Clapperboard className="h-4 w-4" />}
               title={copy.nowPlaying.guide.bigScreen.title}
               detail={copy.nowPlaying.guide.bigScreen.detail}
               value={`${bigScreenMovies.length}`}
+              items={bigScreenMovies.slice(0, 3).map((movie) => movie.title)}
+              href="#now-playing-big-screen"
             />
             <GuideCard
               icon={<ShieldAlert className="h-4 w-4" />}
               title={copy.nowPlaying.guide.caution.title}
               detail={copy.nowPlaying.guide.caution.detail}
               value={`${cautionMovies.length}`}
+              items={cautionMovies.length > 0
+                ? cautionMovies.slice(0, 3).map((movie) => movie.title)
+                : [copy.nowPlaying.noCaution]}
+              href="#now-playing-caution"
             />
             <GuideCard
               icon={<CalendarDays className="h-4 w-4" />}
               title={copy.nowPlaying.guide.upcoming.title}
               detail={copy.nowPlaying.guide.upcoming.detail}
               value={`${data?.upcomingMovies?.length ?? 0}`}
-              href={data?.douban?.laterSourceUrl ?? "https://movie.douban.com/cinema/later/shanghai/"}
+              items={upcomingMovies.slice(0, 3).map((movie) => movie.title)}
+              href="#now-playing-upcoming"
             />
           </div>
 
@@ -261,7 +270,7 @@ export function NowPlayingPanel() {
             </div>
           ) : null}
 
-          <GuideSection title={copy.nowPlaying.sections.bigScreen} icon={<Sparkles className="h-4 w-4" />}>
+          <GuideSection id="now-playing-big-screen" title={copy.nowPlaying.sections.bigScreen} icon={<Sparkles className="h-4 w-4" />}>
             <div className="grid gap-3 lg:grid-cols-2">
               {bigScreenMovies.map((movie) => (
                 <CompactDecisionCard key={`big-screen-${movie.id}`} movie={movie} tone="positive" />
@@ -269,7 +278,7 @@ export function NowPlayingPanel() {
             </div>
           </GuideSection>
 
-          <GuideSection title={copy.nowPlaying.sections.caution} icon={<ShieldAlert className="h-4 w-4" />}>
+          <GuideSection id="now-playing-caution" title={copy.nowPlaying.sections.caution} icon={<ShieldAlert className="h-4 w-4" />}>
             {cautionMovies.length > 0 ? (
               <div className="grid gap-3 lg:grid-cols-2">
                 {cautionMovies.map((movie) => (
@@ -283,7 +292,7 @@ export function NowPlayingPanel() {
             )}
           </GuideSection>
 
-          <GuideSection title={copy.nowPlaying.sections.upcoming} icon={<CalendarDays className="h-4 w-4" />}>
+          <GuideSection id="now-playing-upcoming" title={copy.nowPlaying.sections.upcoming} icon={<CalendarDays className="h-4 w-4" />}>
             <div className="grid gap-3">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4">
                 <p className="max-w-3xl text-sm leading-6 text-slate-400">{copy.nowPlaying.upcomingBody}</p>
@@ -302,7 +311,7 @@ export function NowPlayingPanel() {
             </div>
           </GuideSection>
 
-          <GuideSection title={copy.nowPlaying.sections.current} icon={<BarChart3 className="h-4 w-4" />}>
+          <GuideSection id="now-playing-current" title={copy.nowPlaying.sections.current} icon={<BarChart3 className="h-4 w-4" />}>
             <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/70">
               <div className="grid gap-0">
                 {movies.map((movie) => (
@@ -321,17 +330,19 @@ function GuideCard({
   detail,
   href,
   icon,
+  items,
   title,
   value
 }: {
   detail: string;
   href?: string;
   icon: ReactNode;
+  items?: string[];
   title: string;
   value: string;
 }) {
   const content = (
-    <div className="grid h-full min-h-28 content-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-950">
+    <div className="grid h-full min-h-36 content-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-950">
       <div className="flex items-center justify-between gap-3">
         <span className="grid h-8 w-8 place-items-center rounded-md border border-amber-300/20 bg-amber-300/10 text-amber-200">
           {icon}
@@ -342,19 +353,28 @@ function GuideCard({
         <h3 className="truncate text-sm font-semibold text-slate-50">{title}</h3>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{detail}</p>
       </div>
+      {items && items.length > 0 ? (
+        <div className="grid gap-1">
+          {items.map((item) => (
+            <p className="truncate text-xs font-semibold text-slate-300" key={`${title}-${item}`}>
+              {item}
+            </p>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 
   return href ? (
-    <a href={href} rel="noreferrer" target="_blank" className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
+    <a href={href} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
       {content}
     </a>
   ) : content;
 }
 
-function GuideSection({ children, icon, title }: { children: ReactNode; icon: ReactNode; title: string }) {
+function GuideSection({ children, icon, id, title }: { children: ReactNode; icon: ReactNode; id: string; title: string }) {
   return (
-    <section className="grid gap-3">
+    <section className="scroll-mt-24 grid gap-3" id={id}>
       <div className="flex items-center gap-2">
         <span className="text-emerald-300">{icon}</span>
         <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
