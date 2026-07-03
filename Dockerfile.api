@@ -17,6 +17,7 @@ ENV CACHE_BACKEND=azure
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/api ./apps/api
+COPY apps/web/src/cinema ./apps/web/src/cinema
 COPY packages/cache-store ./packages/cache-store
 COPY packages/shared ./packages/shared
 

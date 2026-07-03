@@ -4,7 +4,7 @@ import { AzureCacheStore } from "./azure.js";
 import { LocalCacheStore } from "./local.js";
 import { LocalMovieCatalogStore } from "./movie-catalog.js";
 import { AzureSearchIndexStore, LocalSearchIndexStore } from "./search-index.js";
-import { LocalTspdtRankingStore } from "./tspdt-ranking.js";
+import { AzureTspdtBrowseStore, LocalTspdtBrowseStore, LocalTspdtRankingStore } from "./tspdt-ranking.js";
 import type { CacheBackend, CacheStore } from "./types.js";
 
 export type { CacheBackend, CacheStore } from "./types.js";
@@ -33,11 +33,17 @@ export {
 } from "./movie-catalog.js";
 export type {
   TspdtRankingBuildOptions,
+  TspdtBrowseEntry,
+  TspdtBrowseState,
+  TspdtBrowseStore,
   TspdtRankingStore,
   TspdtSourceEntry
 } from "./tspdt-ranking.js";
 export {
+  AzureTspdtBrowseStore,
+  buildTspdtBrowseState,
   buildTspdtRanking,
+  LocalTspdtBrowseStore,
   LocalTspdtRankingStore
 } from "./tspdt-ranking.js";
 
@@ -47,6 +53,7 @@ const defaultStatePath = path.join(repoRoot, ".local-data", "cache-state.json");
 const defaultSearchIndexPath = path.join(repoRoot, ".local-data", "search-index.json");
 const defaultMovieCatalogPath = path.join(repoRoot, ".local-data", "movie-catalog.json");
 const defaultTspdtRankingPath = path.join(repoRoot, ".local-data", "tspdt-ranking-2026.json");
+const defaultTspdtBrowsePath = path.join(repoRoot, ".local-data", "tspdt-browse-2026.json");
 
 export function createCacheStore(backend = process.env.CACHE_BACKEND as CacheBackend): CacheStore {
   if (backend === "azure") {
@@ -80,4 +87,16 @@ export function createTspdtRankingStore(): LocalTspdtRankingStore {
   return new LocalTspdtRankingStore(process.env.WWPDW_LOCAL_DATA_DIR
     ? path.resolve(process.env.WWPDW_LOCAL_DATA_DIR, "tspdt-ranking-2026.json")
     : defaultTspdtRankingPath);
+}
+
+export function createTspdtBrowseStore(
+  backend = process.env.CACHE_BACKEND as CacheBackend
+): LocalTspdtBrowseStore | AzureTspdtBrowseStore {
+  if (backend === "azure") {
+    return new AzureTspdtBrowseStore();
+  }
+
+  return new LocalTspdtBrowseStore(process.env.WWPDW_LOCAL_DATA_DIR
+    ? path.resolve(process.env.WWPDW_LOCAL_DATA_DIR, "tspdt-browse-2026.json")
+    : defaultTspdtBrowsePath);
 }

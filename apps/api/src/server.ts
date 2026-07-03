@@ -52,7 +52,7 @@ import {
   type UpdateMemberProfileRequest,
   validateMemberPasscode
 } from "@wwpdw/shared";
-import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
+import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
@@ -62,6 +62,7 @@ import { createSearchSource } from "./search-source.js";
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
+const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
 const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
@@ -1317,6 +1318,21 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const view = requestBrowseView(url);
   const pagedLimitMaximum = channel === "movie" && view === "tspdtRank" ? 2000 : 100;
   const limit = requestLimit(url, 50, mode === "random" ? 200 : pagedLimitMaximum);
+
+  if (channel === "movie" && view === "tspdtRank" && mode === "paged") {
+    const served = await serveStaticTspdtBrowse(response, context, {
+      startedAt,
+      offset,
+      limit,
+      channel,
+      view,
+      mode
+    });
+    if (served) {
+      return;
+    }
+  }
+
   const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
@@ -1374,6 +1390,65 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     nextOffset: hasMore ? offset + results.length : undefined,
     mode
   });
+}
+
+async function serveStaticTspdtBrowse(
+  response: http.ServerResponse,
+  context: RequestContext,
+  options: {
+    startedAt: number;
+    offset: number;
+    limit: number;
+    channel: BrowseChannel;
+    view: BrowseViewId;
+    mode: "paged" | "random";
+  }
+) {
+  try {
+    const state = await tspdtBrowseStore.getState();
+    if (!state?.entries.length) {
+      return false;
+    }
+
+    const pageEntries = state.entries.slice(options.offset, options.offset + options.limit);
+    const pageResults = pageEntries.map((entry) => entry.result);
+    const hasMore = state.entries.length > options.offset + options.limit;
+    rememberResults(pageResults);
+    const results = await enrichResultsWithCache(pageResults);
+
+    logInfo("api.browse", {
+      requestId: context.requestId,
+      resultCount: results.length,
+      variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
+      browseSource: "tspdt_static",
+      channel: options.channel,
+      view: options.view,
+      mode: options.mode,
+      limit: options.limit,
+      offset: options.offset,
+      hasMore,
+      tspdtGeneratedAt: state.generatedAt,
+      tspdtEntryCount: state.entries.length,
+      durationMs: durationMs(options.startedAt)
+    });
+
+    sendJson(response, 200, {
+      results,
+      offset: options.offset,
+      limit: options.limit,
+      hasMore,
+      nextOffset: hasMore ? options.offset + results.length : undefined,
+      mode: options.mode
+    });
+    return true;
+  } catch (error) {
+    logWarn("api.browse.tspdt_static_failed", {
+      requestId: context.requestId,
+      store: tspdtBrowseStore.description,
+      ...errorLogFields(error)
+    });
+    return false;
+  }
 }
 
 function sampleSearchResults(results: SearchResult[], limit: number) {

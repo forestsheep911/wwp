@@ -7,12 +7,18 @@ import {
   logWarn
 } from "@wwpdw/shared";
 import {
+  buildMovieCatalogFromResults,
+  buildTspdtBrowseState,
+  buildTspdtRanking,
   createCacheStore,
   createSearchIndexStore,
+  createTspdtBrowseStore,
   type SearchIndexRun,
   type SearchIndexSyncMode
 } from "@wwpdw/cache-store";
 import { NotionSearchSource } from "./notion-source.js";
+import { tspdtEdition, tspdtSourceUrl, tspdtTop1000 } from "../../web/src/cinema/tspdt";
+import { tspdtImdbIds } from "../../web/src/cinema/tspdt-id-map";
 
 interface SyncOptions {
   mode: SearchIndexSyncMode;
@@ -124,6 +130,7 @@ async function updateRunSafely(run: SearchIndexRun) {
 
 const searchIndex = createSearchIndexStore();
 const cacheStore = createCacheStore();
+const tspdtBrowseStore = createTspdtBrowseStore();
 const notionSource = new NotionSearchSource();
 
 async function runSync() {
@@ -201,6 +208,7 @@ async function runSync() {
     }
 
     const completed = await searchIndex.completeRun(run, "succeeded");
+    await refreshTspdtBrowseIndexSafely(completed.id);
     logInfo("meta.sync.complete", {
       runId: completed.id,
       mode: completed.mode,
@@ -229,6 +237,54 @@ async function runSync() {
     });
     throw error;
   }
+}
+
+async function refreshTspdtBrowseIndexSafely(runId: string) {
+  if (!booleanOption("TSPDT_BROWSE_SYNC_ENABLED", true)) {
+    return;
+  }
+
+  const startedAt = Date.now();
+  const limit = Math.max(1, Math.floor(numberOption("TSPDT_BROWSE_SYNC_LIMIT", 100_000)));
+  try {
+    const results = await searchIndex.search("", limit);
+    const { state: catalog, summary: catalogSummary } = buildMovieCatalogFromResults(results, {
+      sourceKind: "search-index",
+      sourcePath: searchIndex.description
+    });
+    const ranking = buildTspdtRanking(mergeTspdtImdbIds(), catalog, {
+      edition: tspdtEdition,
+      sourceUrl: tspdtSourceUrl
+    });
+    const browseState = buildTspdtBrowseState(ranking, catalog, results);
+
+    await tspdtBrowseStore.replaceState(browseState);
+    logInfo("meta.sync.tspdt_browse.complete", {
+      runId,
+      store: tspdtBrowseStore.description,
+      searchIndex: searchIndex.description,
+      resultCount: results.length,
+      catalogWorkCount: Object.keys(catalog.works).length,
+      catalogIssueCount: catalogSummary.issueCount,
+      browseEntryCount: browseState.entries.length,
+      ...ranking.summary,
+      durationMs: durationMs(startedAt)
+    });
+  } catch (error) {
+    logWarn("meta.sync.tspdt_browse.failed", {
+      runId,
+      store: tspdtBrowseStore.description,
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
+  }
+}
+
+function mergeTspdtImdbIds() {
+  return tspdtTop1000.map((entry) => {
+    const imdbId = entry.imdbId ?? tspdtImdbIds[entry.rank];
+    return imdbId ? { ...entry, imdbId } : entry;
+  });
 }
 
 try {
