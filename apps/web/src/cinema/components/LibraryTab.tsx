@@ -416,6 +416,8 @@ function LibraryHome({
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const autoLoadRequestRef = useRef("");
+  const onRefreshBrowseRef = useRef(onRefreshBrowse);
   const channelViews = viewsForBrowseChannel(browseChannel);
   const activeSortView = (channelViews.find((view) => view.id === activeView) ?? channelViews[0]).id;
   const browsableResults = useMemo(
@@ -451,6 +453,10 @@ function LibraryHome({
   const loadedBrowseItemCount = showingTspdtRank ? browsableResults.length : totalRankedItems;
   const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseViewItemLimit;
   const reachedBrowseViewLimit = totalVisibleItems >= browseViewItemLimit && (totalRankedItems > browseViewItemLimit || browseHasMore);
+  const browseFullViewLoading = needsFullBrowseResults &&
+    !showingTspdtRank &&
+    loadedBrowseItemCount < browseViewItemLimit &&
+    (browseLoading || browseLoadingMore || canLoadMoreFromServer);
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
@@ -483,7 +489,12 @@ function LibraryHome({
   }, [browseChannel]);
 
   useEffect(() => {
+    onRefreshBrowseRef.current = onRefreshBrowse;
+  }, [onRefreshBrowse]);
+
+  useEffect(() => {
     setVisibleItemCount(browseInitialCount);
+    autoLoadRequestRef.current = "";
   }, [activeSortView, browseChannel]);
 
   useEffect(() => {
@@ -492,14 +503,24 @@ function LibraryHome({
     }
 
     if (browseLoadMode !== "paged") {
-      onRefreshBrowse({ mode: "paged", limit: 100, view: activeSortView });
+      const requestKey = `${browseChannel}:${activeSortView}:reset`;
+      if (autoLoadRequestRef.current === requestKey) {
+        return;
+      }
+      autoLoadRequestRef.current = requestKey;
+      onRefreshBrowseRef.current({ mode: "paged", limit: 100, view: activeSortView });
       return;
     }
 
     if (canLoadMoreFromServer) {
-      onRefreshBrowse({ append: true, mode: "paged", limit: 100, view: activeSortView });
+      const requestKey = `${browseChannel}:${activeSortView}:append:${browseResults.length}:${loadedBrowseItemCount}`;
+      if (autoLoadRequestRef.current === requestKey) {
+        return;
+      }
+      autoLoadRequestRef.current = requestKey;
+      onRefreshBrowseRef.current({ append: true, mode: "paged", limit: 100, view: activeSortView });
     }
-  }, [activeSortView, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults, onRefreshBrowse]);
+  }, [activeSortView, browseChannel, browseLoadMode, browseLoading, browseLoadingMore, browseResults.length, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults]);
 
   useEffect(() => {
     if ((!hasMoreItems && !canLoadMoreFromServer) || !loadMoreRef.current) {
@@ -578,7 +599,7 @@ function LibraryHome({
               onLoadMore={showMoreItems}
             />
           </>
-        ) : browseInitialLoading ? (
+        ) : browseFullViewLoading || browseInitialLoading ? (
           <BrowseLoadingGrid />
         ) : browsingResults ? (
           <>
