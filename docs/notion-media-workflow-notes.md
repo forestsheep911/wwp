@@ -98,6 +98,14 @@ node tools\notion-upload-series-source.mjs --package
 node tools\notion-upload-series-source.mjs --apply --upload --max-upload-files 1
 ```
 
+Movie package trial uploads:
+
+```powershell
+node tools\notion-upload-movie-package.mjs --page-id <movie-page-id> --apply --upload-videos
+node tools\notion-upload-movie-package.mjs --page-id <movie-page-id> --apply --upload-meta
+node tools\notion-upload-movie-package.mjs --page-id <movie-page-id> --apply --upload-source --max-source-files 1
+```
+
 All helpers should use `.local-data` manifests for resumability and to avoid
 re-uploading already completed files. `.local-data` is ignored by Git.
 
@@ -116,6 +124,15 @@ Operational defaults that have worked:
 - Do not upload API filenames ending in `.7z.001`; create the upload with a safe
   name like `.7z.part-001.7z`, while keeping the visible Notion block name as
   `.7z.001`.
+- The API cannot create a new nested `child_page` block inside a callout or
+  toggle. If a movie page lacks pre-created placeholders, create the real child
+  pages under the main page and place `link_to_page` blocks inside the
+  callout/toggle as a fallback. This is visually close but not identical to the
+  old hand-built structure.
+- In the 2026-07-03 Basketball Diaries trial, Notion displayed an uploaded
+  `.7z.001` source part as `.7z.001.7z` even when the file block name was set to
+  the original part name. Treat this as a current API/UI naming quirk to inspect
+  before bulk source uploads.
 
 If the network is unstable, test one file or one archive part first, then
 continue only after confirming a real Notion readback.
