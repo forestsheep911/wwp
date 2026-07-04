@@ -3,6 +3,7 @@ import { Client } from "@notionhq/client";
 import type {
   MediaAvailability,
   MediaVariant,
+  MediaVariantMetadata,
   MovieCreditEntry,
   MovieBoxOffice,
   MovieMetadata,
@@ -435,6 +436,110 @@ function episodeNumberFromLabel(value: string) {
 function canonicalEpisodeLabel(value: string) {
   const number = episodeNumberFromLabel(value);
   return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
+}
+
+function pushUnique(target: string[], value: string | undefined) {
+  if (value && !target.includes(value)) {
+    target.push(value);
+  }
+}
+
+function firstMatch(value: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const text = match?.[1] ?? match?.[0];
+    if (text) {
+      return cleanText(text);
+    }
+  }
+  return undefined;
+}
+
+function extensionFromFileName(value: string) {
+  return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
+}
+
+function mediaVariantMetadataFromText(label: string, fileName: string | undefined): MediaVariantMetadata | undefined {
+  const sourceLabel = cleanText(label);
+  const cleanedFileName = cleanText(fileName ?? "");
+  const combined = `${sourceLabel} ${cleanedFileName}`.trim();
+  const normalized = combined.toLowerCase();
+  const audioLanguages: string[] = [];
+  const subtitleLanguages: string[] = [];
+  const subtitleRegions: string[] = [];
+
+  if (/普通话|普通話|国语|國語|mandarin/.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
+  if (/粤语|粵語|cantonese/.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
+  if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio/i.test(combined)) pushUnique(audioLanguages, "ja");
+  if (/英语发音|英語發音|english audio|\.english\.|english\.audio/i.test(combined)) pushUnique(audioLanguages, "en");
+  if (/评论|評論|commentary|\bcmt\b|\bdc\d+\b/i.test(combined)) pushUnique(audioLanguages, "commentary");
+
+  if (/繁简英|繁簡英|chtchseng|chschteng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/简英|簡英|chseng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/繁英|chteng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/简日|簡日|chsjp/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "ja");
+  } else {
+    if (/简|簡|\bchs\b/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hans");
+    if (/繁|cht/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hant");
+  }
+  if (/繁港|chth/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleRegions, "HK");
+  }
+  if (/繁台|chtt/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleRegions, "TW");
+  }
+  if (/日语字幕|日語字幕|\bjp\b/i.test(combined)) pushUnique(subtitleLanguages, "ja");
+  if (/英语字幕|英語字幕|\beng\b/i.test(combined)) pushUnique(subtitleLanguages, "en");
+
+  const size = Number(sourceLabel.match(/(\d+(?:\.\d+)?)\s*GB/i)?.[1]);
+  const qualityTag = combined.match(/\b((?:I?CQ|CRF)[\s._-]?\d{1,2})\b/i)?.[1]?.replace(/[\s._-]+/g, "").toUpperCase();
+  const metadata: MediaVariantMetadata = {
+    availability: "playable",
+    edition: firstMatch(combined, [
+      /Open Matte/i,
+      /The Final Cut/i,
+      /Extended Collectors? Edition/i,
+      /Extended (?:Edition|Cut)/i,
+      /Theatrical/i,
+      /IMAX/i,
+      /公映比例/u,
+      /剧场版/u,
+      /加长版/u,
+      /蓝光加长版/u
+    ]),
+    resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    videoCodec: firstMatch(combined, [/\b(?:h265|hevc|x265)\b/i, /\b(?:h264|avc|x264)\b/i, /\bav1\b/i])?.toLowerCase(),
+    container: extensionFromFileName(cleanedFileName),
+    approximateSizeGb: Number.isFinite(size) ? size : undefined,
+    qualityTag,
+    audioLanguages: audioLanguages.length > 0 ? audioLanguages : undefined,
+    subtitleLanguages: subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
+    subtitleRegions: subtitleRegions.length > 0 ? subtitleRegions : undefined,
+    commentary: audioLanguages.includes("commentary") || undefined,
+    noSubtitles: /无字幕|無字幕|no subtitles/i.test(combined) || undefined,
+    sourceLabel,
+    fileName: cleanedFileName || undefined
+  };
+
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== "";
+    })
+  ) as MediaVariantMetadata;
 }
 
 function clipText(value: string, limit: number) {
@@ -1972,14 +2077,16 @@ export class NotionSearchSource {
     label?: string,
     sourceBreadcrumb?: string[]
   ): MediaVariant {
+    const variantLabel = label || candidate.label || `Option ${index + 1}`;
     return {
       assetKey: variantAssetKey(pageId, candidate, index),
-      label: label || candidate.label || `Option ${index + 1}`,
+      label: variantLabel,
       sourceUrl: candidate.url,
       sourcePageId: pageId,
       sourceBreadcrumb,
       kind: candidate.kind,
-      summary: candidateSummary(candidate)
+      summary: candidateSummary(candidate),
+      metadata: mediaVariantMetadataFromText(variantLabel, candidate.label)
     };
   }
 

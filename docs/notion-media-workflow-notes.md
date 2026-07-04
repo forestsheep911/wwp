@@ -83,6 +83,52 @@ For TV seasons, the spec page title is often just the subtitle/audio label:
 Do not infer from the placeholder title alone. Inspect the actual uploaded or
 local file names first.
 
+## Media Spec Metadata
+
+Playable spec pages should eventually be self-describing. Older rows encode too
+much in the child-page title, for example:
+
+- Titanic mixes `Open Matte`, subtitle language, audio/commentary tracks,
+  resolution, codec, CQ/ICQ quality tags, and size across many spec pages.
+- Nausicaa, Kung Fu Panda 3, Avatar, The Dark Knight, and Spirited Away use a
+  mix of subtitle tags, dubbing language, codec, size, and sometimes regional
+  traditional subtitle hints such as Taiwan/Hong Kong.
+- Blade Runner source/original-disc details are often visible only in filenames,
+  not in the spec page title.
+- Some old spec pages have title metadata but no video block yet, so the title
+  cannot be treated as proof that a playable asset exists.
+
+Keep the current title as a compact human label, but do not make it the only
+source of truth. A playable video spec should be able to carry:
+
+- Availability: playable, source-only, needs-processing, blocked, unknown.
+- Edition/version/cut: theatrical, extended, final cut, open matte, IMAX, etc.
+- Video basics: container, resolution, codec, HDR/SDR if known, approximate
+  file size, CQ/ICQ/CRF or similar encode-quality tag.
+- Audio tracks: original language, Mandarin, Cantonese, Japanese, English,
+  commentary, and notable dubbing source such as theatrical or regional dub.
+- Subtitle tracks: simplified Chinese, Taiwan traditional, Hong Kong
+  traditional, English, Japanese, none, burned-in vs selectable if known.
+- Source lineage: generated encode, remux, Blu-ray/UHD Blu-ray, WEB-DL, ISO,
+  original-disc archive, and whether it came from a repaired/problem source.
+- Operator notes: what was verified, what is missing, and what should be
+  reprocessed later.
+
+Short-term, the website can parse conservative metadata from the spec title and
+video filename into `MediaVariant.metadata`. That is useful for search and
+future display, but it is still a fallback. For new uploads, prefer writing a
+small structured metadata block at the top of each playable spec page, before
+the video block.
+
+Long-term asset tracking now has a dedicated `Media Assets` database under the
+same Notion project root. Each playable variant, episode file, and
+source/original-disc package can have real Notion properties instead of
+page-title parsing. This should become the target for bulk cleanup, website
+display, and source-to-playable production planning.
+
+Local `.env` records both the main library IDs and the new asset database IDs so
+tools do not need to enumerate the root page first.
+
 ## Current Upload Helpers
 
 Playable movie files:
@@ -216,6 +262,8 @@ standardize, but only after inspecting examples:
   subtitle/remux repair, transcode, upload, and verification first.
 - Migrate title-prefix-only download backlog rows to `Media Availability` plus
   `Developer Memo` after auditing examples.
+- Add structured spec/source metadata for representative rows before relying on
+  the website to display variant details.
 - TV seasons that have more episode placeholders than available local files.
 - Source archive size page names under `基地 -> 片源`.
 - Whether old entries use `片源` or `资源`.

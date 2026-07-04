@@ -173,6 +173,11 @@ TV-series parsing has an extra nested pass:
   website normalizes the visible variant label to `Episode NN`. This keeps old
   manual Notion titles from leaking into the UI, but it is not a substitute for
   cleaning the Notion tree itself.
+- Playable variants now have optional `MediaVariant.metadata`, parsed
+  conservatively from the spec page title plus media filename. This is
+  variant-level data, not work-level movie metadata. Use it for future website
+  display of edition, audio language, subtitle language, resolution, codec,
+  approximate size, and CQ/ICQ-style quality tags.
 - Archive/download bundles such as `.7z`, `.zip`, subtitles, PDFs, and text
   sidecars are filtered out because they are not browser-playable assets.
 
@@ -232,6 +237,24 @@ For cleaned/new rows, prefer `Media Availability` over title prefixes. Use
 Memo` is an internal Notion note for source defects, missing subtitles,
 failed/possible remux or transcode fixes, and future processing plans; it should
 not be used as public website copy.
+
+Source/original-disc packages should eventually carry their own asset metadata
+too. Filenames such as Blu-ray/UHD Blu-ray/ISO/remux encode important facts, but
+the website and future processing queues should not depend on filename parsing
+alone.
+
+Notion IDs are now explicit in local `.env`:
+
+- Main library DB: `f47ef878-8acb-4e12-b604-011e95fb1738`
+- Main library data source: `7eced5e7-83de-492f-80f8-31eecd5679b0`
+- Media Assets DB: `9bacb469-eff7-4c92-80bd-8db16838f2e2`
+- Media Assets data source: `5d2f4cad-caca-43eb-9b0a-99bede43bd8d`
+
+If Node SDK calls to Notion fail with TLS resets while DNS resolves
+`api.notion.com` to `198.18.0.11`, use curl with
+`--resolve api.notion.com:443:208.103.161.1`. For data-source endpoints, send
+`Notion-Version: 2025-09-03`; older `2022-06-28` returns invalid request URL
+for `/v1/data_sources/...`.
 
 Cache concurrency and visibility:
 

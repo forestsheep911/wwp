@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
-import type { MovieMetadata, SearchResult } from "@wwpdw/shared";
+import type { MediaVariant, MovieMetadata, SearchResult } from "@wwpdw/shared";
 import type { CacheBackend } from "./types.js";
 
 export type SearchIndexSyncMode = "full" | "incremental" | "ondemand";
@@ -319,13 +319,38 @@ function metadataText(metadata?: MovieMetadata) {
   ].filter((value): value is string => Boolean(value));
 }
 
+function variantMetadataText(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  return [
+    metadata.availability,
+    metadata.edition,
+    metadata.resolution,
+    metadata.videoCodec,
+    metadata.container,
+    metadata.approximateSizeGb ? `${metadata.approximateSizeGb}GB` : undefined,
+    metadata.qualityTag,
+    metadata.audioLanguages?.join(" "),
+    metadata.subtitleLanguages?.join(" "),
+    metadata.subtitleRegions?.join(" "),
+    metadata.commentary ? "commentary" : undefined,
+    metadata.noSubtitles ? "no subtitles" : undefined,
+    metadata.sourceLabel,
+    metadata.fileName
+  ].filter((value): value is string => Boolean(value));
+}
+
 function buildSearchText(result: SearchResult) {
   const variantText = result.variants?.flatMap((variant) => [
     variant.assetKey,
     variant.label,
     variant.summary,
     variant.kind,
-    variant.sourceBreadcrumb?.join(" ")
+    variant.sourceBreadcrumb?.join(" "),
+    ...variantMetadataText(variant)
   ]) ?? [];
 
   return [

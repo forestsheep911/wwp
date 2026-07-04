@@ -369,7 +369,25 @@ export interface MediaVariant {
   sourceBreadcrumb?: string[];
   kind: "file" | "video" | "embed" | "url" | "text";
   summary: string;
+  metadata?: MediaVariantMetadata;
   cache?: CacheAsset;
+}
+
+export interface MediaVariantMetadata {
+  availability?: MediaAvailability;
+  edition?: string;
+  resolution?: string;
+  videoCodec?: string;
+  container?: string;
+  approximateSizeGb?: number;
+  qualityTag?: string;
+  audioLanguages?: string[];
+  subtitleLanguages?: string[];
+  subtitleRegions?: string[];
+  commentary?: boolean;
+  noSubtitles?: boolean;
+  sourceLabel?: string;
+  fileName?: string;
 }
 
 export type Mp4FastStartStatus = "faststart" | "late_moov" | "unknown" | "not_mp4";

@@ -58,6 +58,28 @@ Prefer structured fields over title prefixes for new data:
   tooling mistakes, and future processing plans. Do not rely on this field for
   public website copy.
 
+Work-level metadata is not enough for playback. Each playable spec and each
+source/original-disc package should also become self-describing.
+
+The dedicated asset database is `Media Assets`:
+
+- `NOTION_MEDIA_ASSETS_DATABASE_ID=9bacb469-eff7-4c92-80bd-8db16838f2e2`
+- `NOTION_MEDIA_ASSETS_DATA_SOURCE_ID=5d2f4cad-caca-43eb-9b0a-99bede43bd8d`
+- It has a single-property `Work` relation to the main library data source
+  `7eced5e7-83de-492f-80f8-31eecd5679b0`.
+
+Use one `Media Assets` row per playable video, episode video, source archive,
+original-disc package, subtitle package, or extra. The structured fields to
+preserve per asset are edition/version, audio tracks, subtitle tracks,
+container, resolution, codec, file size, encode-quality tag, source lineage,
+verification status, website visibility, original filename/URL, and operator
+notes.
+
+The API may parse conservative `MediaVariant.metadata` from old spec titles and
+filenames, but that is a migration aid. New cleaned data should store the same
+facts explicitly in Notion so the website does not have to infer them from
+human-written labels.
+
 ## Website Visibility Control
 
 Use `Hide from Website` as the emergency visibility switch.
