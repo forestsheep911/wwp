@@ -80,6 +80,13 @@ filenames, but that is a migration aid. New cleaned data should store the same
 facts explicitly in Notion so the website does not have to infer them from
 human-written labels.
 
+Asset titles have limited trust. A spec/source page title without a real media
+block is `untrusted_title_only`, even if it does not use `【仅供下载】` or
+`【敬请期待】`. Do not sync it as playable, do not create a verified asset from it,
+and do not let it appear on the website as a playable option. Use
+`Media Availability`, `Playback Verified`, `Hide from Website`, and
+`Developer Memo` to record the real state.
+
 ## Website Visibility Control
 
 Use `Hide from Website` as the emergency visibility switch.

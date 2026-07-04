@@ -331,7 +331,9 @@ async function auditPage(notion, page, maxSpecsPerPage) {
           issues.push({
             kind: "playable_spec_without_media",
             pageId: specPage.id,
-            label: specTitle
+            label: specTitle,
+            titleConfidence: "untrusted_title_only",
+            recommendedAction: "Do not create a playable Media Assets row. Attach a real video/file, rename/delete the placeholder, or mark the work/asset as needs_processing/source_only."
           });
           continue;
         }
@@ -344,6 +346,7 @@ async function auditPage(notion, page, maxSpecsPerPage) {
             sourcePageId: specPage.id,
             name: specTitle,
             displayLabel: specTitle,
+            titleConfidence: "verified_by_media_block",
             originalFileName: fileName,
             assetUrlPresent: Boolean(mediaUrl(mediaBlock)),
             metadata: parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" })
@@ -362,7 +365,9 @@ async function auditPage(notion, page, maxSpecsPerPage) {
           issues.push({
             kind: "source_group_without_media",
             pageId: group.id,
-            label: groupTitle
+            label: groupTitle,
+            titleConfidence: "untrusted_title_only",
+            recommendedAction: "Do not create a source Media Assets row from this title alone. Attach files or remove/rename the empty source group."
           });
           continue;
         }
@@ -377,6 +382,7 @@ async function auditPage(notion, page, maxSpecsPerPage) {
           sourcePageId: group.id,
           name: groupTitle,
           displayLabel: groupTitle,
+          titleConfidence: "verified_by_media_block",
           originalFileName: firstFile,
           fileCount: media.length,
           assetUrlPresent: media.some((item) => Boolean(mediaUrl(item))),

@@ -83,6 +83,19 @@ For TV seasons, the spec page title is often just the subtitle/audio label:
 Do not infer from the placeholder title alone. Inspect the actual uploaded or
 local file names first.
 
+Title text is never proof that media exists. A spec child page may have an old
+hand-written label like `繁简英 1080p h265 GB`, or even a nearly empty/generic
+title, while containing no playable `video` or `file` block. If that happens:
+
+- Do not create a `playable_video` asset row from the title alone.
+- Do not show it on the website as a playable variant.
+- Treat the title as `untrusted_title_only` until a real media block exists or
+  a `Media Assets` row is explicitly created and verified.
+- If the work has source files but no playable output, mark the work/asset as
+  `Media Availability = source_only` or `needs_processing` and use `Developer
+  Memo` to explain the gap.
+- If it is just a stale placeholder, rename, delete, or hide it during cleanup.
+
 ## Media Spec Metadata
 
 Playable spec pages should eventually be self-describing. Older rows encode too

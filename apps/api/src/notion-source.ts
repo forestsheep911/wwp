@@ -74,7 +74,7 @@ export interface NotionLibraryScanItem {
   lastEditedTime: string;
   result?: SearchResult;
   deleteAssetKey?: string;
-  skipped?: "hidden_from_website";
+  skipped?: "hidden_from_website" | "no_playable_media";
   error?: string;
 }
 
@@ -1242,6 +1242,10 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
   };
 }
 
+function hasPlayableMedia(result: SearchResult) {
+  return (result.variants?.length ?? 0) > 0;
+}
+
 function findResultByAssetKey(results: SearchResult[], assetKey: string) {
   for (const result of results) {
     if (result.assetKey === assetKey) {
@@ -1490,11 +1494,27 @@ export class NotionSearchSource {
         }
 
         try {
+          const result = await this.pageToSearchResultWithRetry(page, { libraryMode: true });
+          if (!hasPlayableMedia(result)) {
+            yield {
+              pageId: asString(page.id),
+              title,
+              lastEditedTime,
+              deleteAssetKey: `notion-page-${asString(page.id)}`,
+              skipped: "no_playable_media"
+            };
+            yielded += 1;
+            if (delayMs > 0) {
+              await sleep(delayMs);
+            }
+            continue;
+          }
+
           yield {
             pageId: asString(page.id),
             title,
             lastEditedTime,
-            result: await this.pageToSearchResultWithRetry(page, { libraryMode: true })
+            result
           };
         } catch (error) {
           yield {
@@ -1534,6 +1554,9 @@ export class NotionSearchSource {
     const result = await this.pageToSearchResult(page as JsonRecord, {
       libraryMode: Boolean(library)
     });
+    if (library && !hasPlayableMedia(result)) {
+      return undefined;
+    }
 
     const exact = findResultByAssetKey([result], input.assetKey);
     if (exact) {
@@ -1655,7 +1678,10 @@ export class NotionSearchSource {
       .slice(0, this.options.searchPageSize);
     const results: SearchResult[] = [];
     for (const page of pages) {
-      results.push(await this.pageToSearchResult(page, { libraryMode: true }));
+      const result = await this.pageToSearchResult(page, { libraryMode: true });
+      if (hasPlayableMedia(result)) {
+        results.push(result);
+      }
     }
 
     return results;

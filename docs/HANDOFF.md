@@ -178,6 +178,10 @@ TV-series parsing has an extra nested pass:
   variant-level data, not work-level movie metadata. Use it for future website
   display of edition, audio language, subtitle language, resolution, codec,
   approximate size, and CQ/ICQ-style quality tags.
+- A spec/source child-page title without a real playable media block is
+  `untrusted_title_only`. Metadata sync skips library rows with no playable
+  variants and deletes their existing `notion-page-<pageId>` search-index row,
+  even if the Notion title lacks `【仅供下载】` or `【敬请期待】`.
 - Archive/download bundles such as `.7z`, `.zip`, subtitles, PDFs, and text
   sidecars are filtered out because they are not browser-playable assets.
 
