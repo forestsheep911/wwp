@@ -129,6 +129,19 @@ display, and source-to-playable production planning.
 Local `.env` records both the main library IDs and the new asset database IDs so
 tools do not need to enumerate the root page first.
 
+Before writing asset rows, run the read-only audit:
+
+```powershell
+node tools\notion-media-assets-audit.mjs --report .local-data\notion-media-assets-audit.json
+```
+
+If local DNS routes `api.notion.com` to the unstable `198.18.x.x` path, use the
+known working direct resolve override:
+
+```powershell
+node tools\notion-media-assets-audit.mjs --resolve-ip 208.103.161.1
+```
+
 ## Current Upload Helpers
 
 Playable movie files:
