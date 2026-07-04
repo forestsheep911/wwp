@@ -73,12 +73,23 @@ original-disc package, subtitle package, or extra. The structured fields to
 preserve per asset are edition/version, audio tracks, subtitle tracks,
 container, resolution, codec, file size, encode-quality tag, source lineage,
 verification status, website visibility, original filename/URL, and operator
-notes.
+notes. Asset rows should also keep `Source Page ID` and `Media Block ID` when
+they are migrated from the old nested page/block structure.
 
 The API may parse conservative `MediaVariant.metadata` from old spec titles and
 filenames, but that is a migration aid. New cleaned data should store the same
 facts explicitly in Notion so the website does not have to infer them from
 human-written labels.
+
+Use the guarded writer for representative rows before any bulk migration:
+
+```bash
+npm run notion:asset-write -- --query "风之谷" --max-assets 3
+npm run notion:asset-write -- --query "风之谷" --max-assets 3 --apply
+```
+
+The writer is idempotent for the same work/source page/media block and creates
+rows only when `--apply` is present.
 
 Asset titles have limited trust. A spec/source page title without a real media
 block is `untrusted_title_only`, even if it does not use `【仅供下载】` or

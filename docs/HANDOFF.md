@@ -247,6 +247,17 @@ too. Filenames such as Blu-ray/UHD Blu-ray/ISO/remux encode important facts, but
 the website and future processing queues should not depend on filename parsing
 alone.
 
+The guarded Media Assets writer is available for small representative migrations:
+
+```powershell
+npm run notion:asset-write -- --query "风之谷" --max-assets 3
+npm run notion:asset-write -- --query "风之谷" --max-assets 3 --apply
+```
+
+It writes `Source Page ID` and `Media Block ID` for traceability, skips duplicate
+rows for the same work/source/block, and treats source/original-disc rows as
+hidden from the website by default.
+
 Notion IDs are now explicit in local `.env`:
 
 - Main library DB: `f47ef878-8acb-4e12-b604-011e95fb1738`

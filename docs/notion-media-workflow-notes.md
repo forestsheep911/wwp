@@ -148,11 +148,25 @@ Before writing asset rows, run the read-only audit:
 node tools\notion-media-assets-audit.mjs --report .local-data\notion-media-assets-audit.json
 ```
 
+For a small guarded write trial, use the Media Assets writer. It defaults to
+dry-run and only creates rows with `--apply`:
+
+```powershell
+node tools\notion-media-assets-write.mjs --query "风之谷" --max-assets 3 --report .local-data\notion-media-assets-write-preview.json
+node tools\notion-media-assets-write.mjs --query "风之谷" --max-assets 3 --apply --report .local-data\notion-media-assets-write-apply.json
+```
+
+The writer records `Source Page ID` and `Media Block ID` on each asset row so a
+future migration can trace the structured asset back to the old Notion media
+tree. It also skips an existing row when the same work/source/block has already
+been written.
+
 If local DNS routes `api.notion.com` to the unstable `198.18.x.x` path, use the
 known working direct resolve override:
 
 ```powershell
 node tools\notion-media-assets-audit.mjs --resolve-ip 208.103.161.1
+node tools\notion-media-assets-write.mjs --query "风之谷" --resolve-ip 208.103.161.1
 ```
 
 ## Current Upload Helpers
