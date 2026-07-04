@@ -56,6 +56,7 @@ export interface SearchIndexStore {
   getResult(assetKey: string): Promise<SearchResult | undefined>;
   upsertResult(result: SearchResult, indexedAt?: string): Promise<SearchIndexEntry>;
   upsertResults(results: SearchResult[], indexedAt?: string): Promise<SearchIndexEntry[]>;
+  deleteResult(assetKey: string): Promise<boolean>;
   deleteEntriesNotIn(assetKeys: Set<string>): Promise<number>;
   startRun(mode: SearchIndexSyncMode): Promise<SearchIndexRun>;
   updateRun(run: SearchIndexRun): Promise<void>;
@@ -551,6 +552,16 @@ export class LocalSearchIndexStore implements SearchIndexStore {
     });
   }
 
+  async deleteResult(assetKey: string) {
+    return this.updateState((state) => {
+      if (!state.entries[assetKey]) {
+        return false;
+      }
+      delete state.entries[assetKey];
+      return true;
+    });
+  }
+
   async deleteEntriesNotIn(assetKeys: Set<string>) {
     return this.updateState((state) => {
       let deleted = 0;
@@ -702,6 +713,20 @@ export class AzureSearchIndexStore implements SearchIndexStore {
       await this.saveEntry(entry);
     }
     return entries;
+  }
+
+  async deleteResult(assetKey: string) {
+    await this.ensureReady();
+    this.entriesCache = undefined;
+    try {
+      await this.tableClient.deleteEntity(moviePartitionKey, encodeRowKey(assetKey));
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async deleteEntriesNotIn(assetKeys: Set<string>) {

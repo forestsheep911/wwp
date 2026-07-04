@@ -53,6 +53,7 @@ export interface MovieExternalIds {
 }
 
 export type MovieWorkKind = "movie" | "series" | "season" | "episode" | "short" | "special" | "unknown";
+export type MediaAvailability = "playable" | "source_only" | "needs_processing" | "blocked" | "unknown";
 
 export type MovieMetadataSource =
   | "manual"
@@ -71,6 +72,7 @@ export interface MovieTitleEntry {
   title: string;
   kind: MovieTitleKind;
   lang?: string;
+  region?: string;
   source?: MovieMetadataSource;
 }
 
@@ -326,6 +328,8 @@ export interface MovieMetadata {
   description?: string;
   imdbId?: string;
   externalIds?: MovieExternalIds;
+  mediaAvailability?: MediaAvailability;
+  hideFromWebsite?: boolean;
   external?: ExternalMovieMetadata;
 }
 

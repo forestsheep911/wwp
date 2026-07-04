@@ -169,6 +169,10 @@ TV-series parsing has an extra nested pass:
 - That child page may contain episode child pages.
 - The parser enters each episode child page and exposes playable video/file
   blocks as variants, capped by `NOTION_VARIANT_LIMIT`.
+- If an episode child-page title contains a parseable episode number, the
+  website normalizes the visible variant label to `Episode NN`. This keeps old
+  manual Notion titles from leaking into the UI, but it is not a substitute for
+  cleaning the Notion tree itself.
 - Archive/download bundles such as `.7z`, `.zip`, subtitles, PDFs, and text
   sidecars are filtered out because they are not browser-playable assets.
 
@@ -211,6 +215,23 @@ web search
   -> movie metadata index first
   -> live Notion fallback only on miss/error
 ```
+
+Rows with `Hide from Website` checked in Notion are intentionally excluded from
+the website. Metadata sync skips those pages and deletes their existing
+`notion-page-<pageId>` search-index entry when encountered; unchecked or missing
+means normal sync.
+
+Title prefixes `【敬请期待】` and `【仅供下载】` are Notion operator markers, not work
+titles. Website display strips both. `【敬请期待】` means unfinished/waiting-view
+production; `【仅供下载】` means source/archive materials exist but playable web
+media is not ready. Do not remove the latter from Notion until playback has
+actually been produced and verified.
+
+For cleaned/new rows, prefer `Media Availability` over title prefixes. Use
+`source_only` when only original/source/download material exists. `Developer
+Memo` is an internal Notion note for source defects, missing subtitles,
+failed/possible remux or transcode fixes, and future processing plans; it should
+not be used as public website copy.
 
 Cache concurrency and visibility:
 

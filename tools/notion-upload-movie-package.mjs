@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import nodeFetch from "node-fetch";
 
 const DEFAULT_PART_MIB = 20;
-
 function parseArgs() {
   const options = {
     pageId: "",
@@ -96,6 +98,32 @@ function dotenv(name) {
   return process.env[name];
 }
 
+function installNotionDnsOverride() {
+  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+  if (!notionApiIp) return;
+  const originalLookup = dns.lookup.bind(dns);
+  dns.lookup = (hostname, options, callback) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") return options(null, notionApiIp, 4);
+      if (options?.all) return callback(null, [{ address: notionApiIp, family: 4 }]);
+      return callback(null, notionApiIp, 4);
+    }
+    return originalLookup(hostname, options, callback);
+  };
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
+
+function createNotionClient(token) {
+  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+  const options = { auth: token, timeoutMs: 600000 };
+  if (proxyUrl) {
+    options.fetch = nodeFetch;
+    options.agent = new HttpsProxyAgent(proxyUrl);
+    console.log(`proxy: ${proxyUrl}`);
+  }
+  return new Client(options);
+}
+
 function richText(content) {
   return [{ type: "text", text: { content } }];
 }
@@ -111,11 +139,38 @@ function pageTitle(page) {
   return "";
 }
 
+function publicTitle(title) {
+  return title.replace(/^(?:【敬请期待】|【仅供下载】)\s*/u, "").trim();
+}
+
+function productionTitle(title, options = {}) {
+  return title
+    .replace(/^【敬请期待】\s*/u, "")
+    .replace(options.removeDownloadOnly ? /^【仅供下载】\s*/u : /^$/, "")
+    .trim();
+}
+
 function titlePropertyName(pageOrDataSource) {
   for (const [name, property] of Object.entries(pageOrDataSource.properties ?? {})) {
     if (property.type === "title") return name;
   }
   return "Title";
+}
+
+async function cleanupProductionTitle(notion, page, apply, options = {}) {
+  const current = pageTitle(page);
+  const next = productionTitle(current, options);
+  if (!next || current === next) return current;
+  console.log(`${apply ? "update" : "would update"} movie page title: ${current} -> ${next}`);
+  if (apply) {
+    await notion.pages.update({
+      page_id: page.id,
+      properties: {
+        [titlePropertyName(page)]: { title: richText(next) }
+      }
+    });
+  }
+  return next;
 }
 
 function blockTitle(block) {
@@ -127,20 +182,12 @@ function blockTitle(block) {
   return "";
 }
 
-function linkedPageId(block) {
-  const payload = block.link_to_page;
-  if (block.type !== "link_to_page" || !payload) return "";
-  if (payload.type === "page_id") return payload.page_id;
-  return "";
-}
-
 function humanGb(bytes) {
   return `${(bytes / 1e9).toFixed(bytes >= 10e9 ? 1 : 2).replace(/\.0$/, "")}GB`;
 }
 
 function specLabelFromFilename(filename) {
   const normalized = filename.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const capacity = normalized.includes("high") ? "高" : normalized.includes("mid") ? "中" : normalized.includes("low") ? "低" : "";
   let subtitle = "";
   if (normalized.includes("chschteng") || normalized.includes("chtchseng")) subtitle = "繁简英";
   else if (normalized.includes("chscht") || normalized.includes("chtchs")) subtitle = "繁简";
@@ -148,7 +195,7 @@ function specLabelFromFilename(filename) {
   else if (normalized.includes("chseng")) subtitle = "简英";
   else if (normalized.includes("cht")) subtitle = "繁";
   else if (normalized.includes("chs")) subtitle = "简";
-  return [subtitle, capacity].filter(Boolean).join(" ");
+  return subtitle;
 }
 
 function comparableFilename(value) {
@@ -180,6 +227,20 @@ function readManifest(manifestPath) {
 function writeManifest(manifestPath, manifest) {
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+}
+
+function markBlocksAppended(manifest, manifestPath, files, apply) {
+  if (!apply) return;
+  let changed = false;
+  for (const file of files) {
+    const record = manifest.uploads[file.name];
+    if (record && record.blockAppended !== true) {
+      record.blockAppended = true;
+      record.blockAppendedAt = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) writeManifest(manifestPath, manifest);
 }
 
 async function readChunk(filePath, offset, length) {
@@ -243,9 +304,17 @@ async function createMoviePage(notion, library, options) {
   const properties = {
     [titlePropertyName(library.dataSource)]: { title: richText(options.title) }
   };
-  if (options.chineseTitle) properties["Chinese Title"] = { rich_text: richText(options.chineseTitle) };
-  if (options.englishTitle) properties["English Title"] = { rich_text: richText(options.englishTitle) };
-  if (options.originalTitle) properties["Original Title"] = { rich_text: richText(options.originalTitle) };
+  const setRichTextProperty = (name, value) => {
+    if (value && library.dataSource.properties?.[name]) {
+      properties[name] = { rich_text: richText(value) };
+    }
+  };
+  if (options.chineseTitle) {
+    setRichTextProperty("Chinese Title", options.chineseTitle);
+    setRichTextProperty("Simplified Chinese Title", options.chineseTitle);
+  }
+  setRichTextProperty("English Title", options.englishTitle);
+  setRichTextProperty("Original Title", options.originalTitle);
   if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
   if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "Movie" } };
 
@@ -284,8 +353,9 @@ async function ensureDividerAndBase(notion, pageId, apply) {
   return base?.id;
 }
 
-async function ensureChildPageBlock(notion, parentBlockId, title, apply) {
-  return await ensureChildPageBlockWithFallback(notion, parentBlockId, title, apply);
+async function findBaseToggle(notion, pageId) {
+  const children = await listChildren(notion, pageId);
+  return children.find((block) => block.type === "toggle" && /基地/.test(blockTitle(block)));
 }
 
 async function findChildPageByTitle(notion, parentPageId, title) {
@@ -293,47 +363,16 @@ async function findChildPageByTitle(notion, parentPageId, title) {
   return children.find((block) => block.type === "child_page" && blockTitle(block) === title);
 }
 
-async function ensureLinkToPage(notion, parentBlockId, pageId, apply) {
+async function findNestedChildPage(notion, parentBlockId, title) {
   const children = await listChildren(notion, parentBlockId);
-  if (children.some((block) => linkedPageId(block) === pageId)) return;
-  console.log(`${apply ? "append" : "would append"} link_to_page ${pageId} under ${parentBlockId}`);
-  if (!apply) return;
-  await notion.blocks.children.append({
-    block_id: parentBlockId,
-    children: [{ type: "link_to_page", link_to_page: { type: "page_id", page_id: pageId } }]
-  });
+  return children.find((block) => block.type === "child_page" && blockTitle(block) === title);
 }
 
-async function ensureChildPageBlockWithFallback(notion, parentBlockId, title, apply, fallbackParentPageId) {
-  const children = await listChildren(notion, parentBlockId);
-  const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
-  if (existing) return existing.id;
-  if (fallbackParentPageId) {
-    const linked = children.find((block) => block.type === "link_to_page" && linkedPageId(block));
-    if (linked) {
-      const linkedPage = await notion.pages.retrieve({ page_id: linkedPageId(linked) });
-      if (pageTitle(linkedPage) === title) return linkedPage.id;
-    }
-  }
-  console.log(`${apply ? "create" : "would create"} child page "${title}" under ${parentBlockId}`);
-  if (!apply) return undefined;
-  try {
-    const response = await notion.blocks.children.append({
-      block_id: parentBlockId,
-      children: [{ type: "child_page", child_page: { title } }]
-    });
-    return response.results[0]?.id;
-  } catch (error) {
-    if (!fallbackParentPageId || error.code !== "validation_error") throw error;
-    const existingRootPage = await findChildPageByTitle(notion, fallbackParentPageId, title);
-    const pageId = existingRootPage?.id ?? (await notion.pages.create({
-      parent: { page_id: fallbackParentPageId },
-      properties: { title: { title: richText(title) } }
-    })).id;
-    console.log(`fallback page child created/used at page root: ${title} ${pageId}`);
-    await ensureLinkToPage(notion, parentBlockId, pageId, apply);
-    return pageId;
-  }
+async function ensurePageChildOrNested(notion, parentBlockId, rootPageId, title, apply) {
+  if (!parentBlockId) return await ensurePageChild(notion, rootPageId, title, apply);
+  const nested = await findNestedChildPage(notion, parentBlockId, title);
+  if (nested) return nested.id;
+  return await ensurePageChild(notion, rootPageId, title, apply);
 }
 
 async function ensurePageChild(notion, parentPageId, title, apply) {
@@ -352,45 +391,13 @@ async function ensurePageChild(notion, parentPageId, title, apply) {
 async function ensureVideoTarget(notion, pageId, title, apply) {
   const mainChildren = await listChildren(notion, pageId);
   for (const callout of mainChildren.filter((block) => block.type === "callout")) {
-    const children = await listChildren(notion, callout.id);
-    const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
+    const existing = await findNestedChildPage(notion, callout.id, title);
     if (existing) return existing.id;
-    for (const link of children.filter((block) => block.type === "link_to_page" && linkedPageId(block))) {
-      const linkedPage = await notion.pages.retrieve({ page_id: linkedPageId(link) });
-      if (pageTitle(linkedPage) === title) return linkedPage.id;
-    }
   }
   const existingRootPage = await findChildPageByTitle(notion, pageId, title);
   if (existingRootPage) return existingRootPage.id;
 
-  let emptyCallout;
-  for (const callout of mainChildren.filter((block) => block.type === "callout")) {
-    if ((await listChildren(notion, callout.id)).length === 0) {
-      emptyCallout = callout;
-      break;
-    }
-  }
-  if (emptyCallout) {
-    return await ensureChildPageBlockWithFallback(notion, emptyCallout.id, title, apply, pageId);
-  }
-
-  console.log(`${apply ? "create" : "would create"} callout spec page: ${title}`);
-  if (!apply) return undefined;
-  const calloutResponse = await notion.blocks.children.append({
-    block_id: pageId,
-    children: [
-      {
-        type: "callout",
-        callout: {
-          rich_text: richText("😃"),
-          icon: { type: "emoji", emoji: "😃" },
-          children: []
-        }
-      }
-    ]
-  });
-  const callout = calloutResponse.results[0];
-  return await ensureChildPageBlockWithFallback(notion, callout.id, title, apply, pageId);
+  return await ensurePageChild(notion, pageId, title, apply);
 }
 
 async function uploadFile(notion, file, options, manifest, manifestPath) {
@@ -463,11 +470,12 @@ async function uploadFile(notion, file, options, manifest, manifestPath) {
   return record.fileUploadId;
 }
 
-async function appendVideoBlock(notion, targetPageId, file, fileUploadId, apply) {
+async function appendVideoBlock(notion, targetPageId, file, fileUploadId, apply, manifest, manifestPath) {
   const existing = await listChildren(notion, targetPageId);
   const comparable = comparableFilename(file.name);
   if (existing.some((block) => block.type === "video" && comparableFilename(blockTitle(block)).includes(comparable))) {
     console.log(`video block already exists: ${file.name}`);
+    markBlocksAppended(manifest, manifestPath, [file], apply);
     return;
   }
   console.log(`${apply ? "append" : "would append"} video: ${file.name}`);
@@ -476,14 +484,16 @@ async function appendVideoBlock(notion, targetPageId, file, fileUploadId, apply)
     block_id: targetPageId,
     children: [{ type: "video", video: { type: "file_upload", file_upload: { id: fileUploadId }, caption: [] } }]
   });
+  markBlocksAppended(manifest, manifestPath, [file], apply);
 }
 
-async function appendFileBlocks(notion, targetPageId, files, uploadedIds, apply) {
+async function appendFileBlocks(notion, targetPageId, files, uploadedIds, apply, manifest, manifestPath) {
   const existing = await listChildren(notion, targetPageId);
   const existingNames = new Set(existing.filter((block) => block.type === "file").map(blockTitle));
   const missing = files.filter((file) => !existingNames.has(file.name));
   if (missing.length === 0) {
     console.log("all file blocks already exist");
+    markBlocksAppended(manifest, manifestPath, files, apply);
     return;
   }
   console.log(`${apply ? "append" : "would append"} ${missing.length} file block(s)`);
@@ -500,6 +510,7 @@ async function appendFileBlocks(notion, targetPageId, files, uploadedIds, apply)
       }
     }))
   });
+  markBlocksAppended(manifest, manifestPath, files, apply);
 }
 
 function collectArchiveParts(options) {
@@ -520,16 +531,20 @@ function fileFromPath(filePath) {
 
 async function main() {
   const options = parseArgs();
+  installNotionDnsOverride();
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
-  const notion = new Client({ auth: token, timeoutMs: 600000 });
+  const notion = createNotionClient(token);
   const library = await findLibrary(notion);
   const page = options.pageId
     ? await notion.pages.retrieve({ page_id: options.pageId })
     : await createMoviePage(notion, library, options);
   const pageId = page.id;
-  const title = pageTitle(page) || options.title;
+  const hasPlayableUpload = options.uploadVideos && options.videos.length > 0;
+  const title = publicTitle(
+    await cleanupProductionTitle(notion, page, options.apply, { removeDownloadOnly: hasPlayableUpload }) || options.title
+  );
   const localTitle = options.chineseTitle || title.replace(/\s+[A-Za-z].*$/, "").replace(/\s*\(\d{4}\)\s*$/, "").trim();
 
   console.log(`page: ${title} ${pageId}`);
@@ -538,7 +553,7 @@ async function main() {
     for (const videoPath of options.videos) {
       const file = fileFromPath(videoPath);
       const specTitle = `${localTitle} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`;
-      console.log(`would create callout spec page: ${specTitle}`);
+      console.log(`would create movie child page: ${specTitle}`);
     }
     if (options.metaFile) console.log(`would create 基地 -> 资料 -> ${options.metaTitle}`);
     if (options.sourceArchiveName) console.log("would create 基地 -> 片源 -> source size page");
@@ -559,30 +574,32 @@ async function main() {
     if (options.uploadVideos) {
       if (!targetPageId) throw new Error("Video target page unavailable.");
       const uploadId = await uploadFile(notion, file, options, videoManifest, videoManifestPath);
-      await appendVideoBlock(notion, targetPageId, file, uploadId, options.apply);
+      await appendVideoBlock(notion, targetPageId, file, uploadId, options.apply, videoManifest, videoManifestPath);
     }
   }
 
-  const baseId = await ensureDividerAndBase(notion, pageId, options.apply);
-  console.log(`base toggle: ${baseId ?? "(dry-run)"}`);
+  const archiveParts = collectArchiveParts(options);
+  const needsBase = options.metaFile || archiveParts.length > 0 || options.sourceArchiveName;
+  const base = needsBase ? await findBaseToggle(notion, pageId) : undefined;
+  const baseId = base?.id;
+  console.log(needsBase ? `base toggle: ${baseId ?? "not found; root child pages will be used"}` : "base toggle: skipped");
 
   if (options.metaFile) {
-    const dataPageId = await ensureChildPageBlockWithFallback(notion, baseId, "资料", options.apply, pageId);
+    const dataPageId = await ensurePageChildOrNested(notion, baseId, pageId, "资料", options.apply);
     const metaPageId = await ensurePageChild(notion, dataPageId, options.metaTitle, options.apply);
     console.log(`meta target: ${options.metaTitle} ${metaPageId ?? "(dry-run)"}`);
     if (options.uploadMeta) {
       if (!metaPageId) throw new Error("Meta target page unavailable.");
       const file = fileFromPath(options.metaFile);
       const uploadId = await uploadFile(notion, file, options, fileManifest, fileManifestPath);
-      await appendFileBlocks(notion, metaPageId, [file], new Map([[file.name, uploadId]]), options.apply);
+      await appendFileBlocks(notion, metaPageId, [file], new Map([[file.name, uploadId]]), options.apply, fileManifest, fileManifestPath);
     }
   }
 
-  const archiveParts = collectArchiveParts(options);
   if (archiveParts.length > 0 || options.sourceArchiveName) {
     const archiveBytes = archiveParts.reduce((sum, file) => sum + file.size, 0);
     const sourceTitle = options.sourceSizeTitle || humanGb(archiveBytes);
-    const sourcePageId = await ensureChildPageBlockWithFallback(notion, baseId, "片源", options.apply, pageId);
+    const sourcePageId = await ensurePageChildOrNested(notion, baseId, pageId, "片源", options.apply);
     const sizePageId = await ensurePageChild(notion, sourcePageId, sourceTitle, options.apply);
     console.log(`source target: ${sourceTitle} ${sizePageId ?? "(dry-run)"}`);
     console.log(`archive parts: ${archiveParts.length}, ${archiveBytes} bytes (${humanGb(archiveBytes)})`);
@@ -598,7 +615,7 @@ async function main() {
         const uploadId = await uploadFile(notion, part, options, fileManifest, fileManifestPath);
         uploadedIds.set(part.name, uploadId);
       }
-      await appendFileBlocks(notion, sizePageId, uploadParts, uploadedIds, options.apply);
+      await appendFileBlocks(notion, sizePageId, uploadParts, uploadedIds, options.apply, fileManifest, fileManifestPath);
     }
   }
 

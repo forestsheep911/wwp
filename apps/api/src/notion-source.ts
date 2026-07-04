@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Client } from "@notionhq/client";
 import type {
+  MediaAvailability,
   MediaVariant,
   MovieCreditEntry,
   MovieBoxOffice,
@@ -71,6 +72,8 @@ export interface NotionLibraryScanItem {
   title?: string;
   lastEditedTime: string;
   result?: SearchResult;
+  deleteAssetKey?: string;
+  skipped?: "hidden_from_website";
   error?: string;
 }
 
@@ -104,8 +107,15 @@ const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
 const chineseTitlePropertyPattern = /^(?:chinese\s*title|\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u4e2d\u6587\u7247\u540d|\u4e2d\u6587\u540d)$/i;
+const simplifiedChineseTitlePropertyPattern = /^(?:simplified\s*chinese\s*title|chinese\s*title\s*\(simplified\)|zh[-_\s]*cn\s*title|\u7b80\u4f53\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u7b80\u4e2d(?:\s*(?:title|\u540d|\u7247\u540d))?)$/i;
+const traditionalChineseTaiwanTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:taiwan|tw)\)|taiwan(?:ese)?\s*chinese\s*title|zh[-_\s]*tw\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u53f0\u6e7e|\u53f0\u7063)|\u53f0(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u53f0\u6e7e(?:\u8bd1\u540d|\u7247\u540d)|\u53f0\u7063(?:\u8b6f\u540d|\u7247\u540d))$/i;
+const traditionalChineseHongKongTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:hong\s*kong|hk)\)|hong\s*kong\s*chinese\s*title|zh[-_\s]*hk\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u9999\u6e2f|\u6e2f)|\u6e2f(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u9999\u6e2f(?:\u8bd1\u540d|\u8b6f\u540d|\u7247\u540d))$/i;
 const originalTitlePropertyPattern = /^(?:original\s*title|\u539f\u540d|\u539f\u7247\u540d|\u539f\u59cb\u7247\u540d)$/i;
 const englishTitlePropertyPattern = /^(?:english\s*title|\u82f1\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u82f1\u6587\u7247\u540d|\u82f1\u6587\u540d)$/i;
+const hideFromWebsitePropertyPattern =
+  /^(?:hide\s*from\s*website|do\s*not\s*sync\s*to\s*website|exclude\s*from\s*website|website\s*hidden|\u4e0d\u540c\u6b65\u5230\u7f51\u7ad9|\u4e0d\u540c\u6b65\u5230\u7db2\u7ad9|\u7f51\u7ad9\u4e0b\u7ebf|\u7db2\u7ad9\u4e0b\u7dda|\u4e0b\u7ebf|\u4e0b\u7dda)$/i;
+const mediaAvailabilityPropertyPattern =
+  /^(?:media\s*availability|playback\s*status|availability|\u5a92\u4f53\u53ef\u7528\u6027|\u64ad\u653e\u72b6\u6001|\u64ad\u653e\u72c0\u614b)$/i;
 const boxOfficeDisplayPropertyPattern = /^(?:box\s*office|box\s*office\s*display|\u7968\u623f|\u7968\u623f\u663e\u793a)$/i;
 const boxOfficeAmountPropertyPattern = /box\s*office\s*amount|\u7968\u623f.*(?:amount|\u91d1\u989d|\u6570\u503c)/i;
 const boxOfficeCurrencyPropertyPattern = /box\s*office\s*currency|\u7968\u623f.*(?:currency|\u8d27\u5e01|\u5e01\u79cd)/i;
@@ -352,6 +362,81 @@ function cleanText(value: string) {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function publicTitleFromNotionTitle(title: string) {
+  return cleanText(title.replace(/^(?:【敬请期待】|【仅供下载】)\s*/u, ""));
+}
+
+function chineseEpisodeNumber(value: string) {
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  let total = 0;
+  let current = 0;
+  for (const char of value) {
+    if (char === "百") {
+      total += (current || 1) * 100;
+      current = 0;
+      continue;
+    }
+    if (char === "十") {
+      total += (current || 1) * 10;
+      current = 0;
+      continue;
+    }
+    const digit = digits[char];
+    if (digit === undefined) {
+      return undefined;
+    }
+    current = digit;
+  }
+
+  const number = total + current;
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function episodeNumberFromLabel(value: string) {
+  const cleaned = cleanText(value);
+  const patterns = [
+    /^(\d{1,3})$/,
+    /\bS\d{1,2}E(\d{1,3})\b/i,
+    /\b\d{1,2}x(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\b/i,
+    /\bE(?:P)?[\s._-]*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[集话話]/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    const number = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isInteger(number) && number > 0) {
+      return number;
+    }
+  }
+
+  const chineseNumber = chineseEpisodeNumber(cleaned.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
+  if (chineseNumber) {
+    return chineseNumber;
+  }
+
+  return undefined;
+}
+
+function canonicalEpisodeLabel(value: string) {
+  const number = episodeNumberFromLabel(value);
+  return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
+}
+
 function clipText(value: string, limit: number) {
   const cleaned = cleanText(value);
   if (cleaned.length <= limit) {
@@ -403,6 +488,48 @@ function numberFromProperty(value: unknown) {
 
   const formula = asRecord(property.formula);
   return typeof formula?.number === "number" ? formula.number : undefined;
+}
+
+function checkboxFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const property = asRecord(rawProperty);
+    if (property?.type === "checkbox" && typeof property.checkbox === "boolean") {
+      return property.checkbox;
+    }
+  }
+
+  return undefined;
+}
+
+function pageHiddenFromWebsite(page: JsonRecord) {
+  return checkboxFromNamedProperty(asRecord(page.properties) ?? {}, hideFromWebsitePropertyPattern) === true;
+}
+
+function normalizeMediaAvailability(value: string | undefined): MediaAvailability | undefined {
+  const normalized = cleanText(value ?? "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "playable" || normalized === "可播放") {
+    return "playable";
+  }
+  if (normalized === "source_only" || normalized === "download_only" || normalized === "raw_only" || normalized === "仅供下载" || normalized === "只有原盘") {
+    return "source_only";
+  }
+  if (normalized === "needs_processing" || normalized === "needs_transcode" || normalized === "待加工" || normalized === "待处理") {
+    return "needs_processing";
+  }
+  if (normalized === "blocked" || normalized === "unusable" || normalized === "暂缓" || normalized === "不可用") {
+    return "blocked";
+  }
+  if (normalized === "unknown" || normalized === "未知") {
+    return "unknown";
+  }
+  return undefined;
 }
 
 function textFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: number) {
@@ -519,7 +646,7 @@ function boxOfficeFromProperties(properties: JsonRecord, updatedAt: string): Mov
 }
 
 function titleKey(entry: MovieTitleEntry) {
-  return `${entry.kind}:${entry.lang ?? ""}:${cleanText(entry.title).toLowerCase()}`;
+  return `${entry.kind}:${entry.lang ?? ""}:${entry.region ?? ""}:${cleanText(entry.title).toLowerCase()}`;
 }
 
 function uniqueTitleEntries(entries: MovieTitleEntry[]) {
@@ -546,11 +673,17 @@ function uniqueTitleEntries(entries: MovieTitleEntry[]) {
 
 function movieTitleEntriesFromProperties(title: string, properties: JsonRecord) {
   const chineseTitle = textFromNamedProperty(properties, chineseTitlePropertyPattern, 180);
+  const simplifiedChineseTitle = textFromNamedProperty(properties, simplifiedChineseTitlePropertyPattern, 180);
+  const traditionalTaiwanTitle = textFromNamedProperty(properties, traditionalChineseTaiwanTitlePropertyPattern, 180);
+  const traditionalHongKongTitle = textFromNamedProperty(properties, traditionalChineseHongKongTitlePropertyPattern, 180);
   const originalTitle = textFromNamedProperty(properties, originalTitlePropertyPattern, 180);
   const englishTitle = textFromNamedProperty(properties, englishTitlePropertyPattern, 180);
   const entries: Array<MovieTitleEntry | undefined> = [
     { title, kind: "primary", source: "notion" },
     chineseTitle ? { title: chineseTitle, kind: "localized", lang: "zh", source: "notion" } : undefined,
+    simplifiedChineseTitle ? { title: simplifiedChineseTitle, kind: "localized", lang: "zh-Hans", source: "notion" } : undefined,
+    traditionalTaiwanTitle ? { title: traditionalTaiwanTitle, kind: "localized", lang: "zh-Hant", region: "TW", source: "notion" } : undefined,
+    traditionalHongKongTitle ? { title: traditionalHongKongTitle, kind: "localized", lang: "zh-Hant", region: "HK", source: "notion" } : undefined,
     originalTitle ? { title: originalTitle, kind: "original", source: "notion" } : undefined,
     englishTitle ? { title: englishTitle, kind: "alternate", lang: "en", source: "notion" } : undefined
   ];
@@ -737,8 +870,17 @@ function movieMetadataFromPage(
   const pageId = asString(page.id);
   const pageUrl = asString(page.url);
   const boxOffice = boxOfficeFromProperties(properties, updatedAt);
+  const hideFromWebsite = checkboxFromNamedProperty(properties, hideFromWebsitePropertyPattern) === true;
+  const mediaAvailability = normalizeMediaAvailability(
+    listFromNamedProperty(properties, mediaAvailabilityPropertyPattern, 1)?.[0]
+  );
   const titles = movieTitleEntriesFromProperties(title, properties);
-  const displayTitle = titles.find((entry) => entry.kind === "localized" && entry.lang === "zh")?.title ?? title;
+  const displayTitle =
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hans")?.title ??
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh")?.title ??
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "TW")?.title ??
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "HK")?.title ??
+    title;
   const workId = stableMovieWorkIdFromNotion(pageId, title, year);
   const externalIds = Object.fromEntries(
     Object.entries({
@@ -840,6 +982,8 @@ function movieMetadataFromPage(
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,
+    mediaAvailability,
+    hideFromWebsite,
     externalIds: hasExternalIds ? externalIds : undefined
   };
 
@@ -866,7 +1010,7 @@ function titleFromProperties(properties: JsonRecord) {
     if (record?.type === "title") {
       const title = plainTextFromRichText(record.title);
       if (title) {
-        return title;
+        return publicTitleFromNotionTitle(title);
       }
     }
   }
@@ -1225,6 +1369,21 @@ export class NotionSearchSource {
 
         const properties = asRecord(page.properties) ?? {};
         const title = titleFromProperties(properties);
+        if (pageHiddenFromWebsite(page)) {
+          yield {
+            pageId: asString(page.id),
+            title,
+            lastEditedTime,
+            deleteAssetKey: `notion-page-${asString(page.id)}`,
+            skipped: "hidden_from_website"
+          };
+          yielded += 1;
+          if (delayMs > 0) {
+            await sleep(delayMs);
+          }
+          continue;
+        }
+
         try {
           yield {
             pageId: asString(page.id),
@@ -1264,6 +1423,9 @@ export class NotionSearchSource {
 
     const library = await this.getLibraryMetadata();
     const page = await this.notion.pages.retrieve({ page_id: pageId });
+    if (pageHiddenFromWebsite(page as JsonRecord)) {
+      return undefined;
+    }
     const result = await this.pageToSearchResult(page as JsonRecord, {
       libraryMode: Boolean(library)
     });
@@ -1384,7 +1546,8 @@ export class NotionSearchSource {
       }
     }
 
-    const pages = this.rankPages([...pagesById.values()], query).slice(0, this.options.searchPageSize);
+    const pages = this.rankPages([...pagesById.values()].filter((page) => !pageHiddenFromWebsite(page)), query)
+      .slice(0, this.options.searchPageSize);
     const results: SearchResult[] = [];
     for (const page of pages) {
       results.push(await this.pageToSearchResult(page, { libraryMode: true }));
@@ -1493,6 +1656,9 @@ export class NotionSearchSource {
 
     const results: SearchResult[] = [];
     for (const page of pages) {
+      if (pageHiddenFromWebsite(page)) {
+        continue;
+      }
       results.push(await this.pageToSearchResult(page));
     }
 
@@ -1737,6 +1903,7 @@ export class NotionSearchSource {
       }
 
       for (const episodePage of nestedChildPages) {
+        const episodeLabel = canonicalEpisodeLabel(episodePage.title);
         const episodeCandidates: MediaCandidate[] = [];
         await this.collectBlockTree(
           episodePage.id,
@@ -1757,9 +1924,9 @@ export class NotionSearchSource {
             episodeCandidate,
             variants.length,
             playableCandidates.length === 1
-              ? `${childPage.title} / ${episodePage.title}`
-              : `${childPage.title} / ${episodePage.title} / ${episodeCandidate.label}`,
-            [title, childPage.title, episodePage.title]
+              ? `${childPage.title} / ${episodeLabel}`
+              : `${childPage.title} / ${episodeLabel} / ${episodeCandidate.label}`,
+            [title, childPage.title, episodeLabel]
           ));
           if (variants.length >= this.options.variantLimit) {
             return variants;

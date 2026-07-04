@@ -44,6 +44,9 @@ export const notionManagedProperties = [
   { name: "TMDB URL", type: "url", group: "identity" },
 
   { name: "Chinese Title", type: "rich_text", group: "display" },
+  { name: "Simplified Chinese Title", type: "rich_text", group: "display" },
+  { name: "Traditional Chinese Title (Taiwan)", type: "rich_text", group: "display" },
+  { name: "Traditional Chinese Title (Hong Kong)", type: "rich_text", group: "display" },
   { name: "Original Title", type: "rich_text", group: "display" },
   { name: "English Title", type: "rich_text", group: "display" },
   { name: "Release Year", type: "number", group: "display" },
@@ -86,7 +89,21 @@ export const notionManagedProperties = [
   },
   { name: "Metadata Source", type: "multi_select", group: "quality" },
   { name: "Metadata Confidence", type: "number", group: "quality" },
+  {
+    name: "Media Availability",
+    type: "select",
+    group: "quality",
+    options: [
+      { name: "playable", color: "green" },
+      { name: "source_only", color: "yellow" },
+      { name: "needs_processing", color: "orange" },
+      { name: "blocked", color: "red" },
+      { name: "unknown", color: "gray" }
+    ]
+  },
+  { name: "Hide from Website", type: "checkbox", group: "quality" },
   { name: "Needs Review", type: "checkbox", group: "quality" },
+  { name: "Developer Memo", type: "rich_text", group: "quality" },
   { name: "Metadata Updated At", type: "date", group: "quality" }
 ] satisfies NotionManagedProperty[];
 

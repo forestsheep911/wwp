@@ -45,6 +45,13 @@ The `callout -> spec child page` area is for playable transcoded outputs. The
 `基地 -> 片源` area is for source material, remuxes, raw encode inputs, or
 archives that are not the normal browser-playable family-facing version.
 
+TV seasons have one more structural layer than movies because the playable
+variants are grouped by episode. The website parser follows
+`season -> spec page -> episode page -> video/file` and can normalize visible
+episode labels to `Episode NN` when the episode number is parseable. Legacy
+manual Notion data may still contain inconsistent episode child-page titles; do
+a read-only audit before renaming those pages in bulk.
+
 ## Placeholder Pages
 
 Some pages contain pre-created child pages with duplicate or generic titles.
@@ -124,11 +131,15 @@ Operational defaults that have worked:
 - Do not upload API filenames ending in `.7z.001`; create the upload with a safe
   name like `.7z.part-001.7z`, while keeping the visible Notion block name as
   `.7z.001`.
-- The API cannot create a new nested `child_page` block inside a callout or
-  toggle. If a movie page lacks pre-created placeholders, create the real child
-  pages under the main page and place `link_to_page` blocks inside the
-  callout/toggle as a fallback. This is visually close but not identical to the
-  old hand-built structure.
+- Existing Notion media pages may contain real `child_page` blocks directly
+  inside callout/toggle sections, and older workflows used that structure.
+  Reuse nested `child_page` blocks when preserving the existing hand-built
+  standard layout. In the 2026-07-03 Basketball Diaries trial, Notion Public
+  API rejected both `blocks.children.append` with `child_page` and `pages.create`
+  with a `block_id` parent, so new API-created pages should be created directly
+  under the movie page. Do not create cosmetic callouts/toggles plus
+  `link_to_page`; a root-level child page is acceptable as long as recursive
+  parsing can find the media files.
 - In the 2026-07-03 Basketball Diaries trial, Notion displayed an uploaded
   `.7z.001` source part as `.7z.001.7z` even when the file block name was set to
   the original part name. Treat this as a current API/UI naming quirk to inspect
@@ -161,6 +172,37 @@ The one-stop workflow should remain conservative: inspect the target page first,
 dry-run the mapping, upload a single episode or file as a smoke test, then run
 the rest.
 
+If a movie or season page title starts with `【敬请期待】`, treat that prefix as a
+Notion waiting-view marker. If it starts with `【仅供下载】`, treat it as a
+download-only backlog marker: source materials or archives are present, but a
+browser-playable version has not been produced or verified.
+
+For new or cleaned data, prefer `Media Availability = source_only` instead of a
+title prefix. Use `Developer Memo` to record why the row is source-only and what
+would be needed to make it playable. Neither title prefix should appear on the
+website. Apply-mode production helpers may remove `【敬请期待】` once the item is
+actually prepared. Only remove `【仅供下载】` after a playable version has been
+produced, uploaded, and verified; source-only packaging should not change the
+page's backlog status.
+
+Common reasons for `【仅供下载】` rows:
+
+- TV seasons with too many episodes to prepare manually at the time.
+- Imperfect source material: missing subtitles, hard-to-understand audio, no
+  high-quality disc/remux source, or an encode/remux that previously failed.
+- Tooling uncertainty: some old failures may be fixable with better remux,
+  subtitle, or transcode settings, so do not treat the marker as permanent.
+
+When converting these rows later, prioritize deliberately. Many entries may
+require re-downloading source material locally, producing playable files,
+validating subtitles and playback, then uploading the finished outputs back to
+the Notion media tree.
+
+Movie video spec page titles should use the movie title, subtitle-language label,
+and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
+such as `高`, `中`, or `低`; the size already distinguishes variants, and future
+CQ/bitrate variants may not map cleanly to those tiers.
+
 ## Normalization Backlog
 
 The library has manual history from different periods. Future cleanup should
@@ -168,6 +210,12 @@ standardize, but only after inspecting examples:
 
 - Spec page title grammar for movies and TV seasons.
 - Placeholder pages with duplicated titles.
+- TV episode child-page title cleanup. Target `Episode NN` after verifying the
+  episode number against the live block tree and attached file/video names.
+- `【仅供下载】` backlog triage. Decide which rows deserve re-download,
+  subtitle/remux repair, transcode, upload, and verification first.
+- Migrate title-prefix-only download backlog rows to `Media Availability` plus
+  `Developer Memo` after auditing examples.
 - TV seasons that have more episode placeholders than available local files.
 - Source archive size page names under `基地 -> 片源`.
 - Whether old entries use `片源` or `资源`.

@@ -46,6 +46,9 @@ const auditFields = [
   "Douban Subject ID",
   "TMDB ID",
   "Chinese Title",
+  "Simplified Chinese Title",
+  "Traditional Chinese Title (Taiwan)",
+  "Traditional Chinese Title (Hong Kong)",
   "Original Title",
   "English Title",
   "Release Year",
@@ -60,7 +63,10 @@ const auditFields = [
   "Poster URL",
   "Box Office",
   "Box Office Amount",
-  "Box Office Currency"
+  "Box Office Currency",
+  "Media Availability",
+  "Hide from Website",
+  "Developer Memo"
 ];
 
 const sourceStrategy: Record<string, string[]> = {
@@ -68,7 +74,10 @@ const sourceStrategy: Record<string, string[]> = {
   "IMDb ID": ["notion page text parse", "TSPDT/IMDb search", "manual review"],
   "Douban Subject ID": ["notion page text parse", "Douban search", "manual review"],
   "TMDB ID": ["TMDb find by IMDb ID", "TMDb title/year search"],
-  "Chinese Title": ["Douban", "TMDb zh-CN"],
+  "Chinese Title": ["legacy Notion field", "Douban", "TMDb zh-CN"],
+  "Simplified Chinese Title": ["Douban", "TMDb zh-CN", "manual review"],
+  "Traditional Chinese Title (Taiwan)": ["TMDb zh-TW", "Taiwan release data", "manual review"],
+  "Traditional Chinese Title (Hong Kong)": ["Hong Kong release data", "manual review"],
   "Original Title": ["TMDb", "Douban", "manual review"],
   "English Title": ["OMDb", "TMDb"],
   "Release Year": ["Notion title parse", "OMDb", "TMDb"],
@@ -83,7 +92,10 @@ const sourceStrategy: Record<string, string[]> = {
   "Poster URL": ["OMDb", "TMDb", "Douban"],
   "Box Office": ["OMDb", "manual review"],
   "Box Office Amount": ["OMDb", "manual review"],
-  "Box Office Currency": ["OMDb", "manual review"]
+  "Box Office Currency": ["OMDb", "manual review"],
+  "Media Availability": ["manual media operations"],
+  "Hide from Website": ["manual emergency control"],
+  "Developer Memo": ["manual media operations"]
 };
 
 function asRecord(value: unknown): JsonRecord | undefined {
@@ -318,6 +330,9 @@ function summarize(pages: PageAudit[]) {
     "TMDB ID",
     "Original Title",
     "Chinese Title",
+    "Simplified Chinese Title",
+    "Traditional Chinese Title (Taiwan)",
+    "Traditional Chinese Title (Hong Kong)",
     "Release Date",
     "Countries",
     "Languages",
@@ -331,6 +346,7 @@ function summarize(pages: PageAudit[]) {
   const doubanCandidateFields = new Set([
     "Douban Subject ID",
     "Chinese Title",
+    "Simplified Chinese Title",
     "Original Title",
     "Release Date",
     "Countries",

@@ -172,14 +172,28 @@ async function runSync() {
         .at(-1);
 
       if (!item.result) {
-        run.failed += 1;
-        logWarn("meta.sync.page_failed", {
-          runId: run.id,
-          pageId: item.pageId,
-          title: item.title,
-          lastEditedTime: item.lastEditedTime,
-          errorMessage: item.error
-        });
+        if (item.deleteAssetKey) {
+          if (await searchIndex.deleteResult(item.deleteAssetKey)) {
+            run.deleted += 1;
+          }
+          logInfo("meta.sync.page_skipped", {
+            runId: run.id,
+            pageId: item.pageId,
+            title: item.title,
+            lastEditedTime: item.lastEditedTime,
+            reason: item.skipped,
+            assetKey: item.deleteAssetKey
+          });
+        } else {
+          run.failed += 1;
+          logWarn("meta.sync.page_failed", {
+            runId: run.id,
+            pageId: item.pageId,
+            title: item.title,
+            lastEditedTime: item.lastEditedTime,
+            errorMessage: item.error
+          });
+        }
       } else {
         const result = options.posterCacheEnabled
           ? await cacheStore.cacheMoviePosters(item.result)

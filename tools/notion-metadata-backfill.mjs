@@ -201,7 +201,7 @@ function bestDescription(jsonLdDescription, summary) {
 
 function cleanTitle(title) {
   return title
-    .replace(/^【敬请期待】\s*/, "")
+    .replace(/^(?:【敬请期待】|【仅供下载】)\s*/, "")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
     .trim();

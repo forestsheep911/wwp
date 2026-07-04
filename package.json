@@ -19,5 +19,9 @@
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
     "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",
     "typecheck": "npm run typecheck --workspace @wwpdw/web && npm run typecheck --workspace @wwpdw/api && npm run typecheck --workspace @wwpdw/worker"
+  },
+  "dependencies": {
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^3.3.2"
   }
 }
