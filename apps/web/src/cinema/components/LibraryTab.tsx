@@ -373,12 +373,12 @@ const browseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
-  { id: "lucky", label: copy.library.browseViews.lucky.label, detail: copy.library.browseViews.lucky.detail, icon: Shuffle },
-  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
   { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
   { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Flame },
   { id: "topRated", label: copy.library.browseViews.topRated.label, detail: copy.library.browseViews.topRated.detail, icon: Star },
-  { id: "mostWatched", label: copy.library.browseViews.mostWatched.label, detail: copy.library.browseViews.mostWatched.detail, icon: Eye }
+  { id: "mostWatched", label: copy.library.browseViews.mostWatched.label, detail: copy.library.browseViews.mostWatched.detail, icon: Eye },
+  { id: "lucky", label: copy.library.browseViews.lucky.label, detail: copy.library.browseViews.lucky.detail, icon: Shuffle }
 ];
 
 const movieBrowseViews: Array<{
@@ -1295,6 +1295,35 @@ function toTime(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function yearFromString(value?: string) {
+  return value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+}
+
+function yearsFromString(value?: string) {
+  const maxPlausibleYear = new Date().getUTCFullYear() + 1;
+  return Array.from(value?.matchAll(/\b(19\d{2}|20\d{2})\b/g) ?? [], (match) => match[1])
+    .filter((year) => Number(year) <= maxPlausibleYear)
+    .reverse();
+}
+
+function urlSearchText(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const withoutQuery = value.split("?")[0];
+  try {
+    return decodeURIComponent(withoutQuery);
+  } catch {
+    return withoutQuery;
+  }
+}
+
+function yearFromTime(time: number) {
+  const year = new Date(time).getUTCFullYear();
+  return Number.isFinite(year) ? String(year) : undefined;
+}
+
 function historyStatsByAssetKey(historyItems: PlaybackHistoryEntry[]) {
   const stats = new Map<string, { count: number; lastPlayedAt: number }>();
   for (const item of historyItems) {
@@ -1350,13 +1379,49 @@ function sourceRatingSort(source: "douban" | "imdb" | "rotten", seed: number) {
 }
 
 function releaseTime(result: SearchResult) {
-  const releaseDate = toTime(result.metadata?.releaseDate);
+  const metadata = result.metadata;
+  const work = metadata?.work;
+  const observedYear = yearFromString(result.updatedAt);
+  const trustedYearValues = [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    urlSearchText(result.sourceUrl),
+    metadata?.external?.omdb?.year,
+    metadata?.external?.omdb?.title,
+    metadata?.display?.title,
+    work?.display?.title,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
+    ...(result.variants ?? []).flatMap((variant) => [
+      variant.label,
+      variant.sourceBreadcrumb?.join(" "),
+      urlSearchText(variant.sourceUrl)
+    ])
+  ].flatMap(yearsFromString);
+  const trustedYear = trustedYearValues.find((year) => year !== observedYear) ?? trustedYearValues[0];
+  const metadataYear = [
+    metadata?.work?.release?.year,
+    metadata?.release?.year,
+    metadata?.year,
+    metadata?.external?.omdb?.year,
+    metadata?.display?.year,
+    metadata?.work?.display?.year,
+    result.title
+  ].map(yearFromString).find((candidate) => candidate && candidate !== observedYear);
+  const year = trustedYear ?? metadataYear;
+  const releaseDate = [
+    metadata?.work?.release?.date,
+    metadata?.release?.date,
+    metadata?.releaseDate,
+    metadata?.external?.omdb?.released
+  ].map(toTime).find((time) => time > 0 &&
+    (!trustedYear || yearFromTime(time) === trustedYear) &&
+    (!observedYear || yearFromTime(time) !== observedYear || Boolean(trustedYear)));
   if (releaseDate) {
     return releaseDate;
   }
 
-  const year = Number.parseInt(result.metadata?.year ?? "", 10);
-  return Number.isFinite(year) ? toTime(`${year}-01-01`) : 0;
+  return year ? toTime(`${year}-01-01`) : 0;
 }
 
 function resultKeys(result: SearchResult) {

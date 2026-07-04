@@ -28,16 +28,16 @@ export const routeTabs: AppTab[] = [
 ];
 export const browseChannels: BrowseChannel[] = ["recommended", "movie", "tv", "animation"];
 export const browseViews: BrowseViewId[] = [
-  "lucky",
-  "recent",
   "newGood",
+  "recent",
   "popular",
   "topRated",
   "mostWatched",
   "doubanRank",
   "imdbRank",
   "rottenRank",
-  "tspdtRank"
+  "tspdtRank",
+  "lucky"
 ];
 
 export function isAppTab(value: string | null): value is AppTab {
@@ -53,7 +53,7 @@ export function isBrowseView(value: string | null): value is BrowseViewId {
 }
 
 export function defaultBrowseView(channel: BrowseChannel): BrowseViewId {
-  return channel === "movie" ? "newGood" : "lucky";
+  return "newGood";
 }
 
 export function routeFromLocation(): CinemaRoute {

@@ -55,6 +55,7 @@ import type { BrowseViewId } from "./cinema/types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const accessKeyStorageKey = "wwpdw-access-key";
+const backendWakeTimeoutMs = 2500;
 
 export interface HomeBrowseResponse extends SearchResponse {
   homeCache?: {
@@ -101,6 +102,14 @@ export function errorMessage(error: unknown, fallback: string) {
 
 function apiUrl(path: string) {
   return `${apiBaseUrl}${path}`;
+}
+
+export async function wakeBackend() {
+  const response = await fetch(apiUrl("/health"), {
+    cache: "no-store",
+    signal: AbortSignal.timeout(backendWakeTimeoutMs)
+  });
+  return response.ok;
 }
 
 function createRequestId() {

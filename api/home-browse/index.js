@@ -66,7 +66,8 @@ function requestChannel(req) {
 
 function requestView(req) {
   const view = req.query.view;
-  return view === "recent" ||
+  return view === "lucky" ||
+    view === "recent" ||
     view === "newGood" ||
     view === "popular" ||
     view === "topRated" ||
@@ -76,7 +77,7 @@ function requestView(req) {
     view === "rottenRank" ||
     view === "tspdtRank"
     ? view
-    : "lucky";
+    : "newGood";
 }
 
 function safeEqual(left, right) {
@@ -201,7 +202,7 @@ async function fetchOriginBrowse(cfg, accessKey, mode, limit, offset, channel, v
   if (channel !== "recommended") {
     params.set("channel", channel);
   }
-  if (view !== "lucky") {
+  if (view) {
     params.set("view", view);
   }
   const url = `${cfg.originApiBaseUrl}/api/browse-assets?${params.toString()}`;

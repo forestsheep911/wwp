@@ -1252,23 +1252,97 @@ function browseTime(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function browseYear(value?: string) {
+  return value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+}
+
+function browseTextYearCandidates(value?: string) {
+  const maxPlausibleYear = new Date().getUTCFullYear() + 1;
+  return Array.from(value?.matchAll(/\b(19\d{2}|20\d{2})\b/g) ?? [], (match) => match[1])
+    .filter((year) => Number(year) <= maxPlausibleYear)
+    .reverse();
+}
+
+function browseUrlSearchText(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const withoutQuery = value.split("?")[0];
+  try {
+    return decodeURIComponent(withoutQuery);
+  } catch {
+    return withoutQuery;
+  }
+}
+
+function browseYearFromTime(time: number) {
+  const year = new Date(time).getUTCFullYear();
+  return Number.isFinite(year) ? String(year) : undefined;
+}
+
+function browseObservedYear(result: SearchResult) {
+  return browseYear(result.updatedAt);
+}
+
+function browseTrustedReleaseYear(result: SearchResult) {
+  const metadata = result.metadata;
+  const work = metadata?.work;
+  const values = [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    browseUrlSearchText(result.sourceUrl),
+    metadata?.external?.omdb?.year,
+    metadata?.external?.omdb?.title,
+    metadata?.display?.title,
+    metadata?.work?.display?.title,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
+    ...(result.variants ?? []).flatMap((variant) => [
+      variant.label,
+      variant.sourceBreadcrumb?.join(" "),
+      browseUrlSearchText(variant.sourceUrl)
+    ])
+  ];
+  const observedYear = browseObservedYear(result);
+  return values
+    .flatMap(browseTextYearCandidates)
+    .find((year) => year !== observedYear) ?? values.flatMap(browseTextYearCandidates)[0];
+}
+
 function browseReleaseTime(result: SearchResult) {
-  const structuredYear = result.metadata?.release?.year?.match(/\b(\d{4})\b/)?.[1];
-  const workYear = result.metadata?.work?.release?.year?.match(/\b(\d{4})\b/)?.[1];
-  const omdbYear = result.metadata?.external?.omdb?.year?.match(/\b(\d{4})\b/)?.[1];
-  const year = [
-    result.metadata?.year?.match(/\b(\d{4})\b/)?.[1],
-    result.metadata?.releaseDate?.match(/\b(\d{4})\b/)?.[1],
-    structuredYear,
-    workYear,
-    omdbYear
-  ].find(Boolean);
+  const metadata = result.metadata;
+  const trustedYear = browseTrustedReleaseYear(result);
+  const observedYear = browseObservedYear(result);
+  const metadataYear = [
+    metadata?.work?.release?.year,
+    metadata?.release?.year,
+    metadata?.year,
+    metadata?.external?.omdb?.year,
+    metadata?.display?.year,
+    metadata?.work?.display?.year,
+    result.title
+  ].map(browseYear).find((candidate) => candidate && candidate !== observedYear);
+  const year = trustedYear ?? metadataYear;
+  const exactDate = [
+    metadata?.work?.release?.date,
+    metadata?.release?.date,
+    metadata?.releaseDate,
+    metadata?.external?.omdb?.released
+  ].map(browseTime).find((time) => time > 0 &&
+    (!trustedYear || browseYearFromTime(time) === trustedYear) &&
+    (!observedYear || browseYearFromTime(time) !== observedYear || Boolean(trustedYear)));
+  if (exactDate) {
+    return exactDate;
+  }
+
   return year ? browseTime(`${year}-01-01`) : 0;
 }
 
 function requestBrowseView(url: URL): BrowseViewId {
   const value = url.searchParams.get("view");
-  return value === "recent" ||
+  return value === "lucky" ||
+    value === "recent" ||
     value === "newGood" ||
     value === "popular" ||
     value === "topRated" ||
@@ -1278,7 +1352,7 @@ function requestBrowseView(url: URL): BrowseViewId {
     value === "rottenRank" ||
     value === "tspdtRank"
     ? value
-    : "lucky";
+    : "newGood";
 }
 
 function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {

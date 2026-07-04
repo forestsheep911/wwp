@@ -16,6 +16,7 @@ import type {
   MovieRequestEntry,
   MovieRequestStatus,
   PlaybackResponse,
+  SearchResponse,
   SearchResult
 } from "@wwpdw/shared";
 import {
@@ -63,7 +64,8 @@ import {
   setMemberCredits as setMemberCreditsApi,
   updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
-  setAccessKey
+  setAccessKey,
+  wakeBackend
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
@@ -143,6 +145,9 @@ const browseFullViewLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
 const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
+type BrowseOriginOutcome =
+  | { ok: true; response: SearchResponse }
+  | { ok: false; error: unknown };
 
 function canPreviewServiceWakeDialog() {
   if (!import.meta.env.DEV) {
@@ -200,7 +205,9 @@ function hasCollectionMarks(entry: FavoriteEntry) {
 function CinemaApp() {
   const { showToast } = useToast();
   const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
-  const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
+  const [hasStoredAccessKey] = useState(() => Boolean(getAccessKey()));
+  const [unlocked, setUnlocked] = useState(hasStoredAccessKey);
+  const [authRestoring, setAuthRestoring] = useState(hasStoredAccessKey);
   const [role, setRole] = useState<AccessRole | undefined>();
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
@@ -332,7 +339,7 @@ function CinemaApp() {
   }, [favorites]);
 
   const serviceWakeActive = unlocked && (
-    !role ||
+    authRestoring ||
     (activeTab === "library" && query.trim().length === 0 && browseLoading && browseResults.length === 0) ||
     (activeTab === "watchlist" && browseLoading && browseResults.length === 0) ||
     ((activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks") && cachedAssetsLoading && cachedAssets.length === 0) ||
@@ -534,6 +541,7 @@ function CinemaApp() {
 
   function handleRequestError(errorValue: unknown, fallback: string) {
     if (isUnauthorizedError(errorValue)) {
+      setAuthRestoring(false);
       clearAccessKey();
       setUnlocked(false);
       setRole(undefined);
@@ -1037,8 +1045,41 @@ function CinemaApp() {
     offset: number,
     options: { mode: BrowseLoadMode; channel: BrowseChannel; view?: BrowseViewId }
   ) {
+    const originRequest = browseAssets(limit, offset, options);
+    const cacheEligible = offset === 0 && options.mode === "paged" && options.view !== "lucky";
+    if (cacheEligible) {
+      const cachedRequest = browseHomeAssets(limit, offset, options).catch(() => undefined);
+      const originOutcome: Promise<BrowseOriginOutcome> = originRequest
+        .then((response) => ({ ok: true, response }) as const)
+        .catch((error: unknown) => ({ ok: false, error }) as const);
+      const firstOutcome = await Promise.race([
+        originOutcome,
+        browseCacheFallbackTimeout().catch(() => undefined)
+      ]);
+
+      if (firstOutcome?.ok) {
+        return firstOutcome.response;
+      }
+
+      if (firstOutcome && !firstOutcome.ok && isUnauthorizedError(firstOutcome.error)) {
+        throw firstOutcome.error;
+      }
+
+      const cachedResponse = await cachedRequest;
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      const finalOutcome = await originOutcome;
+      if (finalOutcome.ok) {
+        return finalOutcome.response;
+      }
+
+      throw finalOutcome.error;
+    }
+
     try {
-      return await browseAssets(limit, offset, options);
+      return await originRequest;
     } catch (browseError) {
       if (isUnauthorizedError(browseError)) {
         throw browseError;
@@ -1118,6 +1159,7 @@ function CinemaApp() {
   }
 
   function applyAuth(auth: AuthCheckResponse) {
+    setAuthRestoring(false);
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
@@ -1870,6 +1912,7 @@ function CinemaApp() {
 
   function lockCinema() {
     clearAccessKey();
+    setAuthRestoring(false);
     setUnlocked(false);
     setRole(undefined);
     setMember(undefined);
@@ -1940,6 +1983,14 @@ function CinemaApp() {
       query: ""
     }, "replace");
   }
+
+  useEffect(() => {
+    if (!unlocked) {
+      return;
+    }
+
+    void wakeBackend().catch(() => undefined);
+  }, [unlocked]);
 
   useEffect(() => {
     if (!unlocked) {
@@ -2062,18 +2113,29 @@ function CinemaApp() {
   }, [trackedPollKey, job?.id, query, activeTab]);
 
   useEffect(() => {
-    if (!unlocked || role) {
+    if (!unlocked || !authRestoring) {
       return;
     }
 
+    let cancelled = false;
     checkAccess()
       .then((auth) => {
+        if (cancelled) {
+          return;
+        }
         applyAuth(auth);
       })
       .catch((authError) => {
+        if (cancelled) {
+          return;
+        }
         handleRequestError(authError, copy.access.errors.passcodeMismatch);
       });
-  }, [unlocked, role]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authRestoring, unlocked]);
 
   useEffect(() => {
     if (!unlocked || !role || historyInitializedRef.current) {
