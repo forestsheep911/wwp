@@ -409,6 +409,16 @@ works, 2629 playable rows, 713 source-only rows, and zero traceability gaps. A
 regenerated round40 manifest still has 18 ordinary items, but its dry-run found
 zero candidates. Fresh leftovers are now 94 uncovered pages: 46
 operator/status-prefixed pages and 48 series pages.
+`姜子牙` was promoted in a follow-up after the writer/audit display-label cleanup
+learned to strip dangling standalone `GB`/`GiB` units from generated asset
+labels while preserving valid sizes such as `1.76GB`. The targeted dry-run
+produced `姜子牙 繁简英 普通话`, created one playable row, reran as
+`skip_existing`, and removed the `【敬请期待】` title prefix. Latest stats after
+this pass are 3343 active Media Assets rows, 978 covered works, 2630 playable
+rows, 713 source-only rows, and zero traceability gaps. Fresh leftovers are now
+93 uncovered pages: 45 operator/status-prefixed pages and 48 series pages. The
+latest operator/status dry-run found only two pages with candidates:
+`【无字幕】秘密会议` and `【仅供下载】皮克斯短片集`; keep both for manual review.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

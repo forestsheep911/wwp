@@ -652,6 +652,21 @@ zero traceability gaps. A fresh round40 batch still has 18 ordinary items, but
 dry-run finds zero candidates; leftovers now show 94 uncovered pages: 46
 operator/status-prefixed pages and 48 series pages.
 
+The `姜子牙` leftover was then promoted after tightening the Media Assets
+writer/audit display-label cleanup. Legacy spec titles can contain a dangling
+size unit such as `GB` without a numeric value; the tools now strip standalone
+`GB`/`GiB` from generated `Name`/`Display Label` while preserving valid sizes
+such as `1.76GB`. The targeted dry-run changed the candidate label from
+`姜子牙 繁简英 普通话 GB` to `姜子牙 繁简英 普通话`, then created one playable row,
+reran as `skip_existing`, and removed the `【敬请期待】` title prefix. Stats after
+this pass showed 3343 active Media Assets rows, 978 covered works, 2630
+playable rows, 713 source-only rows, and zero traceability gaps. Fresh round41
+leftovers now show 93 uncovered pages: 45 operator/status-prefixed pages and 48
+series pages. A new operator/status dry-run found only two remaining candidate
+pages: `【无字幕】秘密会议`, which should not be published automatically without
+subtitle/operator review, and the duplicate-risk `【仅供下载】皮克斯短片集`. The other
+43 operator/status pages had zero candidates and are backlog/placeholder work.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

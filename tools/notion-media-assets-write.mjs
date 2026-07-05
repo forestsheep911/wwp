@@ -255,6 +255,10 @@ function parseAssetMetadata(label, fileName, options = {}) {
   }));
 }
 
+function normalizeAssetDisplayLabel(label) {
+  return cleanText(label).replace(/(^|\s)(?:GB|GiB)(?=$|\s)/gi, "$1").replace(/\s+/g, " ").trim();
+}
+
 function isPlayableMedia(block) {
   const name = mediaBlockName(block);
   const url = mediaUrl(block);
@@ -357,19 +361,21 @@ async function auditPage(notion, page, maxSpecsPerPage) {
         for (const mediaBlock of media) {
           const fileName = mediaBlockName(mediaBlock);
           const url = mediaUrl(mediaBlock);
+          const metadata = parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" });
+          const displayLabel = normalizeAssetDisplayLabel(specTitle);
           candidates.push({
             assetType: "playable_video",
             workPageId: page.id,
             workTitle: title,
             sourcePageId: specPage.id,
             mediaBlockId: mediaBlock.id,
-            name: specTitle,
-            displayLabel: specTitle,
+            name: displayLabel,
+            displayLabel,
             titleConfidence: "verified_by_media_block",
             originalFileName: fileName,
             assetUrl: isExternalMediaUrl(mediaBlock) ? url : undefined,
             assetUrlPresent: Boolean(url),
-            metadata: parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" })
+            metadata
           });
         }
       }
@@ -398,23 +404,25 @@ async function auditPage(notion, page, maxSpecsPerPage) {
           : /原盘|原盤|iso|disc/i.test(`${groupTitle} ${firstFile}`)
             ? "original_disc"
             : "source_archive";
+        const metadata = parseAssetMetadata(groupTitle, firstFile, {
+          assetType,
+          availability: "source_only"
+        });
+        const displayLabel = normalizeAssetDisplayLabel(groupTitle);
         candidates.push({
           assetType,
           workPageId: page.id,
           workTitle: title,
           sourcePageId: group.id,
           mediaBlockId: media[0].id,
-          name: groupTitle,
-          displayLabel: groupTitle,
+          name: displayLabel,
+          displayLabel,
           titleConfidence: "verified_by_media_block",
           originalFileName: firstFile,
           fileCount: media.length,
           assetUrl: isExternalMediaUrl(media[0]) ? firstUrl : undefined,
           assetUrlPresent: media.some((item) => Boolean(mediaUrl(item))),
-          metadata: parseAssetMetadata(groupTitle, firstFile, {
-            assetType,
-            availability: "source_only"
-          })
+          metadata
         });
       }
     }
