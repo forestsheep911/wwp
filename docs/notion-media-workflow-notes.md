@@ -218,6 +218,23 @@ counts, Work coverage, asset type/availability distribution, website hide flags,
 playback verification flags, and traceability gaps such as missing
 `Source Page ID`, `Media Block ID`, or Work relation.
 
+When a generated batch reaches `items = 0`, run the local leftovers report
+before relaxing any write guard:
+
+```powershell
+node tools\notion-media-assets-leftovers-report.mjs --manifest .local-data\media-assets-round-final.json --markdown .local-data\media-assets-leftovers.md
+npm run notion:asset-leftovers -- .local-data\media-assets-round-final.json .local-data\media-assets-leftovers.json .local-data\media-assets-leftovers.md
+```
+
+The report groups remaining skipped pages into already-covered rows, operator
+prefix rows, TV/season rows, empty placeholder pages, weak-title rows, manual
+title-pattern exclusions, and other cleanup buckets. A page may still have valid
+media-block candidates even when it also has empty placeholder spec/source
+pages. In that case, it is safe to create Media Assets rows only for the
+verified media blocks; keep the empty placeholder pages in the cleanup backlog.
+If a page has no real media candidates, do not create an asset row from the
+title alone.
+
 When migrating `基地` groups, subtitle-only groups should be represented as
 `subtitle_package`, not as `source_archive`.
 
