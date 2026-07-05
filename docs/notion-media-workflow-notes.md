@@ -304,6 +304,15 @@ across standard episode-page structures, including `铁拳教育 第一季`,
 missing `Source Page ID`, `Media Block ID`, or Work relation. The 13 remaining
 issues in that pass were empty episode placeholders under `许愿吧，精灵`.
 
+The follow-up 80-row non-prefixed TV audit sample found 485 playable media
+blocks under standard episode child pages and 14 direct spec-page media blocks.
+The series writer created all 485 standard episode rows by the end of the
+2026-07-05 pass; rerun reported all 485 as `skip_existing`. Post-write stats
+showed 2584 active Media Assets rows, 842 covered works, and zero missing
+`Source Page ID`, `Media Block ID`, or Work relation. Direct spec-page media
+remains intentionally unwritten until a normalization pass decides whether to
+move or map those blocks into episode pages.
+
 Source archive files:
 
 ```powershell
