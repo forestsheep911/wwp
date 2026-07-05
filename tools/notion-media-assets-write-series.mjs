@@ -13,6 +13,7 @@ function parseArgs() {
     maxPages: 2,
     maxAssets: 50,
     includeDirectSpec: false,
+    allowPartialEpisodes: false,
     apply: false,
     resolveIp: ""
   };
@@ -29,6 +30,7 @@ function parseArgs() {
     else if (name === "--max-assets") options.maxAssets = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
     else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
+    else if (arg === "--allow-partial-episodes") options.allowPartialEpisodes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -55,12 +57,15 @@ function printHelp() {
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --allow-partial-episodes --report .local-data/partial-series-preview.json
 
 This writer is episode-aware. It creates Media Assets rows for real media blocks
 found under episode child pages. Empty episode placeholders are reported but not
 written. Direct spec-page media is reported by default; with
 --include-direct-spec, direct media is written only when the media title or file
-name contains a parseable episode number.
+name contains a parseable episode number. With --allow-partial-episodes, pages
+with some unparseable episode titles can still write the parseable episode rows;
+the unparseable rows remain issues.
 `);
 }
 
@@ -500,11 +505,11 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
-function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec) {
+function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec, allowPartialEpisodes) {
   return (auditReport.pages ?? [])
     .filter((page) => (
       (page.summary?.hasPlayableEpisodeMedia || (includeDirectSpec && page.summary?.directPlayableMediaCount > 0)) &&
-      page.summary?.unparseableEpisodePages === 0 &&
+      (allowPartialEpisodes || page.summary?.unparseableEpisodePages === 0) &&
       page.summary?.duplicateEpisodeNumbers === 0
     ))
     .slice(skipPages)
@@ -647,7 +652,13 @@ async function main() {
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
   const auditReport = JSON.parse(fs.readFileSync(options.auditReportPath, "utf8"));
-  const pages = selectablePages(auditReport, options.skipPages, options.maxPages, options.includeDirectSpec);
+  const pages = selectablePages(
+    auditReport,
+    options.skipPages,
+    options.maxPages,
+    options.includeDirectSpec,
+    options.allowPartialEpisodes
+  );
   const notion = createNotionClient(token);
   const mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const existingLookup = makeExistingAssetLookup(notion, mediaAssetsDataSource);
@@ -684,6 +695,7 @@ async function main() {
     auditReportPath: options.auditReportPath,
     skipPages: options.skipPages,
     includeDirectSpec: options.includeDirectSpec,
+    allowPartialEpisodes: options.allowPartialEpisodes,
     mediaAssetsDataSourceId: mediaAssetsDataSource.id,
     summary: summarizeReports(reports),
     reports

@@ -310,8 +310,19 @@ numbers stay as reported issues. The first successful direct-spec pass wrote 8
 rows for `辐射 第二季`, then reran as 8 `skip_existing`.
 The read-only series audit also supports `--skip-targets` so remaining series
 pages can be scanned in chunks. A later chunk found and wrote 85 more standard
-episode rows plus 10 direct-spec rows for `太平洋战争`; `兄弟连` remains manual
-because 2 episode pages are unparseable even though 42 playable rows exist.
+episode rows plus 10 direct-spec rows for `太平洋战争`; `兄弟连` was initially left
+manual because 2 episode pages are unparseable even though 42 playable rows
+exist.
+For confirmed cases like this, the series writer now has an explicit
+`--allow-partial-episodes` flag. It keeps default behavior conservative, but can
+write parseable episode rows while leaving unparseable specials/bonus rows as
+issues. The 2026-07-06 leftover-series audit covered all 49 remaining series
+pages: 48 had no writable media, while `兄弟连` had 40 parseable main episodes
+plus 2 unparseable `Episode Specials` rows. A partial write created those 40
+main-episode rows and reran as 40 `skip_existing`; latest stats after that pass
+are 3233 active Media Assets rows, 928 covered works, 2559 playable rows, 674
+source-only rows, and zero traceability gaps. Fresh leftovers are now 202
+uncovered pages, including 48 remaining series pages.
 `【仅供下载】` rows can be migrated to source-only Media Assets rows when a real
 source/original-disc/subtitle file block exists. Keep `allowedAssetTypes` to
 `original_disc`, `source_archive`, and `subtitle_package`; do not create playable

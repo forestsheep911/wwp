@@ -373,8 +373,21 @@ created 10 rows for `太平洋战争` and reran as 10 `skip_existing`. Stats aft
 pass showed 3119 active Media Assets rows, 880 covered works, 2492 playable
 rows, 627 source-only rows, and zero missing `Source Page ID`, `Media Block ID`,
 or Work relation. A fresh leftovers report then showed 251 uncovered pages,
-including 49 remaining series pages. `兄弟连` still needs manual handling
-because its audit has 42 playable rows but 2 unparseable episode pages.
+including 49 remaining series pages.
+
+The series writer also supports `--allow-partial-episodes` for pages where some
+episode rows are parseable but special/bonus rows are not. This flag keeps the
+default conservative behavior unchanged, but lets a confirmed page write the
+parseable episode rows while leaving unparseable rows as issues. A full leftover
+series audit of those 49 pages found 48 pages without writable media: mostly 20
+episode empty shells, plus one empty spec page. The only playable page was
+`兄弟连`, with 42 playable episode media blocks and 2 unparseable `Episode
+Specials` rows. A partial write created the 40 parseable main-episode rows,
+reran as 40 `skip_existing`, and left the two specials for manual structure or
+numbering decisions. Stats after this pass showed 3233 active Media Assets rows,
+928 covered works, 2559 playable rows, 674 source-only rows, and zero
+traceability gaps. Fresh leftovers then showed 202 uncovered pages, including 48
+remaining series pages.
 
 Source archive files:
 
