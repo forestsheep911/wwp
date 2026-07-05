@@ -325,7 +325,10 @@ removed `【敬请期待】` from those 7 titles; a cleanup rerun reported
 `skip_prefix_absent`. A second waiting-prefix chunk wrote 13 rows for 4 more
 zero-issue pages and removed those prefixes too. Latest stats after that pass:
 3185 active Media Assets rows, 924 covered works, 2514 playable rows, 671
-source-only rows, and zero traceability gaps.
+source-only rows, and zero traceability gaps. Two later low-yield waiting chunks
+promoted `无间道3：终极无间` and `囚徒`, bringing the latest stats to 3190 active
+Media Assets rows, 926 covered works, 2517 playable rows, 673 source-only rows,
+and zero traceability gaps.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

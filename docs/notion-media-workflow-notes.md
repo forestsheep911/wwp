@@ -524,6 +524,14 @@ this pass showed 3185 active Media Assets rows, 924 covered works, 2514 playable
 rows, 671 source-only rows, and zero traceability gaps. Fresh leftovers then
 showed 206 uncovered pages, including 135 operator/status-prefixed pages.
 
+Two subsequent waiting-prefix chunks were lower-yield. Only `无间道3：终极无间`
+and `囚徒` qualified as zero-issue pages. The writer created 2 rows for
+`无间道3` and 3 rows for `囚徒`; both reran as `skip_existing`, and title cleanup
+removed `【敬请期待】` from both titles with `skip_prefix_absent` on rerun. Stats
+after these passes showed 3190 active Media Assets rows, 926 covered works, 2517
+playable rows, 673 source-only rows, and zero traceability gaps. Fresh leftovers
+then showed 204 uncovered pages, including 133 operator/status-prefixed pages.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future
