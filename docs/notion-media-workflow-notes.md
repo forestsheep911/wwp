@@ -558,6 +558,24 @@ structure issues: 86 `playable_spec_without_media` and 56
 Do not promote those automatically until the empty spec/source groups are
 renamed, removed, or repaired.
 
+A later operator-prefix pass checked the remaining `【敬请期待】` non-series pages
+that had not been part of the waiting-preview batches. Out of 15 dry-run pages,
+only `无依之地` and `饥饿站台2` had real media with zero issues. `无依之地` needed
+`maxAssets: 4` to include all detected rows. The writer created 7 rows across
+those two works, reran as 7 `skip_existing`, then title cleanup removed both
+waiting prefixes and reran as `skip_prefix_absent`. Pages such as
+`超级马力欧兄弟大电影` still had real media but also empty source-group issues,
+so they remain structure cleanup rather than automatic promotion.
+
+The two weak-title leftovers, `乱` and `翼`, were safe after switching from
+auto-generated weak title guards to explicit page IDs plus full expected-title
+guards. The writer created 6 rows, reran as 6 `skip_existing`, and cleared the
+weak-title bucket. Stats after these two passes showed 3246 active Media Assets
+rows, 932 covered works, 2568 playable rows, 678 source-only rows, and zero
+traceability gaps. Fresh leftovers then showed 198 uncovered pages: 130
+operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, 6
+no-write pages, and 1 manually excluded title-pattern page.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

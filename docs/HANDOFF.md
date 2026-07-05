@@ -348,6 +348,19 @@ stats to 3193 active Media Assets rows, 927 covered works, 2519 playable rows,
 have now been audited once; the remaining waiting rows either have no candidates
 or have empty playable spec/source groups that must be renamed, removed, or
 repaired before automatic promotion.
+A later operator-prefix pass checked 15 remaining unpreviewed `【敬请期待】`
+non-series pages. Only `无依之地` and `饥饿站台2` were zero-issue; the writer
+created 7 rows, reran as 7 `skip_existing`, and title cleanup removed both
+waiting prefixes. `超级马力欧兄弟大电影` still has real media but also an empty
+source-group issue, so keep it in structure cleanup until that group is renamed,
+removed, or populated.
+The two weak-title leftovers, `乱` and `翼`, were safe with explicit page IDs and
+full expected-title guards. The writer created 6 rows and reran as 6
+`skip_existing`. Latest stats after that pass are 3246 active Media Assets rows,
+932 covered works, 2568 playable rows, 678 source-only rows, and zero
+traceability gaps. Fresh leftovers are now 198 uncovered pages: 130
+operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, 6
+no-write pages, and 1 manually excluded title-pattern page.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
