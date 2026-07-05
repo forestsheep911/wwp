@@ -475,6 +475,28 @@ require re-downloading source material locally, producing playable files,
 validating subtitles and playback, then uploading the finished outputs back to
 the Notion media tree.
 
+On 2026-07-06, `【仅供下载】` source-only rows were migrated in two safe groups.
+First, 19 non-series movie pages with real source/original-disc archives were
+written as `source_only`; the duplicate short-title `【仅供下载】皮克斯短片集` page
+was excluded because it pointed at the same source filename as the fuller
+`The Pixar Shorts Collection` page. Then 14 TV/series pages with real source
+archives were written as `source_only`, including `闯关东`, `模范出租车` seasons
+1-2, `德雷尔一家` seasons 1-4, `弥留之国的爱丽丝 第二季`, and `神探亨特`.
+Every apply pass was rerun and reported only `skip_existing` for the written
+rows. Empty playable spec placeholders on these pages did not block writing the
+source archive row, but no row was created from a title-only or empty source
+group.
+
+Stats after that source-only pass showed 3152 active Media Assets rows, 913
+covered works, 2492 playable rows, 660 source-only rows, and zero missing
+`Source Page ID`, `Media Block ID`, or Work relation. A fresh leftovers report
+then showed 217 uncovered pages: 146 operator/status-prefixed pages, 49 series
+pages, 13 no-media placeholders, 6 no-write pages, 2 weak-title pages, and 1
+manually excluded title-pattern page. Remaining uncovered `【仅供下载】` rows are
+either empty/title-only, duplicate source-file pages, or series pages such as
+`疑犯追踪` and `权力的游戏` seasons where the current audit found no real source
+file block to write.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

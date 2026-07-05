@@ -310,6 +310,13 @@ The read-only series audit also supports `--skip-targets` so remaining series
 pages can be scanned in chunks. A later chunk found and wrote 85 more standard
 episode rows plus 10 direct-spec rows for `太平洋战争`; `兄弟连` remains manual
 because 2 episode pages are unparseable even though 42 playable rows exist.
+`【仅供下载】` rows can be migrated to source-only Media Assets rows when a real
+source/original-disc/subtitle file block exists. Keep `allowedAssetTypes` to
+`original_disc`, `source_archive`, and `subtitle_package`; do not create playable
+rows from empty playable spec placeholders. The 2026-07-06 source-only pass
+wrote 19 movie pages and 14 TV/series pages, then reran as `skip_existing`.
+Remaining download-only rows are mostly title-only/empty source groups, duplicate
+source-file pages, or series pages where no real source file block was found.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
