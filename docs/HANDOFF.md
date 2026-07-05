@@ -255,7 +255,9 @@ exact byte size. Old Notion title/filename parsing is only a migration fallback;
 new assets should be self-contained enough for the website to display variant
 details without guessing. In other words, old cleanup may infer metadata from
 titles and filenames, but new production should write probed media facts back to
-Notion as part of the normal packaging step.
+Notion as part of the normal packaging step. Future upload/package helpers
+should make `ffprobe` a normal writeback step so the website can render variant
+details from structured Notion data rather than parsing human-readable titles.
 For legacy migration, filename evidence should outrank stale spec-title evidence
 for technical fields such as resolution and video codec. Use the title mainly as
 a fallback and for human language/subtitle hints.
@@ -328,7 +330,13 @@ zero-issue pages and removed those prefixes too. Latest stats after that pass:
 source-only rows, and zero traceability gaps. Two later low-yield waiting chunks
 promoted `无间道3：终极无间` and `囚徒`, bringing the latest stats to 3190 active
 Media Assets rows, 926 covered works, 2517 playable rows, 673 source-only rows,
-and zero traceability gaps.
+and zero traceability gaps. The final non-series waiting chunk promoted only
+`少数派报告`, wrote 3 rows, removed its waiting prefix, and brought the latest
+stats to 3193 active Media Assets rows, 927 covered works, 2519 playable rows,
+674 source-only rows, and zero traceability gaps. All non-series waiting pages
+have now been audited once; the remaining waiting rows either have no candidates
+or have empty playable spec/source groups that must be renamed, removed, or
+repaired before automatic promotion.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

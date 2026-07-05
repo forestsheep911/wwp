@@ -141,7 +141,8 @@ when present, frame rate, audio codec/channel layout/languages when tags exist,
 subtitle stream languages, and exact byte size. Old rows can be migrated from
 titles and filenames as a fallback, but new or reprocessed playable files should
 be self-contained enough for the website to display variant details without
-guessing.
+guessing. Future upload/package helpers should treat this probe-and-writeback
+step as normal production work, not as a later cleanup pass.
 
 Long-term asset tracking now has a dedicated `Media Assets` database under the
 same Notion project root. Each playable variant, episode file, and
@@ -531,6 +532,18 @@ removed `【敬请期待】` from both titles with `skip_prefix_absent` on rerun
 after these passes showed 3190 active Media Assets rows, 926 covered works, 2517
 playable rows, 673 source-only rows, and zero traceability gaps. Fresh leftovers
 then showed 204 uncovered pages, including 133 operator/status-prefixed pages.
+
+The final waiting-prefix non-series chunk promoted only `少数派报告`, creating 3
+rows, rerunning as 3 `skip_existing`, and removing its `【敬请期待】` prefix. Stats
+after this pass showed 3193 active Media Assets rows, 927 covered works, 2519
+playable rows, 674 source-only rows, and zero traceability gaps. Fresh leftovers
+then showed 203 uncovered pages, including 132 operator/status-prefixed pages.
+At that point all sampled non-series waiting pages had been audited once. The
+remaining waiting pages either had no candidates or had candidates plus
+structure issues: 86 `playable_spec_without_media` and 56
+`source_group_without_media` observations across the waiting-preview reports.
+Do not promote those automatically until the empty spec/source groups are
+renamed, removed, or repaired.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
