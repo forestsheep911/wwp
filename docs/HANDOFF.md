@@ -298,6 +298,11 @@ For large TV follow-up batches, the series writer supports `--skip-pages`; this
 skips already completed safe pages from the audit report so later batches do not
 rescan old episode trees. Use it only after an apply plus rerun has confirmed
 the earlier pages are already represented by `skip_existing` rows.
+For direct spec-page media, use `--include-direct-spec` only after a dry-run. It
+writes rows only when the media title or filename contains a parseable episode
+number such as `S02E01`; unparseable direct media and duplicate parsed episode
+numbers stay as reported issues. The first successful direct-spec pass wrote 8
+rows for `辐射 第二季`, then reran as 8 `skip_existing`.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

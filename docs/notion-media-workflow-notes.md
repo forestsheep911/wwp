@@ -278,6 +278,7 @@ node tools\notion-media-assets-write-series.mjs --audit-report .local-data\serie
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-apply.json
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-rerun.json
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --skip-pages 12 --max-pages 6 --max-assets 120 --apply --report .local-data\series-assets-next.json
+node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --include-direct-spec --max-pages 1 --max-assets 20 --report .local-data\series-direct-spec-preview.json
 node tools\notion-media-assets-stats.mjs --report .local-data\media-assets-stats-after-series.json
 ```
 
@@ -287,6 +288,12 @@ unchecked for playable rows, and records the episode page as `Source Page ID`
 plus the video/file block as `Media Block ID`. Direct media attached to the spec
 page is reported as `direct_spec_media_not_written` for a later normalization
 pass.
+
+For legacy pages where playable files sit directly under a spec page, use
+`--include-direct-spec` only after checking a dry-run. The writer then parses
+`Episode Number` from the media title or filename, such as `S02E01`; it does not
+guess from block order. Unparseable direct media and duplicate parsed episode
+numbers are reported as issues and are not written.
 
 The first 2026-07-05 sample audit of 20 non-prefixed TV rows found mixed legacy
 shapes: 19 pages had an episode layer, 10 pages already had playable media under
@@ -339,6 +346,14 @@ most pages were empty episode shells, and `辐射 第二季` still had playable 
 directly under a spec page instead of the episode layer. These are now manual
 structure cleanup or direct-spec normalization work, not standard automatic
 episode writes.
+
+The first direct-spec normalization pass handled `辐射 第二季` because all 8
+files were named with parseable `S02E01`-style episode markers. Dry-run reported
+8 `would_create` rows and zero issues; apply created 8 rows; rerun reported 8
+`skip_existing`. Stats after this pass showed 3024 active Media Assets rows,
+873 covered works, 2397 playable rows, 627 source-only rows, and zero missing
+`Source Page ID`, `Media Block ID`, or Work relation. A fresh leftovers report
+then showed 258 uncovered pages, including 56 remaining series pages.
 
 Source archive files:
 

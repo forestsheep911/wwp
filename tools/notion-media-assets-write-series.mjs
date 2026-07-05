@@ -12,6 +12,7 @@ function parseArgs() {
     skipPages: 0,
     maxPages: 2,
     maxAssets: 50,
+    includeDirectSpec: false,
     apply: false,
     resolveIp: ""
   };
@@ -27,6 +28,7 @@ function parseArgs() {
     else if (name === "--max-pages") options.maxPages = Number(value());
     else if (name === "--max-assets") options.maxAssets = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -52,10 +54,13 @@ function printHelp() {
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --report .local-data/series-write-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
 
-This writer is episode-aware. It creates Media Assets rows only for real media
-blocks found under episode child pages. Empty episode placeholders and direct
-spec-page media are reported but not written.
+This writer is episode-aware. It creates Media Assets rows for real media blocks
+found under episode child pages. Empty episode placeholders are reported but not
+written. Direct spec-page media is reported by default; with
+--include-direct-spec, direct media is written only when the media title or file
+name contains a parseable episode number.
 `);
 }
 
@@ -491,10 +496,10 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
-function selectablePages(auditReport, skipPages, maxPages) {
+function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec) {
   return (auditReport.pages ?? [])
     .filter((page) => (
-      page.summary?.hasPlayableEpisodeMedia &&
+      (page.summary?.hasPlayableEpisodeMedia || (includeDirectSpec && page.summary?.directPlayableMediaCount > 0)) &&
       page.summary?.unparseableEpisodePages === 0 &&
       page.summary?.duplicateEpisodeNumbers === 0
     ))
@@ -502,17 +507,66 @@ function selectablePages(auditReport, skipPages, maxPages) {
     .slice(0, maxPages);
 }
 
-async function candidatesForSeriesPage(notion, page) {
+async function candidatesForSeriesPage(notion, page, options = {}) {
   const candidates = [];
   const issues = [];
   for (const spec of page.specPages ?? []) {
     if (spec.directPlayableMediaCount > 0) {
-      issues.push({
-        kind: "direct_spec_media_not_written",
-        specPageId: spec.pageId,
-        specTitle: spec.title,
-        count: spec.directPlayableMediaCount
-      });
+      if (!options.includeDirectSpec) {
+        issues.push({
+          kind: "direct_spec_media_not_written",
+          specPageId: spec.pageId,
+          specTitle: spec.title,
+          count: spec.directPlayableMediaCount
+        });
+      } else {
+        const specChildren = await listChildren(notion, spec.pageId).catch(() => []);
+        const directPlayable = specChildren.filter(isPlayableMedia);
+        const directEpisodeNumbers = new Map();
+        const directCandidates = [];
+        for (const mediaBlock of directPlayable) {
+          const fileName = mediaBlockName(mediaBlock);
+          const episodeNumber = episodeNumberFromLabel(fileName);
+          if (!episodeNumber) {
+            issues.push({
+              kind: "direct_spec_media_unparseable_episode",
+              specPageId: spec.pageId,
+              specTitle: spec.title,
+              mediaBlockId: mediaBlock.id,
+              fileName
+            });
+            continue;
+          }
+          directEpisodeNumbers.set(episodeNumber, (directEpisodeNumbers.get(episodeNumber) ?? 0) + 1);
+          const episodeLabel = `Episode ${String(episodeNumber).padStart(2, "0")}`;
+          const displayLabel = `${spec.title} / ${episodeLabel} / ${fileName || mediaBlock.id}`;
+          directCandidates.push({
+            workPageId: page.pageId,
+            workTitle: page.title,
+            sourcePageId: spec.pageId,
+            mediaBlockId: mediaBlock.id,
+            name: `${page.title} / ${displayLabel}`,
+            displayLabel,
+            originalFileName: fileName,
+            assetUrl: isExternalMediaUrl(mediaBlock) ? mediaUrl(mediaBlock) : undefined,
+            metadata: parseAssetMetadata(`${spec.title} ${episodeLabel}`, fileName, episodeNumber)
+          });
+        }
+        const duplicateDirectEpisodes = new Set();
+        for (const [episodeNumber, count] of directEpisodeNumbers.entries()) {
+          if (count > 1) {
+            duplicateDirectEpisodes.add(episodeNumber);
+            issues.push({
+              kind: "direct_spec_duplicate_episode_number",
+              specPageId: spec.pageId,
+              specTitle: spec.title,
+              episodeNumber,
+              count
+            });
+          }
+        }
+        candidates.push(...directCandidates.filter((candidate) => !duplicateDirectEpisodes.has(candidate.metadata?.episodeNumber)));
+      }
     }
     for (const episode of spec.episodes ?? []) {
       if (!episode.episodeNumber) {
@@ -589,7 +643,7 @@ async function main() {
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
   const auditReport = JSON.parse(fs.readFileSync(options.auditReportPath, "utf8"));
-  const pages = selectablePages(auditReport, options.skipPages, options.maxPages);
+  const pages = selectablePages(auditReport, options.skipPages, options.maxPages, options.includeDirectSpec);
   const notion = createNotionClient(token);
   const mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const existingLookup = makeExistingAssetLookup(notion, mediaAssetsDataSource);
@@ -597,7 +651,7 @@ async function main() {
   const reports = [];
 
   for (const page of pages) {
-    const { candidates, issues } = await candidatesForSeriesPage(notion, page);
+    const { candidates, issues } = await candidatesForSeriesPage(notion, page, { includeDirectSpec: options.includeDirectSpec });
     const selected = candidates.slice(0, remainingAssets);
     remainingAssets -= selected.length;
     const actions = [];
@@ -625,6 +679,7 @@ async function main() {
     mode: options.apply ? "apply" : "dry-run",
     auditReportPath: options.auditReportPath,
     skipPages: options.skipPages,
+    includeDirectSpec: options.includeDirectSpec,
     mediaAssetsDataSourceId: mediaAssetsDataSource.id,
     summary: summarizeReports(reports),
     reports
