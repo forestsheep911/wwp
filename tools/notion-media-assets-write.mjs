@@ -389,9 +389,11 @@ async function auditPage(notion, page, maxSpecsPerPage) {
         }
         const firstFile = mediaBlockName(media[0]);
         const firstUrl = mediaUrl(media[0]);
-        const assetType = /原盘|原盤|iso|disc/i.test(`${groupTitle} ${firstFile}`)
-          ? "original_disc"
-          : "source_archive";
+        const assetType = /字幕|subtitle/i.test(groupTitle)
+          ? "subtitle_package"
+          : /原盘|原盤|iso|disc/i.test(`${groupTitle} ${firstFile}`)
+            ? "original_disc"
+            : "source_archive";
         candidates.push({
           assetType,
           workPageId: page.id,
@@ -453,6 +455,7 @@ function selectRepresentativeCandidates(candidates, maxAssets) {
   )));
   add(candidates.find((item) => item.assetType === "original_disc"));
   add(candidates.find((item) => item.assetType === "source_archive"));
+  add(candidates.find((item) => item.assetType === "subtitle_package"));
 
   for (const candidate of candidates) add(candidate);
   return selected;

@@ -91,6 +91,9 @@ npm run notion:asset-write -- --query "风之谷" --max-assets 3 --apply
 The writer is idempotent for the same work/source page/media block and creates
 rows only when `--apply` is present.
 
+Subtitle-only groups under the old `基地` structure should become
+`subtitle_package` asset rows. Do not collapse them into `source_archive`.
+
 Asset titles have limited trust. A spec/source page title without a real media
 block is `untrusted_title_only`, even if it does not use `【仅供下载】` or
 `【敬请期待】`. Do not sync it as playable, do not create a verified asset from it,

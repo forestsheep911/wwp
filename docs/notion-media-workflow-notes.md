@@ -161,6 +161,9 @@ future migration can trace the structured asset back to the old Notion media
 tree. It also skips an existing row when the same work/source/block has already
 been written.
 
+When migrating `基地` groups, subtitle-only groups should be represented as
+`subtitle_package`, not as `source_archive`.
+
 If local DNS routes `api.notion.com` to the unstable `198.18.x.x` path, use the
 known working direct resolve override:
 
