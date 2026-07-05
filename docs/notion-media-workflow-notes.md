@@ -516,6 +516,14 @@ missing `Source Page ID`, `Media Block ID`, or Work relation. A fresh leftovers
 report then showed 210 uncovered pages, including 139 operator/status-prefixed
 pages.
 
+The next waiting-prefix chunk promoted 4 more zero-issue pages:
+`百战宝枪`, `奇异世界`, `隐藏人物`, and `里斯本丸沉没`. The writer created 13
+Media Assets rows, reran as 13 `skip_existing`, then title cleanup removed
+`【敬请期待】` from all 4 titles and reran as `skip_prefix_absent`. Stats after
+this pass showed 3185 active Media Assets rows, 924 covered works, 2514 playable
+rows, 671 source-only rows, and zero traceability gaps. Fresh leftovers then
+showed 206 uncovered pages, including 135 operator/status-prefixed pages.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

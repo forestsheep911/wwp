@@ -322,7 +322,10 @@ write public playable assets while leaving the waiting prefix in the main title.
 Use `notion-title-prefix-cleanup.mjs` after the Media Assets apply/rerun. The
 first guarded promotion pass wrote 20 rows for 7 zero-issue movie pages and then
 removed `【敬请期待】` from those 7 titles; a cleanup rerun reported
-`skip_prefix_absent`.
+`skip_prefix_absent`. A second waiting-prefix chunk wrote 13 rows for 4 more
+zero-issue pages and removed those prefixes too. Latest stats after that pass:
+3185 active Media Assets rows, 924 covered works, 2514 playable rows, 671
+source-only rows, and zero traceability gaps.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
