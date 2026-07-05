@@ -593,6 +593,18 @@ covered works, 2614 playable rows, 678 source-only rows, and zero traceability
 gaps. Fresh leftovers then showed 195 uncovered pages, including 127
 operator/status-prefixed pages.
 
+The final small-bucket recheck revisited 6 `noWritePages` and the one
+`manualExcludedTitlePatternPages` row. The 6 no-write rows still had zero
+candidates and zero issues, so they are true Notion structure/content gaps rather
+than missed safe rows. `耀眼` had a real source archive plus an empty playable
+placeholder. It was written as one `source_only` `source_archive` row with `Hide
+from Website = true`, reran as `skip_existing`, and the empty playable spec
+remains a future structure cleanup item. Stats after this pass showed 3293
+active Media Assets rows, 936 covered works, 2614 playable rows, 679 source-only
+rows, and zero traceability gaps. Fresh leftovers then showed 194 uncovered
+pages: 127 operator/status-prefixed pages, 48 series pages, 13 no-media
+placeholders, and 6 no-write pages.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

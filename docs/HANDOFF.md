@@ -373,6 +373,15 @@ Episode 01 and Episode 02, so leave it as incomplete. Latest stats after this
 pass are 3292 active Media Assets rows, 935 covered works, 2614 playable rows,
 678 source-only rows, and zero traceability gaps. Fresh leftovers are now 195
 uncovered pages, including 127 operator/status-prefixed pages.
+The 6 `noWritePages` were rechecked against current Notion state and still have
+zero candidates and zero issues. The remaining manual-excluded row, `耀眼`, had
+a real source archive plus an empty playable placeholder; it was written as one
+`source_only` source archive row with website hide enabled and reran as
+`skip_existing`. Latest stats after that pass are 3293 active Media Assets rows,
+936 covered works, 2614 playable rows, 679 source-only rows, and zero
+traceability gaps. Fresh leftovers are now 194 uncovered pages: 127
+operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, and 6
+no-write pages.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
