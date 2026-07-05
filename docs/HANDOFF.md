@@ -265,6 +265,14 @@ batch manifests in `.local-data`; the checked-in example is
 manifest with `npm run notion:asset-batch -- --output .local-data/media-assets-batch.json --max-items 50`.
 Pass `--exclude-preview` with the previous preview report to keep empty or
 high-issue pages out of subsequent candidate batches.
+Before applying a broad batch, run `npm run notion:asset-filter -- --manifest
+.local-data/media-assets-batch.json --preview
+.local-data/media-assets-batch-preview.json --output
+.local-data/media-assets-batch-low-risk.json`, then dry-run and apply that
+filtered manifest. The filter is local-only and keeps conservative movie-like
+pages: at least one dry-run creation, no title mismatch, at most one issue, at
+most three selected assets, no series-looking title, and stronger title evidence
+for single-asset pages.
 
 Notion IDs are now explicit in local `.env`:
 

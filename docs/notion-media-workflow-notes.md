@@ -166,8 +166,16 @@ For larger migrations, use a batch manifest instead of title queries:
 ```powershell
 node tools\notion-media-assets-generate-batch.mjs --output .local-data\media-assets-batch.json --max-items 50
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch.json --report .local-data\media-assets-batch-preview.json
-node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch.json --apply --report .local-data\media-assets-batch-apply.json
+node tools\notion-media-assets-filter-batch.mjs --manifest .local-data\media-assets-batch.json --preview .local-data\media-assets-batch-preview.json --output .local-data\media-assets-batch-low-risk.json
+node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --report .local-data\media-assets-batch-low-risk-preview.json
+node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --apply --report .local-data\media-assets-batch-low-risk-apply.json
+node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --apply --report .local-data\media-assets-batch-low-risk-rerun.json
 ```
+
+The filter step is local-only. It keeps pages whose writer dry-run says there is
+at least one row to create, no title mismatch, at most one issue, and at most
+three selected assets. It also excludes series-looking titles by default and
+requires single-asset pages to have a year or multilingual/native title signal.
 
 Each manifest item must use a Notion `pageId` and should include
 `expectedTitleContains`. If the retrieved page title does not contain every
