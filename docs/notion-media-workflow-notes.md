@@ -164,6 +164,7 @@ been written.
 For larger migrations, use a batch manifest instead of title queries:
 
 ```powershell
+node tools\notion-media-assets-generate-batch.mjs --output .local-data\media-assets-batch.json --max-items 50
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch.json --report .local-data\media-assets-batch-preview.json
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch.json --apply --report .local-data\media-assets-batch-apply.json
 ```
@@ -171,7 +172,9 @@ node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-asse
 Each manifest item must use a Notion `pageId` and should include
 `expectedTitleContains`. If the retrieved page title does not contain every
 expected fragment, that item is skipped and nothing is written. Use
-`allowedAssetTypes` to keep a batch limited to low-risk asset classes.
+`allowedAssetTypes` to keep a batch limited to low-risk asset classes. The
+generator excludes existing Media Assets works, `【敬请期待】` / `【仅供下载】`
+prefixes, and TV season-looking titles by default.
 
 When migrating `基地` groups, subtitle-only groups should be represented as
 `subtitle_package`, not as `source_archive`.
