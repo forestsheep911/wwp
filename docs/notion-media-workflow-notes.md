@@ -134,13 +134,14 @@ small structured metadata block at the top of each playable spec page, before
 the video block.
 
 For newly encoded, remuxed, or reprocessed files, do not rely on title parsing
-as the primary metadata source. Run `ffprobe` on the final local media file and
-write the probed facts into `Media Assets` where possible: container, duration,
-resolution, video codec/profile, HDR/SDR signal when present, frame rate, audio
-codec/channel layout/languages when tags exist, subtitle stream languages, and
-exact byte size. Human-readable titles should remain compact summaries; the
-website should prefer structured `Media Assets` fields and only fall back to
-title/filename parsing for older migrated rows.
+as the primary metadata source. Run `ffprobe` on the final local media file
+before Notion writeback and write the probed facts into `Media Assets` where
+possible: container, duration, resolution, video codec/profile, HDR/SDR signal
+when present, frame rate, audio codec/channel layout/languages when tags exist,
+subtitle stream languages, and exact byte size. Old rows can be migrated from
+titles and filenames as a fallback, but new or reprocessed playable files should
+be self-contained enough for the website to display variant details without
+guessing.
 
 Long-term asset tracking now has a dedicated `Media Assets` database under the
 same Notion project root. Each playable variant, episode file, and
@@ -276,6 +277,7 @@ After a clean audit, write TV episode Media Assets rows with the series writer:
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --report .local-data\series-assets-preview.json
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-apply.json
 node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-rerun.json
+node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --skip-pages 12 --max-pages 6 --max-assets 120 --apply --report .local-data\series-assets-next.json
 node tools\notion-media-assets-stats.mjs --report .local-data\media-assets-stats-after-series.json
 ```
 
@@ -312,6 +314,31 @@ showed 2584 active Media Assets rows, 842 covered works, and zero missing
 `Source Page ID`, `Media Block ID`, or Work relation. Direct spec-page media
 remains intentionally unwritten until a normalization pass decides whether to
 move or map those blocks into episode pages.
+
+A larger follow-up on 2026-07-06 used
+`.local-data/notion-series-structure-audit-2026-07-06-remaining80.json` and
+finished every automatically safe page in that audit. It created 157 rows in
+the first batch, then 21 Rick and Morty rows, 78 Better Call Saul season 1-4
+rows, 91 mixed TV rows, and 85 final safe rows. Each apply was rerun and
+reported only `skip_existing` for the written rows. Final stats after this pass
+showed 3016 active Media Assets rows, 872 covered works, 2389 playable rows,
+627 source-only rows, and zero missing `Source Page ID`, `Media Block ID`, or
+Work relation.
+
+The series writer now supports `--skip-pages` because large follow-up batches
+should not rescan already written TV pages. The option skips over the filtered
+safe page list from the audit report, not raw Notion pages. Use it only after a
+prior apply plus rerun has confirmed the earlier safe pages are already covered.
+
+After the safe pass, a fresh broad batch still produced `items: 0`. The
+leftovers report counted 259 uncovered main-library pages: 180 operator/status
+prefixed pages, 57 series pages, 13 no-media placeholders, 6 no-write pages, 2
+weak-title pages, and 1 manually excluded title-pattern page. A fresh 20-page
+series audit after the safe pass found no playable episode media in that sample:
+most pages were empty episode shells, and `辐射 第二季` still had playable media
+directly under a spec page instead of the episode layer. These are now manual
+structure cleanup or direct-spec normalization work, not standard automatic
+episode writes.
 
 Source archive files:
 

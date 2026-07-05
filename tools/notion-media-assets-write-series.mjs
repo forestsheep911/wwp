@@ -9,6 +9,7 @@ function parseArgs() {
   const options = {
     auditReportPath: "",
     reportPath: ".local-data/notion-media-assets-series-write.json",
+    skipPages: 0,
     maxPages: 2,
     maxAssets: 50,
     apply: false,
@@ -22,6 +23,7 @@ function parseArgs() {
     const value = () => inlineValue ?? args[++index];
     if (name === "--audit-report") options.auditReportPath = value();
     else if (name === "--report") options.reportPath = value();
+    else if (name === "--skip-pages") options.skipPages = Number(value());
     else if (name === "--max-pages") options.maxPages = Number(value());
     else if (name === "--max-assets") options.maxAssets = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
@@ -39,6 +41,7 @@ function parseArgs() {
   }
 
   if (!options.auditReportPath) throw new Error("Set --audit-report.");
+  if (!Number.isFinite(options.skipPages) || options.skipPages < 0) throw new Error("--skip-pages must be zero or a positive number.");
   if (!Number.isFinite(options.maxPages) || options.maxPages < 1) throw new Error("--max-pages must be a positive number.");
   if (!Number.isFinite(options.maxAssets) || options.maxAssets < 1) throw new Error("--max-assets must be a positive number.");
   return options;
@@ -48,6 +51,7 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --report .local-data/series-write-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --apply --report .local-data/series-write-apply.json
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
 
 This writer is episode-aware. It creates Media Assets rows only for real media
 blocks found under episode child pages. Empty episode placeholders and direct
@@ -354,6 +358,99 @@ function relationIds(property) {
   return property?.type === "relation" ? property.relation.map((item) => item.id) : [];
 }
 
+function candidateMatchesPage(page, dataSource, candidate) {
+  const nameProperty = titlePropertyName(dataSource);
+  const properties = page.properties ?? {};
+  const workMatches = relationIds(properties.Work).includes(candidate.workPageId);
+  const titleMatches = propertyPlainText(properties[nameProperty]) === candidate.name;
+  const sourcePageMatches = propertyPlainText(properties["Source Page ID"]) === candidate.sourcePageId;
+  const mediaBlockMatches = propertyPlainText(properties["Media Block ID"]) === candidate.mediaBlockId;
+  const fileNameMatches = !candidate.originalFileName || propertyPlainText(properties["Original File Name"]) === candidate.originalFileName;
+  return workMatches && (mediaBlockMatches || (sourcePageMatches && fileNameMatches && titleMatches) || (titleMatches && fileNameMatches));
+}
+
+function makeExistingAssetLookup(notion, dataSource) {
+  const nameProperty = titlePropertyName(dataSource);
+  const byMediaBlockId = new Map();
+  const bySourcePageId = new Map();
+  const byTitle = new Map();
+
+  const cachePages = (cache, key, pages) => {
+    const existing = cache.get(key) ?? [];
+    const seen = new Set(existing.map((page) => page.id));
+    for (const page of pages) {
+      if (!seen.has(page.id)) {
+        existing.push(page);
+        seen.add(page.id);
+      }
+    }
+    cache.set(key, existing);
+    return existing;
+  };
+
+  const queryRichText = async (propertyName, value) => {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSource.id,
+      page_size: 100,
+      filter: { property: propertyName, rich_text: { equals: value } }
+    });
+    return response.results;
+  };
+
+  const queryTitle = async (value) => {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSource.id,
+      page_size: 20,
+      filter: { property: nameProperty, title: { equals: value } }
+    });
+    return response.results;
+  };
+
+  return {
+    async find(candidate) {
+      const candidates = [];
+
+      if (dataSource.properties?.["Media Block ID"] && candidate.mediaBlockId) {
+        const pages = byMediaBlockId.has(candidate.mediaBlockId)
+          ? byMediaBlockId.get(candidate.mediaBlockId)
+          : cachePages(byMediaBlockId, candidate.mediaBlockId, await queryRichText("Media Block ID", candidate.mediaBlockId));
+        candidates.push(...pages);
+      }
+
+      if (dataSource.properties?.["Source Page ID"] && candidate.sourcePageId) {
+        const pages = bySourcePageId.has(candidate.sourcePageId)
+          ? bySourcePageId.get(candidate.sourcePageId)
+          : cachePages(bySourcePageId, candidate.sourcePageId, await queryRichText("Source Page ID", candidate.sourcePageId));
+        candidates.push(...pages);
+      }
+
+      if (candidates.length === 0) {
+        const pages = byTitle.has(candidate.name)
+          ? byTitle.get(candidate.name)
+          : cachePages(byTitle, candidate.name, await queryTitle(candidate.name));
+        candidates.push(...pages);
+      }
+
+      const seen = new Set();
+      return candidates.find((page) => {
+        if (seen.has(page.id)) return false;
+        seen.add(page.id);
+        return candidateMatchesPage(page, dataSource, candidate);
+      });
+    },
+
+    remember(page) {
+      const properties = page.properties ?? {};
+      const mediaBlockId = propertyPlainText(properties["Media Block ID"]);
+      const sourcePageId = propertyPlainText(properties["Source Page ID"]);
+      const title = propertyPlainText(properties[nameProperty]);
+      if (mediaBlockId) cachePages(byMediaBlockId, mediaBlockId, [page]);
+      if (sourcePageId) cachePages(bySourcePageId, sourcePageId, [page]);
+      if (title) cachePages(byTitle, title, [page]);
+    }
+  };
+}
+
 async function findExistingAsset(notion, dataSource, candidate) {
   const nameProperty = titlePropertyName(dataSource);
   const responses = [];
@@ -383,13 +480,7 @@ async function findExistingAsset(notion, dataSource, candidate) {
   return pages.find((page) => {
     if (seen.has(page.id)) return false;
     seen.add(page.id);
-    const properties = page.properties ?? {};
-    const workMatches = relationIds(properties.Work).includes(candidate.workPageId);
-    const titleMatches = propertyPlainText(properties[nameProperty]) === candidate.name;
-    const sourcePageMatches = propertyPlainText(properties["Source Page ID"]) === candidate.sourcePageId;
-    const mediaBlockMatches = propertyPlainText(properties["Media Block ID"]) === candidate.mediaBlockId;
-    const fileNameMatches = !candidate.originalFileName || propertyPlainText(properties["Original File Name"]) === candidate.originalFileName;
-    return workMatches && (mediaBlockMatches || (sourcePageMatches && fileNameMatches && titleMatches) || (titleMatches && fileNameMatches));
+    return candidateMatchesPage(page, dataSource, candidate);
   });
 }
 
@@ -400,13 +491,14 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
-function selectablePages(auditReport, maxPages) {
+function selectablePages(auditReport, skipPages, maxPages) {
   return (auditReport.pages ?? [])
     .filter((page) => (
       page.summary?.hasPlayableEpisodeMedia &&
       page.summary?.unparseableEpisodePages === 0 &&
       page.summary?.duplicateEpisodeNumbers === 0
     ))
+    .slice(skipPages)
     .slice(0, maxPages);
 }
 
@@ -455,8 +547,10 @@ async function candidatesForSeriesPage(notion, page) {
   return { candidates, issues };
 }
 
-async function processCandidate(notion, dataSource, candidate, apply) {
-  const existing = await findExistingAsset(notion, dataSource, candidate);
+async function processCandidate(notion, dataSource, existingLookup, candidate, apply) {
+  const existing = existingLookup
+    ? await existingLookup.find(candidate)
+    : await findExistingAsset(notion, dataSource, candidate);
   if (existing) {
     return { action: "skip_existing", pageId: existing.id, candidate };
   }
@@ -464,6 +558,7 @@ async function processCandidate(notion, dataSource, candidate, apply) {
     return { action: "would_create", candidate, properties: buildAssetProperties(dataSource, candidate) };
   }
   const created = await createAsset(notion, dataSource, candidate);
+  existingLookup?.remember(created);
   return { action: "created", pageId: created.id, candidate };
 }
 
@@ -494,9 +589,10 @@ async function main() {
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
   const auditReport = JSON.parse(fs.readFileSync(options.auditReportPath, "utf8"));
-  const pages = selectablePages(auditReport, options.maxPages);
+  const pages = selectablePages(auditReport, options.skipPages, options.maxPages);
   const notion = createNotionClient(token);
   const mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
+  const existingLookup = makeExistingAssetLookup(notion, mediaAssetsDataSource);
   let remainingAssets = options.maxAssets;
   const reports = [];
 
@@ -506,7 +602,7 @@ async function main() {
     remainingAssets -= selected.length;
     const actions = [];
     for (const candidate of selected) {
-      actions.push(await processCandidate(notion, mediaAssetsDataSource, candidate, options.apply));
+      actions.push(await processCandidate(notion, mediaAssetsDataSource, existingLookup, candidate, options.apply));
     }
     reports.push({
       pageId: page.pageId,
@@ -528,6 +624,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     mode: options.apply ? "apply" : "dry-run",
     auditReportPath: options.auditReportPath,
+    skipPages: options.skipPages,
     mediaAssetsDataSourceId: mediaAssetsDataSource.id,
     summary: summarizeReports(reports),
     reports

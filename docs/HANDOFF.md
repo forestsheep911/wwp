@@ -253,7 +253,9 @@ possible: container, duration, resolution, video codec/profile, HDR/SDR signal,
 frame rate, audio codec/channel layout/languages, subtitle stream languages, and
 exact byte size. Old Notion title/filename parsing is only a migration fallback;
 new assets should be self-contained enough for the website to display variant
-details without guessing.
+details without guessing. In other words, old cleanup may infer metadata from
+titles and filenames, but new production should write probed media facts back to
+Notion as part of the normal packaging step.
 
 The guarded Media Assets writer is available for small representative migrations:
 
@@ -292,6 +294,10 @@ TV assets should use a separate episode-aware migration path.
 The generator can also accept that filtered manifest path via
 `--exclude-preview`; its `filteredOut` entries are treated as exclusions for
 later rounds.
+For large TV follow-up batches, the series writer supports `--skip-pages`; this
+skips already completed safe pages from the audit report so later batches do not
+rescan old episode trees. Use it only after an apply plus rerun has confirmed
+the earlier pages are already represented by `skip_existing` rows.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
