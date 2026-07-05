@@ -91,6 +91,17 @@ npm run notion:asset-write -- --query "风之谷" --max-assets 3 --apply
 The writer is idempotent for the same work/source page/media block and creates
 rows only when `--apply` is present.
 
+For broader batches, prefer a manifest over title queries:
+
+```bash
+npm run notion:asset-write -- --batch-manifest .local-data/media-assets-batch.json --report .local-data/media-assets-batch-preview.json
+npm run notion:asset-write -- --batch-manifest .local-data/media-assets-batch.json --apply --report .local-data/media-assets-batch-apply.json
+```
+
+Manifest entries are guarded by `expectedTitleContains` so broad-title mistakes
+such as matching a sequel/prequel are skipped before any write. See
+`tools/notion-media-assets-batch.example.json` for the structure.
+
 Subtitle-only groups under the old `基地` structure should become
 `subtitle_package` asset rows. Do not collapse them into `source_archive`.
 

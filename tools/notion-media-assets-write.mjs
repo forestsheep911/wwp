@@ -7,6 +7,7 @@ import nodeFetch from "node-fetch";
 
 function parseArgs() {
   const options = {
+    batchManifest: "",
     query: "",
     pageId: "",
     reportPath: ".local-data/notion-media-assets-write-preview.json",
@@ -22,7 +23,8 @@ function parseArgs() {
     const arg = args[index];
     const [name, inlineValue] = arg.split(/=(.*)/s);
     const value = () => inlineValue ?? args[++index];
-    if (name === "--query") options.query = value();
+    if (name === "--batch-manifest") options.batchManifest = value();
+    else if (name === "--query") options.query = value();
     else if (name === "--page-id") options.pageId = value();
     else if (name === "--report") options.reportPath = value();
     else if (name === "--max-assets") options.maxAssets = Number(value());
@@ -38,8 +40,8 @@ function parseArgs() {
     }
   }
 
-  if (!options.query && !options.pageId) {
-    throw new Error("Set --query or --page-id.");
+  if (!options.batchManifest && !options.query && !options.pageId) {
+    throw new Error("Set --query, --page-id, or --batch-manifest.");
   }
   if (!Number.isFinite(options.maxAssets) || options.maxAssets < 1) {
     throw new Error("--max-assets must be a positive number.");
@@ -51,10 +53,12 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-media-assets-write.mjs --query "风之谷"
   node tools/notion-media-assets-write.mjs --query "风之谷" --apply --max-assets 3
+  node tools/notion-media-assets-write.mjs --batch-manifest .local-data/media-assets-batch.json
 
 Default mode is dry-run. The script creates Media Assets rows only with --apply.
 It writes a small representative sample, skips duplicates, and records source
-Notion page/block IDs for traceability.
+Notion page/block IDs for traceability. Batch manifests use page IDs and
+expected-title guards to avoid broad query mismatches.
 
 Network workaround:
   node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip 208.103.161.1
@@ -434,7 +438,11 @@ function candidateKey(candidate) {
   ].join("|");
 }
 
-function selectRepresentativeCandidates(candidates, maxAssets) {
+function selectRepresentativeCandidates(candidates, maxAssets, allowedAssetTypes = []) {
+  const allowed = new Set(allowedAssetTypes);
+  const filteredCandidates = allowed.size > 0
+    ? candidates.filter((candidate) => allowed.has(candidate.assetType))
+    : candidates;
   const selected = [];
   const seen = new Set();
   const add = (candidate) => {
@@ -445,19 +453,19 @@ function selectRepresentativeCandidates(candidates, maxAssets) {
     selected.push(candidate);
   };
 
-  add(candidates.find((item) => (
+  add(filteredCandidates.find((item) => (
     item.assetType === "playable_video" &&
     item.metadata?.audioLanguages?.includes("zh-Mandarin")
   )));
-  add(candidates.find((item) => (
+  add(filteredCandidates.find((item) => (
     item.assetType === "playable_video" &&
     item.metadata?.subtitleLanguages?.includes("zh-Hant")
   )));
-  add(candidates.find((item) => item.assetType === "original_disc"));
-  add(candidates.find((item) => item.assetType === "source_archive"));
-  add(candidates.find((item) => item.assetType === "subtitle_package"));
+  add(filteredCandidates.find((item) => item.assetType === "original_disc"));
+  add(filteredCandidates.find((item) => item.assetType === "source_archive"));
+  add(filteredCandidates.find((item) => item.assetType === "subtitle_package"));
 
-  for (const candidate of candidates) add(candidate);
+  for (const candidate of filteredCandidates) add(candidate);
   return selected;
 }
 
@@ -591,27 +599,76 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
-async function main() {
-  const options = parseArgs();
-  installNotionDnsOverride(options.resolveIp);
-  const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
-  if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
 
-  const notion = createNotionClient(token);
-  const mainDataSource = await loadMainDataSource(notion);
-  let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
-  const schemaResult = options.ensureSchema && options.apply
-    ? await ensureTraceabilitySchema(notion, mediaAssetsDataSource)
-    : {
-        dataSource: mediaAssetsDataSource,
-        added: [],
-        wouldAdd: options.ensureSchema ? Object.keys(missingTraceabilitySchema(mediaAssetsDataSource)) : []
-      };
-  mediaAssetsDataSource = schemaResult.dataSource;
+function arrayify(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
 
-  const workPage = await resolveWorkPage(notion, mainDataSource, options);
-  const audited = await auditPage(notion, workPage, options.maxSpecsPerPage);
-  const selected = selectRepresentativeCandidates(audited.candidates, options.maxAssets);
+function titleContainsExpected(title, expectedTitleContains) {
+  const expected = arrayify(expectedTitleContains).map((item) => cleanText(String(item))).filter(Boolean);
+  if (expected.length === 0) return true;
+  const normalizedTitle = cleanText(title).toLowerCase();
+  return expected.every((item) => normalizedTitle.includes(item.toLowerCase()));
+}
+
+function normalizeManifest(manifest, options) {
+  const items = Array.isArray(manifest) ? manifest : manifest.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("Batch manifest must be an array or an object with a non-empty items array.");
+  }
+
+  const defaults = Array.isArray(manifest) ? {} : manifest.defaults ?? {};
+  return items.map((item, index) => {
+    if (!item.pageId) throw new Error(`Batch manifest item ${index + 1} is missing pageId.`);
+    return {
+      label: item.label || item.expectedTitleContains || item.pageId,
+      pageId: item.pageId,
+      expectedTitleContains: item.expectedTitleContains,
+      maxAssets: Number(item.maxAssets ?? defaults.maxAssets ?? options.maxAssets),
+      maxSpecsPerPage: Number(item.maxSpecsPerPage ?? defaults.maxSpecsPerPage ?? options.maxSpecsPerPage),
+      allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean)
+    };
+  });
+}
+
+async function processWorkPage(notion, mediaAssetsDataSource, options, workPage, item = {}) {
+  const audited = await auditPage(notion, workPage, item.maxSpecsPerPage ?? options.maxSpecsPerPage);
+  const titleMatches = titleContainsExpected(audited.title, item.expectedTitleContains);
+  if (!titleMatches) {
+    return {
+      label: item.label,
+      mode: options.apply ? "apply" : "dry-run",
+      pageId: workPage.id,
+      title: audited.title,
+      expectedTitleContains: item.expectedTitleContains,
+      summary: {
+        candidatesFound: audited.candidates.length,
+        selected: 0,
+        created: 0,
+        skippedExisting: 0,
+        wouldCreate: 0,
+        issues: audited.issues.length,
+        skippedTitleMismatch: 1
+      },
+      selected: [],
+      actions: [{
+        action: "skip_title_mismatch",
+        expectedTitleContains: item.expectedTitleContains,
+        actualTitle: audited.title
+      }],
+      issues: audited.issues
+    };
+  }
+
+  const selected = selectRepresentativeCandidates(
+    audited.candidates,
+    item.maxAssets ?? options.maxAssets,
+    item.allowedAssetTypes
+  );
   const actions = [];
 
   for (const candidate of selected) {
@@ -642,6 +699,122 @@ async function main() {
     });
   }
 
+  return {
+    label: item.label,
+    mode: options.apply ? "apply" : "dry-run",
+    pageId: workPage.id,
+    title: audited.title,
+    expectedTitleContains: item.expectedTitleContains,
+    allowedAssetTypes: item.allowedAssetTypes ?? [],
+    summary: {
+      candidatesFound: audited.candidates.length,
+      selected: selected.length,
+      created: actions.filter((action) => action.action === "created").length,
+      skippedExisting: actions.filter((action) => action.action === "skip_existing").length,
+      wouldCreate: actions.filter((action) => action.action === "would_create").length,
+      issues: audited.issues.length,
+      skippedTitleMismatch: 0
+    },
+    selected,
+    actions,
+    issues: audited.issues
+  };
+}
+
+function summarizeReports(reports) {
+  return reports.reduce((summary, report) => ({
+    pages: summary.pages + 1,
+    candidatesFound: summary.candidatesFound + report.summary.candidatesFound,
+    selected: summary.selected + report.summary.selected,
+    created: summary.created + report.summary.created,
+    skippedExisting: summary.skippedExisting + report.summary.skippedExisting,
+    wouldCreate: summary.wouldCreate + report.summary.wouldCreate,
+    issues: summary.issues + report.summary.issues,
+    skippedTitleMismatch: summary.skippedTitleMismatch + report.summary.skippedTitleMismatch
+  }), {
+    pages: 0,
+    candidatesFound: 0,
+    selected: 0,
+    created: 0,
+    skippedExisting: 0,
+    wouldCreate: 0,
+    issues: 0,
+    skippedTitleMismatch: 0
+  });
+}
+
+async function main() {
+  const options = parseArgs();
+  installNotionDnsOverride(options.resolveIp);
+  const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
+  if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
+
+  const notion = createNotionClient(token);
+  const mainDataSource = await loadMainDataSource(notion);
+  let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
+  const schemaResult = options.ensureSchema && options.apply
+    ? await ensureTraceabilitySchema(notion, mediaAssetsDataSource)
+    : {
+        dataSource: mediaAssetsDataSource,
+        added: [],
+        wouldAdd: options.ensureSchema ? Object.keys(missingTraceabilitySchema(mediaAssetsDataSource)) : []
+      };
+  mediaAssetsDataSource = schemaResult.dataSource;
+
+  if (options.batchManifest) {
+    const manifest = readJsonFile(options.batchManifest);
+    const items = normalizeManifest(manifest, options);
+    const pages = [];
+    const reports = [];
+    for (const item of items) {
+      const workPage = await notion.pages.retrieve({ page_id: item.pageId });
+      const report = await processWorkPage(notion, mediaAssetsDataSource, options, workPage, item);
+      reports.push(report);
+      pages.push({
+        label: item.label,
+        pageId: report.pageId,
+        title: report.title,
+        summary: report.summary,
+        actions: report.actions.map((action) => ({
+          action: action.action,
+          pageId: action.pageId,
+          assetType: action.candidate?.assetType,
+          name: action.candidate?.name
+        }))
+      });
+    }
+
+    const report = {
+      generatedAt: new Date().toISOString(),
+      mode: options.apply ? "apply" : "dry-run",
+      manifestPath: options.batchManifest,
+      mainDataSourceId: mainDataSource.id,
+      mediaAssetsDataSourceId: mediaAssetsDataSource.id,
+      schemaAdded: schemaResult.added,
+      schemaWouldAdd: schemaResult.wouldAdd ?? [],
+      summary: summarizeReports(reports),
+      pages,
+      reports
+    };
+
+    fs.mkdirSync(path.dirname(options.reportPath), { recursive: true });
+    fs.writeFileSync(options.reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    console.log(JSON.stringify({
+      reportPath: options.reportPath,
+      summary: report.summary,
+      schemaAdded: report.schemaAdded,
+      schemaWouldAdd: report.schemaWouldAdd,
+      pages: pages.map((page) => ({
+        label: page.label,
+        title: page.title,
+        summary: page.summary
+      }))
+    }, null, 2));
+    return;
+  }
+
+  const workPage = await resolveWorkPage(notion, mainDataSource, options);
+  const pageReport = await processWorkPage(notion, mediaAssetsDataSource, options, workPage);
   const report = {
     generatedAt: new Date().toISOString(),
     mode: options.apply ? "apply" : "dry-run",
@@ -650,19 +823,12 @@ async function main() {
     schemaAdded: schemaResult.added,
     schemaWouldAdd: schemaResult.wouldAdd ?? [],
     query: options.query || undefined,
-    pageId: workPage.id,
-    title: audited.title,
-    summary: {
-      candidatesFound: audited.candidates.length,
-      selected: selected.length,
-      created: actions.filter((item) => item.action === "created").length,
-      skippedExisting: actions.filter((item) => item.action === "skip_existing").length,
-      wouldCreate: actions.filter((item) => item.action === "would_create").length,
-      issues: audited.issues.length
-    },
-    selected,
-    actions,
-    issues: audited.issues
+    pageId: pageReport.pageId,
+    title: pageReport.title,
+    summary: pageReport.summary,
+    selected: pageReport.selected,
+    actions: pageReport.actions,
+    issues: pageReport.issues
   };
 
   fs.mkdirSync(path.dirname(options.reportPath), { recursive: true });
@@ -672,11 +838,11 @@ async function main() {
     summary: report.summary,
     schemaAdded: report.schemaAdded,
     schemaWouldAdd: report.schemaWouldAdd,
-    actions: actions.map((item) => ({
+    actions: report.actions.map((item) => ({
       action: item.action,
       pageId: item.pageId,
-      assetType: item.candidate.assetType,
-      name: item.candidate.name
+      assetType: item.candidate?.assetType,
+      name: item.candidate?.name
     }))
   }, null, 2));
 }

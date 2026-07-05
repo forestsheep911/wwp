@@ -258,6 +258,11 @@ It writes `Source Page ID` and `Media Block ID` for traceability, skips duplicat
 rows for the same work/source/block, and treats source/original-disc rows as
 hidden from the website by default.
 
+For larger runs, use `--batch-manifest` with page IDs and
+`expectedTitleContains` guards instead of broad title queries. Keep operational
+batch manifests in `.local-data`; the checked-in example is
+`tools/notion-media-assets-batch.example.json`.
+
 Notion IDs are now explicit in local `.env`:
 
 - Main library DB: `f47ef878-8acb-4e12-b604-011e95fb1738`
