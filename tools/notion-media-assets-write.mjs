@@ -516,7 +516,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
   setIfProperty(properties, dataSource, "Playback Verified", { checkbox: false });
-  setIfProperty(properties, dataSource, "Hide from Website", { checkbox: candidate.assetType !== "playable_video" });
+  setIfProperty(properties, dataSource, "Hide from Website", { checkbox: candidate.hideFromWebsite ?? candidate.assetType !== "playable_video" });
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
   setIfProperty(properties, dataSource, "Asset URL", candidate.assetUrl ? { url: candidate.assetUrl } : undefined);
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
@@ -527,8 +527,9 @@ function buildAssetProperties(dataSource, candidate) {
       candidate.assetType === "playable_video"
         ? "Playable row was created from an attached video/file block; playback still needs manual verification."
         : `Source-only row; ${candidate.fileCount ?? 1} file block(s) were observed.`,
+      candidate.developerMemo,
       "Review metadata before bulk migration."
-    ].join(" "))
+    ].filter(Boolean).join(" "))
   });
   return properties;
 }
@@ -671,9 +672,27 @@ function normalizeManifest(manifest, options) {
       expectedTitleContains: item.expectedTitleContains,
       maxAssets: Number(item.maxAssets ?? defaults.maxAssets ?? options.maxAssets),
       maxSpecsPerPage: Number(item.maxSpecsPerPage ?? defaults.maxSpecsPerPage ?? options.maxSpecsPerPage),
-      allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean)
+      allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean),
+      mediaAvailability: item.mediaAvailability ?? defaults.mediaAvailability,
+      hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
+      developerMemo: item.developerMemo ?? defaults.developerMemo
     };
   });
+}
+
+function applyManifestOverrides(candidate, item = {}) {
+  if (item.mediaAvailability === undefined && item.hideFromWebsite === undefined && !item.developerMemo) {
+    return candidate;
+  }
+  return {
+    ...candidate,
+    hideFromWebsite: item.hideFromWebsite,
+    developerMemo: item.developerMemo,
+    metadata: {
+      ...(candidate.metadata ?? {}),
+      availability: item.mediaAvailability ?? candidate.metadata?.availability
+    }
+  };
 }
 
 async function processWorkPage(notion, mediaAssetsDataSource, options, workPage, item = {}) {
@@ -709,7 +728,7 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
     audited.candidates,
     item.maxAssets ?? options.maxAssets,
     item.allowedAssetTypes
-  );
+  ).map((candidate) => applyManifestOverrides(candidate, item));
   const actions = [];
 
   for (const candidate of selected) {

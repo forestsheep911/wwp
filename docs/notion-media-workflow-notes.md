@@ -211,6 +211,14 @@ broad movie batches only include movie-like rows unless `--include-series` is
 explicitly passed. TV series and miniseries need the separate episode-aware
 structure.
 
+Manifest defaults/items may override `mediaAvailability`, `hideFromWebsite`, and
+`developerMemo` for tightly scoped repair cases. Use this only when the dry-run
+proves a real media block exists but the asset must not be public yet, such as a
+no-subtitle playable file that should be tracked as `needs_processing` with
+`Hide from Website = true`. Do not use the override to hide uncertainty from the
+audit; the title/status marker should remain until the operational issue is
+fixed.
+
 When a preview has identified empty pages or high-issue pages, feed it back into
 the next generator run so the same low-value rows do not keep consuming API
 time. Filtered manifest reports can also be passed to `--exclude-preview`; their
@@ -666,6 +674,20 @@ series pages. A new operator/status dry-run found only two remaining candidate
 pages: `【无字幕】秘密会议`, which should not be published automatically without
 subtitle/operator review, and the duplicate-risk `【仅供下载】皮克斯短片集`. The other
 43 operator/status pages had zero candidates and are backlog/placeholder work.
+
+`秘密会议` was then migrated as a hidden, non-public playable asset rather than a
+public playable row. A targeted manifest override wrote one `playable_video`
+row with `Media Availability = needs_processing`, `Hide from Website = true`,
+and a Developer Memo noting the no-subtitle operator marker. The title still
+keeps `【无字幕】` for operator routing. The apply created one row and the rerun was
+`skip_existing`. Stats after this pass showed 3344 active Media Assets rows,
+979 covered works, 2630 public playable rows, 1 hidden `needs_processing` row,
+713 source-only rows, and zero traceability gaps. Fresh round42 leftovers now
+show 92 uncovered pages: 44 operator/status-prefixed pages and 48 series pages.
+The latest operator/status dry-run has only one remaining candidate page:
+`【仅供下载】皮克斯短片集`, still excluded because of prior duplicate short-title
+source risk. All other remaining operator/status and series pages have no
+writable media candidates in the current Notion tree.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words

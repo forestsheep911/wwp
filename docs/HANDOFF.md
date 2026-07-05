@@ -419,6 +419,17 @@ rows, 713 source-only rows, and zero traceability gaps. Fresh leftovers are now
 93 uncovered pages: 45 operator/status-prefixed pages and 48 series pages. The
 latest operator/status dry-run found only two pages with candidates:
 `【无字幕】秘密会议` and `【仅供下载】皮克斯短片集`; keep both for manual review.
+`秘密会议` was then migrated as a hidden non-public playable asset using the
+writer's manifest override support. The row is `Asset Type = playable_video`,
+`Media Availability = needs_processing`, `Hide from Website = true`, and its
+Developer Memo records the no-subtitle operator marker; the `【无字幕】` title
+prefix remains for operator routing. The apply created one row and reran as
+`skip_existing`. Latest stats after this pass are 3344 active Media Assets rows,
+979 covered works, 2630 public playable rows, 1 hidden `needs_processing` row,
+713 source-only rows, and zero traceability gaps. Fresh leftovers are now 92
+uncovered pages: 44 operator/status-prefixed pages and 48 series pages. The
+latest operator/status dry-run has only one remaining candidate page:
+`【仅供下载】皮克斯短片集`, still excluded for duplicate short-title source risk.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
