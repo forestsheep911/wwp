@@ -270,6 +270,22 @@ Do not feed TV seasons into the movie batch writer just because the audit finds
 playable media; episode rows need episode-aware asset names and `Episode Number`
 values.
 
+After a clean audit, write TV episode Media Assets rows with the series writer:
+
+```powershell
+node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --report .local-data\series-assets-preview.json
+node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-apply.json
+node tools\notion-media-assets-write-series.mjs --audit-report .local-data\series-structure-audit.json --max-pages 2 --max-assets 50 --apply --report .local-data\series-assets-rerun.json
+node tools\notion-media-assets-stats.mjs --report .local-data\media-assets-stats-after-series.json
+```
+
+The series writer only creates rows for real playable media blocks inside
+episode child pages. It sets `Episode Number`, keeps `Hide from Website`
+unchecked for playable rows, and records the episode page as `Source Page ID`
+plus the video/file block as `Media Block ID`. Direct media attached to the spec
+page is reported as `direct_spec_media_not_written` for a later normalization
+pass.
+
 The first 2026-07-05 sample audit of 20 non-prefixed TV rows found mixed legacy
 shapes: 19 pages had an episode layer, 10 pages already had playable media under
 episode pages, 10 pages had empty episode placeholders, and one page (`辐射 第二季`)
