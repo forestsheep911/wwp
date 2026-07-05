@@ -133,6 +133,15 @@ future display, but it is still a fallback. For new uploads, prefer writing a
 small structured metadata block at the top of each playable spec page, before
 the video block.
 
+For newly encoded, remuxed, or reprocessed files, do not rely on title parsing
+as the primary metadata source. Run `ffprobe` on the final local media file and
+write the probed facts into `Media Assets` where possible: container, duration,
+resolution, video codec/profile, HDR/SDR signal when present, frame rate, audio
+codec/channel layout/languages when tags exist, subtitle stream languages, and
+exact byte size. Human-readable titles should remain compact summaries; the
+website should prefer structured `Media Assets` fields and only fall back to
+title/filename parsing for older migrated rows.
+
 Long-term asset tracking now has a dedicated `Media Assets` database under the
 same Notion project root. Each playable variant, episode file, and
 source/original-disc package can have real Notion properties instead of
@@ -181,8 +190,9 @@ Each manifest item must use a Notion `pageId` and should include
 `expectedTitleContains`. If the retrieved page title does not contain every
 expected fragment, that item is skipped and nothing is written. Use
 `allowedAssetTypes` to keep a batch limited to low-risk asset classes. The
-generator excludes existing Media Assets works, `【敬请期待】` / `【仅供下载】`
-prefixes, and TV season-looking titles by default.
+generator excludes existing Media Assets works, duplicate main-library titles
+already covered by Media Assets, `【敬请期待】` / `【仅供下载】` prefixes, and TV
+season-looking titles by default.
 
 When a preview has identified empty pages or high-issue pages, feed it back into
 the next generator run so the same low-value rows do not keep consuming API

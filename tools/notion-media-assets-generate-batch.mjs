@@ -16,6 +16,7 @@ function parseArgs() {
     includeExisting: false,
     includePrefixed: false,
     includeSeries: false,
+    includeDuplicateTitles: false,
     excludeNoWritePreviewPages: true,
     excludeHighIssuePreviewPages: true
   };
@@ -34,6 +35,7 @@ function parseArgs() {
     else if (arg === "--include-existing") options.includeExisting = true;
     else if (arg === "--include-prefixed") options.includePrefixed = true;
     else if (arg === "--include-series") options.includeSeries = true;
+    else if (arg === "--include-duplicate-titles") options.includeDuplicateTitles = true;
     else if (arg === "--include-no-write-preview-pages") options.excludeNoWritePreviewPages = false;
     else if (arg === "--include-high-issue-preview-pages") options.excludeHighIssuePreviewPages = false;
     else if (arg === "--help" || arg === "-h") {
@@ -67,6 +69,7 @@ Options:
   --include-existing
   --include-prefixed
   --include-series
+  --include-duplicate-titles
   --exclude-preview .local-data/previous-preview.json
   --include-no-write-preview-pages
   --include-high-issue-preview-pages
@@ -127,6 +130,14 @@ function relationIds(property) {
 
 function stripOperatorPrefix(title) {
   return title.replace(/^【(?:敬请期待|仅供下载)】\s*/u, "").trim();
+}
+
+function titleIdentity(title) {
+  return stripOperatorPrefix(title)
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("zh-Hans-CN");
 }
 
 function hasOperatorPrefix(title) {
@@ -206,6 +217,12 @@ async function main() {
   const mediaAssetPages = await queryAllDataSourcePages(notion, mediaAssetsDataSourceId, 10000);
   const existingWorkIds = new Set(mediaAssetPages.flatMap((page) => relationIds(page.properties?.Work)));
   const libraryPages = await queryAllDataSourcePages(notion, libraryDataSourceId, options.scanLimit);
+  const existingWorkTitleIds = new Map(
+    libraryPages
+      .filter((page) => existingWorkIds.has(page.id))
+      .map((page) => [titleIdentity(pageTitle(page)), page.id])
+      .filter(([title]) => title)
+  );
   const previewExclusions = loadPreviewExclusions(options);
 
   const skipped = [];
@@ -217,6 +234,14 @@ async function main() {
     if (!title) reasons.push("missing_title");
     if (!expected) reasons.push("weak_expected_title");
     if (!options.includeExisting && existingWorkIds.has(page.id)) reasons.push("already_has_media_assets");
+    if (
+      !options.includeExisting &&
+      !options.includeDuplicateTitles &&
+      !existingWorkIds.has(page.id) &&
+      existingWorkTitleIds.has(titleIdentity(title))
+    ) {
+      reasons.push("already_has_media_assets_same_title");
+    }
     if (!options.includePrefixed && hasOperatorPrefix(title)) reasons.push("operator_prefix");
     if (!options.includeSeries && looksLikeSeries(title)) reasons.push("series_season");
     if (previewExclusions.has(page.id)) reasons.push(...previewExclusions.get(page.id));
@@ -250,6 +275,7 @@ async function main() {
       scanLimit: options.scanLimit,
       existingMediaAssetPages: mediaAssetPages.length,
       existingWorks: existingWorkIds.size,
+      existingWorkTitles: existingWorkTitleIds.size,
       excludePreviewPaths: options.excludePreviewPaths
     },
     defaults: {
@@ -273,6 +299,7 @@ async function main() {
       scanned: libraryPages.length,
       existingMediaAssetPages: mediaAssetPages.length,
       existingWorks: existingWorkIds.size,
+      existingWorkTitles: existingWorkTitleIds.size,
       items: items.length,
       skipped: skipped.length,
       previewExcluded: [...previewExclusions.keys()].length

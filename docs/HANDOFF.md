@@ -247,6 +247,14 @@ too. Filenames such as Blu-ray/UHD Blu-ray/ISO/remux encode important facts, but
 the website and future processing queues should not depend on filename parsing
 alone.
 
+For newly produced or reprocessed media, use `ffprobe` on the final local file
+before Notion writeback and populate structured `Media Assets` fields whenever
+possible: container, duration, resolution, video codec/profile, HDR/SDR signal,
+frame rate, audio codec/channel layout/languages, subtitle stream languages, and
+exact byte size. Old Notion title/filename parsing is only a migration fallback;
+new assets should be self-contained enough for the website to display variant
+details without guessing.
+
 The guarded Media Assets writer is available for small representative migrations:
 
 ```powershell
@@ -264,7 +272,10 @@ batch manifests in `.local-data`; the checked-in example is
 `tools/notion-media-assets-batch.example.json`. Generate the next operational
 manifest with `npm run notion:asset-batch -- --output .local-data/media-assets-batch.json --max-items 50`.
 Pass `--exclude-preview` with the previous preview report to keep empty or
-high-issue pages out of subsequent candidate batches.
+high-issue pages out of subsequent candidate batches. The generator also skips
+main-library pages whose normalized full title already belongs to a Work covered
+by Media Assets, because duplicate Notion rows can otherwise bypass relation-id
+dedupe.
 Before applying a broad batch, run `npm run notion:asset-filter -- --manifest
 .local-data/media-assets-batch.json --preview
 .local-data/media-assets-batch-preview.json --output
