@@ -344,6 +344,10 @@ The series writer now supports `--skip-pages` because large follow-up batches
 should not rescan already written TV pages. The option skips over the filtered
 safe page list from the audit report, not raw Notion pages. Use it only after a
 prior apply plus rerun has confirmed the earlier safe pages are already covered.
+For operator-prefixed series pages, the writer strips leading full-width Notion
+status markers such as `【敬请期待】` from the generated Media Assets `Name`. The
+Work relation still points to the original Notion page, but website-facing asset
+labels should not inherit operator/backlog markers.
 
 After the safe pass, a fresh broad batch still produced `items: 0`. The
 leftovers report counted 259 uncovered main-library pages: 180 operator/status
@@ -575,6 +579,19 @@ rows, 932 covered works, 2568 playable rows, 678 source-only rows, and zero
 traceability gaps. Fresh leftovers then showed 198 uncovered pages: 130
 operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, 6
 no-write pages, and 1 manually excluded title-pattern page.
+
+A prefixed-series audit then checked all 31 remaining operator-prefixed TV-like
+rows: 14 `【敬请期待】` and 17 `【仅供下载】`. Most were empty episode shells or empty
+spec pages. Three `【敬请期待】` pages had complete, parseable episode media and no
+issues: `绝代双骄`, `沙丘：预言 第一季`, and `最后生还者 第一季`. The series writer
+created 46 playable episode rows for those pages, reran as 46 `skip_existing`,
+and title cleanup removed the three waiting prefixes with a `skip_prefix_absent`
+rerun. `基地 第一季` still has 8 playable rows but is explicitly missing Episode
+01 and Episode 02, so it remains incomplete and should not be promoted
+automatically. Stats after this pass showed 3292 active Media Assets rows, 935
+covered works, 2614 playable rows, 678 source-only rows, and zero traceability
+gaps. Fresh leftovers then showed 195 uncovered pages, including 127
+operator/status-prefixed pages.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words

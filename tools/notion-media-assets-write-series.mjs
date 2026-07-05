@@ -109,6 +109,10 @@ function cleanText(value = "") {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function publicWorkTitle(value = "") {
+  return cleanText(value).replace(/^【[^】]+】\s*/u, "").trim();
+}
+
 function plainText(items = []) {
   return items.map((item) => item.plain_text ?? "").join("").trim();
 }
@@ -536,6 +540,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         for (const mediaBlock of directPlayable) {
           const fileName = mediaBlockName(mediaBlock);
           const episodeNumber = episodeNumberFromLabel(fileName);
+          const workTitle = publicWorkTitle(page.title);
           if (!episodeNumber) {
             issues.push({
               kind: "direct_spec_media_unparseable_episode",
@@ -551,10 +556,10 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
           const displayLabel = `${spec.title} / ${episodeLabel} / ${fileName || mediaBlock.id}`;
           directCandidates.push({
             workPageId: page.pageId,
-            workTitle: page.title,
+            workTitle,
             sourcePageId: spec.pageId,
             mediaBlockId: mediaBlock.id,
-            name: `${page.title} / ${displayLabel}`,
+            name: `${workTitle} / ${displayLabel}`,
             displayLabel,
             originalFileName: fileName,
             assetUrl: isExternalMediaUrl(mediaBlock) ? mediaUrl(mediaBlock) : undefined,
@@ -593,12 +598,13 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         const fileName = mediaBlockName(mediaBlock);
         const variantSuffix = playable.length > 1 ? ` / ${fileName || mediaBlock.id}` : "";
         const displayLabel = `${spec.title} / ${episodeLabel}${variantSuffix}`;
+        const workTitle = publicWorkTitle(page.title);
         candidates.push({
           workPageId: page.pageId,
-          workTitle: page.title,
+          workTitle,
           sourcePageId: episode.pageId,
           mediaBlockId: mediaBlock.id,
-          name: `${page.title} / ${displayLabel}`,
+          name: `${workTitle} / ${displayLabel}`,
           displayLabel,
           originalFileName: fileName,
           assetUrl: isExternalMediaUrl(mediaBlock) ? mediaUrl(mediaBlock) : undefined,

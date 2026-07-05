@@ -303,6 +303,9 @@ For large TV follow-up batches, the series writer supports `--skip-pages`; this
 skips already completed safe pages from the audit report so later batches do not
 rescan old episode trees. Use it only after an apply plus rerun has confirmed
 the earlier pages are already represented by `skip_existing` rows.
+The series writer strips leading operator/status markers such as `【敬请期待】`
+from generated Media Assets names, while keeping the Work relation pointed at
+the original Notion page.
 For direct spec-page media, use `--include-direct-spec` only after a dry-run. It
 writes rows only when the media title or filename contains a parseable episode
 number such as `S02E01`; unparseable direct media and duplicate parsed episode
@@ -361,6 +364,15 @@ full expected-title guards. The writer created 6 rows and reran as 6
 traceability gaps. Fresh leftovers are now 198 uncovered pages: 130
 operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, 6
 no-write pages, and 1 manually excluded title-pattern page.
+A prefixed-series audit then checked all 31 remaining operator-prefixed TV-like
+rows. Only three `【敬请期待】` pages were complete and zero-issue:
+`绝代双骄`, `沙丘：预言 第一季`, and `最后生还者 第一季`. The series writer created 46
+playable episode rows, reran as 46 `skip_existing`, and title cleanup removed
+the three waiting prefixes. `基地 第一季` still has playable rows but is missing
+Episode 01 and Episode 02, so leave it as incomplete. Latest stats after this
+pass are 3292 active Media Assets rows, 935 covered works, 2614 playable rows,
+678 source-only rows, and zero traceability gaps. Fresh leftovers are now 195
+uncovered pages, including 127 operator/status-prefixed pages.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
