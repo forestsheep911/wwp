@@ -215,7 +215,11 @@ function extensionFromFileName(value) {
 }
 
 function parseAssetMetadata(label, fileName, episodeNumber) {
-  const combined = `${cleanText(label)} ${cleanText(fileName ?? "")}`.trim();
+  const labelText = cleanText(label);
+  const fileText = cleanText(fileName ?? "");
+  const combined = `${labelText} ${fileText}`.trim();
+  const technicalText = fileText || labelText;
+  const sizeText = `${fileText} ${labelText}`.trim();
   const audioLanguages = [];
   const subtitleLanguages = [];
   const subtitleRegions = [];
@@ -254,12 +258,12 @@ function parseAssetMetadata(label, fileName, episodeNumber) {
   if (/Blu[- ]?ray|Bluray/i.test(combined)) pushUnique(sourceLineage, "Blu-ray");
   if (/remux/i.test(combined)) pushUnique(sourceLineage, "remux");
 
-  const size = Number(combined.match(/(\d+(?:\.\d+)?)\s*GB/i)?.[1]);
+  const size = Number(sizeText.match(/(\d+(?:\.\d+)?)\s*GB/i)?.[1]);
   const metadata = {
     availability: "playable",
     episodeNumber,
-    resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
-    videoCodec: firstMatch(combined, [/\b(?:h265|h\.265|hevc|x265)\b/i, /\b(?:h264|h\.264|avc|x264)\b/i])?.toLowerCase().replace(".", ""),
+    resolution: firstMatch(technicalText, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    videoCodec: firstMatch(technicalText, [/\b(?:h265|h\.265|hevc|x265)\b/i, /\b(?:h264|h\.264|avc|x264)\b/i])?.toLowerCase().replace(".", ""),
     container: extensionFromFileName(fileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,
     audioLanguages,

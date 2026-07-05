@@ -10,6 +10,7 @@ function parseArgs() {
     manifestPath: "",
     pageIds: [],
     limit: 20,
+    skipTargets: 0,
     reportPath: ".local-data/notion-series-structure-audit.json",
     includePrefixed: false,
     resolveIp: ""
@@ -23,6 +24,7 @@ function parseArgs() {
     if (name === "--manifest") options.manifestPath = value();
     else if (name === "--page-id") options.pageIds.push(value());
     else if (name === "--limit") options.limit = Number(value());
+    else if (name === "--skip-targets") options.skipTargets = Number(value());
     else if (name === "--report") options.reportPath = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
     else if (arg === "--include-prefixed") options.includePrefixed = true;
@@ -44,12 +46,16 @@ function parseArgs() {
   if (!Number.isFinite(options.limit) || options.limit < 1) {
     throw new Error("--limit must be a positive number.");
   }
+  if (!Number.isFinite(options.skipTargets) || options.skipTargets < 0) {
+    throw new Error("--skip-targets must be zero or a positive number.");
+  }
   return options;
 }
 
 function printHelp() {
   console.log(`Usage:
   node tools/notion-series-structure-audit.mjs --manifest .local-data/notion-media-assets-batch-round22.json --limit 20 --report .local-data/series-audit.json
+  node tools/notion-series-structure-audit.mjs --manifest .local-data/notion-media-assets-batch-round22.json --skip-targets 20 --limit 20 --report .local-data/series-audit-next.json
   npm run notion:series-audit -- .local-data/notion-media-assets-batch-round22.json .local-data/series-audit.json
   node tools/notion-series-structure-audit.mjs --page-id <notion-page-id> --report .local-data/series-audit.json
 
@@ -227,9 +233,8 @@ function loadTargets(options) {
     if (covered || !series) continue;
     if (!options.includePrefixed && prefixed) continue;
     targets.push({ pageId: item.pageId, title: cleanText(item.title), reasons });
-    if (targets.length >= options.limit) break;
   }
-  return targets.slice(0, options.limit);
+  return targets.slice(options.skipTargets, options.skipTargets + options.limit);
 }
 
 async function auditSpecPage(notion, specPage) {
@@ -364,6 +369,7 @@ async function main() {
     mode: "read-only",
     manifestPath: options.manifestPath || undefined,
     includePrefixed: options.includePrefixed,
+    skipTargets: options.skipTargets,
     targetCount: targets.length,
     summary: summarize(pages),
     pages

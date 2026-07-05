@@ -256,6 +256,9 @@ new assets should be self-contained enough for the website to display variant
 details without guessing. In other words, old cleanup may infer metadata from
 titles and filenames, but new production should write probed media facts back to
 Notion as part of the normal packaging step.
+For legacy migration, filename evidence should outrank stale spec-title evidence
+for technical fields such as resolution and video codec. Use the title mainly as
+a fallback and for human language/subtitle hints.
 
 The guarded Media Assets writer is available for small representative migrations:
 
@@ -303,6 +306,10 @@ writes rows only when the media title or filename contains a parseable episode
 number such as `S02E01`; unparseable direct media and duplicate parsed episode
 numbers stay as reported issues. The first successful direct-spec pass wrote 8
 rows for `辐射 第二季`, then reran as 8 `skip_existing`.
+The read-only series audit also supports `--skip-targets` so remaining series
+pages can be scanned in chunks. A later chunk found and wrote 85 more standard
+episode rows plus 10 direct-spec rows for `太平洋战争`; `兄弟连` remains manual
+because 2 episode pages are unparseable even though 42 playable rows exist.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

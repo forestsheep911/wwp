@@ -289,6 +289,13 @@ plus the video/file block as `Media Block ID`. Direct media attached to the spec
 page is reported as `direct_spec_media_not_written` for a later normalization
 pass.
 
+When parsing legacy filenames, prefer the actual media filename for technical
+fields such as resolution and video codec, then fall back to the spec title only
+when the filename has no signal. Spec titles can be stale or contradictory; for
+example `太平洋战争` had spec-page titles saying h265 while the actual filenames
+said h264. This is still only a migration fallback; new production should use
+`ffprobe`.
+
 For legacy pages where playable files sit directly under a spec page, use
 `--include-direct-spec` only after checking a dry-run. The writer then parses
 `Episode Number` from the media title or filename, such as `S02E01`; it does not
@@ -354,6 +361,19 @@ files were named with parseable `S02E01`-style episode markers. Dry-run reported
 873 covered works, 2397 playable rows, 627 source-only rows, and zero missing
 `Source Page ID`, `Media Block ID`, or Work relation. A fresh leftovers report
 then showed 258 uncovered pages, including 56 remaining series pages.
+
+The remaining series scan was then chunked with `--skip-targets` on the read-only
+series audit. The first two chunks after the safe/direct pass contained only
+empty episode shells or empty specs. The final chunk still contained playable
+media: standard episode rows for `绝命毒师` seasons 1-4, `间谍过家家 第二季`,
+and `爱，死亡和机器人 第一季`, plus direct spec media for `太平洋战争`. The standard
+writer created 85 rows and reran as 85 `skip_existing`; the direct-spec writer
+created 10 rows for `太平洋战争` and reran as 10 `skip_existing`. Stats after this
+pass showed 3119 active Media Assets rows, 880 covered works, 2492 playable
+rows, 627 source-only rows, and zero missing `Source Page ID`, `Media Block ID`,
+or Work relation. A fresh leftovers report then showed 251 uncovered pages,
+including 49 remaining series pages. `兄弟连` still needs manual handling
+because its audit has 42 playable rows but 2 unparseable episode pages.
 
 Source archive files:
 
