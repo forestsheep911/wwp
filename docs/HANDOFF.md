@@ -263,6 +263,8 @@ For larger runs, use `--batch-manifest` with page IDs and
 batch manifests in `.local-data`; the checked-in example is
 `tools/notion-media-assets-batch.example.json`. Generate the next operational
 manifest with `npm run notion:asset-batch -- --output .local-data/media-assets-batch.json --max-items 50`.
+Pass `--exclude-preview` with the previous preview report to keep empty or
+high-issue pages out of subsequent candidate batches.
 
 Notion IDs are now explicit in local `.env`:
 

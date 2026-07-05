@@ -538,23 +538,56 @@ function relationIds(property) {
 
 async function findExistingAsset(notion, dataSource, candidate) {
   const nameProperty = titlePropertyName(dataSource);
-  const response = await notion.dataSources.query({
+  const responses = [];
+
+  if (dataSource.properties?.["Media Block ID"] && candidate.mediaBlockId) {
+    responses.push(await notion.dataSources.query({
+      data_source_id: dataSource.id,
+      page_size: 20,
+      filter: {
+        property: "Media Block ID",
+        rich_text: { equals: candidate.mediaBlockId }
+      }
+    }));
+  }
+
+  if (dataSource.properties?.["Source Page ID"] && candidate.sourcePageId) {
+    responses.push(await notion.dataSources.query({
+      data_source_id: dataSource.id,
+      page_size: 20,
+      filter: {
+        property: "Source Page ID",
+        rich_text: { equals: candidate.sourcePageId }
+      }
+    }));
+  }
+
+  responses.push(await notion.dataSources.query({
     data_source_id: dataSource.id,
     page_size: 20,
     filter: {
       property: nameProperty,
       title: { equals: candidate.name }
     }
-  });
+  }));
 
-  return response.results.find((page) => {
+  const pages = responses.flatMap((response) => response.results);
+  const seen = new Set();
+  return pages.find((page) => {
+    if (seen.has(page.id)) return false;
+    seen.add(page.id);
     const properties = page.properties ?? {};
     const workMatches = relationIds(properties.Work).includes(candidate.workPageId);
+    const titleMatches = propertyPlainText(properties[nameProperty]) === candidate.name;
     const sourcePageMatches = propertyPlainText(properties["Source Page ID"]) === candidate.sourcePageId;
     const mediaBlockMatches = propertyPlainText(properties["Media Block ID"]) === candidate.mediaBlockId;
     const fileNameMatches = !candidate.originalFileName ||
       propertyPlainText(properties["Original File Name"]) === candidate.originalFileName;
-    return workMatches && (sourcePageMatches || mediaBlockMatches || fileNameMatches);
+    return workMatches && (
+      mediaBlockMatches ||
+      (sourcePageMatches && fileNameMatches && titleMatches) ||
+      (titleMatches && fileNameMatches)
+    );
   });
 }
 

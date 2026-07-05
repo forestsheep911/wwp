@@ -105,6 +105,10 @@ such as matching a sequel/prequel are skipped before any write. See
 is read-only and excludes works that already have Media Assets rows unless
 `--include-existing` is passed.
 
+Use `--exclude-preview <previous-preview.json>` on the generator to skip pages
+that a prior preview already proved empty, title-mismatched, or too issue-heavy
+for automatic migration.
+
 Subtitle-only groups under the old `基地` structure should become
 `subtitle_package` asset rows. Do not collapse them into `source_archive`.
 

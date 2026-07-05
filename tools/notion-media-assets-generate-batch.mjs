@@ -12,9 +12,12 @@ function parseArgs() {
     scanLimit: 500,
     maxAssets: 3,
     resolveIp: "",
+    excludePreviewPaths: [],
     includeExisting: false,
     includePrefixed: false,
-    includeSeries: false
+    includeSeries: false,
+    excludeNoWritePreviewPages: true,
+    excludeHighIssuePreviewPages: true
   };
 
   const args = process.argv.slice(2);
@@ -27,9 +30,12 @@ function parseArgs() {
     else if (name === "--scan-limit") options.scanLimit = Number(value());
     else if (name === "--max-assets") options.maxAssets = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--exclude-preview") options.excludePreviewPaths.push(value());
     else if (arg === "--include-existing") options.includeExisting = true;
     else if (arg === "--include-prefixed") options.includePrefixed = true;
     else if (arg === "--include-series") options.includeSeries = true;
+    else if (arg === "--include-no-write-preview-pages") options.excludeNoWritePreviewPages = false;
+    else if (arg === "--include-high-issue-preview-pages") options.excludeHighIssuePreviewPages = false;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -61,6 +67,9 @@ Options:
   --include-existing
   --include-prefixed
   --include-series
+  --exclude-preview .local-data/previous-preview.json
+  --include-no-write-preview-pages
+  --include-high-issue-preview-pages
   --resolve-ip 208.103.161.1
 `);
 }
@@ -125,7 +134,7 @@ function hasOperatorPrefix(title) {
 }
 
 function looksLikeSeries(title) {
-  return /(?:第\s*\d+\s*季|第一季|第二季|第三季|第四季|第五季|Season\s*\d+)/iu.test(title);
+  return /(?:第\s*\d+\s*季|第一季|第二季|第三季|第四季|第五季|Season\s*\d+|\bS\d{1,2}\b|\bs\d{1,2}\b|\bbig\s*bang\s*\d+\b|最终季|Part\.\d+)/iu.test(title);
 }
 
 function expectedTitleFragment(title) {
@@ -151,6 +160,29 @@ async function queryAllDataSourcePages(notion, dataSourceId, limit) {
   return pages;
 }
 
+function loadPreviewExclusions(options) {
+  const exclusions = new Map();
+  for (const previewPath of options.excludePreviewPaths) {
+    const preview = JSON.parse(fs.readFileSync(previewPath, "utf8"));
+    for (const page of preview.pages ?? []) {
+      const reasons = [];
+      if (options.excludeNoWritePreviewPages && page.summary?.wouldCreate === 0) {
+        reasons.push("previous_preview_no_writes");
+      }
+      if (options.excludeHighIssuePreviewPages && (page.summary?.issues ?? 0) > 1) {
+        reasons.push("previous_preview_high_issues");
+      }
+      if (page.summary?.skippedTitleMismatch) {
+        reasons.push("previous_preview_title_mismatch");
+      }
+      if (reasons.length > 0) {
+        exclusions.set(page.pageId, reasons);
+      }
+    }
+  }
+  return exclusions;
+}
+
 async function main() {
   const options = parseArgs();
   installNotionDnsOverride(options.resolveIp);
@@ -166,6 +198,7 @@ async function main() {
   const mediaAssetPages = await queryAllDataSourcePages(notion, mediaAssetsDataSourceId, 10000);
   const existingWorkIds = new Set(mediaAssetPages.flatMap((page) => relationIds(page.properties?.Work)));
   const libraryPages = await queryAllDataSourcePages(notion, libraryDataSourceId, options.scanLimit);
+  const previewExclusions = loadPreviewExclusions(options);
 
   const skipped = [];
   const items = [];
@@ -178,6 +211,7 @@ async function main() {
     if (!options.includeExisting && existingWorkIds.has(page.id)) reasons.push("already_has_media_assets");
     if (!options.includePrefixed && hasOperatorPrefix(title)) reasons.push("operator_prefix");
     if (!options.includeSeries && looksLikeSeries(title)) reasons.push("series_season");
+    if (previewExclusions.has(page.id)) reasons.push(...previewExclusions.get(page.id));
 
     if (reasons.length > 0) {
       skipped.push({ pageId: page.id, title, reasons });
@@ -207,7 +241,8 @@ async function main() {
       mediaAssetsDataSourceId,
       scanLimit: options.scanLimit,
       existingMediaAssetPages: mediaAssetPages.length,
-      existingWorks: existingWorkIds.size
+      existingWorks: existingWorkIds.size,
+      excludePreviewPaths: options.excludePreviewPaths
     },
     defaults: {
       maxAssets: options.maxAssets,
@@ -231,7 +266,8 @@ async function main() {
       existingMediaAssetPages: mediaAssetPages.length,
       existingWorks: existingWorkIds.size,
       items: items.length,
-      skipped: skipped.length
+      skipped: skipped.length,
+      previewExcluded: [...previewExclusions.keys()].length
     },
     firstItems: items.slice(0, 10)
   }, null, 2));

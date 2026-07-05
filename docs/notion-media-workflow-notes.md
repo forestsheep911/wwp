@@ -176,6 +176,19 @@ expected fragment, that item is skipped and nothing is written. Use
 generator excludes existing Media Assets works, `【敬请期待】` / `【仅供下载】`
 prefixes, and TV season-looking titles by default.
 
+When a preview has identified empty pages or high-issue pages, feed it back into
+the next generator run so the same low-value rows do not keep consuming API
+time:
+
+```powershell
+node tools\notion-media-assets-generate-batch.mjs --output .local-data\media-assets-next.json --exclude-preview .local-data\media-assets-batch-preview.json
+```
+
+The writer checks existing rows by `Media Block ID`, `Source Page ID`, filename,
+and title. If Notion indexing briefly lags after a write, rerun the same manifest
+after a short pause; expected steady state is `created = 0` and all selected rows
+reported as `skip_existing`.
+
 When migrating `基地` groups, subtitle-only groups should be represented as
 `subtitle_package`, not as `source_archive`.
 
