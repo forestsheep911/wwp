@@ -257,9 +257,27 @@ node tools\notion-upload-movie-video.mjs --file "E:\video_made\movie.mp4" --appl
 Playable TV season files:
 
 ```powershell
+node tools\notion-series-structure-audit.mjs --manifest .local-data\media-assets-round-final.json --limit 20 --report .local-data\series-structure-audit.json
 node tools\notion-upload-series-videos.mjs --apply
 node tools\notion-upload-series-videos.mjs --apply --max-files 1
 ```
+
+Run the series structure audit before designing a TV Media Assets migration. It
+is read-only and checks whether the old tree follows
+`season -> spec page -> episode page -> media`, whether episode titles can be
+normalized to `Episode NN`, and whether specs/episodes are empty placeholders.
+Do not feed TV seasons into the movie batch writer just because the audit finds
+playable media; episode rows need episode-aware asset names and `Episode Number`
+values.
+
+The first 2026-07-05 sample audit of 20 non-prefixed TV rows found mixed legacy
+shapes: 19 pages had an episode layer, 10 pages already had playable media under
+episode pages, 10 pages had empty episode placeholders, and one page (`辐射 第二季`)
+had playable videos directly under the spec page instead of episode child pages.
+All sampled episode titles were parseable to `Episode NN`. A future TV migration
+should therefore handle both standard episode pages and direct spec-page media,
+but should keep empty episode placeholders as cleanup/backlog rather than
+creating playable assets from their titles.
 
 Source archive files:
 
