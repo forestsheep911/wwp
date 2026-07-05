@@ -629,6 +629,29 @@ source-only rows, and zero traceability gaps. A fresh round39 batch then showed
 leftovers now show 101 uncovered pages: 53 operator/status-prefixed pages and 48
 series pages.
 
+A follow-up series audit covered all 68 remaining TV-like uncovered pages,
+including operator-prefixed seasons, in three chunks. It found zero playable
+episode media and zero direct spec-page playable media. Most remaining TV rows
+are parseable `Episode NN` shells with empty episode pages; four pages are empty
+spec shells. These rows are now resource-production or structure-fill backlog,
+not standard automatic Media Assets writes.
+
+A final operator playable promotion pass then dry-ran the remaining 53
+operator/status pages with all asset types allowed. Ten pages had candidates:
+seven `【敬请期待】` pages were safe playable promotions, while `【无字幕】秘密会议`
+was left out because the status marker means it should not be published
+automatically, `【仅供下载】皮克斯短片集` stayed excluded because of the duplicate
+short-title source risk, and `【敬请期待】姜子牙` stayed excluded because its legacy
+spec title produced an incomplete `GB` label and needs metadata cleanup first.
+The safe seven pages were `搭错车`, `飞驰人生2`, `夜班`, `那些年，我们一起追的女孩`,
+`戏梦巴黎`, `卧虎藏龙`, and `哪吒之魔童闹海`. The writer created 15 playable
+rows, reran as 15 `skip_existing`, and title cleanup removed `【敬请期待】` from
+those seven Notion work titles. Stats after the pass showed 3342 active Media
+Assets rows, 977 covered works, 2629 playable rows, 713 source-only rows, and
+zero traceability gaps. A fresh round40 batch still has 18 ordinary items, but
+dry-run finds zero candidates; leftovers now show 94 uncovered pages: 46
+operator/status-prefixed pages and 48 series pages.
+
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
 such as `高`, `中`, or `低`; the size already distinguishes variants, and future

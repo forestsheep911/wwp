@@ -394,6 +394,21 @@ Assets rows, 970 covered works, 2614 playable rows, 713 source-only rows, and
 zero traceability gaps. A regenerated round39 manifest has 18 ordinary items,
 but its dry-run found zero candidates. Fresh leftovers are now 101 uncovered
 pages: 53 operator/status-prefixed pages and 48 series pages.
+All 68 remaining TV-like uncovered pages, including operator-prefixed seasons,
+were then audited in three chunks. The audit found zero playable episode media
+and zero direct spec-page playable media; remaining TV rows are empty episode
+shells or empty spec shells, so standard automatic series writing is exhausted.
+A final operator/status all-type dry-run found 10 pages with candidates. Seven
+`【敬请期待】` pages were promoted safely: `搭错车`, `飞驰人生2`, `夜班`,
+`那些年，我们一起追的女孩`, `戏梦巴黎`, `卧虎藏龙`, and `哪吒之魔童闹海`. The
+writer created 15 playable rows, reran as 15 `skip_existing`, and title cleanup
+removed `【敬请期待】` from those seven work titles. `【无字幕】秘密会议`,
+`【仅供下载】皮克斯短片集`, and `【敬请期待】姜子牙` remain manual-review items.
+Latest stats after this pass are 3342 active Media Assets rows, 977 covered
+works, 2629 playable rows, 713 source-only rows, and zero traceability gaps. A
+regenerated round40 manifest still has 18 ordinary items, but its dry-run found
+zero candidates. Fresh leftovers are now 94 uncovered pages: 46
+operator/status-prefixed pages and 48 series pages.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
