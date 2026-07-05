@@ -284,6 +284,10 @@ filtered manifest. The filter is local-only and keeps conservative movie-like
 pages: at least one dry-run creation, no title mismatch, at most one issue, at
 most three selected assets, no series-looking title, and stronger title evidence
 for single-asset pages.
+The generator also checks the main library `影别` property when present. Broad
+movie batches exclude non-movie kinds such as `TV Series` and `TV Mini Series`
+unless `--include-series` is explicitly passed; TV assets should use a separate
+episode-aware migration path.
 The generator can also accept that filtered manifest path via
 `--exclude-preview`; its `filteredOut` entries are treated as exclusions for
 later rounds.

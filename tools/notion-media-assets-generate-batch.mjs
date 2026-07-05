@@ -128,6 +128,10 @@ function relationIds(property) {
   return property?.type === "relation" ? property.relation.map((item) => item.id) : [];
 }
 
+function selectName(property) {
+  return property?.type === "select" ? property.select?.name ?? "" : "";
+}
+
 function stripOperatorPrefix(title) {
   return title.replace(/^【(?:敬请期待|仅供下载)】\s*/u, "").trim();
 }
@@ -146,6 +150,14 @@ function hasOperatorPrefix(title) {
 
 function looksLikeSeries(title) {
   return /(?:第\s*\d+\s*季|第一季|第二季|第三季|第四季|第五季|Season\s*\d+|\bS\d{1,2}\b|\bs\d{1,2}\b|\bbig\s*bang\s*\d+\b|最终季|Part\.\d+)/iu.test(title);
+}
+
+function libraryMediaKind(page) {
+  return selectName(page.properties?.["影别"]);
+}
+
+function looksLikeNonMovieKind(kind) {
+  return Boolean(kind) && !/^(?:movie|film|电影|短片|short)$/iu.test(kind);
 }
 
 function expectedTitleFragment(title) {
@@ -230,6 +242,7 @@ async function main() {
   for (const page of libraryPages) {
     const title = pageTitle(page);
     const expected = expectedTitleFragment(title);
+    const mediaKind = libraryMediaKind(page);
     const reasons = [];
     if (!title) reasons.push("missing_title");
     if (!expected) reasons.push("weak_expected_title");
@@ -244,6 +257,9 @@ async function main() {
     }
     if (!options.includePrefixed && hasOperatorPrefix(title)) reasons.push("operator_prefix");
     if (!options.includeSeries && looksLikeSeries(title)) reasons.push("series_season");
+    if (!options.includeSeries && looksLikeNonMovieKind(mediaKind)) {
+      reasons.push(`non_movie_kind:${mediaKind}`);
+    }
     if (previewExclusions.has(page.id)) reasons.push(...previewExclusions.get(page.id));
 
     if (reasons.length > 0) {
