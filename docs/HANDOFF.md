@@ -429,7 +429,12 @@ prefix remains for operator routing. The apply created one row and reran as
 713 source-only rows, and zero traceability gaps. Fresh leftovers are now 92
 uncovered pages: 44 operator/status-prefixed pages and 48 series pages. The
 latest operator/status dry-run has only one remaining candidate page:
-`【仅供下载】皮克斯短片集`, still excluded for duplicate short-title source risk.
+`【仅供下载】皮克斯短片集`, still excluded for duplicate short-title source risk. A
+direct Media Assets lookup confirmed that the same `Original File Name`, `Pixar
+Short Films Collection Vol 1 2007 1080p BluRay AVC LPCM 5.1-CHDBits.7z.001`, is
+already represented as a hidden `source_only` row under
+`【仅供下载】皮克斯短片集 The Pixar Shorts Collection`, so the short-title page should be
+merged/removed manually rather than migrated again.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

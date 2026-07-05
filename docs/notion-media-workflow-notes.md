@@ -686,8 +686,13 @@ keeps `【无字幕】` for operator routing. The apply created one row and the 
 show 92 uncovered pages: 44 operator/status-prefixed pages and 48 series pages.
 The latest operator/status dry-run has only one remaining candidate page:
 `【仅供下载】皮克斯短片集`, still excluded because of prior duplicate short-title
-source risk. All other remaining operator/status and series pages have no
-writable media candidates in the current Notion tree.
+source risk. A direct Media Assets lookup confirmed the same `Original File
+Name`, `Pixar Short Films Collection Vol 1 2007 1080p BluRay AVC LPCM
+5.1-CHDBits.7z.001`, is already written as a hidden `source_only` row under the
+fuller work title `【仅供下载】皮克斯短片集 The Pixar Shorts Collection`, so the short
+title page should be merged/removed manually rather than migrated again. All
+other remaining operator/status and series pages have no writable media
+candidates in the current Notion tree.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words
