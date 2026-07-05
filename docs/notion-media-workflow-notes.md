@@ -186,10 +186,11 @@ prefixes, and TV season-looking titles by default.
 
 When a preview has identified empty pages or high-issue pages, feed it back into
 the next generator run so the same low-value rows do not keep consuming API
-time:
+time. Filtered manifest reports can also be passed to `--exclude-preview`; their
+`filteredOut` pages are skipped on later generated batches:
 
 ```powershell
-node tools\notion-media-assets-generate-batch.mjs --output .local-data\media-assets-next.json --exclude-preview .local-data\media-assets-batch-preview.json
+node tools\notion-media-assets-generate-batch.mjs --output .local-data\media-assets-next.json --exclude-preview .local-data\media-assets-batch-preview.json --exclude-preview .local-data\media-assets-batch-low-risk.json
 ```
 
 The writer checks existing rows by `Media Block ID`, `Source Page ID`, filename,

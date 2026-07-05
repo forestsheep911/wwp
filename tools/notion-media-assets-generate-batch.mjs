@@ -179,6 +179,14 @@ function loadPreviewExclusions(options) {
         exclusions.set(page.pageId, reasons);
       }
     }
+    for (const page of preview.filteredOut ?? []) {
+      const reasons = page.reasons?.length
+        ? page.reasons.map((reason) => `previous_filter_${reason}`)
+        : ["previous_filter_excluded"];
+      if (page.pageId && reasons.length > 0) {
+        exclusions.set(page.pageId, reasons);
+      }
+    }
   }
   return exclusions;
 }
