@@ -172,6 +172,16 @@ future migration can trace the structured asset back to the old Notion media
 tree. It also skips an existing row when the same work/source/block has already
 been written.
 
+When producing new playable files, the upload/writeback helper should run
+`ffprobe` against the final local file and persist the measured facts into
+`Media Assets` instead of leaving the website to infer everything from human
+titles. Record at least container, duration, exact byte size, resolution, frame
+rate, video codec/profile, HDR/SDR signal when present, audio codec/channel
+layout/language tags, and subtitle stream language tags. Old rows can still be
+bootstrapped from titles and filenames during cleanup, but any newly encoded,
+remuxed, repaired, or re-uploaded asset should be self-contained enough for the
+website to display variant details without guessing.
+
 For larger migrations, use a batch manifest instead of title queries:
 
 ```powershell
@@ -604,6 +614,20 @@ active Media Assets rows, 936 covered works, 2614 playable rows, 679 source-only
 rows, and zero traceability gaps. Fresh leftovers then showed 194 uncovered
 pages: 127 operator/status-prefixed pages, 48 series pages, 13 no-media
 placeholders, and 6 no-write pages.
+
+The next operator source-only pass reviewed all 127 remaining operator/status
+leftovers in dry-run chunks and selected only real source-only candidates:
+`original_disc`, `source_archive`, or `subtitle_package`. The safe ready subset
+excluded the duplicate-risk short-title `【仅供下载】皮克斯短片集` and `【缺】闪灵`
+because the missing prefix needs manual semantic review. The writer created 34
+hidden `source_only` rows, all with `Hide from Website = true`, and reran as 34
+`skip_existing`. This pass did not remove any Notion title prefixes, because the
+rows are still not verified playable website assets. Stats after the pass showed
+3327 active Media Assets rows, 970 covered works, 2614 playable rows, 713
+source-only rows, and zero traceability gaps. A fresh round39 batch then showed
+18 ordinary manifest items but a dry-run found zero candidates; refreshed
+leftovers now show 101 uncovered pages: 53 operator/status-prefixed pages and 48
+series pages.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words

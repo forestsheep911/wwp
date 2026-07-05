@@ -382,11 +382,29 @@ a real source archive plus an empty playable placeholder; it was written as one
 traceability gaps. Fresh leftovers are now 194 uncovered pages: 127
 operator/status-prefixed pages, 48 series pages, 13 no-media placeholders, and 6
 no-write pages.
+The round38 operator source-only pass then dry-ran all 127 operator/status
+leftovers in chunks and wrote only a safe subset of real source-only candidates:
+34 `original_disc`, `source_archive`, or `subtitle_package` rows. Each row has
+`Media Availability = source_only`, `Hide from Website = true`, Work relation,
+`Source Page ID`, and `Media Block ID`; the rerun was 34 `skip_existing`.
+`【仅供下载】皮克斯短片集` was excluded because of prior duplicate short-title
+source risk, and `【缺】闪灵` was excluded because the missing marker needs
+manual semantic review. Latest stats after this pass are 3327 active Media
+Assets rows, 970 covered works, 2614 playable rows, 713 source-only rows, and
+zero traceability gaps. A regenerated round39 manifest has 18 ordinary items,
+but its dry-run found zero candidates. Fresh leftovers are now 101 uncovered
+pages: 53 operator/status-prefixed pages and 48 series pages.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
 playback verification flags, and traceability gaps such as missing
 `Source Page ID`, `Media Block ID`, or Work relation.
+
+For newly encoded, remuxed, repaired, or re-uploaded playable assets, run
+`ffprobe` on the final local media file before Notion writeback and persist the
+measured stream/file facts into `Media Assets`. Old cleanup can still bootstrap
+from titles and filenames, but new production should not depend on title parsing
+for website variant display.
 
 Notion IDs are now explicit in local `.env`:
 
