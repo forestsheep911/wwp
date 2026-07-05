@@ -133,7 +133,7 @@ function selectName(property) {
 }
 
 function stripOperatorPrefix(title) {
-  return title.replace(/^【(?:敬请期待|仅供下载)】\s*/u, "").trim();
+  return title.replace(/^【[^】]+】\s*/u, "").trim();
 }
 
 function titleIdentity(title) {
@@ -145,7 +145,7 @@ function titleIdentity(title) {
 }
 
 function hasOperatorPrefix(title) {
-  return /^【(?:敬请期待|仅供下载)】/u.test(title);
+  return /^【[^】]+】/u.test(title);
 }
 
 function looksLikeSeries(title) {

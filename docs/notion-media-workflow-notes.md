@@ -192,11 +192,12 @@ Each manifest item must use a Notion `pageId` and should include
 expected fragment, that item is skipped and nothing is written. Use
 `allowedAssetTypes` to keep a batch limited to low-risk asset classes. The
 generator excludes existing Media Assets works, duplicate main-library titles
-already covered by Media Assets, `【敬请期待】` / `【仅供下载】` prefixes, and TV
-season-looking titles by default. It also uses the main library `影别` property
-when present: broad movie batches only include movie-like rows unless
-`--include-series` is explicitly passed. TV series and miniseries need the
-separate episode-aware structure.
+already covered by Media Assets, leading full-width bracket operator/status
+prefixes such as `【敬请期待】`, `【仅供下载】`, or `【缺】`, and TV season-looking
+titles by default. It also uses the main library `影别` property when present:
+broad movie batches only include movie-like rows unless `--include-series` is
+explicitly passed. TV series and miniseries need the separate episode-aware
+structure.
 
 When a preview has identified empty pages or high-issue pages, feed it back into
 the next generator run so the same low-value rows do not keep consuming API
