@@ -295,6 +295,15 @@ should therefore handle both standard episode pages and direct spec-page media,
 but should keep empty episode placeholders as cleanup/backlog rather than
 creating playable assets from their titles.
 
+The first TV Media Assets write pass on 2026-07-05 used the series writer on a
+40-row non-prefixed TV audit sample. It created 202 episode-level playable rows
+across standard episode-page structures, including `铁拳教育 第一季`,
+`葬送的芙莉莲`, `中国奇谭`, `许愿吧，精灵`, `纸牌屋` seasons 1-6,
+`big bang 2`, `生活大爆炸 第一季`, and `蜗居`. The rerun reported all 202 as
+`skip_existing`. Post-write stats showed 2301 active Media Assets rows and zero
+missing `Source Page ID`, `Media Block ID`, or Work relation. The 13 remaining
+issues in that pass were empty episode placeholders under `许愿吧，精灵`.
+
 Source archive files:
 
 ```powershell
