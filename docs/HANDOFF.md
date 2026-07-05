@@ -317,6 +317,12 @@ rows from empty playable spec placeholders. The 2026-07-06 source-only pass
 wrote 19 movie pages and 14 TV/series pages, then reran as `skip_existing`.
 Remaining download-only rows are mostly title-only/empty source groups, duplicate
 source-file pages, or series pages where no real source file block was found.
+For `【敬请期待】` rows that already contain real playable/source media, do not
+write public playable assets while leaving the waiting prefix in the main title.
+Use `notion-title-prefix-cleanup.mjs` after the Media Assets apply/rerun. The
+first guarded promotion pass wrote 20 rows for 7 zero-issue movie pages and then
+removed `【敬请期待】` from those 7 titles; a cleanup rerun reported
+`skip_prefix_absent`.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,

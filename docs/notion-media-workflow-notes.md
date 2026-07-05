@@ -462,6 +462,13 @@ actually prepared. Only remove `【仅供下载】` after a playable version has
 produced, uploaded, and verified; source-only packaging should not change the
 page's backlog status.
 
+When promoting a `【敬请期待】` page, create/verify its Media Assets rows and remove
+the title prefix in the same guarded operation. Use
+`notion-title-prefix-cleanup.mjs` for the title change; it defaults to dry-run
+and only updates explicit page IDs whose current title starts with the expected
+prefix. Do not create public playable rows while leaving the main library title
+with `【敬请期待】`.
+
 Common reasons for `【仅供下载】` rows:
 
 - TV seasons with too many episodes to prepare manually at the time.
@@ -496,6 +503,18 @@ manually excluded title-pattern page. Remaining uncovered `【仅供下载】` r
 either empty/title-only, duplicate source-file pages, or series pages such as
 `疑犯追踪` and `权力的游戏` seasons where the current audit found no real source
 file block to write.
+
+The first guarded `【敬请期待】` promotion pass on 2026-07-06 used a dry-run
+manifest for non-series waiting pages, then selected only pages with real media
+and zero audit issues. Seven pages qualified: `冷山`, `安娜贝尔`, `活火熔城`,
+`背靠背，脸对脸`, `天地无限`, `赤胆屠龙`, and `神探`. The Media Assets writer
+created 20 rows and reran as 20 `skip_existing`; the title-prefix cleanup tool
+then removed `【敬请期待】` from all 7 titles and a cleanup rerun reported
+`skip_prefix_absent`. Stats after this pass showed 3172 active Media Assets
+rows, 920 covered works, 2505 playable rows, 667 source-only rows, and zero
+missing `Source Page ID`, `Media Block ID`, or Work relation. A fresh leftovers
+report then showed 210 uncovered pages, including 139 operator/status-prefixed
+pages.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words

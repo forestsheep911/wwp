@@ -22,6 +22,7 @@
     "notion:asset-leftovers": "node tools/notion-media-assets-leftovers-report.mjs",
     "notion:asset-stats": "node tools/notion-media-assets-stats.mjs",
     "notion:asset-write": "node tools/notion-media-assets-write.mjs",
+    "notion:title-prefix-cleanup": "node tools/notion-title-prefix-cleanup.mjs",
     "notion:series-audit": "node tools/notion-series-structure-audit.mjs",
     "notion:series-asset-write": "node tools/notion-media-assets-write-series.mjs",
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
