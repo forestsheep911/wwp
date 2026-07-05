@@ -287,6 +287,11 @@ for single-asset pages.
 The generator can also accept that filtered manifest path via
 `--exclude-preview`; its `filteredOut` entries are treated as exclusions for
 later rounds.
+After each broad write, run `node tools/notion-media-assets-stats.mjs --report
+.local-data/media-assets-stats.json`. It is read-only and reports active row
+counts, Work coverage, asset type/availability distribution, website hide flags,
+playback verification flags, and traceability gaps such as missing
+`Source Page ID`, `Media Block ID`, or Work relation.
 
 Notion IDs are now explicit in local `.env`:
 

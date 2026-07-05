@@ -19,6 +19,7 @@
     "notion:asset-audit": "node tools/notion-media-assets-audit.mjs",
     "notion:asset-batch": "node tools/notion-media-assets-generate-batch.mjs",
     "notion:asset-filter": "node tools/notion-media-assets-filter-batch.mjs",
+    "notion:asset-stats": "node tools/notion-media-assets-stats.mjs",
     "notion:asset-write": "node tools/notion-media-assets-write.mjs",
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
     "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",

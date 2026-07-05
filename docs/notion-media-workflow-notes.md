@@ -179,6 +179,7 @@ node tools\notion-media-assets-filter-batch.mjs --manifest .local-data\media-ass
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --report .local-data\media-assets-batch-low-risk-preview.json
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --apply --report .local-data\media-assets-batch-low-risk-apply.json
 node tools\notion-media-assets-write.mjs --batch-manifest .local-data\media-assets-batch-low-risk.json --apply --report .local-data\media-assets-batch-low-risk-rerun.json
+node tools\notion-media-assets-stats.mjs --report .local-data\media-assets-stats.json
 ```
 
 The filter step is local-only. It keeps pages whose writer dry-run says there is
@@ -207,6 +208,11 @@ The writer checks existing rows by `Media Block ID`, `Source Page ID`, filename,
 and title. If Notion indexing briefly lags after a write, rerun the same manifest
 after a short pause; expected steady state is `created = 0` and all selected rows
 reported as `skip_existing`.
+
+Run the stats script after broad writes. It is read-only and reports active row
+counts, Work coverage, asset type/availability distribution, website hide flags,
+playback verification flags, and traceability gaps such as missing
+`Source Page ID`, `Media Block ID`, or Work relation.
 
 When migrating `基地` groups, subtitle-only groups should be represented as
 `subtitle_package`, not as `source_archive`.
