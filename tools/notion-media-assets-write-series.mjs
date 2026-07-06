@@ -9,6 +9,7 @@ function parseArgs() {
   const options = {
     auditReportPath: "",
     reportPath: ".local-data/notion-media-assets-series-write.json",
+    metadataManifestPath: "",
     skipPages: 0,
     maxPages: 2,
     maxAssets: 50,
@@ -25,6 +26,7 @@ function parseArgs() {
     const value = () => inlineValue ?? args[++index];
     if (name === "--audit-report") options.auditReportPath = value();
     else if (name === "--report") options.reportPath = value();
+    else if (name === "--metadata-manifest") options.metadataManifestPath = value();
     else if (name === "--skip-pages") options.skipPages = Number(value());
     else if (name === "--max-pages") options.maxPages = Number(value());
     else if (name === "--max-assets") options.maxAssets = Number(value());
@@ -54,6 +56,7 @@ function parseArgs() {
 function printHelp() {
   console.log(`Usage:
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --report .local-data/series-write-preview.json
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-metadata.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
@@ -356,6 +359,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Video Codec", asSelect(metadata.videoCodec));
   setIfProperty(properties, dataSource, "Container", asSelect(metadata.container));
   setIfProperty(properties, dataSource, "Approx Size GB", metadata.approximateSizeGb ? { number: metadata.approximateSizeGb } : undefined);
+  setIfProperty(properties, dataSource, "Quality Tag", { rich_text: richText(metadata.qualityTag) });
   setIfProperty(properties, dataSource, "Audio Languages", asMultiSelect(metadata.audioLanguages));
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
@@ -367,7 +371,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
   setIfProperty(properties, dataSource, "Media Block ID", { rich_text: richText(candidate.mediaBlockId) });
   setIfProperty(properties, dataSource, "Developer Memo", {
-    rich_text: richText("Created by notion-media-assets-write-series.mjs from an episode child page with a real media block. Playback still needs manual verification.")
+    rich_text: richText(candidate.developerMemo || "Created by notion-media-assets-write-series.mjs from an episode child page with a real media block. Playback still needs manual verification.")
   });
   return properties;
 }
@@ -527,6 +531,50 @@ function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec, al
     .slice(0, maxPages);
 }
 
+function normalizeMetadataOverrides(manifestPath) {
+  if (!manifestPath) return [];
+  const raw = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const defaults = raw.defaults ?? {};
+  const items = Array.isArray(raw) ? raw : raw.items;
+  if (!Array.isArray(items)) throw new Error("Metadata manifest must be an array or an object with an items array.");
+  return items.map((item, index) => ({
+    label: item.label || item.originalFileName || item.mediaBlockId || `item-${index + 1}`,
+    originalFileName: item.originalFileName,
+    mediaBlockId: item.mediaBlockId,
+    sourcePageId: item.sourcePageId,
+    developerMemo: item.developerMemo ?? defaults.developerMemo,
+    metadata: {
+      ...(defaults.metadata ?? {}),
+      ...(item.metadata ?? {})
+    }
+  }));
+}
+
+function metadataOverrideMatches(candidate, override) {
+  if (override.mediaBlockId && candidate.mediaBlockId === override.mediaBlockId) return true;
+  if (override.sourcePageId && override.originalFileName) {
+    return candidate.sourcePageId === override.sourcePageId && candidate.originalFileName === override.originalFileName;
+  }
+  if (override.originalFileName && candidate.originalFileName === override.originalFileName) return true;
+  return false;
+}
+
+function applyMetadataOverrides(candidates, overrides) {
+  if (overrides.length === 0) return candidates;
+  return candidates.map((candidate) => {
+    const override = overrides.find((item) => metadataOverrideMatches(candidate, item));
+    if (!override) return candidate;
+    return {
+      ...candidate,
+      developerMemo: override.developerMemo ?? candidate.developerMemo,
+      metadata: {
+        ...(candidate.metadata ?? {}),
+        ...(override.metadata ?? {})
+      }
+    };
+  });
+}
+
 async function candidatesForSeriesPage(notion, page, options = {}) {
   const candidates = [];
   const issues = [];
@@ -620,7 +668,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
       }
     }
   }
-  return { candidates, issues };
+  return { candidates: applyMetadataOverrides(candidates, options.metadataOverrides ?? []), issues };
 }
 
 async function processCandidate(notion, dataSource, existingLookup, candidate, apply) {
@@ -665,6 +713,7 @@ async function main() {
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
   const auditReport = JSON.parse(fs.readFileSync(options.auditReportPath, "utf8"));
+  const metadataOverrides = normalizeMetadataOverrides(options.metadataManifestPath);
   const pages = selectablePages(
     auditReport,
     options.skipPages,
@@ -679,7 +728,10 @@ async function main() {
   const reports = [];
 
   for (const page of pages) {
-    const { candidates, issues } = await candidatesForSeriesPage(notion, page, { includeDirectSpec: options.includeDirectSpec });
+    const { candidates, issues } = await candidatesForSeriesPage(notion, page, {
+      includeDirectSpec: options.includeDirectSpec,
+      metadataOverrides
+    });
     const selected = candidates.slice(0, remainingAssets);
     remainingAssets -= selected.length;
     const actions = [];
@@ -706,6 +758,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     mode: options.apply ? "apply" : "dry-run",
     auditReportPath: options.auditReportPath,
+    metadataManifestPath: options.metadataManifestPath || undefined,
     skipPages: options.skipPages,
     includeDirectSpec: options.includeDirectSpec,
     allowPartialEpisodes: options.allowPartialEpisodes,

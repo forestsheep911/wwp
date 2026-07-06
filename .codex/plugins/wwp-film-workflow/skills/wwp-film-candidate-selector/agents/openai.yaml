@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Film Candidate Selector"
+  short_description: "Rank WWP input-directory film candidates."
+  default_prompt: "Scan the specified input directory and recommend which WWP film or series candidates to make, defer, or skip."

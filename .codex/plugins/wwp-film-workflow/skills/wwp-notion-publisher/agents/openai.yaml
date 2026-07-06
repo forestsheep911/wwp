@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Notion Publisher"
+  short_description: "Publish playable files and verify Media Assets."
+  default_prompt: "Upload WWP playable media to Notion and verify the corresponding Media Assets rows."

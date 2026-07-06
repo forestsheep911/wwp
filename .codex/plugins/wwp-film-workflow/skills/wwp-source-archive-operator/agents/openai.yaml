@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Source Archive Operator"
+  short_description: "Handle source and original-disc archive state."
+  default_prompt: "Align, package, upload, or reconcile WWP source/original-disc archives separately from playable media."

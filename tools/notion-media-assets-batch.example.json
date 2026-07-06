@@ -15,7 +15,22 @@
       "expectedTitleContains": [
         "风之谷"
       ],
-      "maxAssets": 3
+      "maxAssets": 3,
+      "metadata": {
+        "resolution": "1080p",
+        "videoCodec": "hevc",
+        "container": "mp4",
+        "audioLanguages": [
+          "zh-Mandarin"
+        ],
+        "subtitleLanguages": [
+          "zh-Hant",
+          "en"
+        ],
+        "sourceLineage": [
+          "encode"
+        ]
+      }
     }
   ]
 }

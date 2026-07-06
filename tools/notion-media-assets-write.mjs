@@ -58,7 +58,8 @@ function printHelp() {
 Default mode is dry-run. The script creates Media Assets rows only with --apply.
 It writes a small representative sample, skips duplicates, and records source
 Notion page/block IDs for traceability. Batch manifests use page IDs and
-expected-title guards to avoid broad query mismatches.
+expected-title guards to avoid broad query mismatches. Batch item metadata can
+override values inferred from page labels and filenames.
 
 Network workaround:
   node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip 208.103.161.1
@@ -683,6 +684,10 @@ function arrayify(value) {
   return Array.isArray(value) ? value : [value];
 }
 
+function plainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function titleContainsExpected(title, expectedTitleContains) {
   const expected = arrayify(expectedTitleContains).map((item) => cleanText(String(item))).filter(Boolean);
   if (expected.length === 0) return true;
@@ -699,6 +704,10 @@ function normalizeManifest(manifest, options) {
   const defaults = Array.isArray(manifest) ? {} : manifest.defaults ?? {};
   return items.map((item, index) => {
     if (!item.pageId) throw new Error(`Batch manifest item ${index + 1} is missing pageId.`);
+    const metadata = {
+      ...plainObject(defaults.metadata),
+      ...plainObject(item.metadata)
+    };
     return {
       label: item.label || item.expectedTitleContains || item.pageId,
       pageId: item.pageId,
@@ -708,13 +717,20 @@ function normalizeManifest(manifest, options) {
       allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean),
       mediaAvailability: item.mediaAvailability ?? defaults.mediaAvailability,
       hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
-      developerMemo: item.developerMemo ?? defaults.developerMemo
+      developerMemo: item.developerMemo ?? defaults.developerMemo,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined
     };
   });
 }
 
 function applyManifestOverrides(candidate, item = {}) {
-  if (item.mediaAvailability === undefined && item.hideFromWebsite === undefined && !item.developerMemo) {
+  const metadataOverrides = plainObject(item.metadata);
+  if (
+    item.mediaAvailability === undefined &&
+    item.hideFromWebsite === undefined &&
+    !item.developerMemo &&
+    Object.keys(metadataOverrides).length === 0
+  ) {
     return candidate;
   }
   return {
@@ -723,7 +739,8 @@ function applyManifestOverrides(candidate, item = {}) {
     developerMemo: item.developerMemo,
     metadata: {
       ...(candidate.metadata ?? {}),
-      availability: item.mediaAvailability ?? candidate.metadata?.availability
+      ...metadataOverrides,
+      availability: item.mediaAvailability ?? metadataOverrides.availability ?? candidate.metadata?.availability
     }
   };
 }
