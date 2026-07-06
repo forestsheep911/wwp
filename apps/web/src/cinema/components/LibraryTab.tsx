@@ -12,6 +12,7 @@ import {
   List,
   Loader2,
   Play,
+  ShieldCheck,
   Sparkles,
   Star,
   Shuffle,
@@ -53,7 +54,7 @@ import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
-import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type BadgeVariant, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 
 interface LibraryTabProps {
@@ -991,6 +992,7 @@ function TspdtRankRow({
           />
         </div>
         <CompactRatingBadges result={result} />
+        <AgeRecommendationBadge result={result} />
         {tags.length ? (
           <div className="flex flex-wrap gap-1.5">
             {tags.map((tag) => (
@@ -1634,6 +1636,111 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
   );
 }
 
+type AgeConfidence = "high" | "medium" | "low";
+
+interface AgeRecommendation {
+  age: number;
+  label: string;
+  sourceLabel: string;
+  confidenceLabel?: string;
+  reason?: string;
+  riskTags: string[];
+  ratingLevel: string[];
+  variant: BadgeVariant;
+  tooltip: string;
+}
+
+function ageRecommendation(result: SearchResult): AgeRecommendation | undefined {
+  const metadata = result.metadata;
+  const age = metadata?.effectiveMinimumAge;
+  if (typeof age !== "number" || !Number.isFinite(age)) {
+    return undefined;
+  }
+
+  const label = copy.library.ageRecommendation(age);
+  const confidence = metadata?.aiAgeConfidence as AgeConfidence | undefined;
+  const confidenceLabel = confidence ? copy.library.ageConfidence[confidence] : undefined;
+  const sourceLabel = typeof metadata?.manualAgeOverride === "number" ? copy.library.manualAgeSource : copy.library.aiAgeSource;
+  const riskTags = visibleTags(metadata?.contentRiskTags).slice(0, 6);
+  const ratingLevel = visibleTags(metadata?.ratingLevel).slice(0, 2);
+  const reason = metadata?.aiAgeReason?.trim();
+  const variant: BadgeVariant = age >= 16 ? "danger" : age >= 13 ? "warning" : "default";
+  const tooltip = [
+    copy.library.ageRecommendationTitle,
+    label,
+    sourceLabel,
+    confidenceLabel,
+    ratingLevel.length ? `分级 ${ratingLevel.join(" / ")}` : undefined,
+    riskTags.length ? riskTags.join(" / ") : undefined,
+    reason
+  ].filter(Boolean).join(" / ");
+
+  return {
+    age,
+    label,
+    sourceLabel,
+    confidenceLabel,
+    reason,
+    riskTags,
+    ratingLevel,
+    variant,
+    tooltip
+  };
+}
+
+function AgeRecommendationBadge({ result, className = "" }: { result: SearchResult; className?: string }) {
+  const recommendation = ageRecommendation(result);
+  if (!recommendation) {
+    return null;
+  }
+
+  return (
+    <Badge
+      variant={recommendation.variant}
+      title={recommendation.tooltip}
+      aria-label={recommendation.tooltip}
+      className={`w-fit ${className}`}
+    >
+      <ShieldCheck className="h-3.5 w-3.5" />
+      {recommendation.label}
+    </Badge>
+  );
+}
+
+function AgeRecommendationPanel({ result }: { result: SearchResult }) {
+  const recommendation = ageRecommendation(result);
+  if (!recommendation) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-200">
+          <ShieldCheck className="h-4 w-4 text-emerald-200" />
+          {copy.library.ageRecommendationTitle}
+        </h3>
+        <Badge variant={recommendation.variant}>{recommendation.label}</Badge>
+        <Badge variant="muted">{recommendation.sourceLabel}</Badge>
+        {recommendation.confidenceLabel ? <Badge variant="secondary">{recommendation.confidenceLabel}</Badge> : null}
+        {recommendation.ratingLevel.map((tag) => (
+          <Badge key={`rating-level-${tag}`} variant="secondary">{tag}</Badge>
+        ))}
+      </div>
+      {recommendation.reason ? (
+        <p className="text-sm leading-6 text-slate-300">{recommendation.reason}</p>
+      ) : null}
+      {recommendation.riskTags.length ? (
+        <div className="flex flex-wrap gap-2">
+          {recommendation.riskTags.map((tag) => (
+            <Badge key={`age-risk-${tag}`} variant="muted">{tag}</Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function cardTags(result: SearchResult) {
   return [
     ...genreTags(result),
@@ -1987,6 +2094,7 @@ function MovieCard({
         </button>
 
         <CompactRatingBadges result={result} />
+        <AgeRecommendationBadge result={result} />
 
         {tags.length ? (
           <div className="flex flex-wrap gap-2">
@@ -2264,6 +2372,7 @@ function MovieListView({
                 </td>
                 <td className="px-4 py-4 text-sm">
                   <p className="text-slate-300">{metadataLine(result)}</p>
+                  <AgeRecommendationBadge className="mt-2" result={result} />
                   {directorLine(result) ? (
                     <p className="mt-2 text-xs font-semibold text-slate-400">{copy.library.director(directorLine(result))}</p>
                   ) : null}
@@ -2406,6 +2515,8 @@ function MovieDetailView({
               ))}
             </div>
           ) : null}
+
+          <AgeRecommendationPanel result={result} />
 
           <div className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/80 p-4">
             <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>
