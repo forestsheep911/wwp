@@ -108,6 +108,11 @@ const genrePropertyPattern = /\u65e8\u8da3|\u7c7b\u578b|genre|tag/i;
 const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
 const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
+const aiSuggestedMinimumAgePropertyPattern = /AI\s*(?:suggested\s*)?(?:minimum\s*)?age|AI建议最低年龄|ai\s*age/i;
+const aiAgeConfidencePropertyPattern = /AI年龄建议置信度|AI\s*age\s*confidence|age\s*confidence/i;
+const contentRiskTagsPropertyPattern = /内容风险标签|content\s*risk|risk\s*tags/i;
+const aiAgeReasonPropertyPattern = /AI年龄建议理由|AI\s*age\s*reason|age\s*reason/i;
+const manualAgeOverridePropertyPattern = /人工年龄覆盖|manual\s*age\s*override|age\s*override/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
 const chineseTitlePropertyPattern = /^(?:chinese\s*title|\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u4e2d\u6587\u7247\u540d|\u4e2d\u6587\u540d)$/i;
@@ -1130,6 +1135,9 @@ function movieMetadataFromPage(
   const mediaAvailability = normalizeMediaAvailability(
     listFromNamedProperty(properties, mediaAvailabilityPropertyPattern, 1)?.[0]
   );
+  const aiSuggestedMinimumAge = numberFromNamedProperty(properties, aiSuggestedMinimumAgePropertyPattern);
+  const manualAgeOverride = numberFromNamedProperty(properties, manualAgeOverridePropertyPattern);
+  const effectiveMinimumAge = manualAgeOverride ?? aiSuggestedMinimumAge;
   const titles = movieTitleEntriesFromProperties(title, properties);
   const displayTitle =
     titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hans")?.title ??
@@ -1235,6 +1243,12 @@ function movieMetadataFromPage(
     boxOfficeAmount: boxOffice?.amount,
     boxOfficeCurrency: boxOffice?.currency,
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
+    aiSuggestedMinimumAge,
+    aiAgeConfidence: listFromNamedProperty(properties, aiAgeConfidencePropertyPattern, 1)?.[0],
+    contentRiskTags: listFromNamedProperty(properties, contentRiskTagsPropertyPattern, 12),
+    aiAgeReason: textFromNamedProperty(properties, aiAgeReasonPropertyPattern, 600),
+    manualAgeOverride,
+    effectiveMinimumAge,
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,

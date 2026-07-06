@@ -27,6 +27,13 @@ Do not call OMDb from the user-facing search path. Use metadata sync or a slow a
 
 The Notion write-back path defaults to OMDb `Type=movie` and skips `series`/`episode` rows. Use `--include-non-movies` only after designing separate series/season rules.
 
+`Rated` maps to the existing Notion `分级` multi-select. `Not Rated`, `Unrated`,
+and `N/A` are normalized to `未分级`; values such as `G`, `PG`, `PG-13`, `R`,
+`NC-17`, `TV-14`, and `TV-MA` are written directly when the field is empty.
+This official/country-specific rating is only one input for the custom family
+age fields. Do not treat it as the final child-viewing decision when
+`AI建议最低年龄` or `人工年龄覆盖` is available.
+
 Preferred source precedence:
 
 1. Notion manual metadata

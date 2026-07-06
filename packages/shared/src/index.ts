@@ -331,6 +331,12 @@ export interface MovieMetadata {
   boxOfficeAmount?: number;
   boxOfficeCurrency?: string;
   ratingLevel?: string[];
+  aiSuggestedMinimumAge?: number;
+  aiAgeConfidence?: string;
+  contentRiskTags?: string[];
+  aiAgeReason?: string;
+  manualAgeOverride?: number;
+  effectiveMinimumAge?: number;
   info?: string;
   description?: string;
   imdbId?: string;

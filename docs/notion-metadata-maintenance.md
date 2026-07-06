@@ -58,6 +58,22 @@ Prefer structured fields over title prefixes for new data:
   tooling mistakes, and future processing plans. Do not rely on this field for
   public website copy.
 
+Family viewing age metadata is separate from official ratings. Keep official
+ratings in `分级`; those values may be US MPAA, TV ratings, country-specific
+certificates, or `未分级`. Use these custom fields for the family-facing
+decision layer:
+
+- `AI建议最低年龄`: numeric age from 0 to 18 suggested by an AI review.
+- `AI年龄建议置信度`: `high`, `medium`, or `low`.
+- `内容风险标签`: content concerns such as `暴力`, `血腥`, `恐怖`, `性/裸露`,
+  `脏话`, `毒品`, `自杀自伤`, `战争`, `歧视/仇恨`, `成人主题`, or `儿童友好`.
+- `AI年龄建议理由`: short internal explanation for the age recommendation.
+- `人工年龄覆盖`: manual numeric override. Website logic should treat
+  `人工年龄覆盖 > AI建议最低年龄 > official rating mapping > unknown`.
+
+These are advisory fields, not legal classifications. AI jobs should be allowed
+to mark low confidence or `需人工复核` instead of guessing from a weak synopsis.
+
 Work-level metadata is not enough for playback. Each playable spec and each
 source/original-disc package should also become self-describing.
 

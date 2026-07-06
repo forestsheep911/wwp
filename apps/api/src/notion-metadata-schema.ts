@@ -63,6 +63,76 @@ export const notionManagedProperties = [
   { name: "Box Office Amount", type: "number", group: "display" },
   { name: "Box Office Currency", type: "rich_text", group: "display" },
   { name: "Box Office Source", type: "rich_text", group: "display" },
+  {
+    name: "分级",
+    type: "multi_select",
+    group: "quality",
+    options: [
+      { name: "G", color: "green" },
+      { name: "PG", color: "blue" },
+      { name: "PG-13", color: "yellow" },
+      { name: "R", color: "orange" },
+      { name: "NC-17", color: "red" },
+      { name: "X", color: "red" },
+      { name: "(Banned)", color: "red" },
+      { name: "未分级", color: "gray" },
+      { name: "Approved", color: "green" },
+      { name: "Passed", color: "green" },
+      { name: "TV-Y", color: "green" },
+      { name: "TV-Y7", color: "green" },
+      { name: "TV-G", color: "green" },
+      { name: "TV-PG", color: "blue" },
+      { name: "TV-14", color: "yellow" },
+      { name: "TV-MA", color: "orange" },
+      { name: "DE:16", color: "orange" },
+      { name: "DE:18", color: "red" },
+      { name: "KR:15", color: "yellow" },
+      { name: "GB:PG", color: "blue" },
+      { name: "GB:12A", color: "yellow" },
+      { name: "GB:15", color: "orange" },
+      { name: "GB:18", color: "red" },
+      { name: "JP:G", color: "green" },
+      { name: "JP:PG-12", color: "yellow" },
+      { name: "JP:R18+", color: "red" },
+      { name: "IT:T", color: "blue" },
+      { name: "18+", color: "red" }
+    ]
+  },
+  { name: "IMDB评分", type: "number", group: "quality" },
+  { name: "Metascore", type: "number", group: "quality" },
+  { name: "烂番茄新鲜度", type: "number", group: "quality" },
+  { name: "AI建议最低年龄", type: "number", group: "quality" },
+  {
+    name: "AI年龄建议置信度",
+    type: "select",
+    group: "quality",
+    options: [
+      { name: "high", color: "green" },
+      { name: "medium", color: "yellow" },
+      { name: "low", color: "orange" }
+    ]
+  },
+  {
+    name: "内容风险标签",
+    type: "multi_select",
+    group: "quality",
+    options: [
+      { name: "暴力", color: "orange" },
+      { name: "血腥", color: "red" },
+      { name: "恐怖", color: "purple" },
+      { name: "性/裸露", color: "pink" },
+      { name: "脏话", color: "yellow" },
+      { name: "毒品", color: "red" },
+      { name: "自杀自伤", color: "red" },
+      { name: "战争", color: "orange" },
+      { name: "歧视/仇恨", color: "red" },
+      { name: "成人主题", color: "brown" },
+      { name: "儿童友好", color: "green" },
+      { name: "需人工复核", color: "gray" }
+    ]
+  },
+  { name: "AI年龄建议理由", type: "rich_text", group: "quality" },
+  { name: "人工年龄覆盖", type: "number", group: "quality" },
 
   {
     name: "Match Status",

@@ -1,5 +1,6 @@
 import "./env.js";
 import { mkdir, writeFile } from "node:fs/promises";
+import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
@@ -53,6 +54,7 @@ interface OmdbPayload {
   imdbID?: string;
   Type?: string;
   BoxOffice?: string;
+  Ratings?: Array<{ Source?: string; Value?: string }>;
   Response?: string;
   Error?: string;
 }
@@ -75,6 +77,32 @@ const configuredDataSourceId = process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? proc
 const configuredDatabaseId = process.env.NOTION_LIBRARY_DATABASE_ID ?? process.env.NOTION_MEDIA_DATABASE_ID;
 const notionRequestTimeoutMs = Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000);
 const omdbRequestTimeoutMs = Math.max(1000, Number(process.env.OMDB_REQUEST_TIMEOUT_MS ?? 5000));
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) return;
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
 
 function asRecord(value: unknown): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
@@ -310,6 +338,25 @@ function parseMoneyAmount(value?: string) {
   return Number.isFinite(amount) ? amount : undefined;
 }
 
+function numericText(value?: string) {
+  const cleaned = cleanOmdbText(value);
+  if (!cleaned) return undefined;
+  const number = Number(cleaned.match(/\d+(?:\.\d+)?/)?.[0]);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function rottenTomatoesScore(payload: OmdbPayload) {
+  const rating = payload.Ratings?.find((item) => /rotten\s+tomatoes/i.test(item.Source ?? ""));
+  return numericText(rating?.Value);
+}
+
+function omdbRated(value?: string) {
+  const cleaned = cleanOmdbText(value);
+  if (!cleaned) return undefined;
+  if (/^(?:not rated|unrated|n\/?a)$/i.test(cleaned)) return ["未分级"];
+  return [cleaned];
+}
+
 function moneyCurrency(value?: string) {
   const cleaned = cleanOmdbText(value);
   if (!cleaned) {
@@ -455,6 +502,10 @@ function planUpdates(
   addUpdate(updates, availableProperties, pageProperties, "Directors", cleanOmdbText(payload.Director));
   addUpdate(updates, availableProperties, pageProperties, "Writers", cleanOmdbText(payload.Writer));
   addUpdate(updates, availableProperties, pageProperties, "Cast", cleanOmdbText(payload.Actors));
+  addUpdate(updates, availableProperties, pageProperties, "分级", omdbRated(payload.Rated));
+  addUpdate(updates, availableProperties, pageProperties, "IMDB评分", numericText(payload.imdbRating));
+  addUpdate(updates, availableProperties, pageProperties, "Metascore", numericText(payload.Metascore));
+  addUpdate(updates, availableProperties, pageProperties, "烂番茄新鲜度", rottenTomatoesScore(payload));
   addUpdate(updates, availableProperties, pageProperties, "Poster URL", poster);
   addUpdate(updates, availableProperties, pageProperties, "Box Office", boxOffice);
   addUpdate(updates, availableProperties, pageProperties, "Box Office Amount", parseMoneyAmount(boxOffice));
@@ -490,6 +541,7 @@ async function main() {
     throw new Error("Set OMDB_API_KEY before running Notion OMDb enrichment.");
   }
 
+  installNotionDnsOverride();
   const notion = new Client({ auth: notionToken, timeoutMs: notionRequestTimeoutMs });
   const library = await loadLibrary(notion, options);
   const missingSchema = schemaPatch(library.properties);

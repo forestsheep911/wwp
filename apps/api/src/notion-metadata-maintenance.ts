@@ -1,5 +1,6 @@
 import "./env.js";
 import { mkdir, writeFile } from "node:fs/promises";
+import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
@@ -59,6 +60,32 @@ interface PagePlan {
 }
 
 const requestTimeoutMs = Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000);
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) return;
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const rootPageId = process.env.NOTION_LIBRARY_ROOT_PAGE_ID ?? process.env.PAGE_ID;
@@ -612,6 +639,7 @@ async function main() {
       : "Set NOTION_WRITE_TOKEN, NOTION_TOKEN, or NOTION_READ_ONLY_TOKEN.");
   }
 
+  installNotionDnsOverride();
   const notion = new Client({ auth: token, timeoutMs: requestTimeoutMs });
   const library = await loadLibrary(notion, options);
   const missingSchema = schemaPatch(library.properties);

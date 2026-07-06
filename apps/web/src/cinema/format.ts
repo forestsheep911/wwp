@@ -192,9 +192,13 @@ export function titleInitial(title: string) {
 
 export function metadataLine(result: SearchResult) {
   const metadata = result.metadata;
+  const ageLabel = metadata?.effectiveMinimumAge !== undefined
+    ? `建议 ${metadata.effectiveMinimumAge}+`
+    : undefined;
   const parts = [
     metadata?.year,
     metadata?.type,
+    ageLabel,
     metadata?.ratingLevel?.[0],
     formatLongDate(metadata?.releaseDate)
   ].filter(Boolean);
