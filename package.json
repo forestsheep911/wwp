@@ -14,6 +14,7 @@
     "dev:worker": "npm run dev --workspace @wwpdw/worker",
     "sync:meta": "npm --workspace @wwpdw/api run sync:meta --",
     "sync:family-age-index": "npm --workspace @wwpdw/api run sync:family-age-index --",
+    "sync:title-index": "npm --workspace @wwpdw/api run sync:title-index --",
     "sync:catalog": "npm run sync:catalog --workspace @wwpdw/api",
     "sync:tspdt": "npm run sync:tspdt --workspace @wwpdw/api",
     "notion:metadata": "npm --workspace @wwpdw/api run notion:metadata --",
