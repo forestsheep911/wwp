@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalGenreOptions } from "./genre-taxonomy.js";
 
 export interface MovieIdentityHints {
   imdb?: string;
@@ -52,7 +53,9 @@ export const notionManagedProperties = [
   { name: "Release Date", type: "date", group: "display" },
   { name: "Countries", type: "multi_select", group: "display" },
   { name: "Languages", type: "multi_select", group: "display" },
-  { name: "Genres", type: "multi_select", group: "display" },
+  { name: "旨趣", type: "multi_select", group: "display", options: canonicalGenreOptions },
+  { name: "外部类型原文", type: "rich_text", group: "display" },
+  { name: "未映射类型", type: "rich_text", group: "quality" },
   { name: "Runtime Minutes", type: "number", group: "display" },
   { name: "Directors", type: "rich_text", group: "display" },
   { name: "Writers", type: "rich_text", group: "display" },

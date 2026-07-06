@@ -4,6 +4,7 @@ import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
+import { mapExternalGenres } from "./genre-taxonomy.js";
 import {
   normalizeImdbId,
   notionManagedProperties,
@@ -486,6 +487,7 @@ function planUpdates(
   }
 
   const genres = splitList(payload.Genre);
+  const mappedGenres = mapExternalGenres(genres);
   const countries = splitList(payload.Country);
   const languages = splitList(payload.Language);
   const omdbTitle = cleanOmdbText(payload.Title);
@@ -497,7 +499,9 @@ function planUpdates(
   addUpdate(updates, availableProperties, pageProperties, "Release Date", releaseDate(payload.Released));
   addUpdate(updates, availableProperties, pageProperties, "Countries", countries);
   addUpdate(updates, availableProperties, pageProperties, "Languages", languages);
-  addUpdate(updates, availableProperties, pageProperties, "Genres", genres);
+  addUpdate(updates, availableProperties, pageProperties, "旨趣", mappedGenres.canonical);
+  addUpdate(updates, availableProperties, pageProperties, "外部类型原文", genres.join(" / "));
+  addUpdate(updates, availableProperties, pageProperties, "未映射类型", mappedGenres.unmapped.join(" / "));
   addUpdate(updates, availableProperties, pageProperties, "Runtime Minutes", runtimeMinutes(payload.Runtime));
   addUpdate(updates, availableProperties, pageProperties, "Directors", cleanOmdbText(payload.Director));
   addUpdate(updates, availableProperties, pageProperties, "Writers", cleanOmdbText(payload.Writer));
@@ -513,6 +517,7 @@ function planUpdates(
   addUpdate(updates, availableProperties, pageProperties, "Box Office Source", boxOffice ? "omdb" : undefined);
   addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, "omdb"));
   addUpdate(updates, availableProperties, pageProperties, "Metadata Status", "partial");
+  addUpdate(updates, availableProperties, pageProperties, "Needs Review", mappedGenres.unmapped.length > 0, { overwrite: mappedGenres.unmapped.length > 0 });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Updated At", new Date().toISOString().slice(0, 10), { overwrite: Object.keys(updates).length > 0 });
 
   return {
