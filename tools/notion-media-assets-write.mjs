@@ -275,6 +275,14 @@ function isSourceMedia(block) {
   return block.type === "file" || /\.(7z|zip|rar|iso|mkv|m2ts)(?:\.\d+)?(?:[?#].*)?$/i.test(`${name} ${url}`);
 }
 
+function isSourceContainerTitle(value) {
+  return /^(?:基地|资源|資源|片源|原盘|原盤|source|sources)$/iu.test(cleanText(value));
+}
+
+function isMetadataContainerTitle(value) {
+  return /^(?:资料|資料|meta|metadata)$/iu.test(cleanText(value));
+}
+
 async function listChildren(notion, blockId) {
   const out = [];
   let cursor;
@@ -339,91 +347,109 @@ async function auditPage(notion, page, maxSpecsPerPage) {
   const issues = [];
   let specCount = 0;
 
+  const auditPlayableSpecPage = async (specPage) => {
+    if (specCount >= maxSpecsPerPage) return;
+    specCount += 1;
+    const specTitle = blockTitle(specPage);
+    const specChildren = await listChildren(notion, specPage.id).catch(() => []);
+    const media = specChildren.filter(isPlayableMedia);
+    if (media.length === 0) {
+      issues.push({
+        kind: "playable_spec_without_media",
+        pageId: specPage.id,
+        label: specTitle,
+        titleConfidence: "untrusted_title_only",
+        recommendedAction: "Do not create a playable Media Assets row. Attach a real video/file, rename/delete the placeholder, or mark the work/asset as needs_processing/source_only."
+      });
+      return;
+    }
+    for (const mediaBlock of media) {
+      const fileName = mediaBlockName(mediaBlock);
+      const url = mediaUrl(mediaBlock);
+      const metadata = parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" });
+      const displayLabel = normalizeAssetDisplayLabel(specTitle);
+      candidates.push({
+        assetType: "playable_video",
+        workPageId: page.id,
+        workTitle: title,
+        sourcePageId: specPage.id,
+        mediaBlockId: mediaBlock.id,
+        name: displayLabel,
+        displayLabel,
+        titleConfidence: "verified_by_media_block",
+        originalFileName: fileName,
+        assetUrl: isExternalMediaUrl(mediaBlock) ? url : undefined,
+        assetUrlPresent: Boolean(url),
+        metadata
+      });
+    }
+  };
+
+  const auditSourceContainer = async (containerBlock) => {
+    const groups = (await listChildren(notion, containerBlock.id).catch(() => [])).filter((item) => item.type === "child_page");
+    for (const group of groups) {
+      const groupTitle = blockTitle(group);
+      const groupChildren = await listChildren(notion, group.id).catch(() => []);
+      const media = groupChildren.filter(isSourceMedia);
+      if (media.length === 0) {
+        issues.push({
+          kind: "source_group_without_media",
+          pageId: group.id,
+          label: groupTitle,
+          titleConfidence: "untrusted_title_only",
+          recommendedAction: "Do not create a source Media Assets row from this title alone. Attach files or remove/rename the empty source group."
+        });
+        continue;
+      }
+      const firstFile = mediaBlockName(media[0]);
+      const firstUrl = mediaUrl(media[0]);
+      const assetType = /字幕|subtitle/i.test(groupTitle)
+        ? "subtitle_package"
+        : /原盘|原盤|iso|disc/i.test(`${groupTitle} ${firstFile}`)
+          ? "original_disc"
+          : "source_archive";
+      const metadata = parseAssetMetadata(groupTitle, firstFile, {
+        assetType,
+        availability: "source_only"
+      });
+      const displayLabel = normalizeAssetDisplayLabel(groupTitle);
+      candidates.push({
+        assetType,
+        workPageId: page.id,
+        workTitle: title,
+        sourcePageId: group.id,
+        mediaBlockId: media[0].id,
+        name: displayLabel,
+        displayLabel,
+        titleConfidence: "verified_by_media_block",
+        originalFileName: firstFile,
+        fileCount: media.length,
+        assetUrl: isExternalMediaUrl(media[0]) ? firstUrl : undefined,
+        assetUrlPresent: media.some((item) => Boolean(mediaUrl(item))),
+        metadata
+      });
+    }
+  };
+
   for (const block of children) {
     if (block.type === "callout") {
       const specPages = (await listChildren(notion, block.id)).filter((item) => item.type === "child_page");
       for (const specPage of specPages) {
-        if (specCount >= maxSpecsPerPage) break;
-        specCount += 1;
-        const specTitle = blockTitle(specPage);
-        const specChildren = await listChildren(notion, specPage.id).catch(() => []);
-        const media = specChildren.filter(isPlayableMedia);
-        if (media.length === 0) {
-          issues.push({
-            kind: "playable_spec_without_media",
-            pageId: specPage.id,
-            label: specTitle,
-            titleConfidence: "untrusted_title_only",
-            recommendedAction: "Do not create a playable Media Assets row. Attach a real video/file, rename/delete the placeholder, or mark the work/asset as needs_processing/source_only."
-          });
-          continue;
-        }
-        for (const mediaBlock of media) {
-          const fileName = mediaBlockName(mediaBlock);
-          const url = mediaUrl(mediaBlock);
-          const metadata = parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" });
-          const displayLabel = normalizeAssetDisplayLabel(specTitle);
-          candidates.push({
-            assetType: "playable_video",
-            workPageId: page.id,
-            workTitle: title,
-            sourcePageId: specPage.id,
-            mediaBlockId: mediaBlock.id,
-            name: displayLabel,
-            displayLabel,
-            titleConfidence: "verified_by_media_block",
-            originalFileName: fileName,
-            assetUrl: isExternalMediaUrl(mediaBlock) ? url : undefined,
-            assetUrlPresent: Boolean(url),
-            metadata
-          });
-        }
+        await auditPlayableSpecPage(specPage);
       }
     }
 
-    if (block.type === "toggle" && /基地|资源|資源|片源|原盘|原盤/i.test(blockTitle(block))) {
-      const groups = (await listChildren(notion, block.id)).filter((item) => item.type === "child_page");
-      for (const group of groups) {
-        const groupTitle = blockTitle(group);
-        const groupChildren = await listChildren(notion, group.id).catch(() => []);
-        const media = groupChildren.filter(isSourceMedia);
-        if (media.length === 0) {
-          issues.push({
-            kind: "source_group_without_media",
-            pageId: group.id,
-            label: groupTitle,
-            titleConfidence: "untrusted_title_only",
-            recommendedAction: "Do not create a source Media Assets row from this title alone. Attach files or remove/rename the empty source group."
-          });
-          continue;
-        }
-        const firstFile = mediaBlockName(media[0]);
-        const firstUrl = mediaUrl(media[0]);
-        const assetType = /字幕|subtitle/i.test(groupTitle)
-          ? "subtitle_package"
-          : /原盘|原盤|iso|disc/i.test(`${groupTitle} ${firstFile}`)
-            ? "original_disc"
-            : "source_archive";
-        const metadata = parseAssetMetadata(groupTitle, firstFile, {
-          assetType,
-          availability: "source_only"
-        });
-        const displayLabel = normalizeAssetDisplayLabel(groupTitle);
-        candidates.push({
-          assetType,
-          workPageId: page.id,
-          workTitle: title,
-          sourcePageId: group.id,
-          mediaBlockId: media[0].id,
-          name: displayLabel,
-          displayLabel,
-          titleConfidence: "verified_by_media_block",
-          originalFileName: firstFile,
-          fileCount: media.length,
-          assetUrl: isExternalMediaUrl(media[0]) ? firstUrl : undefined,
-          assetUrlPresent: media.some((item) => Boolean(mediaUrl(item))),
-          metadata
-        });
+    if (block.type === "toggle" && isSourceContainerTitle(blockTitle(block))) {
+      await auditSourceContainer(block);
+    }
+
+    if (block.type === "child_page") {
+      const rootTitle = blockTitle(block);
+      if (isMetadataContainerTitle(rootTitle)) continue;
+      if (isSourceContainerTitle(rootTitle)) {
+        await auditSourceContainer(block);
+      } else {
+        await auditPlayableSpecPage(block);
       }
     }
   }

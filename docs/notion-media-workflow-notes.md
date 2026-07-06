@@ -23,6 +23,23 @@ divider
     -> subtitle file blocks
 ```
 
+Newer movie rows may omit the cosmetic `callout` and `toggle` wrappers:
+
+```text
+movie page
+  -> playable spec child page
+    -> video block
+  -> 片源
+    -> size child page
+      -> source/archive file blocks
+```
+
+Treat both layouts as valid. The Media Assets audit/write tools should read
+root-level playable spec child pages and root-level source containers such as
+`片源`, `资源`, `原盘`, or `基地`; they should skip metadata containers such as
+`资料`/`Metadata`. Empty root-level placeholders still count as
+`untrusted_title_only`, not playable assets.
+
 TV season rows:
 
 ```text
@@ -693,6 +710,19 @@ fuller work title `【仅供下载】皮克斯短片集 The Pixar Shorts Collect
 title page should be merged/removed manually rather than migrated again. All
 other remaining operator/status and series pages have no writable media
 candidates in the current Notion tree.
+
+The newly produced movie-page layout was then added to the Media Assets audit
+and writer. These pages no longer need playable specs to sit under a callout,
+and may place `片源` directly under the movie page. A guarded manifest for this
+layout wrote 14 rows across 6 works: `冲出宁静号`, `美好的世界`, `十二宫`,
+`钢琴课`, `再见列宁`, and `边缘日记`. The rows included 10 playable videos and
+4 hidden `source_only` archives, reran as 14 `skip_existing`, and left only one
+known issue: `钢琴课` has an empty `91.4GB` source placeholder. Stats after this
+pass showed 3358 active Media Assets rows, 985 covered works, 2640 public
+playable rows, 1 hidden `needs_processing` row, 717 source-only rows, and zero
+traceability gaps. Fresh round43 dry-run now has 12 ordinary movie pages with
+zero candidates; each has placeholder spec/source titles but no attached media
+block, so they need manual production or cleanup before automatic writeback.
 
 Movie video spec page titles should use the movie title, subtitle-language label,
 and file size, for example `再见列宁 繁 4.67GB`. Do not add quality tier words

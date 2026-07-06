@@ -435,6 +435,19 @@ Short Films Collection Vol 1 2007 1080p BluRay AVC LPCM 5.1-CHDBits.7z.001`, is
 already represented as a hidden `source_only` row under
 `【仅供下载】皮克斯短片集 The Pixar Shorts Collection`, so the short-title page should be
 merged/removed manually rather than migrated again.
+The movie Media Assets audit/write tools now also understand the newer movie
+page structure where playable spec child pages and the `片源` source container
+sit directly under the movie page instead of inside callout/toggle wrappers. A
+guarded manifest wrote 14 rows for `冲出宁静号`, `美好的世界`, `十二宫`, `钢琴课`,
+`再见列宁`, and `边缘日记`: 10 playable rows plus 4 hidden `source_only`
+archives. The apply reran as 14 `skip_existing`. Latest stats after this pass
+are 3358 active Media Assets rows, 985 covered works, 2640 public playable rows,
+1 hidden `needs_processing` row, 717 source-only rows, and zero traceability
+gaps. A regenerated round43 manifest has 12 ordinary movie pages; its dry-run
+found zero candidates because all 12 have placeholder spec/source titles but no
+attached media blocks. Those 12 need manual Notion cleanup, file attachment, or
+production before automatic writeback. Global leftovers remain 92 uncovered
+skipped pages: 44 operator/status-prefixed pages and 48 series pages.
 After each broad write, run `node tools/notion-media-assets-stats.mjs --report
 .local-data/media-assets-stats.json`. It is read-only and reports active row
 counts, Work coverage, asset type/availability distribution, website hide flags,
@@ -456,9 +469,11 @@ Notion IDs are now explicit in local `.env`:
 
 If Node SDK calls to Notion fail with TLS resets while DNS resolves
 `api.notion.com` to `198.18.0.11`, use curl with
-`--resolve api.notion.com:443:208.103.161.1`. For data-source endpoints, send
-`Notion-Version: 2025-09-03`; older `2022-06-28` returns invalid request URL
-for `/v1/data_sources/...`.
+`--resolve api.notion.com:443:208.103.161.1`, or pass
+`--resolve-ip 208.103.161.1` to the local Notion tools. This came from the
+network-failure recovery notes in conversation `019f27b0-19d0-7ac2-a2bf-686f4bec7b76`.
+For data-source endpoints, send `Notion-Version: 2025-09-03`; older
+`2022-06-28` returns invalid request URL for `/v1/data_sources/...`.
 
 Cache concurrency and visibility:
 
