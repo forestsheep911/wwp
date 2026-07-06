@@ -12,6 +12,7 @@
     "notion:metadata": "tsx src/notion-metadata-maintenance.ts",
     "notion:audit": "tsx src/notion-metadata-audit.ts",
     "notion:omdb": "tsx src/notion-omdb-enrichment.ts",
+    "notion:family-age": "tsx src/notion-family-age-enrichment.ts",
     "backfill:tspdt-imdb": "tsx src/tspdt-imdb-backfill.ts",
     "backfill:posters": "tsx src/poster-backfill.ts",
     "build": "tsc -p tsconfig.json",
