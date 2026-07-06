@@ -22,9 +22,6 @@ everything into one Chinese title:
 - `Original Title`: native-language title for the work. For an Italian film,
   this should be the Italian title; for a Japanese film, the Japanese title;
   for an English-language film, repeating the English title is acceptable.
-- `Chinese Title`: legacy compatibility field. Keep it while older scripts and
-  existing Notion rows still use it, but new sync logic should prefer the
-  specific simplified/traditional fields above.
 
 Do not force completeness. Title sources will be mixed: Douban may be strongest
 for simplified Chinese, TMDb/IMDb/OMDb may cover English and original titles,
@@ -32,9 +29,9 @@ Taiwan/Hong Kong titles may require regional release data or manual review. If
 the native-language title duplicates one of the localized fields, keep the
 duplicate; the fields answer different questions.
 
-For runtime display, prefer `Simplified Chinese Title`, then legacy
-`Chinese Title`, then Taiwan/Hong Kong traditional titles, then the Notion page
-title. For matching/search, index all title fields as aliases.
+For runtime display, prefer `Simplified Chinese Title`, then Taiwan/Hong Kong
+traditional titles, then the Notion page title. For matching/search, index all
+title fields as aliases. Do not recreate the removed `Chinese Title` field.
 
 `【敬请期待】` at the start of a Notion page title is an operator/status marker
 for unfinished rows and waiting views. `【仅供下载】` marks rows where only source
@@ -73,6 +70,22 @@ decision layer:
 
 These are advisory fields, not legal classifications. AI jobs should be allowed
 to mark low confidence or `需人工复核` instead of guessing from a weak synopsis.
+
+## Release Date Model
+
+Use `上映日期` as the single Notion date field for movie theatrical release dates
+and TV premiere dates when the row represents a series/work. `首播日期` can remain
+an accepted source-side label for legacy TV data, but website sync should map it
+into the same runtime `releaseDate` value.
+
+Keep `Release Year` as a numeric derived/index field. It may duplicate the year
+inside `上映日期`, but the numeric field is useful for sorting, filtering, route
+generation, and title parsing when a full date is unavailable.
+
+Do not recreate or write the removed `Release Date` property. It was a temporary
+English duplicate of `上映日期`; conflicting values were treated as lower-priority
+external-source dates during cleanup, with `上映日期` kept as the authoritative
+Notion field.
 
 Work-level metadata is not enough for playback. Each playable spec and each
 source/original-disc package should also become self-describing.
@@ -196,7 +209,7 @@ For `--apply`, the write integration must be shared with the target Notion libra
 
 ## Current Baseline
 
-The latest full dry-run scanned 1132 Notion pages:
+The latest full metadata write-back baseline scanned 1132 Notion pages:
 
 - 1119 pages already expose IMDb/Douban/TMDB IDs in existing page content.
 - 13 pages have no parsed external ID.
@@ -204,13 +217,18 @@ The latest full dry-run scanned 1132 Notion pages:
 - Before the title split, 30 managed Notion properties were tracked. The
   identity/display/quality schema was first added on 2026-07-02, and box office
   fields were added on 2026-07-03.
-- The title split adds
+- The title split added
   `Simplified Chinese Title`, `Traditional Chinese Title (Taiwan)`, and
-  `Traditional Chinese Title (Hong Kong)`. Run schema-only apply before relying
-  on these fields in Notion writes.
+  `Traditional Chinese Title (Hong Kong)`. The old `Chinese Title` property was
+  removed after any existing values were migrated into `Simplified Chinese
+  Title`.
 - `Hide from Website` adds a manual website downline switch. Run schema-only
   apply before using it in Notion.
 - A gated write-back on 2026-07-02 applied structured metadata to 1118 pages with parsed external IDs and skipped the 13 pages without external IDs.
+- A release-date cleanup on 2026-07-06 scanned 1138 Notion pages and removed
+  the duplicate `Release Date` property. The cleanup found 0 pages requiring
+  migration, 6 equal duplicates, and 103 conflicting external-source dates;
+  `上映日期` was kept as authoritative.
 
 The current full report is:
 

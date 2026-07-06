@@ -718,9 +718,6 @@ function buildPatch(page, metadata, imdbRating, posterFile) {
   if (!hasValue(properties, "上映日期") && metadata.releaseDate) {
     patch["上映日期"] = { date: { start: metadata.releaseDate } };
   }
-  if (!hasValue(properties, "Release Date") && metadata.releaseDate) {
-    patch["Release Date"] = { date: { start: metadata.releaseDate } };
-  }
   if (!hasValue(properties, "旨趣") && metadata.genres?.length) {
     const selected = metadata.genres.filter((genre) => genreOptions.has(genre));
     if (selected.length > 0) {

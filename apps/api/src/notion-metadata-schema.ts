@@ -50,7 +50,7 @@ export const notionManagedProperties = [
   { name: "Original Title", type: "rich_text", group: "display" },
   { name: "English Title", type: "rich_text", group: "display" },
   { name: "Release Year", type: "number", group: "display" },
-  { name: "Release Date", type: "date", group: "display" },
+  { name: "上映日期", type: "date", group: "display" },
   { name: "Countries", type: "multi_select", group: "display" },
   { name: "Languages", type: "multi_select", group: "display" },
   { name: "旨趣", type: "multi_select", group: "display", options: canonicalGenreOptions },

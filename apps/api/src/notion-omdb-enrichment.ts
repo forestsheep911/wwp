@@ -496,7 +496,7 @@ function planUpdates(
 
   addUpdate(updates, availableProperties, pageProperties, "English Title", omdbTitle);
   addUpdate(updates, availableProperties, pageProperties, "Release Year", releaseYear(payload) ? Number(releaseYear(payload)) : undefined);
-  addUpdate(updates, availableProperties, pageProperties, "Release Date", releaseDate(payload.Released));
+  addUpdate(updates, availableProperties, pageProperties, "上映日期", releaseDate(payload.Released));
   addUpdate(updates, availableProperties, pageProperties, "Countries", countries);
   addUpdate(updates, availableProperties, pageProperties, "Languages", languages);
   addUpdate(updates, availableProperties, pageProperties, "旨趣", mappedGenres.canonical);

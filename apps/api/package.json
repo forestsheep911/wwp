@@ -18,6 +18,7 @@
     "notion:family-age": "tsx src/notion-family-age-enrichment.ts",
     "notion:title-cleanup": "tsx src/notion-title-field-cleanup.ts",
     "notion:genre-cleanup": "tsx src/notion-genre-field-cleanup.ts",
+    "notion:release-date-cleanup": "tsx src/notion-release-date-cleanup.ts",
     "backfill:tspdt-imdb": "tsx src/tspdt-imdb-backfill.ts",
     "backfill:posters": "tsx src/poster-backfill.ts",
     "build": "tsc -p tsconfig.json",
