@@ -186,8 +186,8 @@ function parseAssetMetadata(label, fileName, options = {}) {
   const subtitleRegions = [];
   const sourceLineage = [];
 
-  if (/普通话|普通話|国语|國語|mandarin/i.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
-  if (/粤语|粵語|cantonese/i.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
+  if (/普通话|普通話|国语|國語|国配|國配|中影国配|中影國配|台配|mandarin|zh[-_. ]?mandarin|zh[-_. ]?taiwan/i.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
+  if (/粤语|粵語|粤配|粵配|cantonese|zh[-_. ]?cantonese/i.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
   if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio/i.test(combined)) pushUnique(audioLanguages, "ja");
   if (/英语发音|英語發音|english audio|\.english\.|english\.audio/i.test(combined)) pushUnique(audioLanguages, "en");
   if (/评论|評論|commentary|\bcmt\b|\bdc\d+\b/i.test(combined)) pushUnique(audioLanguages, "commentary");

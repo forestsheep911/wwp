@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import dns from "node:dns";
 import { Client } from "@notionhq/client";
 import type {
+  MediaAssetType,
   MediaAvailability,
   MediaVariant,
   MediaVariantMetadata,
@@ -39,6 +41,7 @@ interface LibraryMetadata {
   dataSourceId: string;
   titleProperty?: string;
   databaseTitle?: string;
+  properties?: JsonRecord;
 }
 
 interface ChildPageCandidate {
@@ -117,6 +120,31 @@ const hideFromWebsitePropertyPattern =
   /^(?:hide\s*from\s*website|do\s*not\s*sync\s*to\s*website|exclude\s*from\s*website|website\s*hidden|\u4e0d\u540c\u6b65\u5230\u7f51\u7ad9|\u4e0d\u540c\u6b65\u5230\u7db2\u7ad9|\u7f51\u7ad9\u4e0b\u7ebf|\u7db2\u7ad9\u4e0b\u7dda|\u4e0b\u7ebf|\u4e0b\u7dda)$/i;
 const mediaAvailabilityPropertyPattern =
   /^(?:media\s*availability|playback\s*status|availability|\u5a92\u4f53\u53ef\u7528\u6027|\u64ad\u653e\u72b6\u6001|\u64ad\u653e\u72c0\u614b)$/i;
+const mediaAssetTypePropertyPattern = /^(?:asset\s*type|\u8d44\u4ea7\u7c7b\u578b|\u8cc7\u7522\u985e\u578b)$/i;
+const displayLabelPropertyPattern = /^(?:display\s*label|\u663e\u793a\u6807\u7b7e|\u986f\u793a\u6a19\u7c64)$/i;
+const editionPropertyPattern = /^(?:edition\s*\/?\s*version|edition|version|cut|\u7248\u672c|\u526a\u8f91\u7248)$/i;
+const episodeNumberPropertyPattern = /^(?:episode\s*number|episode|ep|\u96c6\u6570|\u96c6\u5e8f)$/i;
+const resolutionPropertyPattern = /^(?:resolution|\u5206\u8fa8\u7387|\u89e3\u50cf\u5ea6)$/i;
+const videoCodecPropertyPattern = /^(?:video\s*codec|codec|\u89c6\u9891\u7f16\u7801|\u8996\u983b\u7de8\u78bc)$/i;
+const containerPropertyPattern = /^(?:container|format|\u5c01\u88c5|\u683c\u5f0f)$/i;
+const approximateSizeGbPropertyPattern = /^(?:approx(?:imate)?\s*size\s*gb|size\s*gb|\u5927\u5c0f\s*gb)$/i;
+const exactByteSizePropertyPattern = /^(?:exact\s*(?:byte\s*)?size|file\s*size\s*bytes|bytes|\u5b57\u8282\u6570|\u5b57\u7bc0\u6578)$/i;
+const durationSecondsPropertyPattern = /^(?:duration\s*seconds|duration\s*s|seconds|\u65f6\u957f\u79d2|\u6642\u9577\u79d2)$/i;
+const frameRatePropertyPattern = /^(?:frame\s*rate|fps|\u5e27\u7387)$/i;
+const videoDynamicRangePropertyPattern = /^(?:hdr\s*\/?\s*sdr|dynamic\s*range|hdr|\u52a8\u6001\u8303\u56f4|\u52d5\u614b\u7bc4\u570d)$/i;
+const qualityTagPropertyPattern = /^(?:quality\s*tag|cq|crf|\u8d28\u91cf\u6807\u7b7e|\u756b\u8cea\u6a19\u7c64)$/i;
+const audioCodecPropertyPattern = /^(?:audio\s*codec|\u97f3\u9891\u7f16\u7801|\u97f3\u983b\u7de8\u78bc)$/i;
+const audioChannelLayoutPropertyPattern = /^(?:audio\s*channels?|channel\s*layout|\u58f0\u9053|\u8072\u9053)$/i;
+const audioLanguagesPropertyPattern = /^(?:audio\s*languages?|\u97f3\u8f68\u8bed\u8a00|\u97f3\u8ecc\u8a9e\u8a00)$/i;
+const subtitleLanguagesPropertyPattern = /^(?:subtitle\s*languages?|\u5b57\u5e55\u8bed\u8a00|\u5b57\u5e55\u8a9e\u8a00)$/i;
+const subtitleRegionsPropertyPattern = /^(?:subtitle\s*regions?|\u5b57\u5e55\u5730\u533a|\u5b57\u5e55\u5730\u5340)$/i;
+const sourceLineagePropertyPattern = /^(?:source\s*lineage|lineage|source|\u6765\u6e90\u94fe\u8def|\u4f86\u6e90\u93c8\u8def)$/i;
+const playbackVerifiedPropertyPattern = /^(?:playback\s*verified|\u64ad\u653e\u5df2\u9a8c\u8bc1|\u64ad\u653e\u5df2\u9a57\u8b49)$/i;
+const originalFileNamePropertyPattern = /^(?:original\s*file\s*name|file\s*name|\u539f\u59cb\u6587\u4ef6\u540d)$/i;
+const assetUrlPropertyPattern = /^(?:asset\s*url|media\s*url|url|\u8d44\u4ea7\s*url|\u8cc7\u7522\s*url)$/i;
+const sourcePageIdPropertyPattern = /^(?:source\s*page\s*id|\u6e90\u9875\u9762\s*id|\u6e90\u9801\u9762\s*id)$/i;
+const mediaBlockIdPropertyPattern = /^(?:media\s*block\s*id|\u5a92\u4f53\u5757\s*id|\u5a92\u9ad4\u584a\s*id)$/i;
+const developerMemoPropertyPattern = /^(?:developer\s*memo|operator\s*memo|memo|\u5907\u6ce8|\u5099\u8a3b)$/i;
 const boxOfficeDisplayPropertyPattern = /^(?:box\s*office|box\s*office\s*display|\u7968\u623f|\u7968\u623f\u663e\u793a)$/i;
 const boxOfficeAmountPropertyPattern = /box\s*office\s*amount|\u7968\u623f.*(?:amount|\u91d1\u989d|\u6570\u503c)/i;
 const boxOfficeCurrencyPropertyPattern = /box\s*office\s*currency|\u7968\u623f.*(?:currency|\u8d27\u5e01|\u5e01\u79cd)/i;
@@ -704,6 +732,122 @@ function numberFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
   return undefined;
 }
 
+function urlFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const property = asRecord(rawProperty);
+    if (!property) {
+      continue;
+    }
+
+    if (property.type === "url" && asString(property.url)) {
+      return asString(property.url);
+    }
+
+    const text = propertyText(property);
+    const url = text.match(urlPattern)?.[0];
+    if (url) {
+      return normalizeUrl(url);
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeMediaAssetType(value: string | undefined): MediaAssetType | undefined {
+  const normalized = cleanText(value ?? "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "playable_video" || normalized === "video" || normalized === "playable") {
+    return "playable_video";
+  }
+  if (normalized === "source_archive" || normalized === "source" || normalized === "archive") {
+    return "source_archive";
+  }
+  if (normalized === "original_disc" || normalized === "disc" || normalized === "iso") {
+    return "original_disc";
+  }
+  if (normalized === "subtitle_package" || normalized === "subtitle" || normalized === "subtitles") {
+    return "subtitle_package";
+  }
+  if (normalized === "extra" || normalized === "other") {
+    return "extra";
+  }
+  if (normalized === "unknown") {
+    return "unknown";
+  }
+  return undefined;
+}
+
+function normalizeMediaAssetCodec(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  return normalizeVideoCodec(value) ?? cleanText(value);
+}
+
+function mediaAssetMetadataFromProperties(
+  assetPageId: string,
+  properties: JsonRecord
+): MediaVariantMetadata {
+  const availability = normalizeMediaAvailability(
+    listFromNamedProperty(properties, mediaAvailabilityPropertyPattern, 1)?.[0]
+  );
+  const assetType = normalizeMediaAssetType(
+    listFromNamedProperty(properties, mediaAssetTypePropertyPattern, 1)?.[0]
+  );
+  const subtitleLanguages = listFromNamedProperty(properties, subtitleLanguagesPropertyPattern, 12);
+  const developerMemo = textFromNamedProperty(properties, developerMemoPropertyPattern, 600);
+  const originalFileName = textFromNamedProperty(properties, originalFileNamePropertyPattern, 600);
+  const metadata: MediaVariantMetadata = {
+    assetType,
+    mediaAssetPageId: assetPageId,
+    availability,
+    edition: textFromNamedProperty(properties, editionPropertyPattern, 120),
+    episodeNumber: numberFromNamedProperty(properties, episodeNumberPropertyPattern),
+    resolution: listFromNamedProperty(properties, resolutionPropertyPattern, 1)?.[0],
+    videoCodec: normalizeMediaAssetCodec(listFromNamedProperty(properties, videoCodecPropertyPattern, 1)?.[0]),
+    container: listFromNamedProperty(properties, containerPropertyPattern, 1)?.[0]?.toLowerCase(),
+    exactByteSize: numberFromNamedProperty(properties, exactByteSizePropertyPattern),
+    approximateSizeGb: numberFromNamedProperty(properties, approximateSizeGbPropertyPattern),
+    durationSeconds: numberFromNamedProperty(properties, durationSecondsPropertyPattern),
+    frameRate: textFromNamedProperty(properties, frameRatePropertyPattern, 40),
+    videoDynamicRange: listFromNamedProperty(properties, videoDynamicRangePropertyPattern, 1)?.[0],
+    qualityTag: textFromNamedProperty(properties, qualityTagPropertyPattern, 40),
+    audioCodec: listFromNamedProperty(properties, audioCodecPropertyPattern, 1)?.[0],
+    audioChannelLayout: textFromNamedProperty(properties, audioChannelLayoutPropertyPattern, 80),
+    audioLanguages: listFromNamedProperty(properties, audioLanguagesPropertyPattern, 12),
+    subtitleLanguages,
+    subtitleRegions: listFromNamedProperty(properties, subtitleRegionsPropertyPattern, 8),
+    sourceLineage: listFromNamedProperty(properties, sourceLineagePropertyPattern, 12),
+    noSubtitles: subtitleLanguages?.some((value) => /^(?:none|no subtitles|无字幕|無字幕)$/i.test(value)) ||
+      /无字幕|無字幕|no subtitles/i.test(`${developerMemo ?? ""} ${originalFileName ?? ""}`) ||
+      undefined,
+    playbackVerified: checkboxFromNamedProperty(properties, playbackVerifiedPropertyPattern),
+    hideFromWebsite: checkboxFromNamedProperty(properties, hideFromWebsitePropertyPattern),
+    sourceLabel: textFromNamedProperty(properties, displayLabelPropertyPattern, 180),
+    fileName: originalFileName,
+    originalFileName,
+    mediaBlockId: textFromNamedProperty(properties, mediaBlockIdPropertyPattern, 120),
+    developerMemo,
+    structuredSource: "media_assets"
+  };
+
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== "";
+    })
+  ) as MediaVariantMetadata;
+}
+
 function parseBoxOfficeAmount(value?: string) {
   if (!value || /^N\/A$/i.test(value.trim())) {
     return undefined;
@@ -1230,6 +1374,11 @@ function variantAssetKey(pageId: string, candidate: MediaCandidate, index: numbe
   return `notion-page-${pageId}-variant-${index + 1}-${hash}`;
 }
 
+function mediaAssetVariantAssetKey(sourcePageId: string | undefined, mediaAssetPageId: string) {
+  const pageId = sourcePageId || mediaAssetPageId;
+  return `notion-page-${pageId}-media-asset-${mediaAssetPageId.replace(/-/g, "")}`;
+}
+
 function pageIdFromAssetKey(assetKey: string) {
   return assetKey.match(notionAssetPageIdPattern)?.[1];
 }
@@ -1406,6 +1555,35 @@ function isTransientNotionError(error: unknown) {
     /\b(?:429|502|503|504)\b/.test(message);
 }
 
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) {
+    return;
+  }
+
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+}
+
 export class NotionSearchSource {
   readonly description: string;
   private readonly notion: Client;
@@ -1414,15 +1592,21 @@ export class NotionSearchSource {
     process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? process.env.NOTION_DATA_SOURCE_ID;
   private readonly configuredLibraryDatabaseId =
     process.env.NOTION_LIBRARY_DATABASE_ID ?? process.env.NOTION_MEDIA_DATABASE_ID;
+  private readonly configuredMediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID;
+  private readonly configuredMediaAssetsDatabaseId = process.env.NOTION_MEDIA_ASSETS_DATABASE_ID;
   private libraryMetadata?: Promise<LibraryMetadata | undefined>;
+  private mediaAssetsMetadata?: Promise<LibraryMetadata | undefined>;
 
   constructor(private readonly options = defaultOptions) {
+    installNotionDnsOverride();
     this.notion = new Client({
       auth: process.env.NOTION_READ_ONLY_TOKEN,
       timeoutMs: this.options.requestTimeoutMs
     });
     this.description = this.hasLibraryConfig()
-      ? "notion library database search"
+      ? this.hasMediaAssetsConfig()
+        ? "notion library database search with media assets"
+        : "notion library database search"
       : "notion read-only search";
   }
 
@@ -1582,9 +1766,25 @@ export class NotionSearchSource {
     );
   }
 
+  private hasMediaAssetsConfig() {
+    return Boolean(
+      this.configuredMediaAssetsDataSourceId ||
+      this.configuredMediaAssetsDatabaseId
+    );
+  }
+
   private async getLibraryMetadata() {
     this.libraryMetadata ??= this.loadLibraryMetadata();
     return this.libraryMetadata;
+  }
+
+  private async getMediaAssetsMetadata() {
+    if (!this.hasMediaAssetsConfig()) {
+      return undefined;
+    }
+
+    this.mediaAssetsMetadata ??= this.loadMediaAssetsMetadata();
+    return this.mediaAssetsMetadata;
   }
 
   private async loadLibraryMetadata(): Promise<LibraryMetadata | undefined> {
@@ -1619,6 +1819,22 @@ export class NotionSearchSource {
     return this.loadDatabaseMetadata(asString(databaseBlock.id), databaseTitle);
   }
 
+  private async loadMediaAssetsMetadata(): Promise<LibraryMetadata | undefined> {
+    try {
+      if (this.configuredMediaAssetsDataSourceId) {
+        return this.loadDataSourceMetadata(this.configuredMediaAssetsDataSourceId);
+      }
+
+      if (this.configuredMediaAssetsDatabaseId) {
+        return this.loadDatabaseMetadata(this.configuredMediaAssetsDatabaseId);
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
   private async loadDatabaseMetadata(databaseId: string, databaseTitle?: string): Promise<LibraryMetadata> {
     const database = await this.notion.databases.retrieve({ database_id: databaseId });
     const dataSources = asArray(asRecord(database)?.data_sources);
@@ -1633,7 +1849,8 @@ export class NotionSearchSource {
       return {
         dataSourceId,
         titleProperty: this.findTitleProperty(properties),
-        databaseTitle
+        databaseTitle,
+        properties
       };
     } catch {
       return {
@@ -1733,6 +1950,150 @@ export class NotionSearchSource {
     } while (startCursor && pages.length < options.limit);
 
     return pages.slice(0, options.limit);
+  }
+
+  private mediaAssetsWorkPropertyName(mediaAssets: LibraryMetadata) {
+    const properties = mediaAssets.properties ?? {};
+    if (properties.Work) {
+      return "Work";
+    }
+
+    for (const [name, property] of Object.entries(properties)) {
+      const type = asString(asRecord(property)?.type);
+      if (type === "relation" && /^(?:work|\u4f5c\u54c1|\u5f71\u7247)$/i.test(name)) {
+        return name;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async queryMediaAssetPagesForWork(workPageId: string) {
+    const mediaAssets = await this.getMediaAssetsMetadata();
+    const workProperty = mediaAssets ? this.mediaAssetsWorkPropertyName(mediaAssets) : undefined;
+    if (!mediaAssets || !workProperty) {
+      return [];
+    }
+
+    const queryForId = async (pageId: string) => {
+      const pages: JsonRecord[] = [];
+      let startCursor: string | undefined;
+
+      do {
+        const response = await this.notion.dataSources.query({
+          data_source_id: mediaAssets.dataSourceId,
+          page_size: 100,
+          start_cursor: startCursor,
+          filter: {
+            property: workProperty,
+            relation: {
+              contains: pageId
+            }
+          }
+        } as never);
+
+        pages.push(...response.results.filter(isPageResult));
+        startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+      } while (startCursor);
+
+      return pages;
+    };
+
+    try {
+      const pages = await queryForId(workPageId);
+      if (pages.length > 0 || !workPageId.includes("-")) {
+        return pages;
+      }
+
+      return queryForId(workPageId.replace(/-/g, ""));
+    } catch {
+      return [];
+    }
+  }
+
+  private async mediaCandidateFromBlockId(blockId: string | undefined) {
+    if (!blockId) {
+      return undefined;
+    }
+
+    try {
+      const block = await this.notion.blocks.retrieve({ block_id: blockId });
+      const candidates: MediaCandidate[] = [];
+      collectBlockCandidates(block as JsonRecord, candidates);
+      return uniqueCandidates(candidates).find(isLikelyPlayableCandidate) ?? chooseBestCandidate(candidates);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async mediaAssetPageToVariant(
+    page: JsonRecord,
+    index: number,
+    workTitle: string
+  ): Promise<MediaVariant | undefined> {
+    if (page.archived === true || page.in_trash === true) {
+      return undefined;
+    }
+
+    const properties = asRecord(page.properties) ?? {};
+    const mediaAssetPageId = asString(page.id);
+    const metadata = mediaAssetMetadataFromProperties(mediaAssetPageId, properties);
+    if (metadata.hideFromWebsite === true || metadata.availability !== "playable" || metadata.assetType !== "playable_video") {
+      return undefined;
+    }
+
+    const sourcePageId = textFromNamedProperty(properties, sourcePageIdPropertyPattern, 120);
+    const mediaBlockId = metadata.mediaBlockId;
+    const label = metadata.sourceLabel || titleFromProperties(properties);
+    const blockCandidate = await this.mediaCandidateFromBlockId(mediaBlockId);
+    const assetUrl = urlFromNamedProperty(properties, assetUrlPropertyPattern);
+    const candidate = blockCandidate ?? (
+      assetUrl
+        ? {
+            url: assetUrl,
+            label: metadata.originalFileName || label,
+            score: mediaScore(assetUrl, 80),
+            kind: "file" as const
+          }
+        : undefined
+    );
+
+    if (!candidate?.url || !isLikelyPlayableCandidate(candidate)) {
+      return undefined;
+    }
+
+    return {
+      assetKey: mediaAssetVariantAssetKey(sourcePageId, mediaAssetPageId),
+      label: label || `Media asset ${index + 1}`,
+      sourceUrl: candidate.url,
+      sourcePageId,
+      sourceBreadcrumb: [workTitle, label].filter(Boolean),
+      kind: candidate.kind,
+      summary: `Structured Media Assets row${metadata.playbackVerified ? " with verified playback" : ""}.`,
+      metadata: {
+        ...metadata,
+        mediaBlockId
+      }
+    };
+  }
+
+  private async mediaAssetVariantsForWork(workPageId: string, workTitle: string) {
+    const pages = await this.queryMediaAssetPagesForWork(workPageId);
+    const variants: MediaVariant[] = [];
+
+    for (const page of pages) {
+      const variant = await this.mediaAssetPageToVariant(page, variants.length, workTitle);
+      if (!variant) {
+        continue;
+      }
+
+      variants.push(variant);
+      if (variants.length >= this.options.variantLimit) {
+        break;
+      }
+    }
+
+    return variants;
   }
 
   private pageMatches(page: JsonRecord, query: string) {
@@ -1982,9 +2343,13 @@ export class NotionSearchSource {
     const pageUrl = asString(page.url);
     const pageId = asString(page.id);
     const sourceBreadcrumb = [title].filter(Boolean);
-    const variants = context.libraryMode
+    const parsedVariants = context.libraryMode
       ? await this.libraryVariants(pageId, title, unique, childPages)
       : this.candidatesToVariants(pageId, unique, 0, sourceBreadcrumb);
+    const mediaAssetVariants = context.libraryMode
+      ? await this.mediaAssetVariantsForWork(pageId, title)
+      : [];
+    const variants = mediaAssetVariants.length > 0 ? mediaAssetVariants : parsedVariants;
     const sourceUrl = variants[0]?.sourceUrl || best?.url || pageUrl;
     const summary = context.libraryMode
       ? this.librarySummary(variants)
@@ -2111,6 +2476,7 @@ export class NotionSearchSource {
     sourceBreadcrumb?: string[]
   ): MediaVariant {
     const variantLabel = label || candidate.label || `Option ${index + 1}`;
+    const metadata = mediaVariantMetadataFromText(variantLabel, candidate.label);
     return {
       assetKey: variantAssetKey(pageId, candidate, index),
       label: variantLabel,
@@ -2119,7 +2485,9 @@ export class NotionSearchSource {
       sourceBreadcrumb,
       kind: candidate.kind,
       summary: candidateSummary(candidate),
-      metadata: mediaVariantMetadataFromText(variantLabel, candidate.label)
+      metadata: metadata
+        ? { ...metadata, structuredSource: "notion_page" }
+        : { structuredSource: "notion_page" }
     };
   }
 

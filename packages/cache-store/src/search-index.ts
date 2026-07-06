@@ -326,20 +326,36 @@ function variantMetadataText(variant: MediaVariant) {
   }
 
   return [
+    metadata.assetType,
+    metadata.mediaAssetPageId,
     metadata.availability,
     metadata.edition,
+    metadata.episodeNumber ? `Episode ${metadata.episodeNumber}` : undefined,
     metadata.resolution,
     metadata.videoCodec,
     metadata.container,
+    metadata.exactByteSize ? `${metadata.exactByteSize} bytes` : undefined,
     metadata.approximateSizeGb ? `${metadata.approximateSizeGb}GB` : undefined,
+    metadata.durationSeconds ? `${metadata.durationSeconds} seconds` : undefined,
+    metadata.frameRate,
+    metadata.videoDynamicRange,
     metadata.qualityTag,
+    metadata.audioCodec,
+    metadata.audioChannelLayout,
     metadata.audioLanguages?.join(" "),
     metadata.subtitleLanguages?.join(" "),
     metadata.subtitleRegions?.join(" "),
+    metadata.sourceLineage?.join(" "),
     metadata.commentary ? "commentary" : undefined,
     metadata.noSubtitles ? "no subtitles" : undefined,
+    metadata.playbackVerified ? "playback verified" : undefined,
+    metadata.hideFromWebsite ? "hidden from website" : undefined,
     metadata.sourceLabel,
-    metadata.fileName
+    metadata.fileName,
+    metadata.originalFileName,
+    metadata.mediaBlockId,
+    metadata.developerMemo,
+    metadata.structuredSource
   ].filter((value): value is string => Boolean(value));
 }
 

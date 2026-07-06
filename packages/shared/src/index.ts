@@ -54,6 +54,13 @@ export interface MovieExternalIds {
 
 export type MovieWorkKind = "movie" | "series" | "season" | "episode" | "short" | "special" | "unknown";
 export type MediaAvailability = "playable" | "source_only" | "needs_processing" | "blocked" | "unknown";
+export type MediaAssetType =
+  | "playable_video"
+  | "source_archive"
+  | "original_disc"
+  | "subtitle_package"
+  | "extra"
+  | "unknown";
 
 export type MovieMetadataSource =
   | "manual"
@@ -374,20 +381,36 @@ export interface MediaVariant {
 }
 
 export interface MediaVariantMetadata {
+  assetType?: MediaAssetType;
+  mediaAssetPageId?: string;
   availability?: MediaAvailability;
   edition?: string;
+  episodeNumber?: number;
   resolution?: string;
   videoCodec?: string;
   container?: string;
+  exactByteSize?: number;
   approximateSizeGb?: number;
+  durationSeconds?: number;
+  frameRate?: string;
+  videoDynamicRange?: string;
   qualityTag?: string;
+  audioCodec?: string;
+  audioChannelLayout?: string;
   audioLanguages?: string[];
   subtitleLanguages?: string[];
   subtitleRegions?: string[];
+  sourceLineage?: string[];
   commentary?: boolean;
   noSubtitles?: boolean;
+  playbackVerified?: boolean;
+  hideFromWebsite?: boolean;
   sourceLabel?: string;
   fileName?: string;
+  originalFileName?: string;
+  mediaBlockId?: string;
+  developerMemo?: string;
+  structuredSource?: "media_assets" | "notion_page";
 }
 
 export type Mp4FastStartStatus = "faststart" | "late_moov" | "unknown" | "not_mp4";

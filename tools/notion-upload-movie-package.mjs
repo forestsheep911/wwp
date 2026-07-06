@@ -188,6 +188,12 @@ function humanGb(bytes) {
 
 function specLabelFromFilename(filename) {
   const normalized = filename.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const labels = [];
+  if (normalized.includes("zhmandarin") || normalized.includes("mandarin") || normalized.includes("guopei")) labels.push("国配");
+  else if (normalized.includes("zhtaiwan") || normalized.includes("taiwan")) labels.push("台配");
+  else if (normalized.includes("zhcantonese") || normalized.includes("cantonese") || normalized.includes("canto")) labels.push("粤配");
+  else if (normalized.includes("englishaudio") || normalized.includes("engaudio")) labels.push("英语");
+
   let subtitle = "";
   if (normalized.includes("chschteng") || normalized.includes("chtchseng")) subtitle = "繁简英";
   else if (normalized.includes("chscht") || normalized.includes("chtchs")) subtitle = "繁简";
@@ -195,7 +201,8 @@ function specLabelFromFilename(filename) {
   else if (normalized.includes("chseng")) subtitle = "简英";
   else if (normalized.includes("cht")) subtitle = "繁";
   else if (normalized.includes("chs")) subtitle = "简";
-  return subtitle;
+  if (subtitle) labels.push(subtitle);
+  return labels.join(" ");
 }
 
 function comparableFilename(value) {

@@ -1707,6 +1707,76 @@ function PosterActions({
   );
 }
 
+const mediaLanguageLabels: Record<string, string> = {
+  "zh-Hans": "简中",
+  "zh-Hant": "繁中",
+  "zh-Mandarin": "国语",
+  "zh-Cantonese": "粤语",
+  en: "英语",
+  ja: "日语",
+  commentary: "评论音轨",
+  none: "无字幕"
+};
+
+const sourceLineageLabels: Record<string, string> = {
+  encode: "压制版",
+  remux: "Remux",
+  "Blu-ray": "蓝光",
+  "UHD Blu-ray": "UHD 蓝光",
+  "WEB-DL": "WEB-DL",
+  ISO: "ISO",
+  source_archive: "片源包"
+};
+
+function labelList(values?: string[]) {
+  return values
+    ?.map((value) => mediaLanguageLabels[value] ?? sourceLineageLabels[value] ?? value)
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function uniqueFactLabels(values: Array<string | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+function variantFactLabels(variant: MediaVariant, compact = false) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  const size = metadata.approximateSizeGb
+    ? `${metadata.approximateSizeGb.toLocaleString(undefined, { maximumFractionDigits: 2 })}GB`
+    : metadata.exactByteSize
+      ? formatBytes(metadata.exactByteSize)
+      : undefined;
+  const audio = labelList(metadata.audioLanguages);
+  const subtitles = metadata.noSubtitles
+    ? "无字幕"
+    : labelList(metadata.subtitleLanguages);
+  const lineage = labelList(metadata.sourceLineage);
+  const facts = uniqueFactLabels([
+    metadata.episodeNumber ? `E${String(metadata.episodeNumber).padStart(2, "0")}` : undefined,
+    metadata.edition,
+    metadata.resolution?.toUpperCase(),
+    metadata.videoCodec,
+    metadata.videoDynamicRange,
+    metadata.container?.toUpperCase(),
+    size,
+    metadata.qualityTag,
+    audio ? `音轨 ${audio}` : undefined,
+    metadata.audioCodec,
+    metadata.audioChannelLayout,
+    subtitles ? `字幕 ${subtitles}` : undefined,
+    metadata.subtitleRegions?.length ? `字幕区 ${metadata.subtitleRegions.join(" / ")}` : undefined,
+    lineage,
+    metadata.playbackVerified ? "播放核验" : undefined,
+    metadata.structuredSource === "media_assets" ? "已整理" : undefined
+  ]);
+
+  return compact ? facts.slice(0, 5) : facts;
+}
+
 function VariantButtons({
   creditPolicy,
   result,
@@ -1746,6 +1816,8 @@ function VariantButtons({
     <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
       {visibleVariants.map((variant) => {
         const variantLabel = displayVariantLabel(result.title, variant.label);
+        const facts = variantFactLabels(variant, compact);
+        const titleParts = uniqueFactLabels([variantLabel, ...facts]);
         const pending = pendingAssetKeys.includes(variant.assetKey);
         const tracked = trackedByAssetKey.get(variant.assetKey);
         const displayAsset = tracked?.asset ?? variant.cache;
@@ -1787,8 +1859,8 @@ function VariantButtons({
               variant={displayAsset?.status === "ready" ? "default" : "secondary"}
               onClick={() => onSelect(result, variant)}
               disabled={isActiveCacheHit}
-              title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-              aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+              title={displayStatus ? `${titleParts.join(" / ")} / ${displayStatus}` : `${titleParts.join(" / ")} / ${costLabel}`}
+              aria-label={displayStatus ? `${titleParts.join(" / ")} / ${displayStatus}` : `${titleParts.join(" / ")} / ${costLabel}`}
             >
               {tracked ? (
                 <span
@@ -1797,7 +1869,18 @@ function VariantButtons({
                   style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
                 />
               ) : null}
-              <span className="relative z-10 min-w-0 max-w-full truncate">{variantLabel}</span>
+              <span className="relative z-10 grid min-w-0 max-w-full gap-1">
+                <span className="min-w-0 truncate">{variantLabel}</span>
+                {facts.length ? (
+                  <span className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] leading-4 text-slate-400">
+                    {facts.map((fact) => (
+                      <span className="max-w-full truncate" key={`${variant.assetKey}-${fact}`}>
+                        {fact}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
               <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
                 {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 {!isActiveCacheHit ? (

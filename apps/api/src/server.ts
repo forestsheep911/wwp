@@ -73,6 +73,8 @@ const searchResultCacheLimit = Math.max(1, Number(process.env.SEARCH_RESULT_CACH
 const searchIndexEnabled = (process.env.SEARCH_INDEX_ENABLED ?? "true").toLowerCase() !== "false";
 const searchIndexWriteThrough = (process.env.SEARCH_INDEX_WRITE_THROUGH ?? "true").toLowerCase() !== "false";
 const searchIndexRefreshOnCache = (process.env.SEARCH_INDEX_REFRESH_ON_CACHE ?? "true").toLowerCase() !== "false";
+const searchIndexRefreshMediaAssetsOnHit =
+  (process.env.SEARCH_INDEX_REFRESH_MEDIA_ASSETS_ON_HIT ?? "true").toLowerCase() !== "false";
 const omdbApiKey = process.env.OMDB_API_KEY?.trim();
 const omdbRequestTimeoutMs = Math.max(1000, Number(process.env.OMDB_REQUEST_TIMEOUT_MS ?? 5000));
 const omdbLiveEnrichEnabled = (process.env.OMDB_LIVE_ENRICH_ENABLED ?? "false").toLowerCase() === "true";
@@ -827,6 +829,61 @@ async function writeSearchResultsToIndex(results: SearchResult[], context: strin
   }
 }
 
+function resultHasMediaAssetsVariants(result: SearchResult) {
+  return result.variants?.some((variant) => variant.metadata?.structuredSource === "media_assets") === true;
+}
+
+async function refreshIndexedMediaAssetResults(query: string, results: SearchResult[]) {
+  if (!searchIndexRefreshMediaAssetsOnHit || !searchSource.refreshAsset || results.length === 0) {
+    return results;
+  }
+
+  const refreshAsset = searchSource.refreshAsset.bind(searchSource);
+  let refreshedCount = 0;
+  const refreshedResults = await Promise.all(results.map(async (result) => {
+    if (resultHasMediaAssetsVariants(result) || !result.sourcePageId) {
+      return result;
+    }
+
+    try {
+      const refreshed = await refreshAsset({
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        title: result.title,
+        sourceBreadcrumb: result.sourceBreadcrumb
+      });
+
+      if (refreshed && resultHasMediaAssetsVariants(refreshed)) {
+        refreshedCount += 1;
+        return refreshed;
+      }
+    } catch (error) {
+      logWarn("api.search.index_media_assets_refresh_failed", {
+        query,
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        ...errorLogFields(error)
+      });
+    }
+
+    return result;
+  }));
+
+  if (refreshedCount > 0) {
+    void writeSearchResultsToIndex(
+      refreshedResults.filter(resultHasMediaAssetsVariants),
+      "index_hit_media_assets_refresh"
+    );
+    logInfo("api.search.index_media_assets_refreshed", {
+      query,
+      refreshedCount,
+      resultCount: refreshedResults.length
+    });
+  }
+
+  return refreshedResults;
+}
+
 async function loadSearchResultsFromPersistentSources(
   query: string,
   disabledStatus: SearchLoadStatus = "live"
@@ -839,7 +896,7 @@ async function loadSearchResultsFromPersistentSources(
       const indexedResults = await searchIndex.search(query, searchIndexResultLimit);
       if (indexedResults.length > 0) {
         return {
-          results: indexedResults,
+          results: await refreshIndexedMediaAssetResults(query, indexedResults),
           cacheStatus: "index_hit"
         };
       }
