@@ -144,6 +144,13 @@ source of truth. A playable video spec should be able to carry:
 - Operator notes: what was verified, what is missing, and what should be
   reprocessed later.
 
+For the Notion `Video Codec` select field, store codec families rather than
+encoder implementations. Use `hevc`, `h264`, and `av1` as the current Notion
+canonical values. Treat `x265` as an HEVC encoder signal, not a codec value, and
+normalize `h265`/`H.265`/`x265` to `hevc`. Likewise normalize `avc`/`x264` to
+`h264`. Website display can render those families as `HEVC`, `H.264`, and
+`AV1`, but the Notion select column should stay compact and deduplicated.
+
 Short-term, the website can parse conservative metadata from the spec title and
 video filename into `MediaVariant.metadata`. That is useful for search and
 future display, but it is still a fallback. For new uploads, prefer writing a

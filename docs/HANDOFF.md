@@ -261,6 +261,14 @@ details from structured Notion data rather than parsing human-readable titles.
 For legacy migration, filename evidence should outrank stale spec-title evidence
 for technical fields such as resolution and video codec. Use the title mainly as
 a fallback and for human language/subtitle hints.
+For the Notion `Video Codec` select field, keep codec-family values instead of
+encoder names: `hevc`, `h264`, and `av1` are the current canonical Notion values.
+`x265` is an HEVC encoder signal, so normalize `h265`/`H.265`/`x265` to `hevc`;
+normalize `avc`/`x264` to `h264`. The API display parser can still expose
+`HEVC`, `H.264`, and `AV1` for website-facing metadata. A July 6, 2026 cleanup
+used `tools/notion-media-assets-normalize-codec.mjs` and left zero old codec
+candidates; the final Notion distribution was `hevc = 2132`, `h264 = 548`, and
+`av1 = 4`.
 
 The guarded Media Assets writer is available for small representative migrations:
 

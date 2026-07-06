@@ -455,6 +455,13 @@ function firstMatch(value: string, patterns: RegExp[]) {
   return undefined;
 }
 
+function normalizeVideoCodec(value: string) {
+  if (/\b(?:h265|h\.265|hevc|x265)\b/i.test(value)) return "HEVC";
+  if (/\b(?:h264|h\.264|avc|x264)\b/i.test(value)) return "H.264";
+  if (/\bav1\b/i.test(value)) return "AV1";
+  return undefined;
+}
+
 function extensionFromFileName(value: string) {
   return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
 }
@@ -519,7 +526,7 @@ function mediaVariantMetadataFromText(label: string, fileName: string | undefine
       /蓝光加长版/u
     ]),
     resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
-    videoCodec: firstMatch(combined, [/\b(?:h265|hevc|x265)\b/i, /\b(?:h264|avc|x264)\b/i, /\bav1\b/i])?.toLowerCase(),
+    videoCodec: normalizeVideoCodec(combined),
     container: extensionFromFileName(cleanedFileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,
     qualityTag,

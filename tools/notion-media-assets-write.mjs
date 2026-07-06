@@ -151,6 +151,13 @@ function firstMatch(value, patterns) {
   return undefined;
 }
 
+function normalizeVideoCodec(value) {
+  if (/\b(?:h265|h\.265|hevc|x265)\b/i.test(value)) return "hevc";
+  if (/\b(?:h264|h\.264|avc|x264)\b/i.test(value)) return "h264";
+  if (/\bav1\b/i.test(value)) return "av1";
+  return undefined;
+}
+
 function extensionFromFileName(value) {
   return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
 }
@@ -238,7 +245,7 @@ function parseAssetMetadata(label, fileName, options = {}) {
       /蓝光加长版/u
     ]),
     resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
-    videoCodec: firstMatch(combined, [/\b(?:h265|hevc|x265)\b/i, /\b(?:h264|avc|x264)\b/i, /\bav1\b/i])?.toLowerCase(),
+    videoCodec: normalizeVideoCodec(combined),
     container: extensionFromFileName(cleanedFileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,
     qualityTag: combined.match(/\b((?:I?CQ|CRF)[\s._-]?\d{1,2})\b/i)?.[1]?.replace(/[\s._-]+/g, "").toUpperCase(),
