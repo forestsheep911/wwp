@@ -7,10 +7,11 @@ import { Card, CardContent } from "../../components/ui/card";
 import {
   bestSummary,
   directorLine,
-  displayVariantLabel,
   formatBytes,
   formatDateTime,
   metadataLine,
+  variantHasSizeMetadata,
+  variantSpecText,
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
@@ -563,8 +564,8 @@ function WatchCandidateCard({
 
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <p className="min-w-0 truncate text-xs font-semibold text-slate-500">
-            {variant ? displayVariantLabel(result.title, variant.label) : copy.watchlist.noPlayableVariant}
-            {ready && variant?.cache?.media?.contentLength ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
+            {variant ? variantSpecText(result.title, variant, { compact: true }) : copy.watchlist.noPlayableVariant}
+            {ready && variant?.cache?.media?.contentLength && !variantHasSizeMetadata(variant) ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
             {candidate.cachedAt ? ` / ${copy.watchlist.cachedAt(formatDateTime(candidate.cachedAt))}` : ` / ${copy.watchlist.updatedAt(formatDateTime(result.updatedAt))}`}
           </p>
           {variant ? (

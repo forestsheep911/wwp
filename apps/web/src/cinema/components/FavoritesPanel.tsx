@@ -6,11 +6,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import {
   bestSummary,
   directorLine,
-  displayVariantLabel,
   formatBytes,
   formatDateTime,
   metadataLine,
   titleInitial,
+  variantHasSizeMetadata,
+  variantSpecText,
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
@@ -234,8 +235,8 @@ function FavoriteCard({
         <p className="min-w-0 truncate text-xs font-semibold text-slate-500">
           <CalendarDays className="mr-1 inline h-3.5 w-3.5" />
           {stampedLabel}
-          {variant ? ` / ${displayVariantLabel(result.title, variant.label)}` : ` / ${copy.favorites.noPlayableVariant}`}
-          {ready && variant?.cache?.media?.contentLength ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
+          {variant ? ` / ${variantSpecText(result.title, variant, { compact: true })}` : ` / ${copy.favorites.noPlayableVariant}`}
+          {ready && variant?.cache?.media?.contentLength && !variantHasSizeMetadata(variant) ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
         </p>
       </div>
 

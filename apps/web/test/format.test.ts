@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SearchResult } from "@wwpdw/shared";
-import { bestDetailSummary, bestSummary } from "../src/cinema/format";
+import type { MediaVariant, SearchResult } from "@wwpdw/shared";
+import {
+  bestDetailSummary,
+  bestSummary,
+  variantHasSizeMetadata,
+  variantSpecLabels,
+  variantSpecText
+} from "../src/cinema/format";
 
 function result(overrides: Partial<SearchResult>): SearchResult {
   return {
@@ -62,4 +68,48 @@ test("bestSummary ignores metadata status labels and falls back to a real plot",
     })),
     "A real plot from a metadata provider."
   );
+});
+
+test("variantSpecLabels formats Media Assets metadata as structured tags", () => {
+  const variant: MediaVariant = {
+    assetKey: "media-assets-elio-1080p",
+    label: "地球特派员 简英 1.72GB",
+    sourceUrl: "https://example.local/elio.mp4",
+    kind: "file",
+    summary: "Structured Media Assets row.",
+    metadata: {
+      structuredSource: "media_assets",
+      resolution: "1080p",
+      videoCodec: "HEVC",
+      container: "mp4",
+      approximateSizeGb: 1.72,
+      subtitleLanguages: ["zh-Hans", "en"],
+      sourceLineage: ["encode"]
+    }
+  };
+
+  assert.deepEqual(variantSpecLabels(variant), [
+    "1080P",
+    "HEVC",
+    "MP4",
+    "1.72GB",
+    "字幕 简中 / 英语",
+    "压制版"
+  ]);
+  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "1080P / HEVC / MP4 / 1.72GB / 字幕 简中 / 英语 / 压制版");
+  assert.equal(variantHasSizeMetadata(variant), true);
+});
+
+test("variantSpecText falls back to cleaned labels without structured metadata", () => {
+  const variant: MediaVariant = {
+    assetKey: "legacy-elio",
+    label: "地球特派员 简英 1.72GB",
+    sourceUrl: "https://example.local/elio.mp4",
+    kind: "file",
+    summary: "Legacy page variant."
+  };
+
+  assert.deepEqual(variantSpecLabels(variant), []);
+  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简英 1.72GB");
+  assert.equal(variantHasSizeMetadata(variant), false);
 });

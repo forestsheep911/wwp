@@ -3,6 +3,7 @@ import type {
   CacheAssetLookupResponse,
   CacheJob,
   CacheStatus,
+  MediaVariant,
   MediaDiagnostics,
   MemberAccessCode,
   SearchResult
@@ -322,6 +323,103 @@ export function displayVariantLabel(title: string, label: string) {
   }
 
   return cleanedLabel || label;
+}
+
+const mediaLanguageLabels: Record<string, string> = {
+  "zh-Hans": "简中",
+  "zh-Hant": "繁中",
+  "zh-Mandarin": "国语",
+  "zh-Cantonese": "粤语",
+  en: "英语",
+  ja: "日语",
+  commentary: "评论音轨",
+  none: "无字幕"
+};
+
+const sourceLineageLabels: Record<string, string> = {
+  encode: "压制版",
+  remux: "Remux",
+  "Blu-ray": "蓝光",
+  "UHD Blu-ray": "UHD 蓝光",
+  "WEB-DL": "WEB-DL",
+  ISO: "ISO",
+  source_archive: "片源包"
+};
+
+function labelList(values?: string[]) {
+  return values
+    ?.map((value) => mediaLanguageLabels[value] ?? sourceLineageLabels[value] ?? value)
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function uniqueDisplayLabels(values: Array<string | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+export function variantHasSizeMetadata(variant?: MediaVariant) {
+  const metadata = variant?.metadata;
+  return Boolean(
+    metadata &&
+    (
+      (typeof metadata.approximateSizeGb === "number" && Number.isFinite(metadata.approximateSizeGb) && metadata.approximateSizeGb > 0) ||
+      (typeof metadata.exactByteSize === "number" && Number.isFinite(metadata.exactByteSize) && metadata.exactByteSize > 0)
+    )
+  );
+}
+
+function variantSizeLabel(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return undefined;
+  }
+
+  if (typeof metadata.approximateSizeGb === "number" && Number.isFinite(metadata.approximateSizeGb) && metadata.approximateSizeGb > 0) {
+    return `${metadata.approximateSizeGb.toLocaleString(undefined, { maximumFractionDigits: 2 })}GB`;
+  }
+
+  if (typeof metadata.exactByteSize === "number" && Number.isFinite(metadata.exactByteSize) && metadata.exactByteSize > 0) {
+    return formatBytes(metadata.exactByteSize);
+  }
+
+  return undefined;
+}
+
+export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean } = {}) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  const audio = labelList(metadata.audioLanguages);
+  const subtitles = metadata.noSubtitles
+    ? "无字幕"
+    : labelList(metadata.subtitleLanguages);
+  const lineage = labelList(metadata.sourceLineage);
+  const labels = uniqueDisplayLabels([
+    metadata.episodeNumber ? `E${String(metadata.episodeNumber).padStart(2, "0")}` : undefined,
+    metadata.edition,
+    metadata.resolution?.toUpperCase(),
+    metadata.videoCodec,
+    metadata.videoDynamicRange,
+    metadata.container?.toUpperCase(),
+    variantSizeLabel(variant),
+    metadata.qualityTag,
+    audio ? `音轨 ${audio}` : undefined,
+    metadata.audioCodec,
+    metadata.audioChannelLayout,
+    subtitles ? `字幕 ${subtitles}` : undefined,
+    metadata.subtitleRegions?.length ? `字幕区 ${metadata.subtitleRegions.join(" / ")}` : undefined,
+    lineage,
+    metadata.playbackVerified ? "已核验" : undefined
+  ]);
+
+  return options.compact ? labels.slice(0, 5) : labels;
+}
+
+export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
+  const labels = variantSpecLabels(variant, options);
+  return labels.length > 0 ? labels.join(" / ") : displayVariantLabel(title, variant.label);
 }
 
 export function mediaQuality(media?: MediaDiagnostics) {
