@@ -114,6 +114,7 @@ export const zhCN = {
     list: "列表",
     noTitlesFound: "没有找到影片",
     noTitlesLoaded: "暂无影片",
+    missingSummary: "暂无影片简介",
     table: {
       title: "片名",
       metadata: "信息",

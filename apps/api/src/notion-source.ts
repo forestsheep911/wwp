@@ -102,7 +102,7 @@ const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
 const posterPropertyPattern = /\u6d77\u62a5|poster|cover|image|\u56fe\u7247/i;
 const descriptionPropertyPattern = /\u7b80\u4ecb|summary|description|synopsis|plot/i;
-const infoPropertyPattern = /\u57fa\u672c\u4fe1\u606f|info|metadata/i;
+const infoPropertyPattern = /^(?:\u57fa\u672c\u4fe1\u606f|basic\s*info(?:rmation)?|info)$/i;
 const releaseDatePropertyPattern = /\u4e0a\u6620|release|premiere|date/i;
 const genrePropertyPattern = /\u65e8\u8da3|\u7c7b\u578b|genre|tag/i;
 const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
@@ -1074,6 +1074,8 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
   const posters: MoviePoster[] = [];
   const seen = new Set<string>();
   const coverUrl = mediaUrlFromObject(page.cover);
+  const fileUrls: string[] = [];
+  const textUrls: string[] = [];
   pushPoster(posters, seen, coverUrl);
 
   for (const [name, rawProperty] of Object.entries(properties)) {
@@ -1090,20 +1092,25 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
     if (type === "files") {
       for (const file of asArray(property.files)) {
         const url = mediaUrlFromObject(file);
-        pushPoster(posters, seen, url);
+        if (url) {
+          fileUrls.push(url);
+        }
       }
     }
 
     if (type === "url" && asString(property.url)) {
-      pushPoster(posters, seen, asString(property.url));
+      textUrls.push(asString(property.url) as string);
     }
 
     if (type === "rich_text") {
       for (const match of plainTextFromRichText(property.rich_text).matchAll(urlPattern)) {
-        pushPoster(posters, seen, normalizeUrl(match[0]));
+        textUrls.push(normalizeUrl(match[0]));
       }
     }
   }
+
+  fileUrls.forEach((url) => pushPoster(posters, seen, url));
+  textUrls.forEach((url) => pushPoster(posters, seen, url));
 
   return posters;
 }
@@ -2507,10 +2514,10 @@ export class NotionSearchSource {
 
   private librarySummary(variants: MediaVariant[]) {
     if (variants.length === 0) {
-      return "No playable specs were found in this movie entry.";
+      return "这条影片暂时没有可播放规格。";
     }
 
-    return `${variants.length} playable spec${variants.length === 1 ? "" : "s"} found in this movie entry.`;
+    return `已整理 ${variants.length} 个可播放规格，可直接选择版本观看。`;
   }
 
   private globalSummary(best?: MediaCandidate) {

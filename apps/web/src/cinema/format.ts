@@ -221,8 +221,52 @@ export function peopleTags(result: SearchResult) {
   return visibleTags(result.metadata?.people).slice(0, 3);
 }
 
+function normalizedDisplayText(value?: string) {
+  const text = value?.trim();
+  if (!text || /^N\/?A$/i.test(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
+function isGeneratedLibrarySummary(value: string) {
+  return (
+    /\b\d+\s+playable specs?\s+found in this movie entry\b/i.test(value) ||
+    /^No playable specs were found\b/i.test(value) ||
+    /^已整理\s*\d+\s*个可播放规格/u.test(value) ||
+    /^这条影片暂时没有可播放规格/u.test(value) ||
+    /^Structured Media Assets row\b/i.test(value) ||
+    /^Media Assets? row\b/i.test(value)
+  );
+}
+
+function usableSummary(value?: string) {
+  const text = normalizedDisplayText(value);
+  if (!text || isGeneratedLibrarySummary(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
+function usableInfo(value?: string) {
+  const text = usableSummary(value);
+  if (!text || /^(?:draft|partial|complete|completed|ready|verified|unknown|none|metadata|meta|notion|omdb)$/i.test(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
 export function bestSummary(result: SearchResult) {
-  return result.metadata?.description ?? result.metadata?.info ?? result.summary;
+  return (
+    usableSummary(result.metadata?.description) ??
+    usableInfo(result.metadata?.info) ??
+    usableSummary(result.metadata?.external?.omdb?.plot) ??
+    usableSummary(result.summary) ??
+    copy.library.missingSummary
+  );
 }
 
 function looksTruncated(value: string) {

@@ -18,6 +18,7 @@ import { copy } from "../i18n";
 import type { CollectionMark, FavoriteEntry, ResultWithCache } from "../types";
 import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
+import { PosterImage } from "./PosterImage";
 
 interface FavoriteCandidate {
   entry: FavoriteEntry;
@@ -278,25 +279,16 @@ function FavoriteCard({
 }
 
 function MoviePoster({ result }: { result: ResultWithCache }) {
-  const posterUrl = result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
-
   return (
     <div className="relative aspect-[2/3] overflow-hidden rounded-md bg-slate-900">
       <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-slate-900 to-emerald-950 text-3xl font-black text-emerald-100">
         {titleInitial(result.title)}
       </div>
-      {posterUrl ? (
-        <img
-          alt={result.title}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={posterUrl}
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
+      <PosterImage
+        alt={result.title}
+        className="absolute inset-0 h-full w-full object-cover"
+        result={result}
+      />
     </div>
   );
 }

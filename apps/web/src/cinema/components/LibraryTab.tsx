@@ -56,6 +56,7 @@ import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
 import { formatCreditAmount, playbackCreditCost, type BadgeVariant, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
+import { PosterImage } from "./PosterImage";
 
 interface LibraryTabProps {
   creditPolicy: CreditPolicyResponse;
@@ -1765,25 +1766,16 @@ function detailTags(result: SearchResult) {
 }
 
 function MoviePoster({ result }: { result: SearchResult }) {
-  const posterUrl = result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
-
   return (
     <div className="relative aspect-[2/3] overflow-hidden rounded-md bg-slate-900">
       <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-slate-900 to-emerald-950 text-4xl font-black text-emerald-100">
         {titleInitial(result.title)}
       </div>
-      {posterUrl ? (
-        <img
-          alt={result.title}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={posterUrl}
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
+      <PosterImage
+        alt={result.title}
+        className="absolute inset-0 h-full w-full object-cover"
+        result={result}
+      />
     </div>
   );
 }

@@ -776,8 +776,10 @@ async function loadSearchResults(query: string): Promise<{
   const cached = searchResultCache.get(key);
   if (cached && cached.expiresAt > now) {
     cached.lastUsedAt = now;
+    const cachedResults = await refreshIndexedMediaAssetResults(query, cached.results);
+    cached.results = cloneSearchResults(cachedResults);
     return {
-      results: cloneSearchResults(cached.results),
+      results: cloneSearchResults(cachedResults),
       cacheStatus: "hit"
     };
   }
@@ -833,6 +835,10 @@ function resultHasMediaAssetsVariants(result: SearchResult) {
   return result.variants?.some((variant) => variant.metadata?.structuredSource === "media_assets") === true;
 }
 
+function resultNeedsSourceRefreshOnHit(result: SearchResult) {
+  return Boolean(result.sourcePageId) && !resultHasMediaAssetsVariants(result);
+}
+
 async function refreshIndexedMediaAssetResults(query: string, results: SearchResult[]) {
   if (!searchIndexRefreshMediaAssetsOnHit || !searchSource.refreshAsset || results.length === 0) {
     return results;
@@ -841,7 +847,7 @@ async function refreshIndexedMediaAssetResults(query: string, results: SearchRes
   const refreshAsset = searchSource.refreshAsset.bind(searchSource);
   let refreshedCount = 0;
   const refreshedResults = await Promise.all(results.map(async (result) => {
-    if (resultHasMediaAssetsVariants(result) || !result.sourcePageId) {
+    if (!resultNeedsSourceRefreshOnHit(result)) {
       return result;
     }
 
@@ -853,7 +859,7 @@ async function refreshIndexedMediaAssetResults(query: string, results: SearchRes
         sourceBreadcrumb: result.sourceBreadcrumb
       });
 
-      if (refreshed && resultHasMediaAssetsVariants(refreshed)) {
+      if (refreshed) {
         refreshedCount += 1;
         return refreshed;
       }
@@ -871,7 +877,7 @@ async function refreshIndexedMediaAssetResults(query: string, results: SearchRes
 
   if (refreshedCount > 0) {
     void writeSearchResultsToIndex(
-      refreshedResults.filter(resultHasMediaAssetsVariants),
+      refreshedResults,
       "index_hit_media_assets_refresh"
     );
     logInfo("api.search.index_media_assets_refreshed", {

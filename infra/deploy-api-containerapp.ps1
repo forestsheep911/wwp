@@ -22,6 +22,8 @@ param(
     [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
     [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
     [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
+    [string]$NotionMediaAssetsDatabaseId = $env:NOTION_MEDIA_ASSETS_DATABASE_ID,
+    [string]$NotionMediaAssetsDataSourceId = $env:NOTION_MEDIA_ASSETS_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
@@ -90,6 +92,14 @@ if (-not $NotionLibraryDatabaseId) {
 
 if (-not $NotionLibraryDataSourceId) {
     $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
+}
+
+if (-not $NotionMediaAssetsDatabaseId) {
+    $NotionMediaAssetsDatabaseId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
+}
+
+if (-not $NotionMediaAssetsDataSourceId) {
+    $NotionMediaAssetsDataSourceId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
 }
 
 if (-not $AdminKey) {
@@ -198,6 +208,14 @@ if ($NotionLibraryDatabaseId) {
 
 if ($NotionLibraryDataSourceId) {
     $envVars += "NOTION_LIBRARY_DATA_SOURCE_ID=$NotionLibraryDataSourceId"
+}
+
+if ($NotionMediaAssetsDatabaseId) {
+    $envVars += "NOTION_MEDIA_ASSETS_DATABASE_ID=$NotionMediaAssetsDatabaseId"
+}
+
+if ($NotionMediaAssetsDataSourceId) {
+    $envVars += "NOTION_MEDIA_ASSETS_DATA_SOURCE_ID=$NotionMediaAssetsDataSourceId"
 }
 
 if ($OmdbApiKey) {
