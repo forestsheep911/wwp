@@ -306,12 +306,11 @@ function parseStructuredTitles(title: string) {
     splitIndex = 1;
   }
 
-  const chineseTitle = splitIndex > 0 ? segments.slice(0, splitIndex).join(" ") : body;
+  const simplifiedChineseTitle = splitIndex > 0 ? segments.slice(0, splitIndex).join(" ") : body;
   const originalTitle = splitIndex > 0 ? segments.slice(splitIndex).join(" ") : undefined;
 
   return {
-    chineseTitle,
-    simplifiedChineseTitle: chineseTitle,
+    simplifiedChineseTitle,
     originalTitle
   };
 }
@@ -587,7 +586,6 @@ async function planPage(
   ].filter((value): value is string => Boolean(value));
   const hasExternalId = Boolean(imdb || douban || tmdb);
   const hasStructuredTitle = Boolean(
-    structuredTitles.chineseTitle ||
     structuredTitles.simplifiedChineseTitle ||
     structuredTitles.originalTitle ||
     structuredTitles.englishTitle
@@ -601,7 +599,6 @@ async function planPage(
   addUpdate(updates, availableProperties, pageProperties, "Douban URL", doubanSubjectUrl(douban));
   addUpdate(updates, availableProperties, pageProperties, "TMDB ID", tmdb);
   addUpdate(updates, availableProperties, pageProperties, "TMDB URL", tmdbMovieUrl(tmdb));
-  addUpdate(updates, availableProperties, pageProperties, "Chinese Title", structuredTitles.chineseTitle);
   addUpdate(updates, availableProperties, pageProperties, "Simplified Chinese Title", structuredTitles.simplifiedChineseTitle);
   addUpdate(updates, availableProperties, pageProperties, "Original Title", structuredTitles.originalTitle);
   addUpdate(updates, availableProperties, pageProperties, "English Title", structuredTitles.englishTitle);

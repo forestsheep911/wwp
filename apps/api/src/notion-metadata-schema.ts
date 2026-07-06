@@ -43,7 +43,6 @@ export const notionManagedProperties = [
   { name: "TMDB ID", type: "rich_text", group: "identity" },
   { name: "TMDB URL", type: "url", group: "identity" },
 
-  { name: "Chinese Title", type: "rich_text", group: "display" },
   { name: "Simplified Chinese Title", type: "rich_text", group: "display" },
   { name: "Traditional Chinese Title (Taiwan)", type: "rich_text", group: "display" },
   { name: "Traditional Chinese Title (Hong Kong)", type: "rich_text", group: "display" },

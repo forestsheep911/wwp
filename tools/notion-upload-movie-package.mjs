@@ -317,7 +317,6 @@ async function createMoviePage(notion, library, options) {
     }
   };
   if (options.chineseTitle) {
-    setRichTextProperty("Chinese Title", options.chineseTitle);
     setRichTextProperty("Simplified Chinese Title", options.chineseTitle);
   }
   setRichTextProperty("English Title", options.englishTitle);

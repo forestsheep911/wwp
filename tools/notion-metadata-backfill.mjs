@@ -796,7 +796,7 @@ async function collectTargetPages(notion, options) {
 async function processPage(notion, pageRef, options, cookie) {
   const page = await notion.pages.retrieve({ page_id: pageRef.id });
   const title = propText(page.properties.Title);
-  const chineseTitle = propText(page.properties["Chinese Title"]);
+  const chineseTitle = propText(page.properties["Simplified Chinese Title"]);
   const releaseYear = propText(page.properties["Release Year"]);
   const searchTitle = chineseTitle && releaseYear ? `${chineseTitle} (${releaseYear})` : chineseTitle || title;
   const existingInfo = [propText(page.properties["基本信息"]), propText(page.properties.note)].join(" ");

@@ -115,7 +115,6 @@ const aiAgeReasonPropertyPattern = /AI年龄建议理由|AI\s*age\s*reason|age\s
 const manualAgeOverridePropertyPattern = /人工年龄覆盖|manual\s*age\s*override|age\s*override/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
-const chineseTitlePropertyPattern = /^(?:chinese\s*title|\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u4e2d\u6587\u7247\u540d|\u4e2d\u6587\u540d)$/i;
 const simplifiedChineseTitlePropertyPattern = /^(?:simplified\s*chinese\s*title|chinese\s*title\s*\(simplified\)|zh[-_\s]*cn\s*title|\u7b80\u4f53\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u7b80\u4e2d(?:\s*(?:title|\u540d|\u7247\u540d))?)$/i;
 const traditionalChineseTaiwanTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:taiwan|tw)\)|taiwan(?:ese)?\s*chinese\s*title|zh[-_\s]*tw\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u53f0\u6e7e|\u53f0\u7063)|\u53f0(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u53f0\u6e7e(?:\u8bd1\u540d|\u7247\u540d)|\u53f0\u7063(?:\u8b6f\u540d|\u7247\u540d))$/i;
 const traditionalChineseHongKongTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:hong\s*kong|hk)\)|hong\s*kong\s*chinese\s*title|zh[-_\s]*hk\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u9999\u6e2f|\u6e2f)|\u6e2f(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u9999\u6e2f(?:\u8bd1\u540d|\u8b6f\u540d|\u7247\u540d))$/i;
@@ -933,7 +932,6 @@ function uniqueTitleEntries(entries: MovieTitleEntry[]) {
 }
 
 function movieTitleEntriesFromProperties(title: string, properties: JsonRecord) {
-  const chineseTitle = textFromNamedProperty(properties, chineseTitlePropertyPattern, 180);
   const simplifiedChineseTitle = textFromNamedProperty(properties, simplifiedChineseTitlePropertyPattern, 180);
   const traditionalTaiwanTitle = textFromNamedProperty(properties, traditionalChineseTaiwanTitlePropertyPattern, 180);
   const traditionalHongKongTitle = textFromNamedProperty(properties, traditionalChineseHongKongTitlePropertyPattern, 180);
@@ -941,7 +939,6 @@ function movieTitleEntriesFromProperties(title: string, properties: JsonRecord) 
   const englishTitle = textFromNamedProperty(properties, englishTitlePropertyPattern, 180);
   const entries: Array<MovieTitleEntry | undefined> = [
     { title, kind: "primary", source: "notion" },
-    chineseTitle ? { title: chineseTitle, kind: "localized", lang: "zh", source: "notion" } : undefined,
     simplifiedChineseTitle ? { title: simplifiedChineseTitle, kind: "localized", lang: "zh-Hans", source: "notion" } : undefined,
     traditionalTaiwanTitle ? { title: traditionalTaiwanTitle, kind: "localized", lang: "zh-Hant", region: "TW", source: "notion" } : undefined,
     traditionalHongKongTitle ? { title: traditionalHongKongTitle, kind: "localized", lang: "zh-Hant", region: "HK", source: "notion" } : undefined,
@@ -1148,7 +1145,6 @@ function movieMetadataFromPage(
   const titles = movieTitleEntriesFromProperties(title, properties);
   const displayTitle =
     titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hans")?.title ??
-    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh")?.title ??
     titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "TW")?.title ??
     titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "HK")?.title ??
     title;

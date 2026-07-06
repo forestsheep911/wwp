@@ -45,7 +45,6 @@ const auditFields = [
   "IMDb ID",
   "Douban Subject ID",
   "TMDB ID",
-  "Chinese Title",
   "Simplified Chinese Title",
   "Traditional Chinese Title (Taiwan)",
   "Traditional Chinese Title (Hong Kong)",
@@ -80,7 +79,6 @@ const sourceStrategy: Record<string, string[]> = {
   "IMDb ID": ["notion page text parse", "TSPDT/IMDb search", "manual review"],
   "Douban Subject ID": ["notion page text parse", "Douban search", "manual review"],
   "TMDB ID": ["TMDb find by IMDb ID", "TMDb title/year search"],
-  "Chinese Title": ["legacy Notion field", "Douban", "TMDb zh-CN"],
   "Simplified Chinese Title": ["Douban", "TMDb zh-CN", "manual review"],
   "Traditional Chinese Title (Taiwan)": ["TMDb zh-TW", "Taiwan release data", "manual review"],
   "Traditional Chinese Title (Hong Kong)": ["Hong Kong release data", "manual review"],
@@ -346,7 +344,6 @@ function summarize(pages: PageAudit[]) {
   const tmdbCandidateFields = new Set([
     "TMDB ID",
     "Original Title",
-    "Chinese Title",
     "Simplified Chinese Title",
     "Traditional Chinese Title (Taiwan)",
     "Traditional Chinese Title (Hong Kong)",
@@ -362,7 +359,6 @@ function summarize(pages: PageAudit[]) {
   ]);
   const doubanCandidateFields = new Set([
     "Douban Subject ID",
-    "Chinese Title",
     "Simplified Chinese Title",
     "Original Title",
     "Release Date",
