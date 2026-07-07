@@ -462,22 +462,38 @@ function variantEpisodeLabel(variant: MediaVariant) {
   return typeof number === "number" && Number.isInteger(number) && number > 0 ? `第${number}集` : undefined;
 }
 
-export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean } = {}) {
+export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean; includeEpisode?: boolean; includeSize?: boolean } = {}) {
   const metadata = variant.metadata;
   if (!metadata) {
     return [];
   }
 
+  const includeEpisode = options.includeEpisode ?? true;
+  const includeSize = options.includeSize ?? true;
   const subtitles = metadata.noSubtitles
     ? "无字幕"
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
-    variantEpisodeLabel(variant),
+    includeEpisode ? variantEpisodeLabel(variant) : undefined,
     subtitles ? `字幕 ${subtitles}` : undefined,
-    variantSizeLabel(variant)
+    includeSize ? variantSizeLabel(variant) : undefined
   ]);
 
   return options.compact ? labels.slice(0, 3) : labels;
+}
+
+export function variantSpecGroupLabels(variant: MediaVariant) {
+  return variantSpecLabels(variant, { includeEpisode: false, includeSize: false });
+}
+
+export function variantSpecGroupText(title: string, variant: MediaVariant) {
+  const labels = variantSpecGroupLabels(variant);
+  if (labels.length > 0) {
+    return labels.join(" / ");
+  }
+
+  const sourceLabel = variant.sourceBreadcrumb?.[1] ?? variant.metadata?.sourceLabel ?? variant.label;
+  return displayVariantLabel(title, sourceLabel) || "默认规格";
 }
 
 export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {

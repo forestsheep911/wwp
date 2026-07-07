@@ -44,6 +44,8 @@ import {
   peopleTags,
   titleInitial,
   variantEpisodeNumber,
+  variantSpecGroupLabels,
+  variantSpecGroupText,
   variantSpecText,
   visibleTags
 } from "../format";
@@ -1740,6 +1742,56 @@ function VariantButtons({
   reserveMoreRow?: boolean;
 }) {
   const variants = sortedVariants(result.variants ?? []);
+  const specGroups = variantLimit && onShowAllVariants ? variantSpecGroups(result.title, variants) : [];
+  if (specGroups.length > 0) {
+    const shouldReserveMoreGroupRow = Boolean(reserveMoreRow && variantLimit && specGroups.length > variantLimit);
+    const visibleGroupLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreGroupRow ? 1 : 0)) : specGroups.length;
+    const visibleGroups = specGroups.slice(0, visibleGroupLimit);
+    const hiddenGroupCount = Math.max(0, specGroups.length - visibleGroups.length);
+
+    return (
+      <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
+        {visibleGroups.map((group) => (
+          <Button
+            className={`min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-left text-slate-100 hover:bg-slate-800 ${compact ? "" : "h-auto py-2"}`}
+            type="button"
+            variant="outline"
+            size="sm"
+            key={group.key}
+            onClick={onShowAllVariants}
+            title={`${group.label} / ${group.episodeCount} 集`}
+            aria-label={`${group.label} / ${group.episodeCount} 集`}
+          >
+            <span className="flex min-w-0 flex-wrap gap-1.5">
+              {(group.labels.length > 0 ? group.labels : [group.label]).map((label) => (
+                <span
+                  className="inline-flex max-w-full items-center rounded-full border border-slate-600/70 bg-slate-950/55 px-2 py-0.5 text-[11px] font-semibold leading-4 text-slate-100 shadow-sm shadow-black/10"
+                  key={`${group.key}-${label}`}
+                  title={label}
+                >
+                  <span className="max-w-full truncate">{label}</span>
+                </span>
+              ))}
+            </span>
+            <Badge className="shrink-0" variant="muted">{group.episodeCount} 集</Badge>
+          </Button>
+        ))}
+        {hiddenGroupCount > 0 ? (
+          <Button
+            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onShowAllVariants}
+            title={copy.library.viewAllVariants}
+          >
+            {copy.library.moreVariants(hiddenGroupCount)}
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
   const shouldReserveMoreRow = Boolean(reserveMoreRow && variantLimit && onShowAllVariants && variants.length > variantLimit);
   const visibleLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreRow ? 1 : 0)) : variants.length;
   const visibleVariants = variants.slice(0, visibleLimit);
@@ -1869,6 +1921,44 @@ function sortedVariants(variants: MediaVariant[]) {
 
     return 0;
   });
+}
+
+type VariantSpecGroup = {
+  key: string;
+  label: string;
+  labels: string[];
+  episodeCount: number;
+};
+
+function variantSpecGroupKey(variant: MediaVariant, fallbackIndex: number) {
+  return variant.sourceBreadcrumb?.[1] ??
+    variant.metadata?.mediaAssetPageId ??
+    variant.metadata?.sourceLabel ??
+    `variant-spec-${fallbackIndex}`;
+}
+
+function variantSpecGroups(title: string, variants: MediaVariant[]): VariantSpecGroup[] {
+  const episodeVariants = variants.filter((variant) => typeof variantEpisodeNumber(variant) === "number");
+  if (episodeVariants.length < 2) {
+    return [];
+  }
+
+  const groups = new Map<string, { key: string; label: string; labels: string[]; variants: MediaVariant[] }>();
+  episodeVariants.forEach((variant, index) => {
+    const key = variantSpecGroupKey(variant, index);
+    const labels = variantSpecGroupLabels(variant);
+    const label = variantSpecGroupText(title, variant);
+    const group = groups.get(key) ?? { key, label, labels, variants: [] };
+    group.variants.push(variant);
+    groups.set(key, group);
+  });
+
+  return [...groups.values()].map((group) => ({
+    key: group.key,
+    label: group.label,
+    labels: group.labels,
+    episodeCount: group.variants.length
+  }));
 }
 
 function MovieCard({
