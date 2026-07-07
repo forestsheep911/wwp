@@ -183,7 +183,7 @@ export function AccessGate({
   }
 
   return (
-    <main className="relative grid min-h-screen place-items-center px-5 py-10">
+    <main className="relative grid min-h-[100dvh] place-items-end px-3 pb-0 pt-16 sm:place-items-center sm:px-5 sm:py-10">
       <ServiceWakeDialog open={showWakeDialog && loading} onOpenChange={setShowWakeDialog} />
       <Button
         className="absolute right-5 top-5"
@@ -196,14 +196,15 @@ export function AccessGate({
         {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         <span className="sr-only">{themeToggleTitle}</span>
       </Button>
-      <Card className="w-full max-w-md">
-        <CardHeader>
+      <Card className="w-full max-w-md rounded-t-3xl border-b-0 bg-slate-950/88 sm:rounded-lg sm:border-b">
+        <CardHeader className="p-5 pb-4 sm:p-5">
           <img alt="" className="mb-4 h-14 w-14 rounded-xl" src="/wwp-icon-192.png" />
-          <CardTitle className="text-3xl">{copy.app.name}</CardTitle>
+          <CardTitle className="text-4xl sm:text-3xl">{copy.app.name}</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="mb-4 grid grid-cols-2 rounded-md border border-slate-800 bg-slate-950 p-1">
+        <CardContent className="p-5 pt-0">
+          <div className="mb-4 grid grid-cols-2 rounded-xl border border-slate-800 bg-slate-950 p-1 sm:rounded-md">
             <Button
+              className="rounded-lg sm:rounded-md"
               type="button"
               variant={mode === "login" ? "secondary" : "ghost"}
               size="sm"
@@ -216,6 +217,7 @@ export function AccessGate({
               {copy.access.enter}
             </Button>
             <Button
+              className="rounded-lg sm:rounded-md"
               type="button"
               variant={mode === "register" ? "secondary" : "ghost"}
               size="sm"
@@ -282,7 +284,7 @@ export function AccessGate({
               ) : null}
               {mode === "login" ? (
                 <button
-                  className="w-fit text-xs font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                  className="min-h-11 w-fit rounded-md text-sm font-semibold text-emerald-300 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:text-xs"
                   type="button"
                   onClick={() => {
                     setMode("reset");

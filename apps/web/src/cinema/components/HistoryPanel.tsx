@@ -35,13 +35,13 @@ export function HistoryPanel({
 
   return (
     <div className="grid gap-3">
-      <div className="flex justify-end">
-        <Button type="button" variant="outline" size="sm" onClick={onClear}>
+      <div className="grid gap-2 sm:flex sm:justify-end">
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onClear}>
           {copy.history.clear}
         </Button>
       </div>
       {items.map((item) => (
-        <Card key={`${item.assetKey}-${item.playedAt}`}>
+        <Card key={`${item.assetKey}-${item.playedAt}`} className="rounded-xl sm:rounded-lg">
           <CardContent className="grid gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -50,7 +50,7 @@ export function HistoryPanel({
                   {historyCacheLabel(statusByAssetKey[item.assetKey])}
                 </Badge>
               </div>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm leading-6 text-slate-400 sm:leading-normal">
                 {formatLongDate(item.playedAt)} / {item.contentType ?? copy.common.unknown} / {formatBytes(item.contentLength)}
               </p>
               {!statusByAssetKey[item.assetKey]?.playable && !item.result ? (

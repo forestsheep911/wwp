@@ -76,12 +76,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         aria-live="polite"
         aria-relevant="additions"
-        className="pointer-events-none fixed inset-x-3 bottom-4 z-[220] grid gap-2 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:w-[22rem]"
+        className="pointer-events-none fixed inset-x-3 bottom-[calc(5.25rem+env(safe-area-inset-bottom)+100vh-100dvh)] z-[220] grid gap-2 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:w-[22rem]"
       >
         {toasts.map((toast) => (
           <div
             className={cn(
-              "pointer-events-auto grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-md border px-3 py-3 text-sm text-slate-100 shadow-2xl shadow-black/40 backdrop-blur",
+              "pointer-events-auto grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border px-3 py-3 text-sm text-slate-100 shadow-2xl shadow-black/40 backdrop-blur sm:rounded-md",
               toastClassName(toast.variant)
             )}
             key={toast.id}
@@ -94,7 +94,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               ) : null}
             </div>
             <Button
-              className="h-7 w-7 border-slate-700/70"
+              className="h-11 w-11 border-slate-700/70 sm:h-7 sm:w-7"
               type="button"
               variant="outline"
               size="icon"

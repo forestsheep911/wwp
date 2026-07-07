@@ -93,7 +93,7 @@ export function CreditConfirmDialog({
         onCancel();
       }
     }}>
-      <DialogContent className="w-[min(94vw,480px)]">
+      <DialogContent className="sm:w-[min(94vw,480px)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Coins className="h-5 w-5 text-emerald-300" />
@@ -106,7 +106,7 @@ export function CreditConfirmDialog({
 
         {preview ? (
           <div className="grid gap-4">
-            <div className="rounded-md border border-slate-800 bg-slate-950/70 p-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
               <p className="line-clamp-2 font-semibold text-slate-50">{preview.title}</p>
               <p className="mt-2 text-sm leading-6 text-slate-300">{explanation(preview, policy)}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -128,24 +128,24 @@ export function CreditConfirmDialog({
                 <Badge variant="muted">{freeReason}</Badge>
               ) : null}
               {!preview.canAfford ? (
-                <p className="mt-3 rounded border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200">
+                <p className="mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200 sm:rounded">
                   {copy.credit.insufficient(unit)}
                 </p>
               ) : null}
             </div>
 
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
+              <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={onCancel} disabled={loading}>
                 {copy.common.cancel}
               </Button>
-              <Button type="button" onClick={onConfirm} disabled={loading || !preview.canAfford}>
+              <Button className="w-full sm:w-auto" type="button" onClick={onConfirm} disabled={loading || !preview.canAfford}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {preview.chargeable ? copy.credit.spend(costLabel) : copy.common.continue}
               </Button>
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/70 px-4 py-6 text-sm font-semibold text-slate-300">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-6 text-sm font-semibold text-slate-300 sm:rounded-md">
             <Loader2 className="h-4 w-4 animate-spin" />
             {copy.credit.confirming}
           </div>

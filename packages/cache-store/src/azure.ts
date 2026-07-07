@@ -239,6 +239,14 @@ function blobNameForPoster(assetKey: string, index: number, sourceUrl?: string, 
   return `posters/${encodeRowKey(assetKey)}/${String(index + 1).padStart(2, "0")}${posterExtension(sourceUrl, contentType)}`;
 }
 
+function isAzureBlobUrl(url: string) {
+  return /^https:\/\/[^/?#]+\.blob\.core\.windows\.net\//i.test(url);
+}
+
+function firstBlobPosterUrl(posters: MoviePoster[]) {
+  return posters.find((poster) => isAzureBlobUrl(poster.url))?.url;
+}
+
 function parseHeaderNumber(value: string | null) {
   if (!value) {
     return undefined;
@@ -921,7 +929,7 @@ export class AzureCacheStore implements CacheStore {
       ...result,
       metadata: {
         ...metadata,
-        posterUrl: cachedPosters[0]?.url ?? metadata.posterUrl,
+        posterUrl: firstBlobPosterUrl(cachedPosters),
         posters: cachedPosters
       }
     };
@@ -954,7 +962,7 @@ export class AzureCacheStore implements CacheStore {
       ...result,
       metadata: {
         ...metadata,
-        posterUrl: hydratedPosters[0]?.url ?? metadata.posterUrl,
+        posterUrl: firstBlobPosterUrl(hydratedPosters),
         posters: hydratedPosters
       }
     };

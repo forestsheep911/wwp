@@ -15,7 +15,7 @@ export function MediaDiagnosticsView({ media }: { media?: MediaDiagnostics }) {
   }
 
   return (
-    <div className="grid gap-3 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+    <div className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-lg">
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-semibold text-slate-500">{copy.media.title}</span>
         <Badge variant={media.mp4?.status === "late_moov" ? "warning" : "secondary"}>
@@ -41,7 +41,7 @@ export function Metric({ label, value }: { label: string; value: string | number
   return (
     <div className="min-w-0">
       <p className="text-xs font-semibold uppercase text-slate-500">{label}</p>
-      <p className="truncate text-sm font-semibold text-slate-100">{value}</p>
+      <p className="break-all text-sm font-semibold leading-6 text-slate-100 sm:truncate sm:leading-normal">{value}</p>
     </div>
   );
 }

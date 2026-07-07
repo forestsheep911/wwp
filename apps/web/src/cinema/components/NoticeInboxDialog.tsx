@@ -32,7 +32,7 @@ export function NoticeInboxDialog({
 }: NoticeInboxDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(94vw,760px)]">
+      <DialogContent className="sm:w-[min(94vw,760px)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5 text-emerald-300" />
@@ -43,29 +43,29 @@ export function NoticeInboxDialog({
         </DialogHeader>
 
         {error ? (
-          <p className="rounded border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200">
+          <p className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200 sm:rounded">
             {error}
           </p>
         ) : null}
 
         {loading && notices.length === 0 ? (
-          <div className="flex items-center gap-2 rounded border border-slate-800 bg-slate-950/70 px-4 py-8 text-sm font-semibold text-slate-300">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-8 text-sm font-semibold text-slate-300 sm:rounded">
             <Loader2 className="h-4 w-4 animate-spin" />
             正在加载站内信
           </div>
         ) : notices.length === 0 ? (
-          <div className="grid place-items-center rounded border border-slate-800 bg-slate-950/70 px-4 py-10 text-center text-sm text-slate-400">
+          <div className="grid place-items-center rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-10 text-center text-sm text-slate-400 sm:rounded">
             <Inbox className="mb-3 h-6 w-6 text-slate-500" />
             暂无站内信
           </div>
         ) : (
-          <div className="max-h-[58vh] overflow-auto rounded border border-slate-800">
-            <div className="grid divide-y divide-slate-800">
+          <div className="max-h-[58dvh] overflow-auto rounded-xl border border-slate-800 sm:rounded">
+            <div className="grid gap-2 p-2 sm:gap-0 sm:divide-y sm:divide-slate-800 sm:p-0">
               {notices.map((notice) => {
                 const unread = !notice.readAt;
                 return (
-                  <article key={notice.id} className={`grid gap-3 p-3 ${unread ? "bg-emerald-400/8" : "bg-slate-950/50"}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
+                  <article key={notice.id} className={`grid gap-3 rounded-lg p-3 sm:rounded-none ${unread ? "bg-emerald-400/8" : "bg-slate-950/50"}`}>
+                    <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-slate-50">{notice.title}</h3>
@@ -80,7 +80,7 @@ export function NoticeInboxDialog({
                         </p>
                       </div>
                       {unread ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => onMarkRead(notice.id)} disabled={loading}>
+                        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={() => onMarkRead(notice.id)} disabled={loading}>
                           <CheckCircle2 className="h-4 w-4" />
                           已读
                         </Button>

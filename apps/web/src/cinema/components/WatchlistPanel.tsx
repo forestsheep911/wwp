@@ -158,8 +158,8 @@ export function WatchlistPanel({
   if (browseResults.length === 0) {
     return (
       <div className="grid gap-3">
-        <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={browseLoading}>
+        <div className="grid gap-2 sm:flex sm:justify-end">
+          <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={browseLoading}>
             <RefreshCw className={`h-4 w-4 ${browseLoading ? "animate-spin" : ""}`} />
             {copy.watchlist.refresh}
           </Button>
@@ -171,7 +171,7 @@ export function WatchlistPanel({
 
   return (
     <section className="grid gap-4">
-      <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <div className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 sm:rounded-lg lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="default">
@@ -185,13 +185,13 @@ export function WatchlistPanel({
           <h2 className="mt-3 text-2xl font-semibold leading-tight text-slate-50">{copy.watchlist.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{copy.watchlist.description}</p>
         </div>
-        <Button type="button" variant="outline" onClick={onRefresh} disabled={browseLoading || browseLoadingMore}>
+        <Button className="w-full lg:w-auto" type="button" variant="outline" onClick={onRefresh} disabled={browseLoading || browseLoadingMore}>
           <RefreshCw className={`h-4 w-4 ${browseLoading || browseLoadingMore ? "animate-spin" : ""}`} />
           {copy.common.refresh}
         </Button>
       </div>
 
-      <div className="grid gap-3 rounded-md border border-slate-800 bg-slate-950 p-3">
+      <div className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950 p-3 sm:rounded-md">
         <FilterRow label={copy.watchlist.rows.sort}>
           {sortOptions.map((option) => (
             <FilterButton key={option.id} active={activeSort === option.id} onClick={() => setActiveSort(option.id)}>
@@ -258,8 +258,8 @@ export function WatchlistPanel({
       )}
 
       {browseHasMore ? (
-        <div className="flex justify-center pt-1">
-          <Button type="button" variant="outline" onClick={onLoadMore} disabled={browseLoadingMore}>
+        <div className="grid gap-2 pt-1 sm:flex sm:justify-center">
+          <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={onLoadMore} disabled={browseLoadingMore}>
             {browseLoadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
             {copy.watchlist.loadMore}
           </Button>
@@ -271,19 +271,19 @@ export function WatchlistPanel({
 
 function FilterRow({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="grid gap-2 md:grid-cols-[4rem_minmax(0,1fr)] md:items-start">
+    <div className="grid min-w-0 gap-2 md:grid-cols-[4rem_minmax(0,1fr)] md:items-start">
       <div className="flex items-center gap-1.5 pt-1 text-sm font-bold text-emerald-300">
         <SlidersHorizontal className="h-3.5 w-3.5" />
         {label}
       </div>
-      <div className="scrollbar-none flex gap-2 overflow-x-auto md:flex-wrap">{children}</div>
+      <div className="scrollbar-none flex max-w-[calc(100vw-3rem)] gap-2 overflow-x-auto md:max-w-none md:flex-wrap">{children}</div>
     </div>
   );
 }
 
 function FilterButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
   return (
-    <Button className="flex-none" type="button" size="sm" variant={active ? "secondary" : "ghost"} onClick={onClick}>
+    <Button className="min-h-11 flex-none rounded-lg sm:min-h-8 sm:rounded-md" type="button" size="sm" variant={active ? "secondary" : "ghost"} onClick={onClick}>
       {children}
     </Button>
   );
@@ -519,7 +519,7 @@ function WatchCandidateCard({
   const year = releaseYear(result);
 
   return (
-    <Card>
+    <Card className="rounded-xl sm:rounded-lg">
       <CardContent className="grid gap-3 p-4">
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
           <div className="min-w-0">
@@ -529,7 +529,7 @@ function WatchCandidateCard({
               <p className="mt-1 text-xs font-semibold text-slate-500">{copy.library.director(directorLine(result))}</p>
             ) : null}
           </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <Button
               className={favorite ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""}
               type="button"
@@ -560,16 +560,16 @@ function WatchCandidateCard({
           </div>
         ) : null}
 
-        <p className="line-clamp-2 text-sm leading-6 text-slate-400">{bestSummary(result)}</p>
+        <p className="line-clamp-3 text-sm leading-6 text-slate-400 sm:line-clamp-2">{bestSummary(result)}</p>
 
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-          <p className="min-w-0 truncate text-xs font-semibold text-slate-500">
+          <p className="min-w-0 text-xs font-semibold leading-5 text-slate-500 sm:truncate sm:leading-normal">
             {variant ? variantSpecText(result.title, variant, { compact: true }) : copy.watchlist.noPlayableVariant}
             {ready && variant?.cache?.media?.contentLength && !variantHasSizeMetadata(variant) ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
             {candidate.cachedAt ? ` / ${copy.watchlist.cachedAt(formatDateTime(candidate.cachedAt))}` : ` / ${copy.watchlist.updatedAt(formatDateTime(result.updatedAt))}`}
           </p>
           {variant ? (
-            <Button type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
+            <Button className="w-full sm:w-auto" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
               <Play className="h-4 w-4" />
               {ready
                 ? formatCreditAmount(playbackCreditCost(variant.cache?.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)

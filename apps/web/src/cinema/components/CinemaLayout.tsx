@@ -122,10 +122,10 @@ export function CinemaLayout({
   return (
     <main className="min-h-screen">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
-        <header className="relative z-[100] border-b border-slate-800 bg-slate-950/70 backdrop-blur">
-          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
+        <header className="sticky top-0 z-[100] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
+          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 sm:px-5 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
             <button
-              className="group flex min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+              className="group flex min-h-11 min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               type="button"
               onClick={onOpenHome}
               title={copy.layout.homeTitle}
@@ -138,16 +138,16 @@ export function CinemaLayout({
 
             <nav
               aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 flex min-w-0 items-center gap-5 overflow-x-auto lg:order-2 lg:col-span-1 lg:mx-auto lg:justify-center"
+              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-auto lg:justify-center lg:gap-5"
             >
               {browseChannels.map((channel) => {
                 const active = activeTab === "library" && activeBrowseChannel === channel.id;
                 return (
                   <button
-                    className={`relative h-9 flex-none px-0.5 text-sm font-semibold transition-colors ${
+                    className={`relative min-h-11 flex-none rounded-full border px-4 text-sm font-semibold transition-colors lg:h-9 lg:min-h-0 lg:border-0 lg:px-0.5 ${
                       active
-                        ? "text-emerald-200"
-                        : "text-slate-400 hover:text-slate-100"
+                        ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100 lg:bg-transparent lg:text-emerald-200"
+                        : "border-slate-800 bg-slate-950/75 text-slate-300 hover:border-slate-700 hover:text-slate-100 lg:bg-transparent lg:text-slate-400"
                     }`}
                     key={channel.id}
                     type="button"
@@ -157,7 +157,7 @@ export function CinemaLayout({
                     {channel.label}
                     <span
                       aria-hidden="true"
-                      className={`absolute inset-x-0 -bottom-1 h-0.5 rounded-full transition-colors ${
+                      className={`absolute inset-x-4 -bottom-0.5 h-0.5 rounded-full transition-colors lg:inset-x-0 lg:-bottom-1 ${
                         active ? "bg-emerald-300" : "bg-transparent"
                       }`}
                     />
@@ -167,23 +167,23 @@ export function CinemaLayout({
             </nav>
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
-              <Button type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
                 <HelpCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.help}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenForum} title={copy.layout.forum}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenForum} title={copy.layout.forum}>
                 <MessageCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.forum}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenFavorites} title={copy.layout.favorites}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenFavorites} title={copy.layout.favorites}>
                 <Star className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.favorites}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenWatchlist} title={copy.layout.watchlist}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenWatchlist} title={copy.layout.watchlist}>
                 <Clapperboard className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.watchlist}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenNowPlaying} title={copy.layout.nowPlaying}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenNowPlaying} title={copy.layout.nowPlaying}>
                 <Flame className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.nowPlaying}</span>
               </Button>
@@ -191,12 +191,12 @@ export function CinemaLayout({
                 <Search className="h-4 w-4" />
                 <span className="sr-only">{copy.common.search}</span>
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onToggleTheme} title={themeToggleTitle}>
+              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onToggleTheme} title={themeToggleTitle}>
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 <span className="sr-only">{themeToggleTitle}</span>
               </Button>
               {canChangePasscode ? (
-                <Button className="relative" type="button" variant="outline" size="icon" onClick={onOpenNotices} title="站内信">
+                <Button className="relative hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenNotices} title="站内信">
                   <Bell className="h-4 w-4" />
                   {noticeUnreadCount > 0 ? (
                     <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">
@@ -207,7 +207,7 @@ export function CinemaLayout({
                 </Button>
               ) : null}
               {canChangePasscode ? (
-                <Button type="button" variant="outline" size="icon" onClick={onOpenSpending} title={copy.layout.spending}>
+                <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenSpending} title={copy.layout.spending}>
                   <ReceiptText className="h-4 w-4" />
                   <span className="sr-only">{copy.layout.spending}</span>
                 </Button>
@@ -237,7 +237,7 @@ export function CinemaLayout({
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-4 px-5 py-5 md:px-8">
+        <div className="mx-auto grid max-w-7xl gap-4 px-3 pb-24 pt-4 sm:px-5 sm:pb-5 md:px-8">
           <div className="min-w-0 overflow-hidden">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
@@ -251,8 +251,45 @@ export function CinemaLayout({
             {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
           </div>
         </div>
+        <nav className="fixed inset-x-0 bottom-[calc(100vh-100dvh)] z-[90] w-[100dvw] border-t border-slate-800 bg-slate-950/94 px-3 py-2 shadow-2xl shadow-black/45 backdrop-blur sm:hidden" aria-label="手机快捷导航">
+          <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
+            <MobileNavButton active={activeTab === "library"} icon={<Clapperboard className="h-5 w-5" />} label={copy.layout.browseChannels.recommended} onClick={onOpenHome} />
+            <MobileNavButton active={activeTab === "nowPlaying"} icon={<Flame className="h-5 w-5" />} label={copy.layout.nowPlaying} onClick={onOpenNowPlaying} />
+            <MobileNavButton active={false} icon={<Search className="h-5 w-5" />} label={copy.common.search} onClick={onOpenSearch} />
+            <MobileNavButton active={activeTab === "watchlist"} icon={<Star className="h-5 w-5" />} label="今晚" onClick={onOpenWatchlist} />
+            <MobileNavButton active={activeTab === "forum"} icon={<MessageCircle className="h-5 w-5" />} label={copy.layout.forum} onClick={onOpenForum} />
+          </div>
+        </nav>
       </Tabs>
     </main>
+  );
+}
+
+function MobileNavButton({
+  active,
+  icon,
+  label,
+  onClick
+}: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`grid min-h-14 place-items-center gap-0.5 rounded-xl px-0 text-[10px] font-bold leading-none transition-colors ${
+        active
+          ? "bg-emerald-300/12 text-emerald-100"
+          : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+      }`}
+      type="button"
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+    >
+      {icon}
+      <span className="max-w-full whitespace-nowrap">{label}</span>
+    </button>
   );
 }
 

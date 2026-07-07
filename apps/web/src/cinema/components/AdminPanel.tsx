@@ -162,7 +162,7 @@ export function AdminPanel({
 }: AdminPanelProps) {
   if (!adminUnlocked) {
     return (
-      <Card>
+      <Card className="rounded-xl sm:rounded-lg">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-emerald-300" />
@@ -172,7 +172,7 @@ export function AdminPanel({
         </CardHeader>
         <CardContent>
           <form
-            className="grid max-w-md gap-3"
+            className="grid max-w-md gap-3 sm:max-w-md"
             onSubmit={(event) => {
               event.preventDefault();
               onUnlock();
@@ -186,7 +186,7 @@ export function AdminPanel({
               type="password"
             />
             {adminError ? <p className="text-sm font-semibold text-rose-300">{adminError}</p> : null}
-            <Button type="submit" disabled={adminLoading}>
+            <Button className="w-full sm:w-auto" type="submit" disabled={adminLoading}>
               {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
               {copy.admin.unlock}
             </Button>
@@ -199,13 +199,13 @@ export function AdminPanel({
   return (
     <div className="grid gap-4">
       {adminError ? (
-        <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
+        <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200 sm:rounded-md">
           {adminError}
         </div>
       ) : null}
 
       <Tabs defaultValue="cached">
-        <TabsList>
+        <TabsList className="max-w-[calc(100vw-1.5rem)] sm:max-w-full">
           <TabsTrigger value="cached">
             <Database className="h-4 w-4" />
             {copy.admin.tabs.cached}
@@ -332,6 +332,8 @@ export function AdminPanel({
 }
 
 const movieRequestStatusOptions: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
+const adminSelectClassName = "h-12 rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30 sm:h-10 sm:rounded-md sm:text-sm";
+const adminTextareaClassName = "min-h-32 resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base leading-7 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30 sm:rounded-md sm:py-2 sm:text-sm sm:leading-6";
 
 function AdminNoticesPanel({
   actionLoading,
@@ -374,7 +376,7 @@ function AdminNoticesPanel({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-      <Card className="self-start">
+      <Card className="self-start rounded-xl sm:rounded-lg">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5 text-emerald-300" />
@@ -388,7 +390,7 @@ function AdminNoticesPanel({
               <Label htmlFor="notice-audience">发送范围</Label>
               <select
                 id="notice-audience"
-                className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+                className={adminSelectClassName}
                 value={audience}
                 onChange={(event) => setAudience(event.target.value === "member" ? "member" : "all")}
               >
@@ -401,7 +403,7 @@ function AdminNoticesPanel({
                 <Label htmlFor="notice-target">成员</Label>
                 <select
                   id="notice-target"
-                  className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+                  className={adminSelectClassName}
                   value={targetMemberId}
                   onChange={(event) => setTargetMemberId(event.target.value)}
                   required
@@ -426,14 +428,14 @@ function AdminNoticesPanel({
               <Label htmlFor="notice-body">内容</Label>
               <textarea
                 id="notice-body"
-                className="min-h-32 resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+                className={adminTextareaClassName}
                 maxLength={4000}
                 value={body}
                 onChange={(event) => setBody(event.target.value)}
               />
               <p className="text-xs text-slate-500">{body.length}/4000</p>
             </div>
-            <Button type="submit" disabled={busy || !title.trim() || !body.trim() || (audience === "member" && !targetMemberId)}>
+            <Button className="w-full sm:w-auto" type="submit" disabled={busy || !title.trim() || !body.trim() || (audience === "member" && !targetMemberId)}>
               {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
               发送
             </Button>
@@ -441,7 +443,7 @@ function AdminNoticesPanel({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-xl sm:rounded-lg">
         <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div>
             <CardTitle className="flex items-center gap-2">
@@ -450,7 +452,7 @@ function AdminNoticesPanel({
             </CardTitle>
             <CardDescription>按发送时间查看公告和单人消息。</CardDescription>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
+          <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             {copy.common.refresh}
           </Button>
@@ -463,8 +465,8 @@ function AdminNoticesPanel({
           ) : (
             <div className="grid gap-3">
               {notices.map((notice) => (
-                <article key={notice.id} className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/70 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <article key={notice.id} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md sm:p-3">
+                  <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-semibold text-slate-50">{notice.title}</h3>
@@ -512,7 +514,7 @@ function AdminMovieRequestsPanel({
   const busy = actionLoading || loading;
 
   return (
-    <Card>
+    <Card className="rounded-xl sm:rounded-lg">
       <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">
@@ -528,13 +530,13 @@ function AdminMovieRequestsPanel({
       </CardHeader>
       <CardContent>
         {requests.length === 0 ? (
-          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+          <div className="grid place-items-center rounded-xl border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500 sm:rounded-md">
             {loading ? copy.admin.loadingRequests : copy.admin.noRequests}
           </div>
         ) : (
           <div className="grid gap-3">
             {requests.map((request) => (
-              <div key={request.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
+              <div key={request.id} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -548,9 +550,10 @@ function AdminMovieRequestsPanel({
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 md:justify-end">
+                  <div className="grid gap-2 sm:flex sm:flex-wrap md:justify-end">
                     {movieRequestStatusOptions.map((status) => (
                       <Button
+                        className="w-full sm:w-auto"
                         key={status}
                         type="button"
                         variant={request.status === status ? "secondary" : "outline"}
@@ -588,7 +591,7 @@ function AdminLoginAuditPanel({
   onRefresh: () => void;
 }) {
   return (
-    <Card>
+    <Card className="rounded-xl sm:rounded-lg">
       <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">
@@ -604,14 +607,14 @@ function AdminLoginAuditPanel({
       </CardHeader>
       <CardContent>
         {events.length === 0 ? (
-          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+          <div className="grid place-items-center rounded-xl border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500 sm:rounded-md">
             {loading ? copy.admin.loadingAudit : copy.admin.noAudit}
           </div>
         ) : (
           <div className="grid gap-3">
             {events.map((event) => (
-              <div key={event.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div key={event.id} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
+                <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-semibold text-slate-50">
@@ -632,7 +635,7 @@ function AdminLoginAuditPanel({
                 </div>
 
                 {event.userAgent ? (
-                  <p className="truncate text-xs text-slate-500" title={event.userAgent}>
+                  <p className="break-all text-xs leading-5 text-slate-500 sm:truncate" title={event.userAgent}>
                     <MonitorSmartphone className="mr-1 inline h-3.5 w-3.5" />
                     {event.userAgent}
                   </p>
@@ -684,7 +687,7 @@ function AdminMembersPanel({
 
   return (
     <div className="grid gap-4">
-        <Card>
+        <Card className="rounded-xl sm:rounded-lg">
           <CardHeader className="flex flex-col items-start justify-between gap-4 lg:flex-row">
             <div className="min-w-0">
               <CardTitle className="flex items-center gap-2">
@@ -737,14 +740,14 @@ function AdminMembersPanel({
           <EmptyState icon={<Users className="h-5 w-5" />} title={copy.admin.noMembers} />
         ) : (
           memberCodes.map((code) => (
-            <Card key={code.id}>
+            <Card key={code.id} className="rounded-xl sm:rounded-lg">
               <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-semibold text-slate-50">{code.name}</p>
                     <Badge variant={code.status === "active" ? "default" : "danger"}>{adminMemberStatusLabel(code.status)}</Badge>
                   </div>
-                  <p className="mt-1 truncate font-mono text-sm text-slate-300">
+                  <p className="mt-1 break-all font-mono text-sm leading-6 text-slate-300 sm:truncate">
                     {code.code ?? code.codePreview}
                   </p>
                   <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-[minmax(0,180px)]">
@@ -756,9 +759,9 @@ function AdminMembersPanel({
                 </div>
 
                 <div className="grid gap-2 lg:min-w-[360px]">
-                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                  <div className="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] lg:flex lg:flex-wrap lg:items-center lg:justify-end">
                     <Input
-                      className="h-9 w-20"
+                      className="w-full lg:w-20"
                       min={0}
                       max={10000}
                       type="number"
@@ -766,6 +769,7 @@ function AdminMembersPanel({
                       onChange={(event) => setMemberCreditEdit(code.id, Number(event.target.value))}
                     />
                     <Button
+                      className="w-full lg:w-auto"
                       type="button"
                       variant="outline"
                       size="sm"
@@ -775,8 +779,9 @@ function AdminMembersPanel({
                       {copy.admin.setCredits}
                     </Button>
                   </div>
-                  <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:justify-end">
                     <Button
+                      className="w-full lg:w-auto"
                       type="button"
                       variant="outline"
                       size="sm"
@@ -787,6 +792,7 @@ function AdminMembersPanel({
                       {copy.layout.spending}
                     </Button>
                     <Button
+                      className="w-full lg:w-auto"
                       type="button"
                       variant="outline"
                       size="sm"
@@ -798,6 +804,7 @@ function AdminMembersPanel({
                     </Button>
                     {code.status === "active" ? (
                       <Button
+                        className="w-full lg:w-auto"
                         type="button"
                         variant="destructive"
                         size="sm"
@@ -809,6 +816,7 @@ function AdminMembersPanel({
                     ) : null}
                     {code.status !== "active" ? (
                       <Button
+                        className="w-full lg:w-auto"
                         type="button"
                         variant="destructive"
                         size="sm"
@@ -850,7 +858,7 @@ function AdminInvitesPanel({
   return (
     <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
       <div className="self-start">
-        <Card>
+        <Card className="rounded-xl sm:rounded-lg">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-emerald-300" />
@@ -877,7 +885,7 @@ function AdminInvitesPanel({
                   onChange={(event) => setMemberCredits(Number(event.target.value))}
                 />
               </div>
-              <Button type="submit" disabled={adminLoading}>
+              <Button className="w-full sm:w-auto" type="submit" disabled={adminLoading}>
                 {adminLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                 {copy.admin.generateInvite}
               </Button>
@@ -886,7 +894,7 @@ function AdminInvitesPanel({
         </Card>
       </div>
 
-      <Card>
+      <Card className="rounded-xl sm:rounded-lg">
         <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2">
@@ -908,8 +916,8 @@ function AdminInvitesPanel({
               {memberInvitations.map((invitation) => {
                 const link = invitationLink(invitation);
                 return (
-                  <div key={invitation.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div key={invitation.id} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md sm:p-3">
+                    <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-semibold text-slate-50">
@@ -924,11 +932,11 @@ function AdminInvitesPanel({
                           </Badge>
                           <Badge variant="muted">{adminInvitationTypeLabel(invitation.type)}</Badge>
                         </div>
-                        <p className="mt-1 truncate font-mono text-sm text-slate-300">
+                        <p className="mt-1 break-all font-mono text-sm leading-6 text-slate-300 sm:truncate">
                           {invitation.code ?? invitation.codePreview}
                         </p>
                         {link ? (
-                          <p className="mt-1 truncate text-xs text-emerald-200">
+                          <p className="mt-1 break-all text-xs leading-5 text-emerald-200 sm:truncate">
                             {link}
                           </p>
                         ) : null}
@@ -977,7 +985,7 @@ function AdminCachedAssetsPanel({
   const busy = actionLoading || loading;
 
   return (
-    <Card>
+    <Card className="rounded-xl sm:rounded-lg">
       <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">
@@ -993,17 +1001,17 @@ function AdminCachedAssetsPanel({
       </CardHeader>
       <CardContent>
         {assets.length === 0 ? (
-          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+          <div className="grid place-items-center rounded-xl border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500 sm:rounded-md">
             {loading ? copy.admin.loadingCached : copy.admin.noCached}
           </div>
         ) : (
           <div className="grid gap-3">
             {assets.map((asset) => (
-              <div key={asset.assetKey} className="grid gap-3 overflow-hidden rounded-md border border-slate-800 bg-slate-950/70 p-4">
+              <div key={asset.assetKey} className="grid gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-50">{asset.title}</p>
-                    <p className="mt-1 text-sm text-slate-400">
+                    <p className="line-clamp-2 font-semibold leading-6 text-slate-50 sm:truncate">{asset.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-400 sm:leading-normal">
                       {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
                     </p>
                   </div>
@@ -1053,7 +1061,7 @@ function AdminCacheJobsPanel({
   const busy = actionLoading || loading;
 
   return (
-    <Card>
+    <Card className="rounded-xl sm:rounded-lg">
       <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">
@@ -1069,16 +1077,16 @@ function AdminCacheJobsPanel({
       </CardHeader>
       <CardContent>
         {jobs.length === 0 ? (
-          <div className="grid place-items-center rounded-md border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500">
+          <div className="grid place-items-center rounded-xl border border-slate-800 bg-slate-950/70 p-8 text-center text-sm font-semibold text-slate-500 sm:rounded-md">
             {copy.admin.noJobs}
           </div>
         ) : (
           <div className="grid gap-3">
             {jobs.map(({ job, asset }) => (
-              <div key={job.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div key={job.id} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
+                <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-50">{job.title}</p>
+                    <p className="line-clamp-2 font-semibold leading-6 text-slate-50 sm:truncate">{job.title}</p>
                     <p className="mt-1 text-sm leading-6 text-slate-400">{jobMessageLabel(job)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1104,9 +1112,10 @@ function AdminCacheJobsPanel({
 
                 {job.error ? <p className="text-sm font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
 
-                <div className="flex flex-wrap gap-2">
+                <div className="grid gap-2 sm:flex sm:flex-wrap">
                   {job.status === "failed" ? (
                     <Button
+                      className="w-full sm:w-auto"
                       type="button"
                       variant="secondary"
                       size="sm"
@@ -1118,6 +1127,7 @@ function AdminCacheJobsPanel({
                     </Button>
                   ) : null}
                   <Button
+                    className="w-full sm:w-auto"
                     type="button"
                     variant="destructive"
                     size="sm"

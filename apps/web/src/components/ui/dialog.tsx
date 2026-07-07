@@ -16,7 +16,7 @@ export const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn("fixed inset-0 z-50 bg-black/70 backdrop-blur-sm", className)}
+    className={cn("fixed inset-0 z-[130] bg-black/70 backdrop-blur-sm", className)}
     {...props}
   />
 ));
@@ -35,14 +35,14 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-[min(92vw,520px)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-2xl",
+        "fixed inset-x-0 bottom-[calc(100vh-100dvh)] z-[140] grid max-h-[calc(100dvh-0.75rem)] w-[100dvw] gap-4 overflow-y-auto rounded-t-2xl border border-slate-800 bg-slate-950 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-slate-100 shadow-2xl sm:left-1/2 sm:top-1/2 sm:bottom-auto sm:w-[min(92vw,520px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:p-6",
         className
       )}
       {...props}
     >
       {children}
       {!hideCloseButton ? (
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-slate-500 hover:bg-slate-900 hover:text-slate-100">
+        <DialogPrimitive.Close className="absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-lg text-slate-500 hover:bg-slate-900 hover:text-slate-100 sm:right-4 sm:top-4 sm:h-8 sm:w-8 sm:rounded-md">
           <X className="h-4 w-4" />
           <span className="sr-only">{copy.common.close}</span>
         </DialogPrimitive.Close>
