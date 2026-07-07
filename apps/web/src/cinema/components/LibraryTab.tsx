@@ -498,6 +498,7 @@ function LibraryHome({
   const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseServerItemLimit;
   const reachedBrowseViewLimit = totalVisibleItems >= browseDisplayItemLimit && (totalRankedItems > browseDisplayItemLimit || browseHasMore);
   const browseFullViewLoading = needsFullBrowseResults &&
+    rankedResults.length === 0 &&
     loadedBrowseItemCount < browseServerItemLimit &&
     (browseLoading || browseLoadingMore || canLoadMoreFromServer);
   const visibleResults = useMemo(
