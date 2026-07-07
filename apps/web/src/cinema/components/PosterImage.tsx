@@ -11,7 +11,7 @@ function posterUrls(result: SearchResult) {
   const candidates = [
     ...(result.metadata?.posters?.map((poster) => ({
       url: poster.url,
-      allowed: poster.source === "blob" || Boolean(poster.blobName) || isBlobPosterUrl(poster.url)
+      allowed: isBlobPosterUrl(poster.url)
     })) ?? []),
     ...(result.metadata?.posterUrl
       ? [{

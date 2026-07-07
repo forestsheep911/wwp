@@ -239,8 +239,12 @@ function blobNameForPoster(assetKey: string, index: number, sourceUrl?: string, 
   return `posters/${encodeRowKey(assetKey)}/${String(index + 1).padStart(2, "0")}${posterExtension(sourceUrl, contentType)}`;
 }
 
+function isAzureBlobUrl(url: string) {
+  return /^https:\/\/[^/?#]+\.blob\.core\.windows\.net\//i.test(url);
+}
+
 function firstBlobPosterUrl(posters: MoviePoster[]) {
-  return posters.find((poster) => poster.source === "blob" || Boolean(poster.blobName))?.url;
+  return posters.find((poster) => isAzureBlobUrl(poster.url))?.url;
 }
 
 function parseHeaderNumber(value: string | null) {
