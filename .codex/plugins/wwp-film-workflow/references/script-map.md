@@ -18,7 +18,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-upload-movie-video.mjs`
   - Upload a playable movie MP4 to an existing or target movie/spec page.
 - `tools/notion-upload-movie-package.mjs`
-  - Create/update movie package structures and upload playable/source pieces when explicitly configured. For large Notion uploads, preserve the generated upload manifest and command log so an interrupted run can resume parts instead of restarting.
+  - Create/update movie package structures and upload playable/source pieces when explicitly configured. Newly created work pages default to `Hide from Website=true`, `Needs Review=true`, and `Media Availability=needs_processing`; use the explicit gate flags only when a workflow has a better evidenced state. For large Notion uploads, preserve the generated upload manifest and command log so an interrupted run can resume parts instead of restarting.
 - `tools/notion-upload-series-videos.mjs`
   - Upload episode playable files with series-aware mapping. It can also create a new series/season page, spec page, and missing episode pages when explicitly called with `--create --title <title> --create-episodes`; default existing-page behavior remains unchanged.
 - `tools/notion-upload-series-source.mjs`
@@ -26,9 +26,9 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-media-assets-audit.mjs`
   - Audit Notion pages for candidate playable/source Media Assets rows.
 - `tools/notion-media-assets-write.mjs`
-  - Write movie Media Assets rows from audited candidates. Prefer batch manifests with page IDs, expected-title guards, and ffprobe-backed `metadata` overrides for production apply runs.
+  - Write movie Media Assets rows from audited candidates. Prefer batch manifests with page IDs, expected-title guards, and ffprobe-backed `metadata` overrides for production apply runs. The writer must not treat a playable row as permission to un-hide website visibility; playback/QC review remains separate.
 - `tools/notion-media-assets-write-series.mjs`
-  - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs.
+  - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. The writer must not treat a playable episode row as permission to un-hide website visibility.
 - `tools/notion-media-assets-stats.mjs`
   - Read-only Media Assets stats/readback.
 - `tools/notion-media-assets-generate-batch.mjs`
@@ -40,13 +40,17 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-media-assets-normalize-codec.mjs`
   - Normalize codec select values.
 - `tools/notion-metadata-backfill.mjs`
-  - Backfill work-level metadata, including Douban search/fetch/poster behavior.
+  - Backfill work-level metadata, including Douban search/fetch/poster behavior and structured fields such as `Release Year`, `上映日期`, `Countries`, `Languages`, `Traditional Chinese Title (Taiwan)`, `Traditional Chinese Title (Hong Kong)`, `旨趣`, `外部类型原文`, `未映射类型`, `Runtime Minutes`, `Directors`, `Writers`, `Cast`, source/status/confidence, and update date. It does not write legacy `Release Date`.
 - `tools/manual-douban-subject-update.mjs`
   - Manually apply explicit Douban Subject IDs and posters.
 - `tools/omdb-inspect.mjs`
   - Inspect OMDb payloads.
-- `apps/api/src/notion-omdb-enrichment.ts`
-  - OMDb enrichment path for Notion metadata; respect quota and environment requirements.
+- `npx tsx apps/api/src/notion-metadata-maintenance.ts --page-id <page> --pages --limit 1 --report <json>`
+  - Initialize/repair identity fields such as `WW Work ID`, parsed external IDs, schema, match/status/source/confidence, and title-derived fields. Use `--apply` only after dry-run.
+- `npx tsx apps/api/src/notion-omdb-enrichment.ts --page-id <page> --limit 1 --max-updates 1 --report <json>`
+  - OMDb enrichment path for Notion metadata: ratings, `分级`, Metascore, Rotten Tomatoes, box office fields, and English structured metadata. Respect quota and environment requirements. Use direct `npx tsx` form when passing flags; root npm forwarding may treat flags as npm config.
+- `npx tsx apps/api/src/notion-family-age-enrichment.ts --page-id <page> --limit 1 --max-updates 1 --report <json>`
+  - AI advisory enrichment for `AI建议最低年龄`, `AI年龄建议置信度`, `内容风险标签`, and `AI年龄建议理由`. Run after sourced metadata exists. Use `--apply` only after preview.
 - `apps/api/src/notion-metadata-audit.ts`
   - Audit metadata completeness and source expectations.
 - `apps/api/src/notion-metadata-maintenance.ts`

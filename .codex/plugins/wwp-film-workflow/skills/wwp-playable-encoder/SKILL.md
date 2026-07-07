@@ -14,6 +14,7 @@ Use this skill for playable outputs that people will watch directly. Source arch
 - Codec direction: HEVC preferred unless the user asks otherwise or compatibility requires another choice.
 - Subtitle delivery: burn selected Chinese subtitles into the video for subtitle-dependent versions.
 - Mandarin-language films: prefer no hard subtitles unless subtitles are already burned into the source and cannot be separated.
+- Size target: keep Notion-bound playable MP4 files below 5,000,000,000 bytes unless the user verifies a newer Notion limit. For high-bitrate manual-upload candidates, usually aim for about 4.7-4.9GB.
 
 ## Flow
 
@@ -25,6 +26,7 @@ Use this skill for playable outputs that people will watch directly. Source arch
 6. Use `../../scripts/plan-stream-variants.mjs` when combining hard subtitles, soft subtitles, Mandarin/Cantonese/original/commentary audio, or director cuts.
 7. Generate QC artifacts, including contact sheets when helpful.
 8. Probe final files and preserve the JSON/manifest for Media Assets.
+9. Verify the final byte size is below the Notion playable upload limit before calling it upload-ready.
 
 ## Variant Rules
 
@@ -36,4 +38,4 @@ Use this skill for playable outputs that people will watch directly. Source arch
 
 ## Completion Gate
 
-Before handing off to Notion, report final path, size, ffprobe-derived metadata, selected subtitle/audio tracks, QC result, and any known limitations.
+Before handing off to Notion, report final path, exact byte size, whether it is below the Notion playable upload limit, ffprobe-derived metadata, selected subtitle/audio tracks, QC result, and any known limitations.

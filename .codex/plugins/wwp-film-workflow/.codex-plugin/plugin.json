@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "WWP Film Workflow",
     "shortDescription": "Produce WWP playable video, Notion pages, Media Assets, and metadata.",
-    "longDescription": "Project-local Codex workflow rules for selecting films and series, encoding playable MP4 variants, publishing to Notion, writing Media Assets, backfilling manual uploads, handling source archives, and filling film metadata.",
+    "longDescription": "Project-local Codex workflow rules for selecting films and series, creating work/spec pages early, encoding playable MP4 variants, publishing to Notion, writing Media Assets, backfilling manual uploads, handling source archives, and filling structured film metadata through identity, Douban, OMDb, TMDb, and AI advisory lanes.",
     "developerName": "WWP local workflow",
     "category": "Productivity",
     "capabilities": [

@@ -27,7 +27,10 @@ function parseArgs() {
     create: false,
     uploadVideos: false,
     uploadSource: false,
-    uploadMeta: false
+    uploadMeta: false,
+    initialGates: true,
+    mediaAvailability: "",
+    developerMemo: ""
   };
 
   const args = process.argv.slice(2);
@@ -52,6 +55,9 @@ function parseArgs() {
     else if (arg === "--upload-videos") options.uploadVideos = true;
     else if (arg === "--upload-source") options.uploadSource = true;
     else if (arg === "--upload-meta") options.uploadMeta = true;
+    else if (arg === "--no-initial-gates") options.initialGates = false;
+    else if (arg === "--media-availability") options.mediaAvailability = args[++index];
+    else if (arg === "--developer-memo") options.developerMemo = args[++index];
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -85,6 +91,9 @@ Useful flags:
   --source-archive-name <name>  base archive name, for example movie.7z
   --meta-file <7z>              small metadata archive
   --upload-videos --upload-meta --upload-source
+  --media-availability <state>  initial work-page state for new pages
+  --developer-memo <text>       initial Developer Memo for new pages
+  --no-initial-gates            do not set safety gates on newly created work pages
 `);
 }
 
@@ -316,6 +325,16 @@ async function createMoviePage(notion, library, options) {
       properties[name] = { rich_text: richText(value) };
     }
   };
+  const setSelectProperty = (name, value) => {
+    if (value && library.dataSource.properties?.[name]?.type === "select") {
+      properties[name] = { select: { name: value } };
+    }
+  };
+  const setCheckboxProperty = (name, value) => {
+    if (library.dataSource.properties?.[name]?.type === "checkbox") {
+      properties[name] = { checkbox: Boolean(value) };
+    }
+  };
   if (options.chineseTitle) {
     setRichTextProperty("Simplified Chinese Title", options.chineseTitle);
   }
@@ -323,6 +342,12 @@ async function createMoviePage(notion, library, options) {
   setRichTextProperty("Original Title", options.originalTitle);
   if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
   if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "Movie" } };
+  if (options.initialGates) {
+    setCheckboxProperty("Hide from Website", true);
+    setCheckboxProperty("Needs Review", true);
+    setSelectProperty("Media Availability", options.mediaAvailability || "needs_processing");
+    setRichTextProperty("Developer Memo", options.developerMemo || "New work page created before playable upload, Media Assets readback, subtitles/QC, and playback verification are complete. Keep hidden and Needs Review until production evidence is verified.");
+  }
 
   console.log(`${options.apply ? "create" : "would create"} movie page: ${options.title}`);
   if (!options.apply) return { id: "(dry-run)", properties };

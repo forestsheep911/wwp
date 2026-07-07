@@ -3,6 +3,7 @@ import path from "node:path";
 import dns from "node:dns";
 import crypto from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 
 const VIEW_ID = "22920ac1-2f0a-801d-bcf4-000cc6950264";
@@ -22,6 +23,8 @@ const genreOptions = new Set([
   "科幻",
   "动画",
   "浪漫",
+  "武侠",
+  "古装",
   "悬疑",
   "奇幻",
   "家庭",
@@ -37,7 +40,15 @@ const genreOptions = new Set([
   "歌舞",
   "黑色",
   "灾难",
-  "真人秀"
+  "真人秀",
+  "成人",
+  "游戏节目",
+  "新闻",
+  "脱口秀"
+]);
+
+const genreAliases = new Map([
+  ["爱情", "浪漫"]
 ]);
 
 const ratingLevelOptions = new Set([
@@ -204,11 +215,110 @@ function propText(property) {
   if (property.type === "files") {
     return property.files.length > 0 ? "files" : "";
   }
+  if (property.type === "url") {
+    return property.url ?? "";
+  }
+  if (property.type === "checkbox") {
+    return property.checkbox ? "true" : "";
+  }
   return "";
 }
 
 function hasValue(properties, name) {
   return Boolean(propText(properties[name]));
+}
+
+function numericPropertyValue(property) {
+  return property?.type === "number" && Number.isFinite(property.number) ? property.number : undefined;
+}
+
+function propertyExists(properties, name) {
+  return Object.prototype.hasOwnProperty.call(properties, name);
+}
+
+function uniqueNonEmpty(values = []) {
+  const result = [];
+  for (const value of values) {
+    const cleaned = `${value ?? ""}`.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    if (cleaned && !result.includes(cleaned)) {
+      result.push(cleaned);
+    }
+  }
+  return result;
+}
+
+function splitListValue(value, limit = Infinity) {
+  return uniqueNonEmpty(`${value ?? ""}`.split(/\s*(?:\/|,|，)\s*/u)).slice(0, limit);
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function parseRuntimeMinutes(value) {
+  const match = `${value ?? ""}`.match(/(\d{2,4})\s*(?:分钟|分鐘|min|m\b)/iu);
+  if (!match) {
+    return undefined;
+  }
+  const minutes = Number(match[1]);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : undefined;
+}
+
+function releaseYearFromText(value) {
+  const match = `${value ?? ""}`.match(/\b(18|19|20)\d{2}\b/u);
+  return match ? Number(match[0]) : undefined;
+}
+
+function multiSelect(values = []) {
+  const names = uniqueNonEmpty(values);
+  return names.length ? { multi_select: names.map((name) => ({ name })) } : undefined;
+}
+
+function select(name) {
+  return name ? { select: { name } } : undefined;
+}
+
+function currentMultiSelectNames(property) {
+  return property?.type === "multi_select" ? property.multi_select.map((item) => item.name).filter(Boolean) : [];
+}
+
+function combinedMultiSelect(property, values = []) {
+  return multiSelect([...currentMultiSelectNames(property), ...values]);
+}
+
+function richTextValue(value) {
+  const cleaned = `${value ?? ""}`.trim();
+  return cleaned ? { rich_text: richText(cleaned) } : undefined;
+}
+
+function joinList(values = []) {
+  return uniqueNonEmpty(values).join(" / ");
+}
+
+function mapGenres(genres = []) {
+  const raw = uniqueNonEmpty(genres);
+  const canonical = uniqueNonEmpty(raw.map((genre) => genreAliases.get(genre) ?? genre).filter((genre) => genreOptions.has(genre)));
+  const unmapped = raw.filter((genre) => !genreOptions.has(genre) && !genreAliases.has(genre));
+  return { raw, canonical, unmapped };
+}
+
+function extractRegionalTitles(aliasText) {
+  const titles = {};
+  for (const alias of splitListValue(aliasText)) {
+    const match = alias.match(/^(.*?)\s*[\(（]\s*([^()（）]+?)\s*[\)）]\s*$/u);
+    if (!match) continue;
+    const title = match[1].trim();
+    const region = match[2].trim();
+    if (!title) continue;
+    if (/^(?:台|臺|台湾|臺灣)$/u.test(region) && !titles.taiwan) {
+      titles.taiwan = title;
+    }
+    if (/^(?:港|香港)$/u.test(region) && !titles.hongKong) {
+      titles.hongKong = title;
+    }
+  }
+  return titles;
 }
 
 function looksTruncated(value) {
@@ -551,8 +661,8 @@ function parseJsonLd(html) {
 }
 
 function names(values = [], limit = Infinity) {
-  return values
-    .map((item) => item.name)
+  return asArray(values)
+    .map((item) => (typeof item === "string" ? item : item.name))
     .filter(Boolean)
     .slice(0, limit);
 }
@@ -567,20 +677,21 @@ function parseInfoPairs(infoText) {
     "制片国家/地区",
     "语言",
     "上映日期",
+    "首播",
     "片长",
     "又名",
     "IMDb"
   ];
-  for (let index = 0; index < labels.length; index += 1) {
-    const label = labels[index];
-    const next = labels[index + 1];
-    const pattern = next
-      ? new RegExp(`${label}\\s*:\\s*([\\s\\S]*?)\\s+${next}\\s*:`, "i")
-      : new RegExp(`${label}\\s*:\\s*([\\s\\S]*)$`, "i");
-    const match = infoText.match(pattern);
-    if (match) {
-      pairs[label] = match[1].trim();
-    }
+  const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`(${escapedLabels.join("|")})\\s*:\\s*`, "giu");
+  const matches = [...infoText.matchAll(pattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const label = match[1];
+    const start = match.index + match[0].length;
+    const end = matches[index + 1]?.index ?? infoText.length;
+    const value = infoText.slice(start, end).trim();
+    if (value) pairs[label] = value;
   }
   return pairs;
 }
@@ -609,18 +720,28 @@ async function fetchDoubanMetadata(subjectId, cookie) {
   const summary = stripHtml(html.match(/<span property="v:summary"[^>]*>([\s\S]*?)<\/span>/)?.[1] ?? "");
   const rating = Number(ld.aggregateRating?.ratingValue ?? html.match(/<strong class="ll rating_num" property="v:average">([\s\S]*?)<\/strong>/)?.[1]?.trim());
   const imdbId = infoPairs.IMDb?.match(/tt\d+/i)?.[0];
-  const releaseDate = ld.datePublished || infoPairs["上映日期"]?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
-  const genres = Array.isArray(ld.genre) ? ld.genre : [];
-  const durationMinutes = isoDurationToMinutes(ld.duration);
+  const releaseText = infoPairs["上映日期"] || infoPairs["首播"] || "";
+  const releaseDate = ld.datePublished || releaseText.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  const releaseYear = releaseYearFromText(releaseDate) ?? releaseYearFromText(releaseText);
+  const ldGenres = asArray(ld.genre).map((genre) => `${genre ?? ""}`);
+  const genres = splitListValue(infoPairs["类型"]).length > 0 ? splitListValue(infoPairs["类型"]) : uniqueNonEmpty(ldGenres);
+  const durationMinutes = parseRuntimeMinutes(infoPairs["片长"]) ?? isoDurationToMinutes(ld.duration);
+  const directors = splitListValue(infoPairs["导演"]).length > 0 ? splitListValue(infoPairs["导演"], 20) : names(ld.director, 20);
+  const writers = splitListValue(infoPairs["编剧"]).length > 0 ? splitListValue(infoPairs["编剧"], 30) : names(ld.author, 30);
+  const cast = splitListValue(infoPairs["主演"]).length > 0 ? splitListValue(infoPairs["主演"], 80) : names(ld.actor, 80);
+  const countries = splitListValue(infoPairs["制片国家/地区"], 12);
+  const languages = splitListValue(infoPairs["语言"], 12);
+  const mappedGenres = mapGenres(genres);
+  const regionalTitles = extractRegionalTitles(infoPairs["又名"]);
 
   const basicInfoLines = [
-    ["导演", infoPairs["导演"] || names(ld.director).join(" / ")],
-    ["编剧", infoPairs["编剧"] || names(ld.author).join(" / ")],
-    ["主演", infoPairs["主演"] || names(ld.actor, 8).join(" / ")],
-    ["类型", infoPairs["类型"] || genres.join(" / ")],
-    ["制片国家/地区", infoPairs["制片国家/地区"]],
-    ["语言", infoPairs["语言"]],
-    ["上映日期", infoPairs["上映日期"] || releaseDate],
+    ["导演", infoPairs["导演"] || joinList(directors)],
+    ["编剧", infoPairs["编剧"] || joinList(writers)],
+    ["主演", infoPairs["主演"] || joinList(cast.slice(0, 12))],
+    ["类型", infoPairs["类型"] || joinList(genres)],
+    ["制片国家/地区", infoPairs["制片国家/地区"] || joinList(countries)],
+    ["语言", infoPairs["语言"] || joinList(languages)],
+    ["上映日期", infoPairs["上映日期"] || infoPairs["首播"] || releaseDate],
     ["片长", infoPairs["片长"] || (durationMinutes ? `${durationMinutes}分钟` : "")],
     ["又名", infoPairs["又名"]],
     ["IMDb", imdbId]
@@ -634,8 +755,18 @@ async function fetchDoubanMetadata(subjectId, cookie) {
     posterUrl: ld.image,
     doubanRating: Number.isFinite(rating) ? rating : undefined,
     releaseDate,
+    releaseYear,
     genres,
+    externalGenreText: joinList(mappedGenres.raw),
+    unmappedGenres: mappedGenres.unmapped,
     imdbId,
+    countries,
+    languages,
+    regionalTitles,
+    runtimeMinutes: durationMinutes,
+    directors,
+    writers,
+    cast,
     description: bestDescription(ld.description, summary),
     basicInfo: basicInfoLines.join("\n")
   };
@@ -705,9 +836,10 @@ async function uploadPoster(notion, metadata, title) {
   };
 }
 
-function buildPatch(page, metadata, imdbRating, posterFile) {
+function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   const properties = page.properties;
   const patch = {};
+  const genres = mapGenres(metadata.genres ?? []);
 
   if (!hasValue(properties, "豆瓣评分") && metadata.doubanRating !== undefined) {
     patch["豆瓣评分"] = { number: metadata.doubanRating };
@@ -715,14 +847,61 @@ function buildPatch(page, metadata, imdbRating, posterFile) {
   if (!hasValue(properties, "IMDB评分") && imdbRating !== undefined) {
     patch["IMDB评分"] = { number: imdbRating };
   }
+  if (propertyExists(properties, "Release Year") && !hasValue(properties, "Release Year") && metadata.releaseYear) {
+    patch["Release Year"] = { number: metadata.releaseYear };
+  }
   if (!hasValue(properties, "上映日期") && metadata.releaseDate) {
     patch["上映日期"] = { date: { start: metadata.releaseDate } };
   }
-  if (!hasValue(properties, "旨趣") && metadata.genres?.length) {
-    const selected = metadata.genres.filter((genre) => genreOptions.has(genre));
-    if (selected.length > 0) {
-      patch["旨趣"] = { multi_select: selected.map((name) => ({ name })) };
+  if (propertyExists(properties, "Countries") && !hasValue(properties, "Countries") && metadata.countries?.length) {
+    patch.Countries = multiSelect(metadata.countries);
+  }
+  if (propertyExists(properties, "Languages") && !hasValue(properties, "Languages") && metadata.languages?.length) {
+    patch.Languages = multiSelect(metadata.languages);
+  }
+  if (propertyExists(properties, "Traditional Chinese Title (Taiwan)") && !hasValue(properties, "Traditional Chinese Title (Taiwan)") && metadata.regionalTitles?.taiwan) {
+    patch["Traditional Chinese Title (Taiwan)"] = richTextValue(metadata.regionalTitles.taiwan);
+  }
+  if (propertyExists(properties, "Traditional Chinese Title (Hong Kong)") && !hasValue(properties, "Traditional Chinese Title (Hong Kong)") && metadata.regionalTitles?.hongKong) {
+    patch["Traditional Chinese Title (Hong Kong)"] = richTextValue(metadata.regionalTitles.hongKong);
+  }
+  if (propertyExists(properties, "旨趣") && genres.canonical.length) {
+    const currentGenres = currentMultiSelectNames(properties["旨趣"]);
+    const nextGenres = uniqueNonEmpty([...currentGenres, ...genres.canonical]);
+    if (nextGenres.length !== currentGenres.length) {
+      patch["旨趣"] = multiSelect(nextGenres);
     }
+  }
+  if (propertyExists(properties, "外部类型原文") && !hasValue(properties, "外部类型原文")) {
+    const externalGenreText = metadata.externalGenreText || joinList(genres.raw);
+    if (externalGenreText) {
+      patch["外部类型原文"] = richTextValue(externalGenreText);
+    }
+  }
+  if (propertyExists(properties, "未映射类型")) {
+    const unmappedGenres = uniqueNonEmpty(metadata.unmappedGenres?.length ? metadata.unmappedGenres : genres.unmapped);
+    const currentUnmappedText = propText(properties["未映射类型"]);
+    const currentUnmappedGenres = splitListValue(currentUnmappedText);
+    const stillUnmapped = mapGenres([...currentUnmappedGenres, ...unmappedGenres]).unmapped;
+    if (stillUnmapped.length && joinList(stillUnmapped) !== currentUnmappedText) {
+      patch["未映射类型"] = richTextValue(joinList(stillUnmapped));
+    } else if (!stillUnmapped.length && currentUnmappedGenres.length) {
+      patch["未映射类型"] = { rich_text: [] };
+    } else if (unmappedGenres.length && !currentUnmappedGenres.length) {
+      patch["未映射类型"] = richTextValue(joinList(unmappedGenres));
+    }
+  }
+  if (propertyExists(properties, "Runtime Minutes") && !hasValue(properties, "Runtime Minutes") && metadata.runtimeMinutes) {
+    patch["Runtime Minutes"] = { number: metadata.runtimeMinutes };
+  }
+  if (propertyExists(properties, "Directors") && !hasValue(properties, "Directors") && metadata.directors?.length) {
+    patch.Directors = richTextValue(joinList(metadata.directors));
+  }
+  if (propertyExists(properties, "Writers") && !hasValue(properties, "Writers") && metadata.writers?.length) {
+    patch.Writers = richTextValue(joinList(metadata.writers));
+  }
+  if (propertyExists(properties, "Cast") && !hasValue(properties, "Cast") && metadata.cast?.length) {
+    patch.Cast = richTextValue(joinList(metadata.cast));
   }
   if (!hasValue(properties, "imdb") && metadata.imdbId) {
     patch.imdb = {
@@ -745,7 +924,7 @@ function buildPatch(page, metadata, imdbRating, posterFile) {
     patch["Poster URL"] = { url: metadata.posterUrl };
   }
   const currentDescription = propText(properties["简介"]);
-  if ((!currentDescription || (looksTruncated(currentDescription) && metadata.description.length > currentDescription.length)) && metadata.description) {
+  if ((!currentDescription || (looksTruncated(currentDescription) && metadata.description?.length > currentDescription.length)) && metadata.description) {
     patch["简介"] = { rich_text: richText(metadata.description) };
   }
   if (!hasValue(properties, "基本信息") && metadata.basicInfo) {
@@ -754,11 +933,36 @@ function buildPatch(page, metadata, imdbRating, posterFile) {
   if (!hasValue(properties, "海报") && posterFile) {
     patch["海报"] = { files: [posterFile] };
   }
+  if (propertyExists(properties, "Match Status") && !hasValue(properties, "Match Status")) {
+    patch["Match Status"] = select("candidate");
+  }
+  const metadataStatus = propText(properties["Metadata Status"]);
+  if (propertyExists(properties, "Metadata Status") && (!metadataStatus || metadataStatus === "draft")) {
+    patch["Metadata Status"] = select("partial");
+  }
+  if (propertyExists(properties, "Metadata Source")) {
+    const nextSources = combinedMultiSelect(properties["Metadata Source"], ["douban"]);
+    const currentSources = currentMultiSelectNames(properties["Metadata Source"]);
+    if (nextSources && nextSources.multi_select.length !== currentSources.length) {
+      patch["Metadata Source"] = nextSources;
+    }
+  }
+  const metadataConfidence = numericPropertyValue(properties["Metadata Confidence"]);
+  if (propertyExists(properties, "Metadata Confidence") && metadata.subjectId && (metadataConfidence === undefined || metadataConfidence < 0.9)) {
+    patch["Metadata Confidence"] = { number: 0.9 };
+  }
+  const unresolvedGenres = uniqueNonEmpty(metadata.unmappedGenres?.length ? metadata.unmappedGenres : genres.unmapped);
+  if (propertyExists(properties, "Needs Review") && unresolvedGenres.length > 0) {
+    patch["Needs Review"] = { checkbox: true };
+  }
 
   const currentTitle = propText(properties.Title);
   const cleanedTitle = cleanTitle(currentTitle);
   if (currentTitle !== cleanedTitle && Object.keys(patch).length > 0) {
     patch.Title = { title: richText(cleanedTitle) };
+  }
+  if (propertyExists(properties, "Metadata Updated At") && Object.keys(patch).length > 0) {
+    patch["Metadata Updated At"] = { date: { start: options.now ?? new Date().toISOString().slice(0, 10) } };
   }
 
   return patch;
@@ -820,8 +1024,9 @@ async function processPage(notion, pageRef, options, cookie) {
     ? undefined
     : await fetchImdbRating(metadata.imdbId, options.imdbTimeoutMs).catch(() => undefined);
   await sleep(options.delayMs);
+  const needsPosterUpload = !hasValue(page.properties, "海报") && metadata.posterUrl;
   const posterFile =
-    options.dryRun && metadata.posterUrl
+    needsPosterUpload && options.dryRun
       ? {
           name: `${cleanTitle(title)} poster - Douban.jpg`,
           type: "file_upload",
@@ -829,7 +1034,9 @@ async function processPage(notion, pageRef, options, cookie) {
             id: "dry-run"
           }
         }
-      : await uploadPoster(notion, metadata, title);
+      : needsPosterUpload
+        ? await uploadPoster(notion, metadata, title)
+        : undefined;
   const patch = buildPatch(page, metadata, imdbRating, posterFile);
 
   if (Object.keys(patch).length === 0) {
@@ -917,7 +1124,16 @@ async function main() {
   console.log(`Report written to ${REPORT_PATH}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  buildPatch,
+  parseInfoPairs,
+  parseRuntimeMinutes,
+  splitListValue
+};

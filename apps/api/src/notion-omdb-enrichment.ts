@@ -2,7 +2,7 @@ import "./env.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import dns from "node:dns";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { mapExternalGenres } from "./genre-taxonomy.js";
 import {
@@ -259,6 +259,32 @@ function pagePropertyValue(type: NotionManagedProperty["type"], value: string | 
   return undefined;
 }
 
+function payloadText(value: unknown) {
+  const payload = asRecord(value);
+  if (!payload) return "";
+  if (payload.rich_text) return richTextPlain(payload.rich_text);
+  if (payload.url) return asString(payload.url);
+  if (typeof payload.number === "number") return `${payload.number}`;
+  if (payload.date) return asString(asRecord(payload.date)?.start);
+  if (typeof payload.checkbox === "boolean") return String(payload.checkbox);
+  if (payload.select) return asString(asRecord(payload.select)?.name);
+  if (payload.multi_select) {
+    return asArray(payload.multi_select).map((item) => asString(asRecord(item)?.name)).filter(Boolean).join(" ");
+  }
+  return "";
+}
+
+function payloadMatchesCurrent(current: unknown, payload: unknown) {
+  const currentRecord = asRecord(current);
+  const payloadRecord = asRecord(payload);
+  if (currentRecord?.type === "multi_select" && payloadRecord?.multi_select) {
+    const currentNames = readMultiSelect({ current }, "current");
+    const nextNames = asArray(payloadRecord.multi_select).map((item) => asString(asRecord(item)?.name)).filter(Boolean);
+    return currentNames.length === nextNames.length && currentNames.every((name, index) => name === nextNames[index]);
+  }
+  return propertyText(current) === payloadText(payload);
+}
+
 function addUpdate(
   updates: Record<string, unknown>,
   availableProperties: JsonRecord,
@@ -279,6 +305,9 @@ function addUpdate(
 
   const payload = pagePropertyValue(schema.type, value);
   if (payload) {
+    if (options.overwrite && payloadMatchesCurrent(pageProperties[name], payload)) {
+      return;
+    }
     updates[name] = payload;
   }
 }
@@ -515,7 +544,7 @@ function planUpdates(
   addUpdate(updates, availableProperties, pageProperties, "Box Office Amount", parseMoneyAmount(boxOffice));
   addUpdate(updates, availableProperties, pageProperties, "Box Office Currency", moneyCurrency(boxOffice));
   addUpdate(updates, availableProperties, pageProperties, "Box Office Source", boxOffice ? "omdb" : undefined);
-  addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, "omdb"));
+  addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, "omdb"), { overwrite: true });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Status", "partial");
   addUpdate(updates, availableProperties, pageProperties, "Needs Review", mappedGenres.unmapped.length > 0, { overwrite: mappedGenres.unmapped.length > 0 });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Updated At", new Date().toISOString().slice(0, 10), { overwrite: Object.keys(updates).length > 0 });
@@ -621,7 +650,13 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  planUpdates
+};

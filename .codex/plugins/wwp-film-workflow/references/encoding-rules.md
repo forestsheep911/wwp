@@ -8,6 +8,8 @@
 - Playable output directory: user-specified, otherwise `E:\video_made`.
 - Subtitle-dependent versions: burn the selected Chinese subtitle into the video by default.
 - Mandarin-language films: prefer no hard subtitles unless the source already has unavoidable hard subtitles.
+- Notion playable uploads must stay below the current Notion file upload ceiling. Treat 5,000,000,000 bytes as the hard practical maximum unless the user verifies a newer limit, and target about 4.7-4.9GB when making a high-bitrate version.
+- If an encode is trending over the limit, stop early and recalculate the bitrate instead of finishing an unusable upload candidate.
 
 ## Subtitle Priority
 
@@ -34,6 +36,7 @@ Report the full available subtitle set and the subset produced. More subtitle va
 - Same picture and same hard subtitles with different audio can reuse video stream via remux/stream-copy or audio-only encode.
 - Soft subtitle delivery can reuse the same video stream with different subtitle tracks, but this is not the default WWP playable delivery.
 - Commentary, Mandarin, Cantonese, and original-audio combinations should reuse a QC-passed video stream when the visual stream is identical.
+- When creating multiple audio variants from the same visual stream, budget the shared video stream so each final MP4 remains below the Notion playable upload limit after audio and MP4 mux overhead are added.
 - Plan the video/audio/subtitle matrix before encoding many variants. Use `scripts/plan-stream-variants.mjs` for a dry-run explanation.
 
 ## QC

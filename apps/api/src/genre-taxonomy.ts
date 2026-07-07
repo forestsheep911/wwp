@@ -8,6 +8,8 @@ export const canonicalGenreOptions = [
   { name: "科幻", color: "purple" },
   { name: "动画", color: "pink" },
   { name: "浪漫", color: "pink" },
+  { name: "武侠", color: "red" },
+  { name: "古装", color: "brown" },
   { name: "悬疑", color: "purple" },
   { name: "奇幻", color: "purple" },
   { name: "家庭", color: "green" },
@@ -55,6 +57,9 @@ const genreMap = new Map<string, string>([
   ["reality-tv", "真人秀"],
   ["reality tv", "真人秀"],
   ["romance", "浪漫"],
+  ["爱情", "浪漫"],
+  ["武侠", "武侠"],
+  ["古装", "古装"],
   ["sci-fi", "科幻"],
   ["science fiction", "科幻"],
   ["short", "短片"],
@@ -67,6 +72,8 @@ const genreMap = new Map<string, string>([
   ["western", "西部"]
 ]);
 
+const canonicalGenreNames = new Set(canonicalGenreOptions.map((option) => option.name));
+
 function normalizeGenre(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -78,7 +85,7 @@ export function mapExternalGenres(values: string[]) {
   for (const value of values) {
     const trimmed = value.trim();
     if (!trimmed) continue;
-    const mapped = genreMap.get(normalizeGenre(trimmed));
+    const mapped = canonicalGenreNames.has(trimmed) ? trimmed : genreMap.get(normalizeGenre(trimmed));
     if (mapped) {
       if (!canonical.includes(mapped)) canonical.push(mapped);
     } else if (!unmapped.includes(trimmed)) {

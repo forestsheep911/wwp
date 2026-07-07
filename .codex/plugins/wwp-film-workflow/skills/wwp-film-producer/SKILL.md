@@ -21,16 +21,19 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 
 1. Confirm the user-specified input directory. Do not assume a fixed input path.
 2. Select candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk.
-3. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
-4. Run probe/QC before upload.
-5. Publish playable output to Notion, then write Media Assets from `ffprobe` and production manifests.
-6. Backfill film metadata when the work page is new or incomplete.
-7. Report IDs, output paths, Media Assets state, metadata state, skipped items, and any deferred user decisions.
+3. For accepted candidates, create or reuse the Notion work page and intended spec page before long encode/upload work when they are missing. This also applies when upload is slow, deferred, or the playable video is not yet suitable to upload.
+4. Start work-level metadata backfill immediately after the work page exists: identity maintenance, Douban, OMDb when IMDb exists, AI family-age after sourced fields, and TMDb only when credentials or trusted hints exist. Let metadata backfill run while encoding, QC, or upload continues when the tasks do not depend on each other.
+5. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
+6. Run probe/QC before upload.
+7. Publish playable output to Notion, then write Media Assets from `ffprobe` and production manifests.
+8. Run any remaining metadata enrichment, including AI advisory fields, when the work page is still incomplete after sourced metadata.
+9. Report IDs, output paths, Media Assets state, metadata state, skipped items, and any deferred user decisions.
 
 ## Guardrails
 
 - Existing Notion works should be reused; do not create duplicate work pages for supplemental specs.
 - Spec backfill can be as important as new-film creation when the existing specs are weak.
+- Do not block work-page creation and sourced metadata backfill on video upload readiness. Playable Media Assets rows still require real uploaded/probed media evidence.
 - Source/original-disc upload is not the default playable production path.
 - Do not claim completion until Notion or Media Assets readback proves the external state.
 

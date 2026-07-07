@@ -550,7 +550,9 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
   setIfProperty(properties, dataSource, "Playback Verified", { checkbox: false });
-  setIfProperty(properties, dataSource, "Hide from Website", { checkbox: candidate.hideFromWebsite ?? candidate.assetType !== "playable_video" });
+  if (candidate.hideFromWebsite !== false) {
+    setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
+  }
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
   setIfProperty(properties, dataSource, "Asset URL", candidate.assetUrl ? { url: candidate.assetUrl } : undefined);
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });

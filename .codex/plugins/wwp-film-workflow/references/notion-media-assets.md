@@ -15,6 +15,8 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 
 ## Media Assets Write Rules
 
+- Before uploading a playable through Notion, check the exact local file size. The normal Notion playable path requires a file below the current Notion upload ceiling; use 5,000,000,000 bytes as the hard practical maximum unless the user has verified a newer limit.
+- Files above the limit are not playable-upload-ready. Re-encode under the limit, split only if the workflow explicitly supports split playback, or route the asset to a source/archive workflow rather than a playable spec.
 - Run `ffprobe` on the exact local final file that corresponds to the uploaded playable.
 - Prefer ffprobe output plus production manifest over filename guessing.
 - When the writer supports batch manifests, use page IDs and expected-title guards for apply runs. Put ffprobe-confirmed values in the manifest `metadata` object when filename/page parsing would be lossy or ambiguous.
@@ -24,6 +26,19 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 - Read back created/updated rows or run stats/audit before claiming completion.
 - Rerun idempotency checks when a writer supports them.
 - Notion-hosted media URLs are often temporary signed URLs. Do not treat an empty persistent `Asset URL` field as a failure when `Source Page ID`, `Media Block ID`, filename, work relation, and readback metadata are present.
+
+## Early Page Creation
+
+- It is valid to create/reuse the work page and intended spec page before the playable upload is ready. This lets work-level metadata backfill run while encode, QC, or upload continues.
+- Early work/spec pages are not evidence for playable Media Assets rows. Create playable Media Assets only after a real uploaded video/file block or a final local file with a planned upload has been verified.
+- When upload is deferred or unsuitable, record the operational state in notes/reporting or `Media Availability` only when the media workflow has enough evidence. Do not let metadata backfill infer availability.
+
+## Visibility and Review Gates
+
+- Keep `Hide from Website` true when there is no verified playable path: no suitable upload, no playable Media Assets row, source-only state, blocked encode/QC, missing required Chinese subtitles, broken media relationship, or unresolved playback risk.
+- Treat a user-set `Hide from Website` as intentional. Do not clear it automatically. If the playable specs and Media Assets look good but the work is still hidden, report the evidence and ask the user before un-hiding.
+- Use `Needs Review` for fixable uncertainty rather than visibility alone: ambiguous work/spec matching, Media Assets mismatch, duplicate or missing episode/spec links, missing ffprobe evidence, subtitle/audio uncertainty, metadata conflict, low-confidence AI advisory, or any condition where a human should inspect before relying on the row.
+- Clearing `Needs Review` requires the named issue to be resolved and read back. Clearing it should not automatically clear `Hide from Website`.
 
 ## Backfill Rules
 
