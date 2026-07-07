@@ -56,7 +56,9 @@ export function formatDateTime(value?: string) {
     return value;
   }
 
+  const includeYear = date.getFullYear() !== new Date().getFullYear();
   return new Intl.DateTimeFormat("zh-CN", {
+    ...(includeYear ? { year: "numeric" as const } : {}),
     month: "short",
     day: "numeric",
     hour: "2-digit",
