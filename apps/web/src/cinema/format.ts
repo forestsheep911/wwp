@@ -455,14 +455,18 @@ function episodeNumberFromText(value: string) {
   return chineseEpisodeNumber(value.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
 }
 
-function variantEpisodeLabel(variant: MediaVariant) {
+export function variantEpisodeNumber(variant: MediaVariant) {
   const metadata = variant.metadata;
-  const number = metadata?.episodeNumber ?? episodeNumberFromText([
+  return metadata?.episodeNumber ?? episodeNumberFromText([
     variant.label,
     metadata?.sourceLabel,
     metadata?.fileName,
     metadata?.originalFileName
   ].filter(Boolean).join(" "));
+}
+
+function variantEpisodeLabel(variant: MediaVariant) {
+  const number = variantEpisodeNumber(variant);
 
   return typeof number === "number" && Number.isInteger(number) && number > 0 ? `第${number}集` : undefined;
 }

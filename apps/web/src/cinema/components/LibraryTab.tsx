@@ -43,6 +43,7 @@ import {
   metadataLine,
   peopleTags,
   titleInitial,
+  variantEpisodeNumber,
   variantSpecText,
   visibleTags
 } from "../format";
@@ -1738,7 +1739,7 @@ function VariantButtons({
   variantLimit?: number;
   reserveMoreRow?: boolean;
 }) {
-  const variants = result.variants ?? [];
+  const variants = sortedVariants(result.variants ?? []);
   const shouldReserveMoreRow = Boolean(reserveMoreRow && variantLimit && onShowAllVariants && variants.length > variantLimit);
   const visibleLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreRow ? 1 : 0)) : variants.length;
   const visibleVariants = variants.slice(0, visibleLimit);
@@ -1850,6 +1851,24 @@ function VariantButtons({
       ) : null}
     </div>
   );
+}
+
+function sortedVariants(variants: MediaVariant[]) {
+  return [...variants].sort((left, right) => {
+    const leftEpisode = variantEpisodeNumber(left);
+    const rightEpisode = variantEpisodeNumber(right);
+    const leftHasEpisode = typeof leftEpisode === "number" && Number.isFinite(leftEpisode);
+    const rightHasEpisode = typeof rightEpisode === "number" && Number.isFinite(rightEpisode);
+
+    if (leftHasEpisode && rightHasEpisode && leftEpisode !== rightEpisode) {
+      return leftEpisode - rightEpisode;
+    }
+    if (leftHasEpisode !== rightHasEpisode) {
+      return leftHasEpisode ? -1 : 1;
+    }
+
+    return 0;
+  });
 }
 
 function MovieCard({
