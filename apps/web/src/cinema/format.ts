@@ -385,15 +385,6 @@ function variantSizeLabel(variant: MediaVariant) {
   return undefined;
 }
 
-function variantResolutionLabel(resolution?: string) {
-  const value = resolution?.trim();
-  if (!value) {
-    return undefined;
-  }
-
-  return /^\d+p$/i.test(value) ? value.toLowerCase() : value.toUpperCase();
-}
-
 function chineseEpisodeNumber(value: string) {
   const digits: Record<string, number> = {
     零: 0,
@@ -482,12 +473,11 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
     variantEpisodeLabel(variant),
-    variantResolutionLabel(metadata.resolution),
     subtitles ? `字幕 ${subtitles}` : undefined,
     variantSizeLabel(variant)
   ]);
 
-  return options.compact ? labels.slice(0, 4) : labels;
+  return options.compact ? labels.slice(0, 3) : labels;
 }
 
 export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
