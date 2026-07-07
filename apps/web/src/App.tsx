@@ -2184,16 +2184,24 @@ function CinemaApp() {
   }, [activeTab, role]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "history") {
       void refreshHistoryAssetStatus();
     }
-  }, [activeTab, history.length]);
+  }, [activeTab, history.length, role, unlocked]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks" || activeTab === "watchlist") {
       void refreshCachedAssets();
     }
-  }, [activeTab]);
+  }, [activeTab, role, unlocked]);
 
   useEffect(() => {
     if ((role === "member" || role === "admin") && !ownMovieRequestsLoaded) {
@@ -2208,19 +2216,31 @@ function CinemaApp() {
   }, [role, ownNoticesLoaded]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "forum" && !forumThreadsLoaded && !forumThreadsAutoLoadRef.current) {
       forumThreadsAutoLoadRef.current = true;
       void refreshForumThreads(true);
     }
-  }, [activeTab, forumThreadsLoaded]);
+  }, [activeTab, forumThreadsLoaded, role, unlocked]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "library" && cachedAssets.length === 0 && !cachedAssetsLoading) {
       void refreshCachedAssets();
     }
-  }, [activeTab]);
+  }, [activeTab, role, unlocked]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "library" && query.trim().length === 0) {
       const loadKey = browseRouteLoadKey(browseChannel, browseView);
       if (browseResults.length === 0 || browseRouteLoadRef.current !== loadKey) {
@@ -2232,13 +2252,17 @@ function CinemaApp() {
         });
       }
     }
-  }, [activeTab, browseChannel, browseView, query]);
+  }, [activeTab, browseChannel, browseResults.length, browseView, query, role, unlocked]);
 
   useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
     if (activeTab === "watchlist" && browseResults.length === 0 && !browseLoading) {
       void refreshBrowseAssets({ mode: "paged", limit: 100, view: "newGood" });
     }
-  }, [activeTab, browseLoading, browseResults.length]);
+  }, [activeTab, browseLoading, browseResults.length, role, unlocked]);
 
   const serviceWakePreviewButton = serviceWakePreviewEnabled ? (
     <button
