@@ -71,7 +71,7 @@ export function PasscodeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:w-[min(92vw,520px)]">
         <DialogHeader>
           <DialogTitle>{copy.passcode.title}</DialogTitle>
           <DialogDescription>{copy.access.passcodeRule}</DialogDescription>
@@ -126,9 +126,9 @@ export function PasscodeDialog({
             />
           </div>
 
-          {localError || error ? <p className="text-sm font-semibold text-rose-300">{localError || error}</p> : null}
+          {localError || error ? <p className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200 sm:rounded">{localError || error}</p> : null}
 
-          <Button type="submit" disabled={loading}>
+          <Button className="w-full sm:w-auto" type="submit" disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
             {copy.passcode.save}
           </Button>

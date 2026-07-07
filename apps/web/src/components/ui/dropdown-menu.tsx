@@ -15,7 +15,7 @@ export const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-[110] min-w-[16rem] overflow-hidden rounded-md border border-slate-800 bg-slate-950 p-1 text-slate-100 shadow-2xl shadow-black/40 outline-none",
+        "z-[110] min-w-[16rem] overflow-hidden rounded-xl border border-slate-800 bg-slate-950 p-1 text-slate-100 shadow-2xl shadow-black/40 outline-none sm:rounded-md",
         className
       )}
       {...props}
@@ -31,7 +31,7 @@ export const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "flex cursor-pointer select-none items-center gap-2 rounded px-2.5 py-2 text-sm font-semibold text-slate-300 outline-none transition-colors hover:bg-slate-900 hover:text-white focus:bg-slate-900 focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "flex min-h-11 cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-300 outline-none transition-colors hover:bg-slate-900 hover:text-white focus:bg-slate-900 focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-50 sm:min-h-9 sm:rounded sm:px-2.5 sm:py-2",
       className
     )}
     {...props}
@@ -40,7 +40,7 @@ export const DropdownMenuItem = React.forwardRef<
 DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
 
 export function DropdownMenuLabel({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("px-2.5 py-2 text-sm font-semibold text-slate-50", className)} {...props} />;
+  return <div className={cn("px-3 py-2.5 text-sm font-semibold text-slate-50 sm:px-2.5 sm:py-2", className)} {...props} />;
 }
 
 export function DropdownMenuSeparator({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

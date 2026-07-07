@@ -28,8 +28,8 @@ export function CachedShelf({
   if (cachedAssets.length === 0) {
     return (
       <div className="grid gap-3">
-        <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+        <div className="grid gap-2 sm:flex sm:justify-end">
+          <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             {copy.common.refresh}
           </Button>
@@ -41,23 +41,23 @@ export function CachedShelf({
 
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
         <Badge variant="default">
           <CheckCircle2 className="h-3.5 w-3.5" />
           {copy.cachedShelf.playableCount(cachedAssets.length)}
         </Badge>
-        <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           {copy.common.refresh}
         </Button>
       </div>
       <div className="grid gap-3 xl:grid-cols-2">
         {cachedAssets.map((asset) => (
-          <Card key={asset.assetKey} className="min-w-0 overflow-hidden">
+          <Card key={asset.assetKey} className="min-w-0 overflow-hidden rounded-xl sm:rounded-lg">
             <CardContent className="grid min-w-0 gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
-                <p className="truncate font-semibold text-slate-50">{asset.title}</p>
-                <p className="mt-1 text-sm text-slate-400">
+                <p className="line-clamp-2 font-semibold leading-6 text-slate-50 sm:truncate">{asset.title}</p>
+                <p className="mt-1 text-sm leading-6 text-slate-400 sm:leading-normal">
                   {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
                 </p>
               </div>

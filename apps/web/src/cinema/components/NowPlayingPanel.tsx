@@ -168,8 +168,8 @@ export function NowPlayingPanel() {
 
   return (
     <section className="grid gap-4">
-      <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:rounded-lg">
+        <div className="grid gap-4 lg:flex lg:flex-wrap lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Flame className="h-5 w-5 text-amber-300" />
@@ -183,8 +183,9 @@ export function NowPlayingPanel() {
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{copy.nowPlaying.description}</p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
             <Button
+              className="w-full sm:w-auto"
               type="button"
               variant="outline"
               size="sm"
@@ -195,13 +196,13 @@ export function NowPlayingPanel() {
               {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {refreshing ? copy.nowPlaying.refreshing : copy.common.refresh}
             </Button>
-            <Button asChild type="button" variant="outline" size="sm">
+            <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
               <a href={data?.sourceUrl ?? "https://piaofang.maoyan.com/dashboard/movie"} rel="noreferrer" target="_blank">
                 <ExternalLink className="h-4 w-4" />
                 {copy.nowPlaying.source}
               </a>
             </Button>
-            <Button asChild type="button" variant="outline" size="sm">
+            <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
               <a href={data?.douban?.sourceUrl ?? "https://movie.douban.com/cinema/nowplaying/shanghai/"} rel="noreferrer" target="_blank">
                 <ExternalLink className="h-4 w-4" />
                 {copy.nowPlaying.doubanSource}
@@ -227,7 +228,7 @@ export function NowPlayingPanel() {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
+        <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200 sm:rounded-md">
           {error}
         </div>
       ) : null}
@@ -241,7 +242,7 @@ export function NowPlayingPanel() {
         <EmptyState icon={<BarChart3 className="h-5 w-5" />} title={copy.nowPlaying.empty} />
       ) : (
         <div className="grid gap-3">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <GuideCard
               icon={<Flame className="h-4 w-4" />}
               title={copy.nowPlaying.guide.current.title}
@@ -312,7 +313,7 @@ export function NowPlayingPanel() {
             <div className="grid gap-3">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4">
                 <p className="max-w-3xl text-sm leading-6 text-slate-400">{copy.nowPlaying.upcomingBody}</p>
-                <Button asChild type="button" variant="outline" size="sm">
+                <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
                   <a href={data?.douban?.laterSourceUrl ?? "https://movie.douban.com/cinema/later/shanghai/"} rel="noreferrer" target="_blank">
                     <ExternalLink className="h-4 w-4" />
                     {copy.nowPlaying.doubanSource}
@@ -358,7 +359,7 @@ function GuideCard({
   value: string;
 }) {
   const content = (
-    <div className="grid h-full min-h-36 content-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-950">
+    <div className="grid h-full min-h-40 content-between gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-left transition-colors hover:border-slate-700 hover:bg-slate-950 sm:min-h-36 sm:rounded-lg">
       <div className="flex items-center justify-between gap-3">
         <span className="grid h-8 w-8 place-items-center rounded-md border border-amber-300/20 bg-amber-300/10 text-amber-200">
           {icon}
@@ -366,7 +367,7 @@ function GuideCard({
         <span className="text-xl font-bold text-slate-100">{value}</span>
       </div>
       <div className="min-w-0">
-        <h3 className="truncate text-sm font-semibold text-slate-50">{title}</h3>
+          <h3 className="truncate text-base font-semibold text-slate-50 sm:text-sm">{title}</h3>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{detail}</p>
       </div>
       {items && items.length > 0 ? (
@@ -382,7 +383,7 @@ function GuideCard({
   );
 
   return href ? (
-    <a href={href} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
+    <a href={href} className="block min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
       {content}
     </a>
   ) : content;
@@ -409,7 +410,7 @@ function CompactDecisionCard({ movie, tone }: { movie: NowPlayingMovie; tone: "p
     : "border-amber-400/20 bg-amber-400/5";
 
   return (
-    <article className={`grid gap-3 rounded-lg border p-4 ${toneClass}`}>
+    <article className={`grid gap-3 rounded-xl border p-4 sm:rounded-lg ${toneClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -427,18 +428,18 @@ function CompactDecisionCard({ movie, tone }: { movie: NowPlayingMovie; tone: "p
         <Metric label={copy.nowPlaying.showRate} value={movie.showCountRate ?? copy.common.unknown} />
         <Metric label={copy.nowPlaying.doubanRating} value={movie.douban?.rating ?? copy.nowPlaying.noRating} />
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 sm:flex sm:flex-wrap">
         {movie.douban?.voteCount ? (
           <Badge variant="muted">{copy.nowPlaying.doubanVotes(compactCount(movie.douban.voteCount))}</Badge>
         ) : null}
-        <Button asChild type="button" variant="outline" size="sm">
+        <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
           <a href={movie.sourceUrl} rel="noreferrer" target="_blank">
             <BarChart3 className="h-4 w-4" />
             {copy.nowPlaying.proData}
           </a>
         </Button>
         {movie.ticketUrl ? (
-          <Button asChild type="button" variant="secondary" size="sm">
+          <Button className="w-full sm:w-auto" asChild type="button" variant="secondary" size="sm">
             <a href={movie.ticketUrl} rel="noreferrer" target="_blank">
               <Ticket className="h-4 w-4" />
               {copy.nowPlaying.ticket}
@@ -446,7 +447,7 @@ function CompactDecisionCard({ movie, tone }: { movie: NowPlayingMovie; tone: "p
           </Button>
         ) : null}
         {movie.douban ? (
-          <Button asChild type="button" variant="outline" size="sm">
+          <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
             <a href={movie.douban.url} rel="noreferrer" target="_blank">
               <ExternalLink className="h-4 w-4" />
               {copy.nowPlaying.doubanRating}
@@ -460,7 +461,7 @@ function CompactDecisionCard({ movie, tone }: { movie: NowPlayingMovie; tone: "p
 
 function UpcomingMovieCard({ movie }: { movie: UpcomingMovie }) {
   return (
-    <article className="grid min-h-36 content-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-4">
+    <article className="grid min-h-40 content-between gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:min-h-36 sm:rounded-lg">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="warning">{movie.releaseDate}</Badge>
@@ -473,16 +474,16 @@ function UpcomingMovieCard({ movie }: { movie: UpcomingMovie }) {
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge variant="secondary">{copy.nowPlaying.doubanWish(compactCount(movie.wishCount))}</Badge>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
           {movie.trailerUrl ? (
-            <Button asChild type="button" variant="outline" size="sm">
+            <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
               <a href={movie.trailerUrl} rel="noreferrer" target="_blank">
                 <ExternalLink className="h-4 w-4" />
                 预告片
               </a>
             </Button>
           ) : null}
-          <Button asChild type="button" variant="outline" size="sm">
+          <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
             <a href={movie.sourceUrl} rel="noreferrer" target="_blank">
               <ExternalLink className="h-4 w-4" />
               {copy.nowPlaying.doubanRating}
@@ -498,7 +499,7 @@ function TopMovieCard({ movie }: { movie: NowPlayingMovie }) {
   const tags = recommendationTags(movie).slice(0, 2);
 
   return (
-    <article className="grid min-h-40 content-between gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4">
+    <article className="grid min-h-44 content-between gap-4 rounded-xl border border-slate-800 bg-slate-950 p-4 sm:min-h-40 sm:rounded-lg">
       <div className="min-w-0">
         <div className="flex items-center justify-between gap-3">
           <Badge variant="warning">{copy.nowPlaying.rank(movie.rank)}</Badge>
@@ -560,17 +561,17 @@ function MovieObservationRow({ movie }: { movie: NowPlayingMovie }) {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-2 lg:justify-end">
+      <div className="grid gap-2 sm:flex sm:flex-wrap lg:justify-end">
         <Badge variant="muted">{copy.nowPlaying.showCount} {formatCount(movie.showCount)}</Badge>
         {movie.douban?.voteCount ? <Badge variant="muted">{copy.nowPlaying.doubanVotes(compactCount(movie.douban.voteCount))}</Badge> : null}
-        <Button asChild type="button" variant="outline" size="sm">
+        <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
           <a href={movie.sourceUrl} rel="noreferrer" target="_blank">
             <BarChart3 className="h-4 w-4" />
             {copy.nowPlaying.proData}
           </a>
         </Button>
         {movie.ticketUrl ? (
-          <Button asChild type="button" variant="secondary" size="sm">
+          <Button className="w-full sm:w-auto" asChild type="button" variant="secondary" size="sm">
             <a href={movie.ticketUrl} rel="noreferrer" target="_blank">
               <Ticket className="h-4 w-4" />
               {copy.nowPlaying.ticket}
@@ -578,7 +579,7 @@ function MovieObservationRow({ movie }: { movie: NowPlayingMovie }) {
           </Button>
         ) : null}
         {movie.douban ? (
-          <Button asChild type="button" variant="outline" size="sm">
+          <Button className="w-full sm:w-auto" asChild type="button" variant="outline" size="sm">
             <a href={movie.douban.url} rel="noreferrer" target="_blank">
               <ExternalLink className="h-4 w-4" />
               {copy.nowPlaying.doubanRating}

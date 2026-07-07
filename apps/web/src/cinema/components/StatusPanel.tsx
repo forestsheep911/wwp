@@ -26,8 +26,8 @@ export function StatusPanel({
 }) {
   if (items.length === 0) {
     return (
-      <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
-        <CardHeader className="shrink-0 pr-16">
+      <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden rounded-xl sm:rounded-lg">
+        <CardHeader className="shrink-0 pr-4 sm:pr-16">
           <CardTitle className="flex items-center gap-2 text-base">
             <Database className="h-4 w-4 text-emerald-300" />
             {copy.tasks.currentTitle}
@@ -39,8 +39,8 @@ export function StatusPanel({
   }
 
   return (
-    <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden">
-      <CardHeader className="shrink-0 pr-16">
+    <Card className="sticky top-5 flex max-h-[calc(100vh-2.5rem)] flex-col overflow-hidden rounded-xl sm:rounded-lg">
+      <CardHeader className="shrink-0 pr-4 sm:pr-16">
         <CardTitle className="flex items-center justify-between gap-3 text-base">
           <span className="min-w-0 truncate">{copy.tasks.currentTitle}</span>
           <Badge className="shrink-0" variant="secondary">{items.length} {copy.common.items}</Badge>
@@ -49,8 +49,8 @@ export function StatusPanel({
       </CardHeader>
       <CardContent className="grid min-h-0 flex-1 gap-3 overflow-y-auto pr-3">
         {items.map(({ job, asset, result }) => (
-          <div key={job.id} className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-3">
-            <div className="flex items-start justify-between gap-3">
+          <div key={job.id} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-md">
+            <div className="grid gap-2 sm:flex sm:items-start sm:justify-between sm:gap-3">
               <div className="min-w-0">
                 <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-50">{job.title}</p>
                 <p className="mt-1 text-xs leading-5 text-slate-400">{jobMessageLabel(job)}</p>
@@ -69,7 +69,7 @@ export function StatusPanel({
             {job.error ? <p className="text-xs font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
             {asset?.media ? <MediaDiagnosticsView media={asset.media} /> : null}
             {asset?.status === "ready" ? (
-              <Button type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
+              <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
                 {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
               </Button>

@@ -74,19 +74,19 @@ export function FavoritesPanel({
 
   return (
     <section className="grid gap-4">
-      <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4 shadow-2xl shadow-black/20">
+      <div className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 sm:rounded-lg">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold leading-tight text-slate-50">{copy.favorites.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{copy.favorites.description}</p>
         </div>
 
         <Tabs defaultValue={defaultSection}>
-          <TabsList className="justify-start bg-slate-950/72">
+          <TabsList className="max-w-[calc(100vw-2rem)] justify-start overflow-x-auto rounded-xl bg-slate-950/72 sm:max-w-none sm:rounded-md">
             {sections.map((section) => {
               const Icon = section.icon;
               return (
                 <TabsTrigger
-                  className="data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950"
+                  className="min-h-11 flex-none rounded-lg data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950 sm:min-h-8 sm:rounded-md"
                   key={section.mark}
                   value={section.mark}
                 >
@@ -151,7 +151,7 @@ function FavoriteSection({
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed border-slate-800 bg-slate-950/45 px-4 py-5 text-sm font-semibold text-slate-500">
+        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/45 px-4 py-5 text-sm font-semibold text-slate-500 sm:rounded-md">
           {copy.favorites.sectionEmpty[section.mark]}
         </div>
       )}
@@ -209,8 +209,8 @@ function FavoriteCard({
       : copy.favorites.watchedAt(formatDateTime(timestamp));
 
   return (
-    <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 sm:grid-cols-[76px_minmax(0,1fr)] lg:grid-cols-[84px_minmax(0,1fr)_minmax(280px,0.42fr)]">
-      <div className="w-[76px] overflow-hidden rounded-md border border-slate-800 bg-slate-950 sm:w-full">
+    <article className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 sm:grid-cols-[76px_minmax(0,1fr)] sm:rounded-md lg:grid-cols-[84px_minmax(0,1fr)_minmax(280px,0.42fr)]">
+      <div className="w-28 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 sm:w-full sm:rounded-md">
         <MoviePoster result={result} />
       </div>
 
@@ -241,7 +241,7 @@ function FavoriteCard({
       </div>
 
       <div className="grid content-between gap-3 sm:col-start-2 lg:col-start-auto">
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
           {ready ? <Badge variant="default">{copy.cache.status.ready}</Badge> : <Badge variant="muted">{copy.cache.notCached}</Badge>}
           <Button
             type="button"
@@ -262,7 +262,7 @@ function FavoriteCard({
         </div>
 
         {variant ? (
-          <Button className="justify-self-end" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
+          <Button className="w-full justify-center sm:w-auto sm:justify-self-end" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
             <Play className="h-4 w-4" />
             {ready
               ? formatCreditAmount(playbackCreditCost(variant.cache?.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)

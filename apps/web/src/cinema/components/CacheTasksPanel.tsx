@@ -59,18 +59,18 @@ export function CacheTasksPanel({
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-xl font-semibold text-slate-50">{copy.tasks.title}</h2>
           <p className="mt-1 text-sm text-slate-400">{copy.tasks.description}</p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={onRefreshCached} disabled={loadingCached}>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onRefreshCached} disabled={loadingCached}>
           <RefreshCw className={`h-4 w-4 ${loadingCached ? "animate-spin" : ""}`} />
           {copy.common.refresh}
         </Button>
       </div>
 
-      <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+      <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
         <TaskTabButton active={mainTab === "preparing"} onClick={() => setMainTab("preparing")}>
           {copy.tasks.preparing}
           <Badge variant={preparingItems.length ? "warning" : "secondary"}>{preparingItems.length}</Badge>
@@ -89,7 +89,7 @@ export function CacheTasksPanel({
         />
       ) : (
         <div className="grid gap-4">
-          <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+          <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
             <TaskTabButton active={readyTab === "mine"} onClick={() => setReadyTab("mine")}>
               {copy.tasks.mine}
               <Badge variant="secondary">{myAssets.length}</Badge>
@@ -122,7 +122,7 @@ function TaskTabButton({
 }) {
   return (
     <Button
-      className="flex-1 sm:flex-none"
+      className="min-h-11 flex-1 rounded-lg sm:min-h-8 sm:flex-none sm:rounded-md"
       type="button"
       size="sm"
       variant={active ? "secondary" : "ghost"}
@@ -149,9 +149,9 @@ function PreparingList({
   return (
     <div className="grid gap-3 xl:grid-cols-2">
       {items.map(({ job, asset, result }) => (
-        <Card key={job.id} className="min-w-0 overflow-hidden">
+        <Card key={job.id} className="min-w-0 overflow-hidden rounded-xl sm:rounded-lg">
           <CardContent className="grid gap-3 p-4">
-            <div className="flex items-start justify-between gap-3">
+            <div className="grid gap-2 sm:flex sm:items-start sm:justify-between sm:gap-3">
               <div className="min-w-0">
                 <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-50">{job.title}</p>
                 <p className="mt-1 text-xs leading-5 text-slate-400">{jobMessageLabel(job)}</p>
@@ -166,7 +166,7 @@ function PreparingList({
             {job.error ? <p className="text-xs font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
             {asset?.media ? <MediaDiagnosticsView media={asset.media} /> : null}
             {asset?.status === "ready" ? (
-              <Button type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
+              <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
                 {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
               </Button>
@@ -200,14 +200,14 @@ function ReadyAssetList({
   return (
     <div className="grid gap-3 xl:grid-cols-2">
       {assets.map((asset) => (
-        <Card key={asset.assetKey} className="min-w-0 overflow-hidden">
+        <Card key={asset.assetKey} className="min-w-0 overflow-hidden rounded-xl sm:rounded-lg">
           <CardContent className="grid min-w-0 gap-3 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="min-w-0 truncate font-semibold text-slate-50">{asset.title}</p>
                 {asset.requestedByMemberName ? <Badge variant="muted">{asset.requestedByMemberName}</Badge> : null}
               </div>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm leading-6 text-slate-400 sm:leading-normal">
                 {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
               </p>
             </div>
