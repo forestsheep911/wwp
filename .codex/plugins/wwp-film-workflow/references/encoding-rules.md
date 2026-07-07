@@ -8,7 +8,7 @@
 - Playable output directory: user-specified, otherwise `E:\video_made`.
 - Subtitle-dependent versions: burn the selected Chinese subtitle into the video by default.
 - Mandarin-language films: prefer no hard subtitles unless the source already has unavoidable hard subtitles.
-- Notion playable uploads must stay below the current Notion file upload ceiling. Treat 5,000,000,000 bytes as the hard practical maximum unless the user verifies a newer limit, and target about 4.7-4.9GB when making a high-bitrate version.
+- Notion playable uploads must stay below the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but keep the lower decimal-byte cap as upload safety margin. Target about 4.7-4.9GB when making a high-bitrate version; do not plan 6GB as a Notion upload candidate.
 - If an encode is trending over the limit, stop early and recalculate the bitrate instead of finishing an unusable upload candidate.
 
 ## Subtitle Priority

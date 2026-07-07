@@ -15,7 +15,7 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 
 ## Media Assets Write Rules
 
-- Before uploading a playable through Notion, check the exact local file size. The normal Notion playable path requires a file below the current Notion upload ceiling; use 5,000,000,000 bytes as the hard practical maximum unless the user has verified a newer limit.
+- Before uploading a playable through Notion, check the exact local file size. The normal Notion playable path uses the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but keep the lower decimal-byte cap as upload safety margin.
 - Files above the limit are not playable-upload-ready. Re-encode under the limit, split only if the workflow explicitly supports split playback, or route the asset to a source/archive workflow rather than a playable spec.
 - Run `ffprobe` on the exact local final file that corresponds to the uploaded playable.
 - Prefer ffprobe output plus production manifest over filename guessing.

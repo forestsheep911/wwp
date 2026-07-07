@@ -14,7 +14,7 @@ Use this skill for playable outputs that people will watch directly. Source arch
 - Codec direction: HEVC preferred unless the user asks otherwise or compatibility requires another choice.
 - Subtitle delivery: burn selected Chinese subtitles into the video for subtitle-dependent versions.
 - Mandarin-language films: prefer no hard subtitles unless subtitles are already burned into the source and cannot be separated.
-- Size target: keep Notion-bound playable MP4 files below 5,000,000,000 bytes unless the user verifies a newer Notion limit. For high-bitrate manual-upload candidates, usually aim for about 4.7-4.9GB.
+- Size target: keep Notion-bound playable MP4 files below the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but this workflow keeps the lower decimal-byte cap as upload safety margin. For high-bitrate manual-upload candidates, usually aim for about 4.7-4.9GB, never a 6GB upload candidate.
 
 ## Flow
 
