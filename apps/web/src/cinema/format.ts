@@ -394,6 +394,79 @@ function variantResolutionLabel(resolution?: string) {
   return /^\d+p$/i.test(value) ? value.toLowerCase() : value.toUpperCase();
 }
 
+function chineseEpisodeNumber(value: string) {
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  let total = 0;
+  let current = 0;
+
+  for (const char of value) {
+    if (char === "百") {
+      total += (current || 1) * 100;
+      current = 0;
+      continue;
+    }
+    if (char === "十") {
+      total += (current || 1) * 10;
+      current = 0;
+      continue;
+    }
+
+    const digit = digits[char];
+    if (digit === undefined) {
+      return undefined;
+    }
+    current = digit;
+  }
+
+  const number = total + current;
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function episodeNumberFromText(value: string) {
+  const patterns = [
+    /\bS\d{1,2}E(\d{1,3})\b/i,
+    /\b\d{1,2}x(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\b/i,
+    /\bE(?:P)?[\s._-]*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[集话話]/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const number = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isInteger(number) && number > 0) {
+      return number;
+    }
+  }
+
+  return chineseEpisodeNumber(value.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
+}
+
+function variantEpisodeLabel(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  const number = metadata?.episodeNumber ?? episodeNumberFromText([
+    variant.label,
+    metadata?.sourceLabel,
+    metadata?.fileName,
+    metadata?.originalFileName
+  ].filter(Boolean).join(" "));
+
+  return typeof number === "number" && Number.isInteger(number) && number > 0 ? `第${number}集` : undefined;
+}
+
 export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean } = {}) {
   const metadata = variant.metadata;
   if (!metadata) {
@@ -404,12 +477,13 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
     ? "无字幕"
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
+    variantEpisodeLabel(variant),
     variantResolutionLabel(metadata.resolution),
     subtitles ? `字幕 ${subtitles}` : undefined,
     variantSizeLabel(variant)
   ]);
 
-  return options.compact ? labels.slice(0, 3) : labels;
+  return options.compact ? labels.slice(0, 4) : labels;
 }
 
 export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
