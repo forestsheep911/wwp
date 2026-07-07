@@ -120,3 +120,7 @@ The cleanup job removes idle-expired cache assets on a daily schedule. Member pa
 npm run typecheck
 npm run build
 ```
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

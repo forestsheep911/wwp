@@ -48,10 +48,13 @@ export const zhCN = {
     resetHelp: "请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。",
     passcodeRule: "通行码为 6 位字符。",
     wake: {
-      title: "正在唤醒放映服务",
-      description: "第一次开场可能要等服务器从后台醒来，请耐心等一下。",
-      frames: ["片头", "开机", "放映"],
-      status: "放映员正在穿过片尾字幕，把机房灯打开。很快就能入场。"
+      title: "服务唤醒中",
+      correct: "答对了",
+      wrong: "差一点",
+      yourAnswer: "你的答案",
+      correctAnswer: "正确答案",
+      next: "下一题",
+      idle: "银幕还在亮起来。当前题不会计时，答完会立即给出结果和解析。"
     },
     errors: {
       enterPasscode: "请输入通行码。",
@@ -111,6 +114,7 @@ export const zhCN = {
     list: "列表",
     noTitlesFound: "没有找到影片",
     noTitlesLoaded: "暂无影片",
+    missingSummary: "暂无影片简介",
     table: {
       title: "片名",
       metadata: "信息",
@@ -140,6 +144,7 @@ export const zhCN = {
     viewDetails: "查看详细信息",
     viewAllVariants: "查看全部规格",
     directDownload: "直接下载",
+    summaryTitle: "完整简介",
     aiSummary: "AI 简介",
     aiSummaryTitle: "AI 剧情简介",
     aiSummaryDescription: "用快速档生成一段可读简介。",
@@ -151,6 +156,15 @@ export const zhCN = {
     variantCount: (count: number) => `${count} 个规格`,
     playableVariantCount: (count: number) => `${count} 个可播放`,
     director: (name: string) => `导演 ${name}`,
+    ageRecommendationTitle: "年龄建议",
+    ageRecommendation: (age: number) => `建议 ${age}+`,
+    aiAgeSource: "AI建议",
+    manualAgeSource: "人工覆盖",
+    ageConfidence: {
+      high: "高置信",
+      medium: "中等置信",
+      low: "低置信"
+    },
     backToList: "返回列表",
     intro: "简介",
     allVariants: "全部规格",
@@ -176,16 +190,34 @@ export const zhCN = {
   },
   favorites: {
     title: "我的收藏",
-    description: "点过星星的影视会留在这里，之后想找回来就不用重新翻片库。",
-    count: (count: number) => `${count} 个收藏`,
-    empty: "还没有收藏影片",
-    emptyHint: "在片库或今晚看什么里点星星，就会加入这里。",
+    description: "把喜欢、想看和已看分开放，之后想找回来就不用重新翻片库。",
+    count: (count: number) => `${count} 部影视`,
+    empty: "还没有标记影片",
+    emptyHint: "在片库里点星星，或进入详情标记想看、已看，就会加入这里。",
     addedAt: (date: string) => `收藏 ${date}`,
+    wantToWatchAt: (date: string) => `想看 ${date}`,
+    watchedAt: (date: string) => `已看 ${date}`,
     remove: "取消收藏",
+    removeWantToWatch: "取消想看",
+    removeWatched: "取消已看",
     open: "查看详情",
     noPlayableVariant: "暂无可用规格",
     favorite: "收藏",
-    unfavorite: "取消收藏"
+    unfavorite: "取消收藏",
+    wantToWatch: "想看",
+    unwantToWatch: "取消想看",
+    watched: "已看",
+    unwatched: "取消已看",
+    sections: {
+      favorite: "喜欢",
+      wantToWatch: "想看",
+      watched: "已看"
+    },
+    sectionEmpty: {
+      favorite: "还没有喜欢的影片",
+      wantToWatch: "还没有想看的影片",
+      watched: "还没有标记已看的影片"
+    }
   },
   watchlist: {
     title: "今晚看什么",

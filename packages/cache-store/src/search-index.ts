@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
-import type { MovieMetadata, SearchResult } from "@wwpdw/shared";
+import type { MediaVariant, MovieMetadata, SearchResult } from "@wwpdw/shared";
 import type { CacheBackend } from "./types.js";
 
 export type SearchIndexSyncMode = "full" | "incremental" | "ondemand";
@@ -56,6 +56,7 @@ export interface SearchIndexStore {
   getResult(assetKey: string): Promise<SearchResult | undefined>;
   upsertResult(result: SearchResult, indexedAt?: string): Promise<SearchIndexEntry>;
   upsertResults(results: SearchResult[], indexedAt?: string): Promise<SearchIndexEntry[]>;
+  deleteResult(assetKey: string): Promise<boolean>;
   deleteEntriesNotIn(assetKeys: Set<string>): Promise<number>;
   startRun(mode: SearchIndexSyncMode): Promise<SearchIndexRun>;
   updateRun(run: SearchIndexRun): Promise<void>;
@@ -236,6 +237,10 @@ function metadataText(metadata?: MovieMetadata) {
     metadata.display?.castLine,
     metadata.release?.year,
     metadata.release?.date,
+    metadata.boxOffice?.display,
+    metadata.boxOffice?.amount?.toString(),
+    metadata.boxOffice?.currency,
+    metadata.boxOffice?.source,
     titles.map((title) => [title.title, title.kind, title.lang, title.source].filter(Boolean).join(" ")).join(" "),
     credits.map((credit) => [
       credit.name,
@@ -260,6 +265,10 @@ function metadataText(metadata?: MovieMetadata) {
     work?.genres?.join(" "),
     work?.countries?.join(" "),
     work?.ratings?.map((rating) => `${rating.label} ${rating.value}`).join(" "),
+    work?.boxOffice?.display,
+    work?.boxOffice?.amount?.toString(),
+    work?.boxOffice?.currency,
+    work?.boxOffice?.source,
     work?.display?.title,
     work?.display?.subtitle,
     work?.display?.year,
@@ -272,7 +281,16 @@ function metadataText(metadata?: MovieMetadata) {
     metadata.directors?.join(" "),
     metadata.people?.join(" "),
     metadata.ratings?.map((rating) => `${rating.label} ${rating.value}`).join(" "),
+    metadata.boxOfficeDisplay,
+    metadata.boxOfficeAmount?.toString(),
+    metadata.boxOfficeCurrency,
     metadata.ratingLevel?.join(" "),
+    metadata.aiSuggestedMinimumAge !== undefined ? `AI建议最低年龄 ${metadata.aiSuggestedMinimumAge}` : undefined,
+    metadata.aiAgeConfidence,
+    metadata.contentRiskTags?.join(" "),
+    metadata.aiAgeReason,
+    metadata.manualAgeOverride !== undefined ? `人工年龄覆盖 ${metadata.manualAgeOverride}` : undefined,
+    metadata.effectiveMinimumAge !== undefined ? `建议年龄 ${metadata.effectiveMinimumAge}` : undefined,
     metadata.info,
     metadata.description,
     metadata.imdbId,
@@ -307,13 +325,54 @@ function metadataText(metadata?: MovieMetadata) {
   ].filter((value): value is string => Boolean(value));
 }
 
+function variantMetadataText(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  return [
+    metadata.assetType,
+    metadata.mediaAssetPageId,
+    metadata.availability,
+    metadata.edition,
+    metadata.episodeNumber ? `Episode ${metadata.episodeNumber}` : undefined,
+    metadata.resolution,
+    metadata.videoCodec,
+    metadata.container,
+    metadata.exactByteSize ? `${metadata.exactByteSize} bytes` : undefined,
+    metadata.approximateSizeGb ? `${metadata.approximateSizeGb}GB` : undefined,
+    metadata.durationSeconds ? `${metadata.durationSeconds} seconds` : undefined,
+    metadata.frameRate,
+    metadata.videoDynamicRange,
+    metadata.qualityTag,
+    metadata.audioCodec,
+    metadata.audioChannelLayout,
+    metadata.audioLanguages?.join(" "),
+    metadata.subtitleLanguages?.join(" "),
+    metadata.subtitleRegions?.join(" "),
+    metadata.sourceLineage?.join(" "),
+    metadata.commentary ? "commentary" : undefined,
+    metadata.noSubtitles ? "no subtitles" : undefined,
+    metadata.playbackVerified ? "playback verified" : undefined,
+    metadata.hideFromWebsite ? "hidden from website" : undefined,
+    metadata.sourceLabel,
+    metadata.fileName,
+    metadata.originalFileName,
+    metadata.mediaBlockId,
+    metadata.developerMemo,
+    metadata.structuredSource
+  ].filter((value): value is string => Boolean(value));
+}
+
 function buildSearchText(result: SearchResult) {
   const variantText = result.variants?.flatMap((variant) => [
     variant.assetKey,
     variant.label,
     variant.summary,
     variant.kind,
-    variant.sourceBreadcrumb?.join(" ")
+    variant.sourceBreadcrumb?.join(" "),
+    ...variantMetadataText(variant)
   ]) ?? [];
 
   return [
@@ -540,6 +599,16 @@ export class LocalSearchIndexStore implements SearchIndexStore {
     });
   }
 
+  async deleteResult(assetKey: string) {
+    return this.updateState((state) => {
+      if (!state.entries[assetKey]) {
+        return false;
+      }
+      delete state.entries[assetKey];
+      return true;
+    });
+  }
+
   async deleteEntriesNotIn(assetKeys: Set<string>) {
     return this.updateState((state) => {
       let deleted = 0;
@@ -691,6 +760,20 @@ export class AzureSearchIndexStore implements SearchIndexStore {
       await this.saveEntry(entry);
     }
     return entries;
+  }
+
+  async deleteResult(assetKey: string) {
+    await this.ensureReady();
+    this.entriesCache = undefined;
+    try {
+      await this.tableClient.deleteEntity(moviePartitionKey, encodeRowKey(assetKey));
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async deleteEntriesNotIn(assetKeys: Set<string>) {

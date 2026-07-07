@@ -16,12 +16,12 @@ import type {
   MovieRequestEntry,
   MovieRequestStatus,
   PlaybackResponse,
+  SearchResponse,
   SearchResult
 } from "@wwpdw/shared";
 import {
   adjustMemberCredits as adjustMemberCreditsApi,
   browseAssets,
-  browseHomeAssets,
   checkAccess,
   clearAccessKey,
   createAdminNotice,
@@ -63,7 +63,8 @@ import {
   setMemberCredits as setMemberCreditsApi,
   updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
-  setAccessKey
+  setAccessKey,
+  wakeBackend
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
@@ -92,6 +93,7 @@ import { copy } from "./cinema/i18n";
 import { triggerDirectDownload } from "./cinema/download";
 import {
   cinemaHistoryState,
+  defaultBrowseView,
   historyStateRoute,
   routeFromLocation,
   routeUrl,
@@ -111,6 +113,7 @@ import type {
   AppTheme,
   BrowseChannel,
   BrowseViewId,
+  CollectionMark,
   FavoriteEntry,
   HistoryAssetStatusMap,
   LibraryViewMode,
@@ -137,8 +140,32 @@ type PendingCreditAction =
 
 const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
-const browseCacheFallbackMs = 2200;
+const browseFullViewLimit = 300;
+const tspdtBrowseCatalogLimit = 2000;
 type BrowseLoadMode = "paged" | "random";
+
+function canPreviewServiceWakeDialog() {
+  if (!import.meta.env.DEV) {
+    return false;
+  }
+
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+function shouldOpenServiceWakePreview() {
+  if (!canPreviewServiceWakeDialog()) {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).has("wake");
+}
+
+interface BrowseViewCacheEntry {
+  results: ResultWithCache[];
+  hasMore: boolean;
+  nextOffset: number;
+  mode: BrowseLoadMode;
+}
 
 function isAppTheme(value: unknown): value is AppTheme {
   return value === "dark" || value === "light";
@@ -153,17 +180,38 @@ function favoriteKeyForIdentity(role?: AccessRole, memberId?: string) {
   return memberScopedStorageKey(favoriteStorageKey, memberId ?? role ?? "guest");
 }
 
+function normalizeFavorites(entries: FavoriteEntry[]) {
+  return entries.map((entry) => {
+    if (entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt) {
+      return entry;
+    }
+
+    return {
+      ...entry,
+      favoriteAt: entry.addedAt
+    };
+  });
+}
+
+function hasCollectionMarks(entry: FavoriteEntry) {
+  return Boolean(entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt);
+}
+
 function CinemaApp() {
   const { showToast } = useToast();
   const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
-  const [unlocked, setUnlocked] = useState(() => Boolean(getAccessKey()));
+  const [hasStoredAccessKey] = useState(() => Boolean(getAccessKey()));
+  const [unlocked, setUnlocked] = useState(hasStoredAccessKey);
+  const [authRestoring, setAuthRestoring] = useState(hasStoredAccessKey);
   const [role, setRole] = useState<AccessRole | undefined>();
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
+  const [browseView, setBrowseView] = useState<BrowseViewId>(initialRoute.browseView);
   const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
+  const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [browseResults, setBrowseResults] = useState<ResultWithCache[]>([]);
   const [browseLoading, setBrowseLoading] = useState(
@@ -173,6 +221,7 @@ function CinemaApp() {
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
   const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
+  const browseViewCacheRef = useRef(new Map<string, BrowseViewCacheEntry>());
   const [job, setJob] = useState<CacheJob | undefined>();
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
@@ -220,6 +269,7 @@ function CinemaApp() {
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
   const [searchDialogError, setSearchDialogError] = useState("");
   const [showServiceWakeDialog, setShowServiceWakeDialog] = useState(false);
+  const [serviceWakePreviewOpen, setServiceWakePreviewOpen] = useState(() => shouldOpenServiceWakePreview());
   const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -251,6 +301,7 @@ function CinemaApp() {
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
   const forumThreadsAutoLoadRef = useRef(false);
+  const browseRouteLoadRef = useRef("");
 
   const trackedPollKey = useMemo(
     () =>
@@ -272,17 +323,32 @@ function CinemaApp() {
   }, [trackedItems]);
 
   const favoriteAssetKeys = useMemo(
-    () => new Set(favorites.map((item) => item.assetKey)),
+    () => new Set(favorites.filter((item) => item.favoriteAt).map((item) => item.assetKey)),
     [favorites]
   );
 
+  const collectionMarksByAssetKey = useMemo(() => {
+    const marks = new Map<string, FavoriteEntry>();
+    favorites.forEach((item) => marks.set(item.assetKey, item));
+    return marks;
+  }, [favorites]);
+
   const serviceWakeActive = unlocked && (
-    !role ||
+    authRestoring ||
     (activeTab === "library" && query.trim().length === 0 && browseLoading && browseResults.length === 0) ||
     (activeTab === "watchlist" && browseLoading && browseResults.length === 0) ||
     ((activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks") && cachedAssetsLoading && cachedAssets.length === 0) ||
     (activeTab === "forum" && forumLoading && forumThreads.length === 0)
   );
+  const serviceWakePreviewEnabled = canPreviewServiceWakeDialog();
+  const serviceWakeDialogOpen = serviceWakePreviewOpen || (showServiceWakeDialog && serviceWakeActive);
+
+  function handleServiceWakeDialogOpenChange(open: boolean) {
+    setShowServiceWakeDialog(open);
+    if (!open) {
+      setServiceWakePreviewOpen(false);
+    }
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -331,7 +397,9 @@ function CinemaApp() {
     return {
       tab: activeTab,
       browseChannel,
+      browseView,
       query,
+      detailAssetKey,
       playerAssetKey: playback?.assetKey,
       ...overrides
     };
@@ -340,27 +408,94 @@ function CinemaApp() {
   function navigateToTab(nextTab: AppTab) {
     const nextRoute = permittedRoute(routeForCurrentView({
       tab: nextTab,
+      detailAssetKey: undefined,
       playerAssetKey: undefined
     }));
     setPlayback(undefined);
+    setDetailAssetKey(undefined);
     setActiveTab(nextRoute.tab);
     writeRoute(nextRoute, "push");
   }
 
   function openBrowseChannel(nextChannel: BrowseChannel) {
+    const nextBrowseView = defaultBrowseView(nextChannel);
     setBrowseChannel(nextChannel);
+    setBrowseView(nextBrowseView);
+    setDetailAssetKey(undefined);
     setError("");
     setQuery("");
     setResults([]);
     setPlayback(undefined);
     setActiveTab("library");
+    browseRouteLoadRef.current = browseRouteLoadKey(nextChannel, nextBrowseView);
     writeRoute({
       tab: "library",
       browseChannel: nextChannel,
+      browseView: nextBrowseView,
       query: "",
+      detailAssetKey: undefined,
       playerAssetKey: undefined
     }, "push");
-    void refreshBrowseAssets({ channel: nextChannel });
+    void refreshBrowseAssets({ channel: nextChannel, view: nextBrowseView });
+  }
+
+  function browseLoadModeForView(view: BrowseViewId): BrowseLoadMode {
+    return view === "lucky" ? "random" : "paged";
+  }
+
+  function browseLimitForView(view: BrowseViewId) {
+    return view === "lucky"
+      ? browsePageLimit
+      : view === "tspdtRank"
+        ? tspdtBrowseCatalogLimit
+        : view === "popular" || view === "mostWatched"
+          ? browseFullViewLimit
+          : browseCatalogPageLimit;
+  }
+
+  function browseRouteLoadKey(channel: BrowseChannel, view: BrowseViewId) {
+    return `${channel}:${view}`;
+  }
+
+  function openBrowseView(nextView: BrowseViewId, options: { refresh?: boolean } = {}) {
+    const routeMode = options.refresh && nextView === browseView ? "replace" : "push";
+    setBrowseView(nextView);
+    setDetailAssetKey(undefined);
+    setPlayback(undefined);
+    browseRouteLoadRef.current = browseRouteLoadKey(browseChannel, nextView);
+    writeRoute({
+      tab: "library",
+      browseChannel,
+      browseView: nextView,
+      query: "",
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }, routeMode);
+    void refreshBrowseAssets({
+      mode: browseLoadModeForView(nextView),
+      limit: browseLimitForView(nextView),
+      view: nextView,
+      force: options.refresh === true
+    });
+  }
+
+  function openLibraryDetail(result: ResultWithCache) {
+    setDetailAssetKey(result.assetKey);
+    setFocusedLibraryAssetKey(result.assetKey);
+    setPlayback(undefined);
+    writeRoute(routeForCurrentView({
+      tab: "library",
+      detailAssetKey: result.assetKey,
+      playerAssetKey: undefined
+    }), "push");
+  }
+
+  function closeLibraryDetail() {
+    setDetailAssetKey(undefined);
+    writeRoute(routeForCurrentView({
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }), "replace");
   }
 
   function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
@@ -401,6 +536,7 @@ function CinemaApp() {
 
   function handleRequestError(errorValue: unknown, fallback: string) {
     if (isUnauthorizedError(errorValue)) {
+      setAuthRestoring(false);
       clearAccessKey();
       setUnlocked(false);
       setRole(undefined);
@@ -454,10 +590,12 @@ function CinemaApp() {
   async function runSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     const normalizedQuery = query.trim();
+    setDetailAssetKey(undefined);
     await refreshResults({ showLoading: true, activateLibrary: true }, normalizedQuery);
     writeRoute({
       tab: "library",
       browseChannel,
+      browseView,
       query: normalizedQuery
     }, "push");
   }
@@ -491,11 +629,14 @@ function CinemaApp() {
     setActiveTab("library");
     setPlayback(undefined);
     setFocusedLibraryAssetKey(result.assetKey);
+    setDetailAssetKey(result.assetKey);
     setSearchOpen(false);
     writeRoute({
       tab: "library",
       browseChannel,
+      browseView,
       query: normalizedQuery,
+      detailAssetKey: result.assetKey,
       playerAssetKey: undefined
     }, "push");
   }
@@ -609,7 +750,7 @@ function CinemaApp() {
     const pendingWindow = window.open("about:blank", "_blank");
     try {
       const response = await getDirectDownload(target);
-      triggerDirectDownload(response.downloadUrl, pendingWindow);
+      triggerDirectDownload(response.downloadUrl, pendingWindow, response.title);
     } catch (downloadError) {
       pendingWindow?.close();
       handleRequestError(downloadError, copy.fallbackErrors.directDownload);
@@ -756,28 +897,67 @@ function CinemaApp() {
     writeJsonStorage(storageKey, nextFavorites);
   }
 
-  function toggleFavorite(result: ResultWithCache) {
+  function updateCollectionMark(result: ResultWithCache, mark: CollectionMark) {
     setFavorites((currentFavorites) => {
-      const exists = currentFavorites.some((item) => item.assetKey === result.assetKey);
-      const nextFavorites = exists
-        ? currentFavorites.filter((item) => item.assetKey !== result.assetKey)
-        : [
-          {
-            assetKey: result.assetKey,
-            title: result.title,
-            addedAt: new Date().toISOString(),
-            result
-          },
-          ...currentFavorites
-        ];
+      const now = new Date().toISOString();
+      const currentEntry = currentFavorites.find((item) => item.assetKey === result.assetKey);
+      const baseEntry: FavoriteEntry = currentEntry ?? {
+        assetKey: result.assetKey,
+        title: result.title,
+        addedAt: now,
+        result
+      };
+      const nextEntry: FavoriteEntry = {
+        ...baseEntry,
+        title: result.title,
+        result
+      };
+
+      if (mark === "favorite") {
+        nextEntry.favoriteAt = nextEntry.favoriteAt ? undefined : now;
+      } else if (mark === "wantToWatch") {
+        const active = Boolean(nextEntry.wantToWatchAt);
+        nextEntry.wantToWatchAt = active ? undefined : now;
+        if (!active) {
+          nextEntry.watchedAt = undefined;
+        }
+      } else {
+        const active = Boolean(nextEntry.watchedAt);
+        nextEntry.watchedAt = active ? undefined : now;
+        if (!active) {
+          nextEntry.wantToWatchAt = undefined;
+        }
+      }
+
+      const withoutCurrent = currentFavorites.filter((item) => item.assetKey !== result.assetKey);
+      const nextFavorites = hasCollectionMarks(nextEntry) ? [nextEntry, ...withoutCurrent] : withoutCurrent;
       writeFavorites(nextFavorites);
       return nextFavorites;
     });
   }
 
-  function removeFavorite(assetKey: string) {
+  function toggleFavorite(result: ResultWithCache) {
+    updateCollectionMark(result, "favorite");
+  }
+
+  function removeCollectionMark(assetKey: string, mark: CollectionMark) {
     setFavorites((currentFavorites) => {
-      const nextFavorites = currentFavorites.filter((item) => item.assetKey !== assetKey);
+      const nextFavorites = currentFavorites.flatMap((item) => {
+        if (item.assetKey !== assetKey) {
+          return [item];
+        }
+
+        const nextItem: FavoriteEntry = { ...item };
+        if (mark === "favorite") {
+          nextItem.favoriteAt = undefined;
+        } else if (mark === "wantToWatch") {
+          nextItem.wantToWatchAt = undefined;
+        } else {
+          nextItem.watchedAt = undefined;
+        }
+
+        return hasCollectionMarks(nextItem) ? [nextItem] : [];
+      });
       writeFavorites(nextFavorites);
       return nextFavorites;
     });
@@ -812,79 +992,77 @@ function CinemaApp() {
     }
   }
 
+  function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
+    return view ? `${channel}:${view}` : undefined;
+  }
+
+  function applyBrowseCache(entry: BrowseViewCacheEntry) {
+    setBrowseResults(entry.results);
+    setBrowseHasMore(entry.hasMore);
+    setBrowseNextOffset(entry.nextOffset);
+    setBrowseLoadMode(entry.mode);
+  }
+
   function applyBrowseResponse(
     response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode },
     append: boolean,
-    mode: BrowseLoadMode
+    mode: BrowseLoadMode,
+    cacheKey?: string
   ) {
     setBrowseResults((currentResults) => {
-      if (!append) {
-        return response.results;
-      }
-
       const currentKeys = new Set(currentResults.map((result) => result.assetKey));
-      const nextResults = response.results.filter((result) => !currentKeys.has(result.assetKey));
-      return [...currentResults, ...nextResults];
+      const nextResults = append
+        ? [...currentResults, ...response.results.filter((result) => !currentKeys.has(result.assetKey))]
+        : response.results;
+      if (cacheKey) {
+        browseViewCacheRef.current.set(cacheKey, {
+          results: nextResults,
+          hasMore: Boolean(response.hasMore),
+          nextOffset: response.nextOffset ?? 0,
+          mode: response.mode ?? mode
+        });
+      }
+      return nextResults;
     });
     setBrowseHasMore(Boolean(response.hasMore));
     setBrowseNextOffset(response.nextOffset ?? 0);
     setBrowseLoadMode(response.mode ?? mode);
   }
 
-  function browseCacheFallbackTimeout() {
-    return new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("Browse cache fallback timed out.")), browseCacheFallbackMs);
-    });
-  }
-
-  async function browseAssetsWithCacheFallback(
-    limit: number,
-    offset: number,
-    options: { mode: BrowseLoadMode; channel: BrowseChannel; view?: BrowseViewId }
-  ) {
-    try {
-      return await browseAssets(limit, offset, options);
-    } catch (browseError) {
-      if (isUnauthorizedError(browseError)) {
-        throw browseError;
-      }
-
-      const cachedResponse = await Promise.race([
-        browseHomeAssets(limit, offset, options),
-        browseCacheFallbackTimeout()
-      ]).catch(() => undefined);
-
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      throw browseError;
-    }
-  }
-
   async function refreshBrowseAssets(
-    options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId } = {}
+    options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId; force?: boolean } = {}
   ) {
     const append = options.append === true;
-    const mode = options.mode ?? (append ? "paged" : "random");
+    const requestView = options.view ?? browseView;
+    const mode = options.mode ?? (append || requestView !== "lucky" ? "paged" : "random");
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     const requestChannel = options.channel ?? browseChannel;
+    const cacheKey = browseViewCacheKey(requestChannel, requestView);
+    const cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
+    if (cachedBrowseView) {
+      applyBrowseCache(cachedBrowseView);
+      return;
+    }
     if (append) {
       if (browseLoadingMore || !browseHasMore) {
         return;
       }
       setBrowseLoadingMore(true);
     } else {
+      if (requestView === "lucky") {
+        setBrowseResults([]);
+        setBrowseHasMore(false);
+        setBrowseNextOffset(0);
+        setBrowseLoadMode("random");
+      }
       setBrowseLoading(true);
     }
 
     try {
       const offset = append ? browseNextOffset : 0;
-      const response = append
-        ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: options.view })
-        : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: options.view });
+      const response = await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView });
 
-      applyBrowseResponse(response, append, mode);
+      applyBrowseResponse(response, append, mode, cacheKey);
     } catch (browseError) {
       handleRequestError(browseError, copy.fallbackErrors.browseTitles);
     } finally {
@@ -910,10 +1088,11 @@ function CinemaApp() {
   }
 
   function applyAuth(auth: AuthCheckResponse) {
+    setAuthRestoring(false);
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
-    setFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), []));
+    setFavorites(normalizeFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), [])));
   }
 
   function updateCurrentMemberCredits(credits: NonNullable<AuthCheckResponse["member"]>["credits"]) {
@@ -1662,6 +1841,7 @@ function CinemaApp() {
 
   function lockCinema() {
     clearAccessKey();
+    setAuthRestoring(false);
     setUnlocked(false);
     setRole(undefined);
     setMember(undefined);
@@ -1723,12 +1903,23 @@ function CinemaApp() {
     setDownloadRequestAssetKeys([]);
     setCachedAssets([]);
     historyInitializedRef.current = false;
+    setBrowseView(defaultBrowseView("recommended"));
+    setDetailAssetKey(undefined);
     writeRoute({
       tab: "library",
       browseChannel: "recommended",
+      browseView: defaultBrowseView("recommended"),
       query: ""
     }, "replace");
   }
+
+  useEffect(() => {
+    if (!unlocked) {
+      return;
+    }
+
+    void wakeBackend().catch(() => undefined);
+  }, [unlocked]);
 
   useEffect(() => {
     if (!unlocked) {
@@ -1851,18 +2042,29 @@ function CinemaApp() {
   }, [trackedPollKey, job?.id, query, activeTab]);
 
   useEffect(() => {
-    if (!unlocked || role) {
+    if (!unlocked || !authRestoring) {
       return;
     }
 
+    let cancelled = false;
     checkAccess()
       .then((auth) => {
+        if (cancelled) {
+          return;
+        }
         applyAuth(auth);
       })
       .catch((authError) => {
+        if (cancelled) {
+          return;
+        }
         handleRequestError(authError, copy.access.errors.passcodeMismatch);
       });
-  }, [unlocked, role]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authRestoring, unlocked]);
 
   useEffect(() => {
     if (!unlocked || !role || historyInitializedRef.current) {
@@ -1873,12 +2075,16 @@ function CinemaApp() {
     const initialPermittedRoute = permittedRoute({
       tab: activeTab,
       browseChannel: initialRoute.browseChannel,
+      browseView: initialRoute.browseView,
       query,
+      detailAssetKey: initialRoute.detailAssetKey,
       playerAssetKey: initialRoute.playerAssetKey
     });
     setActiveTab(initialPermittedRoute.tab);
     setBrowseChannel(initialPermittedRoute.browseChannel);
+    setBrowseView(initialPermittedRoute.browseView);
     setQuery(initialPermittedRoute.query);
+    setDetailAssetKey(initialPermittedRoute.detailAssetKey);
     writeRoute(initialPermittedRoute, "replace");
 
     if (initialPermittedRoute.query.trim()) {
@@ -1903,7 +2109,9 @@ function CinemaApp() {
       setError("");
       setActiveTab(nextRoute.tab);
       setBrowseChannel(nextRoute.browseChannel);
+      setBrowseView(nextRoute.browseView);
       setQuery(nextRoute.query);
+      setDetailAssetKey(nextRoute.detailAssetKey);
 
       if (!nextRoute.playerAssetKey) {
         setPlayback(undefined);
@@ -1947,9 +2155,11 @@ function CinemaApp() {
     if (activeTab === "admin" && role && role !== "admin") {
       const nextRoute = routeForCurrentView({
         tab: "library",
+        detailAssetKey: undefined,
         playerAssetKey: undefined
       });
       setActiveTab(nextRoute.tab);
+      setDetailAssetKey(undefined);
       writeRoute(nextRoute, "replace");
     }
   }, [activeTab, role]);
@@ -1992,10 +2202,18 @@ function CinemaApp() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === "library" && query.trim().length === 0 && browseResults.length === 0) {
-      void refreshBrowseAssets();
+    if (activeTab === "library" && query.trim().length === 0) {
+      const loadKey = browseRouteLoadKey(browseChannel, browseView);
+      if (browseResults.length === 0 || browseRouteLoadRef.current !== loadKey) {
+        browseRouteLoadRef.current = loadKey;
+        void refreshBrowseAssets({
+          mode: browseLoadModeForView(browseView),
+          limit: browseLimitForView(browseView),
+          view: browseView
+        });
+      }
     }
-  }, [activeTab, query]);
+  }, [activeTab, browseChannel, browseView, query]);
 
   useEffect(() => {
     if (activeTab === "watchlist" && browseResults.length === 0 && !browseLoading) {
@@ -2003,19 +2221,41 @@ function CinemaApp() {
     }
   }, [activeTab, browseLoading, browseResults.length]);
 
+  const serviceWakePreviewButton = serviceWakePreviewEnabled ? (
+    <button
+      type="button"
+      className="fixed bottom-4 right-4 z-50 rounded-full border border-emerald-300/30 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-200 hover:bg-slate-900"
+      onClick={() => setServiceWakePreviewOpen(true)}
+    >
+      等待态预览
+    </button>
+  ) : null;
+
+  const serviceWakeDialog = (
+    <ServiceWakeDialog
+      dismissible={serviceWakePreviewOpen && !serviceWakeActive}
+      open={serviceWakeDialogOpen}
+      onOpenChange={handleServiceWakeDialogOpenChange}
+    />
+  );
+
   if (!unlocked) {
     return (
-      <AccessGate
-        theme={theme}
-        onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
-        onUnlock={(auth, options) => {
-          setUnlocked(true);
-          applyAuth(auth);
-          if (options?.openProfile) {
-            setProfileOpen(true);
-          }
-        }}
-      />
+      <>
+        {serviceWakeDialog}
+        <AccessGate
+          theme={theme}
+          onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
+          onUnlock={(auth, options) => {
+            setUnlocked(true);
+            applyAuth(auth);
+            if (options?.openProfile) {
+              setProfileOpen(true);
+            }
+          }}
+        />
+        {serviceWakePreviewButton}
+      </>
     );
   }
 
@@ -2054,7 +2294,8 @@ function CinemaApp() {
 
   return (
     <>
-      <ServiceWakeDialog open={showServiceWakeDialog && serviceWakeActive} onOpenChange={setShowServiceWakeDialog} />
+      {serviceWakeDialog}
+      {serviceWakePreviewButton}
       <SearchDialog
         error={searchDialogError}
         loading={searchPreviewLoading || searchLoading}
@@ -2158,20 +2399,25 @@ function CinemaApp() {
             results={results}
             browseChannel={browseChannel}
             browseResults={browseResults}
+            browseView={browseView}
             browseLoading={browseLoading}
             browseLoadingMore={browseLoadingMore}
             browseHasMore={browseHasMore}
             browseLoadMode={browseLoadMode}
-            cachedAssets={cachedAssets}
             historyItems={history}
             trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
             pendingDownloadAssetKeys={downloadRequestAssetKeys}
             favoriteAssetKeys={favoriteAssetKeys}
+            collectionMarksByAssetKey={collectionMarksByAssetKey}
             trackedByAssetKey={trackedByAssetKey}
-            onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onToggleFavorite={toggleFavorite}
+            onUpdateCollectionMark={updateCollectionMark}
+            onBrowseViewChange={openBrowseView}
+            detailAssetKey={detailAssetKey}
+            onOpenDetail={openLibraryDetail}
+            onCloseDetail={closeLibraryDetail}
             onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
@@ -2202,7 +2448,7 @@ function CinemaApp() {
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
             favorites={favorites}
-            onRemove={removeFavorite}
+            onRemove={removeCollectionMark}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
         )}

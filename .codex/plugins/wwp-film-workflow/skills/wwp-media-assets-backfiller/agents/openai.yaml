@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Media Assets Backfiller"
+  short_description: "Repair missing Media Assets after uploads."
+  default_prompt: "Find manually or remotely uploaded WWP media and backfill missing or incomplete Media Assets rows."

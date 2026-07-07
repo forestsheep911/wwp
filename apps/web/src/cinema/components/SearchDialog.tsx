@@ -15,6 +15,7 @@ import { bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import type { ResultWithCache } from "../types";
+import { PosterImage } from "./PosterImage";
 
 interface SearchDialogProps {
   error: string;
@@ -252,49 +253,31 @@ function SearchLoadingRows() {
 }
 
 function MiniPoster({ result }: { result: SearchResult }) {
-  const posterUrl = result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
-
   return (
     <span className="relative aspect-[2/3] h-16 overflow-hidden rounded-md border border-slate-800 bg-slate-900">
       <span className="absolute inset-0 grid place-items-center text-lg font-black text-emerald-100">
         {titleInitial(result.title)}
       </span>
-      {posterUrl ? (
-        <img
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={posterUrl}
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
+      <PosterImage
+        alt=""
+        className="absolute inset-0 h-full w-full object-cover"
+        result={result}
+      />
     </span>
   );
 }
 
 function Poster({ result }: { result: SearchResult }) {
-  const posterUrl = result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
-
   return (
     <div className="relative aspect-[16/10] overflow-hidden bg-slate-900">
       <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 text-5xl font-black text-emerald-100">
         {titleInitial(result.title)}
       </div>
-      {posterUrl ? (
-        <img
-          alt={result.title}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={posterUrl}
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
+      <PosterImage
+        alt={result.title}
+        className="absolute inset-0 h-full w-full object-cover"
+        result={result}
+      />
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/95 to-transparent p-3">
         <p className="text-xs font-semibold uppercase tracking-normal text-slate-300">{formatDate(result.updatedAt)}</p>
       </div>

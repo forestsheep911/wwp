@@ -52,7 +52,7 @@ import {
   type UpdateMemberProfileRequest,
   validateMemberPasscode
 } from "@wwpdw/shared";
-import { createCacheStore, createSearchIndexStore, isFreshReady } from "@wwpdw/cache-store";
+import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
@@ -62,6 +62,7 @@ import { createSearchSource } from "./search-source.js";
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
+const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
 const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
@@ -72,6 +73,8 @@ const searchResultCacheLimit = Math.max(1, Number(process.env.SEARCH_RESULT_CACH
 const searchIndexEnabled = (process.env.SEARCH_INDEX_ENABLED ?? "true").toLowerCase() !== "false";
 const searchIndexWriteThrough = (process.env.SEARCH_INDEX_WRITE_THROUGH ?? "true").toLowerCase() !== "false";
 const searchIndexRefreshOnCache = (process.env.SEARCH_INDEX_REFRESH_ON_CACHE ?? "true").toLowerCase() !== "false";
+const searchIndexRefreshMediaAssetsOnHit =
+  (process.env.SEARCH_INDEX_REFRESH_MEDIA_ASSETS_ON_HIT ?? "true").toLowerCase() !== "false";
 const omdbApiKey = process.env.OMDB_API_KEY?.trim();
 const omdbRequestTimeoutMs = Math.max(1000, Number(process.env.OMDB_REQUEST_TIMEOUT_MS ?? 5000));
 const omdbLiveEnrichEnabled = (process.env.OMDB_LIVE_ENRICH_ENABLED ?? "false").toLowerCase() === "true";
@@ -773,8 +776,10 @@ async function loadSearchResults(query: string): Promise<{
   const cached = searchResultCache.get(key);
   if (cached && cached.expiresAt > now) {
     cached.lastUsedAt = now;
+    const cachedResults = await refreshIndexedMediaAssetResults(query, cached.results);
+    cached.results = cloneSearchResults(cachedResults);
     return {
-      results: cloneSearchResults(cached.results),
+      results: cloneSearchResults(cachedResults),
       cacheStatus: "hit"
     };
   }
@@ -826,6 +831,65 @@ async function writeSearchResultsToIndex(results: SearchResult[], context: strin
   }
 }
 
+function resultHasMediaAssetsVariants(result: SearchResult) {
+  return result.variants?.some((variant) => variant.metadata?.structuredSource === "media_assets") === true;
+}
+
+function resultNeedsSourceRefreshOnHit(result: SearchResult) {
+  return Boolean(result.sourcePageId) && !resultHasMediaAssetsVariants(result);
+}
+
+async function refreshIndexedMediaAssetResults(query: string, results: SearchResult[]) {
+  if (!searchIndexRefreshMediaAssetsOnHit || !searchSource.refreshAsset || results.length === 0) {
+    return results;
+  }
+
+  const refreshAsset = searchSource.refreshAsset.bind(searchSource);
+  let refreshedCount = 0;
+  const refreshedResults = await Promise.all(results.map(async (result) => {
+    if (!resultNeedsSourceRefreshOnHit(result)) {
+      return result;
+    }
+
+    try {
+      const refreshed = await refreshAsset({
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        title: result.title,
+        sourceBreadcrumb: result.sourceBreadcrumb
+      });
+
+      if (refreshed) {
+        refreshedCount += 1;
+        return refreshed;
+      }
+    } catch (error) {
+      logWarn("api.search.index_media_assets_refresh_failed", {
+        query,
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        ...errorLogFields(error)
+      });
+    }
+
+    return result;
+  }));
+
+  if (refreshedCount > 0) {
+    void writeSearchResultsToIndex(
+      refreshedResults,
+      "index_hit_media_assets_refresh"
+    );
+    logInfo("api.search.index_media_assets_refreshed", {
+      query,
+      refreshedCount,
+      resultCount: refreshedResults.length
+    });
+  }
+
+  return refreshedResults;
+}
+
 async function loadSearchResultsFromPersistentSources(
   query: string,
   disabledStatus: SearchLoadStatus = "live"
@@ -838,7 +902,7 @@ async function loadSearchResultsFromPersistentSources(
       const indexedResults = await searchIndex.search(query, searchIndexResultLimit);
       if (indexedResults.length > 0) {
         return {
-          results: indexedResults,
+          results: await refreshIndexedMediaAssetResults(query, indexedResults),
           cacheStatus: "index_hit"
         };
       }
@@ -1251,23 +1315,97 @@ function browseTime(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function browseYear(value?: string) {
+  return value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+}
+
+function browseTextYearCandidates(value?: string) {
+  const maxPlausibleYear = new Date().getUTCFullYear() + 1;
+  return Array.from(value?.matchAll(/\b(19\d{2}|20\d{2})\b/g) ?? [], (match) => match[1])
+    .filter((year) => Number(year) <= maxPlausibleYear)
+    .reverse();
+}
+
+function browseUrlSearchText(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const withoutQuery = value.split("?")[0];
+  try {
+    return decodeURIComponent(withoutQuery);
+  } catch {
+    return withoutQuery;
+  }
+}
+
+function browseYearFromTime(time: number) {
+  const year = new Date(time).getUTCFullYear();
+  return Number.isFinite(year) ? String(year) : undefined;
+}
+
+function browseObservedYear(result: SearchResult) {
+  return browseYear(result.updatedAt);
+}
+
+function browseTrustedReleaseYear(result: SearchResult) {
+  const metadata = result.metadata;
+  const work = metadata?.work;
+  const values = [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    browseUrlSearchText(result.sourceUrl),
+    metadata?.external?.omdb?.year,
+    metadata?.external?.omdb?.title,
+    metadata?.display?.title,
+    metadata?.work?.display?.title,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
+    ...(result.variants ?? []).flatMap((variant) => [
+      variant.label,
+      variant.sourceBreadcrumb?.join(" "),
+      browseUrlSearchText(variant.sourceUrl)
+    ])
+  ];
+  const observedYear = browseObservedYear(result);
+  return values
+    .flatMap(browseTextYearCandidates)
+    .find((year) => year !== observedYear) ?? values.flatMap(browseTextYearCandidates)[0];
+}
+
 function browseReleaseTime(result: SearchResult) {
-  const structuredYear = result.metadata?.release?.year?.match(/\b(\d{4})\b/)?.[1];
-  const workYear = result.metadata?.work?.release?.year?.match(/\b(\d{4})\b/)?.[1];
-  const omdbYear = result.metadata?.external?.omdb?.year?.match(/\b(\d{4})\b/)?.[1];
-  const year = [
-    result.metadata?.year?.match(/\b(\d{4})\b/)?.[1],
-    result.metadata?.releaseDate?.match(/\b(\d{4})\b/)?.[1],
-    structuredYear,
-    workYear,
-    omdbYear
-  ].find(Boolean);
+  const metadata = result.metadata;
+  const trustedYear = browseTrustedReleaseYear(result);
+  const observedYear = browseObservedYear(result);
+  const metadataYear = [
+    metadata?.work?.release?.year,
+    metadata?.release?.year,
+    metadata?.year,
+    metadata?.external?.omdb?.year,
+    metadata?.display?.year,
+    metadata?.work?.display?.year,
+    result.title
+  ].map(browseYear).find((candidate) => candidate && candidate !== observedYear);
+  const year = trustedYear ?? metadataYear;
+  const exactDate = [
+    metadata?.work?.release?.date,
+    metadata?.release?.date,
+    metadata?.releaseDate,
+    metadata?.external?.omdb?.released
+  ].map(browseTime).find((time) => time > 0 &&
+    (!trustedYear || browseYearFromTime(time) === trustedYear) &&
+    (!observedYear || browseYearFromTime(time) !== observedYear || Boolean(trustedYear)));
+  if (exactDate) {
+    return exactDate;
+  }
+
   return year ? browseTime(`${year}-01-01`) : 0;
 }
 
 function requestBrowseView(url: URL): BrowseViewId {
   const value = url.searchParams.get("view");
-  return value === "recent" ||
+  return value === "lucky" ||
+    value === "recent" ||
     value === "newGood" ||
     value === "popular" ||
     value === "topRated" ||
@@ -1277,7 +1415,7 @@ function requestBrowseView(url: URL): BrowseViewId {
     value === "rottenRank" ||
     value === "tspdtRank"
     ? value
-    : "lucky";
+    : "newGood";
 }
 
 function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {
@@ -1315,8 +1453,27 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const offset = requestOffset(url);
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
-  const pagedLimitMaximum = channel === "movie" && view === "tspdtRank" ? 2000 : 100;
+  const pagedLimitMaximum = channel === "movie" && view === "tspdtRank"
+    ? 2000
+    : view === "popular" || view === "mostWatched"
+      ? 300
+      : 100;
   const limit = requestLimit(url, 50, mode === "random" ? 200 : pagedLimitMaximum);
+
+  if (channel === "movie" && view === "tspdtRank" && mode === "paged") {
+    const served = await serveStaticTspdtBrowse(response, context, {
+      startedAt,
+      offset,
+      limit,
+      channel,
+      view,
+      mode
+    });
+    if (served) {
+      return;
+    }
+  }
+
   const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
@@ -1374,6 +1531,65 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     nextOffset: hasMore ? offset + results.length : undefined,
     mode
   });
+}
+
+async function serveStaticTspdtBrowse(
+  response: http.ServerResponse,
+  context: RequestContext,
+  options: {
+    startedAt: number;
+    offset: number;
+    limit: number;
+    channel: BrowseChannel;
+    view: BrowseViewId;
+    mode: "paged" | "random";
+  }
+) {
+  try {
+    const state = await tspdtBrowseStore.getState();
+    if (!state?.entries.length) {
+      return false;
+    }
+
+    const pageEntries = state.entries.slice(options.offset, options.offset + options.limit);
+    const pageResults = pageEntries.map((entry) => entry.result);
+    const hasMore = state.entries.length > options.offset + options.limit;
+    rememberResults(pageResults);
+    const results = await enrichResultsWithCache(pageResults);
+
+    logInfo("api.browse", {
+      requestId: context.requestId,
+      resultCount: results.length,
+      variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
+      browseSource: "tspdt_static",
+      channel: options.channel,
+      view: options.view,
+      mode: options.mode,
+      limit: options.limit,
+      offset: options.offset,
+      hasMore,
+      tspdtGeneratedAt: state.generatedAt,
+      tspdtEntryCount: state.entries.length,
+      durationMs: durationMs(options.startedAt)
+    });
+
+    sendJson(response, 200, {
+      results,
+      offset: options.offset,
+      limit: options.limit,
+      hasMore,
+      nextOffset: hasMore ? options.offset + results.length : undefined,
+      mode: options.mode
+    });
+    return true;
+  } catch (error) {
+    logWarn("api.browse.tspdt_static_failed", {
+      requestId: context.requestId,
+      store: tspdtBrowseStore.description,
+      ...errorLogFields(error)
+    });
+    return false;
+  }
 }
 
 function sampleSearchResults(results: SearchResult[], limit: number) {

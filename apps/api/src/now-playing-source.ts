@@ -150,7 +150,7 @@ interface DoubanPayload {
 
 function parseDoubanNowPlaying(html: string): DoubanNowPlayingEntry[] {
   const entries: DoubanNowPlayingEntry[] = [];
-  for (const match of html.matchAll(/<li\s+id="([^"]+)"\s+class="list-item"([\s\S]*?)>/g)) {
+  for (const match of html.matchAll(/<li\s+id="([^"]+)"([^>]*\bclass="[^"]*\blist-item\b[^"]*"[^>]*)>/g)) {
     const subjectId = match[1];
     const attributes = parseAttributes(match[2]);
     const title = attributes["data-title"];

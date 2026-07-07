@@ -5,6 +5,7 @@ import type {
   MovieCatalogEntry,
   MovieCatalogIssue,
   MovieCatalogState,
+  MovieBoxOffice,
   MovieCreditEntry,
   MovieExternalIds,
   MovieMetadataSource,
@@ -171,6 +172,7 @@ function mergeCatalogEntry(entry: MovieCatalogEntry, incoming: MovieWorkProfile,
       countries: uniqueStrings([...(work.countries ?? []), ...(incoming.countries ?? [])]),
       credits: uniqueByKey([...(work.credits ?? []), ...(incoming.credits ?? [])], creditKey),
       ratings: uniqueByKey([...(work.ratings ?? []), ...(incoming.ratings ?? [])], ratingKey),
+      boxOffice: mergeBoxOffice(work.boxOffice, incoming.boxOffice),
       media: {
         ...incoming.media,
         ...work.media,
@@ -244,6 +246,17 @@ function workFromResult(result: SearchResult): MovieWorkProfile {
       observedAt: result.updatedAt
     }
   ], sourceRefKey);
+  const boxOffice = mergeBoxOffice(
+    metadata?.work?.boxOffice,
+    metadata?.boxOffice,
+    metadata?.external?.omdb?.boxOffice
+      ? {
+          display: metadata.external.omdb.boxOffice,
+          source: "omdb",
+          updatedAt: metadata.external.omdb.fetchedAt
+        }
+      : undefined
+  );
 
   return {
     workId,
@@ -261,6 +274,7 @@ function workFromResult(result: SearchResult): MovieWorkProfile {
     countries: metadata?.work?.countries,
     credits,
     ratings,
+    boxOffice,
     media: {
       ...metadata?.work?.media,
       posters: uniqueByKey([
@@ -338,6 +352,21 @@ function mergeExternalIds(...values: Array<MovieExternalIds | undefined>) {
         merged[source] = id;
       }
     }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function mergeBoxOffice(...values: Array<MovieBoxOffice | undefined>) {
+  const merged: MovieBoxOffice = {};
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    merged.display ??= value.display;
+    merged.amount ??= value.amount;
+    merged.currency ??= value.currency;
+    merged.source ??= value.source;
+    merged.updatedAt ??= value.updatedAt;
   }
   return Object.keys(merged).length > 0 ? merged : undefined;
 }

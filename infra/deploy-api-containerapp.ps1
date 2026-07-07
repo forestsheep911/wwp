@@ -22,6 +22,8 @@ param(
     [string]$NotionLibraryRootPageId = $env:NOTION_LIBRARY_ROOT_PAGE_ID,
     [string]$NotionLibraryDatabaseId = $env:NOTION_LIBRARY_DATABASE_ID,
     [string]$NotionLibraryDataSourceId = $env:NOTION_LIBRARY_DATA_SOURCE_ID,
+    [string]$NotionMediaAssetsDatabaseId = $env:NOTION_MEDIA_ASSETS_DATABASE_ID,
+    [string]$NotionMediaAssetsDataSourceId = $env:NOTION_MEDIA_ASSETS_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
@@ -29,6 +31,7 @@ param(
     [string]$JobTable = "cachejobs",
     [string]$MemberTable = "membercodes",
     [string]$SearchIndexTable = "movieindex",
+    [string]$TspdtBrowseTable = "tspdtbrowse",
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
@@ -91,6 +94,14 @@ if (-not $NotionLibraryDataSourceId) {
     $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
+if (-not $NotionMediaAssetsDatabaseId) {
+    $NotionMediaAssetsDatabaseId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
+}
+
+if (-not $NotionMediaAssetsDataSourceId) {
+    $NotionMediaAssetsDataSourceId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
+}
+
 if (-not $AdminKey) {
     $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
 }
@@ -147,6 +158,7 @@ $envVars = @(
     "SEARCH_INDEX_REFRESH_ON_CACHE=true",
     "SEARCH_INDEX_RESULT_LIMIT=8",
     "SEARCH_INDEX_ENTRY_CACHE_TTL_SECONDS=300",
+    "TSPDT_BROWSE_CACHE_TTL_SECONDS=300",
     "OMDB_REQUEST_TIMEOUT_MS=5000",
     "OMDB_LIVE_ENRICH_ENABLED=false",
     "WWPDW_AI_SUMMARY_MODEL_PRESET=spark",
@@ -176,6 +188,7 @@ $envVars = @(
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
+    "AZURE_STORAGE_TSPDT_BROWSE_TABLE=$TspdtBrowseTable",
     "CACHE_ASSET_LOOKUP_CACHE_TTL_SECONDS=30",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=720",
     "AZURE_STORAGE_POSTER_SAS_MINUTES=1440",
@@ -195,6 +208,14 @@ if ($NotionLibraryDatabaseId) {
 
 if ($NotionLibraryDataSourceId) {
     $envVars += "NOTION_LIBRARY_DATA_SOURCE_ID=$NotionLibraryDataSourceId"
+}
+
+if ($NotionMediaAssetsDatabaseId) {
+    $envVars += "NOTION_MEDIA_ASSETS_DATABASE_ID=$NotionMediaAssetsDatabaseId"
+}
+
+if ($NotionMediaAssetsDataSourceId) {
+    $envVars += "NOTION_MEDIA_ASSETS_DATA_SOURCE_ID=$NotionMediaAssetsDataSourceId"
 }
 
 if ($OmdbApiKey) {

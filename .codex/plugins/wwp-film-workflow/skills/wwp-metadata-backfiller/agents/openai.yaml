@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Metadata Backfiller"
+  short_description: "Fill WWP work-level film metadata."
+  default_prompt: "Backfill WWP work metadata from existing fields, Douban, OMDb, TMDb, and AI advisory fields."

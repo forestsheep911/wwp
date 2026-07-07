@@ -1,5 +1,6 @@
 import "./env.js";
 import { mkdir, writeFile } from "node:fs/promises";
+import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
@@ -59,6 +60,32 @@ interface PagePlan {
 }
 
 const requestTimeoutMs = Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000);
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) return;
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, "../../..");
 const rootPageId = process.env.NOTION_LIBRARY_ROOT_PAGE_ID ?? process.env.PAGE_ID;
@@ -228,6 +255,64 @@ function readMultiSelect(properties: JsonRecord, name: string) {
 
 function yearFromTitle(title: string) {
   return title.match(/\b(18\d{2}|19\d{2}|20\d{2})\b/)?.[1];
+}
+
+function normalizedTitleBody(title: string) {
+  return title
+    .replace(/^[\s\u00a0]*(?:【[^】]+】\s*)+/u, "")
+    .replace(/[\s\u00a0]*[（(](?:18\d{2}|19\d{2}|20\d{2})[）)]\s*$/u, "")
+    .replace(/[\s\u00a0]+/gu, " ")
+    .trim();
+}
+
+function hasCjk(text: string) {
+  return /[\p{Script=Han}]/u.test(text);
+}
+
+function hasNonChineseTitleScript(text: string) {
+  return /[A-Za-z0-9\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text);
+}
+
+function parseStructuredTitles(title: string) {
+  const body = normalizedTitleBody(title);
+  if (!body) {
+    return {};
+  }
+
+  const segments = body.split(" ").filter(Boolean);
+  if (!hasCjk(body)) {
+    return {
+      englishTitle: body,
+      originalTitle: body
+    };
+  }
+
+  let splitIndex = -1;
+  let sawCjk = false;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    sawCjk = sawCjk || hasCjk(segment);
+    if (index > 0 && sawCjk && !hasCjk(segment) && hasNonChineseTitleScript(segment)) {
+      splitIndex = index;
+      break;
+    }
+    if (index > 0 && sawCjk && /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(segment)) {
+      splitIndex = index;
+      break;
+    }
+  }
+
+  if (splitIndex < 0 && segments.length === 2 && hasCjk(segments[0]) && hasCjk(segments[1]) && segments[0] !== segments[1]) {
+    splitIndex = 1;
+  }
+
+  const simplifiedChineseTitle = splitIndex > 0 ? segments.slice(0, splitIndex).join(" ") : body;
+  const originalTitle = splitIndex > 0 ? segments.slice(splitIndex).join(" ") : undefined;
+
+  return {
+    simplifiedChineseTitle,
+    originalTitle
+  };
 }
 
 function pagePropertyValue(type: NotionManagedProperty["type"], value: string | number | boolean | string[] | undefined) {
@@ -492,6 +577,7 @@ async function planPage(
   const douban = existingDouban ?? parsedDouban;
   const tmdb = existingTmdb ?? parsedTmdb;
   const year = yearFromTitle(title);
+  const structuredTitles = parseStructuredTitles(title);
   const workId = readManagedText(pageProperties, ["WW Work ID"]) ?? stableMovieWorkIdFromNotion(pageId, title, year);
   const conflicts = [
     existingImdb && parsedImdb && existingImdb !== parsedImdb ? `IMDb ${existingImdb} != ${parsedImdb}` : undefined,
@@ -499,6 +585,11 @@ async function planPage(
     existingTmdb && parsedTmdb && existingTmdb !== parsedTmdb ? `TMDB ${existingTmdb} != ${parsedTmdb}` : undefined
   ].filter((value): value is string => Boolean(value));
   const hasExternalId = Boolean(imdb || douban || tmdb);
+  const hasStructuredTitle = Boolean(
+    structuredTitles.simplifiedChineseTitle ||
+    structuredTitles.originalTitle ||
+    structuredTitles.englishTitle
+  );
   const updates: Record<string, unknown> = {};
 
   addUpdate(updates, availableProperties, pageProperties, "WW Work ID", workId);
@@ -508,10 +599,13 @@ async function planPage(
   addUpdate(updates, availableProperties, pageProperties, "Douban URL", doubanSubjectUrl(douban));
   addUpdate(updates, availableProperties, pageProperties, "TMDB ID", tmdb);
   addUpdate(updates, availableProperties, pageProperties, "TMDB URL", tmdbMovieUrl(tmdb));
+  addUpdate(updates, availableProperties, pageProperties, "Simplified Chinese Title", structuredTitles.simplifiedChineseTitle);
+  addUpdate(updates, availableProperties, pageProperties, "Original Title", structuredTitles.originalTitle);
+  addUpdate(updates, availableProperties, pageProperties, "English Title", structuredTitles.englishTitle);
   addUpdate(updates, availableProperties, pageProperties, "Release Year", year ? Number(year) : undefined);
   addUpdate(updates, availableProperties, pageProperties, "Match Status", conflicts.length > 0 ? "conflict" : hasExternalId ? "candidate" : "unmatched");
   addUpdate(updates, availableProperties, pageProperties, "Metadata Status", conflicts.length > 0 ? "conflict" : hasExternalId ? "partial" : "draft");
-  addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, hasExternalId ? "notion-text" : "notion-page"));
+  addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, hasStructuredTitle ? "notion-title" : hasExternalId ? "notion-text" : "notion-page"));
   addUpdate(updates, availableProperties, pageProperties, "Metadata Confidence", conflicts.length > 0 ? 0.2 : hasExternalId ? 0.9 : 0.3);
   addUpdate(updates, availableProperties, pageProperties, "Needs Review", conflicts.length > 0 || !hasExternalId, { overwrite: conflicts.length > 0 });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Updated At", new Date().toISOString().slice(0, 10), { overwrite: Object.keys(updates).length > 0 });
@@ -542,6 +636,7 @@ async function main() {
       : "Set NOTION_WRITE_TOKEN, NOTION_TOKEN, or NOTION_READ_ONLY_TOKEN.");
   }
 
+  installNotionDnsOverride();
   const notion = new Client({ auth: token, timeoutMs: requestTimeoutMs });
   const library = await loadLibrary(notion, options);
   const missingSchema = schemaPatch(library.properties);

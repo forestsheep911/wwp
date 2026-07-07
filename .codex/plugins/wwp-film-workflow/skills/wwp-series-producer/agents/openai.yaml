@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Series Producer"
+  short_description: "Handle WWP series and episode workflows."
+  default_prompt: "Map, encode, upload, or reconcile WWP series episodes while preserving season and episode relationships."

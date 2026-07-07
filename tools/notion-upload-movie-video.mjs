@@ -84,7 +84,7 @@ function humanGb(bytes) {
 
 function cleanMovieTitle(title) {
   return title
-    .replace(/^【敬请期待】\s*/, "")
+    .replace(/^(?:【敬请期待】|【仅供下载】)\s*/, "")
     .replace(/\s+[A-Za-z][A-Za-z0-9:.,'"!?&\- ]+(?:\(\d{4}\))?\s*$/, "")
     .replace(/\s*\(\d{4}\)\s*$/, "")
     .trim();

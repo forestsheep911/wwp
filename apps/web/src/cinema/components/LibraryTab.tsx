@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
-  ChevronDown,
+  CheckCircle2,
   ChevronLeft,
   Database,
   Download,
@@ -11,13 +11,13 @@ import {
   LayoutGrid,
   List,
   Loader2,
-  Play,
+  ShieldCheck,
   Sparkles,
   Star,
   Shuffle,
   Trophy
 } from "lucide-react";
-import type { CacheAsset, CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
+import type { CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
 import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -36,16 +36,17 @@ import {
   cacheLabel,
   cacheVariant,
   directorLine,
-  displayVariantLabel,
-  formatBytes,
   formatDateTime,
   formatLongDate,
   jobStatusLabel,
   jobVariant,
-  mediaQuality,
   metadataLine,
   peopleTags,
   titleInitial,
+  variantEpisodeNumber,
+  variantSpecGroupLabels,
+  variantSpecGroupText,
+  variantSpecText,
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
@@ -53,8 +54,10 @@ import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
-import { formatCreditAmount, playbackCreditCost, type BrowseChannel, type BrowseViewId, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
+import { formatCreditAmount, playbackCreditCost, type BadgeVariant, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
+import { PosterImage } from "./PosterImage";
+import { VariantSpecTags } from "./VariantSpecTags";
 
 interface LibraryTabProps {
   creditPolicy: CreditPolicyResponse;
@@ -65,21 +68,26 @@ interface LibraryTabProps {
   results: ResultWithCache[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
+  browseView: BrowseViewId;
   browseLoading: boolean;
   browseLoadingMore: boolean;
   browseHasMore: boolean;
   browseLoadMode: "paged" | "random";
-  cachedAssets: CacheAsset[];
   historyItems: PlaybackHistoryEntry[];
   trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
+  collectionMarksByAssetKey: Map<string, FavoriteEntry>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
-  onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
+  onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
+  onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
+  detailAssetKey?: string;
+  onOpenDetail: (result: ResultWithCache) => void;
+  onCloseDetail: () => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -94,20 +102,25 @@ export function LibraryTab({
   results,
   browseChannel,
   browseResults,
+  browseView,
   browseLoading,
   browseLoadingMore,
   browseHasMore,
   browseLoadMode,
-  cachedAssets,
   historyItems,
   trackedItems,
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
+  collectionMarksByAssetKey,
   trackedByAssetKey,
-  onOpenCachedAsset,
   onFocusedAssetHandled,
   onToggleFavorite,
+  onUpdateCollectionMark,
+  onBrowseViewChange,
+  detailAssetKey,
+  onOpenDetail,
+  onCloseDetail,
   onRefreshBrowse,
   onViewModeChange,
   onSelect,
@@ -171,9 +184,22 @@ export function LibraryTab({
     });
   }
 
+  function openDetailResult(result: ResultWithCache) {
+    setDetailResult(result);
+    onOpenDetail(result);
+  }
+
   useEffect(() => {
-    setDetailResult(undefined);
-  }, [browseChannel, query]);
+    if (!detailAssetKey) {
+      setDetailResult(undefined);
+      return;
+    }
+
+    const detailCandidate = [...results, ...browseResults].find((result) => result.assetKey === detailAssetKey);
+    if (detailCandidate) {
+      setDetailResult(detailCandidate);
+    }
+  }, [browseResults, detailAssetKey, results]);
 
   useEffect(() => {
     if (!focusedAssetKey) {
@@ -202,17 +228,18 @@ export function LibraryTab({
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
+          collectionEntry={collectionMarksByAssetKey.get(detailResult.assetKey)}
           trackedByAssetKey={trackedByAssetKey}
-          onBack={() => setDetailResult(undefined)}
+          onBack={onCloseDetail}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
+          onUpdateCollectionMark={onUpdateCollectionMark}
           onSelect={onSelect}
           onDownload={onDownload}
         />
       ) : !hasQuery && results.length === 0 ? (
         <LibraryHome
           creditPolicy={creditPolicy}
-          cachedAssets={cachedAssets}
           browseChannel={browseChannel}
           browseResults={browseResults}
           browseLoading={browseLoading}
@@ -224,9 +251,10 @@ export function LibraryTab({
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
-          onOpenCachedAsset={onOpenCachedAsset}
+          browseView={browseView}
+          onBrowseViewChange={onBrowseViewChange}
           onRefreshBrowse={onRefreshBrowse}
-          onOpenDetail={setDetailResult}
+          onOpenDetail={openDetailResult}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
           onSelect={onSelect}
@@ -276,7 +304,7 @@ export function LibraryTab({
                       pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                       favoriteAssetKeys={favoriteAssetKeys}
                       trackedByAssetKey={trackedByAssetKey}
-                      onOpenDetail={setDetailResult}
+                      onOpenDetail={openDetailResult}
                       onSummarize={openMovieSummary}
                       onToggleFavorite={onToggleFavorite}
                       onSelect={onSelect}
@@ -294,7 +322,7 @@ export function LibraryTab({
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
-              onOpenDetail={setDetailResult}
+              onOpenDetail={openDetailResult}
               onSummarize={openMovieSummary}
               onToggleFavorite={onToggleFavorite}
               onSelect={onSelect}
@@ -331,7 +359,6 @@ const browseLoadStep = 12;
 const browseViewItemLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
 const browseRandomLimit = 48;
-const luckyRanks = new Map<string, number>();
 
 function randomBrowseSeed() {
   return Math.floor(Math.random() * 0x7fffffff);
@@ -343,12 +370,12 @@ const browseViews: Array<{
   detail: string;
   icon: typeof CalendarDays;
 }> = [
-  { id: "lucky", label: copy.library.browseViews.lucky.label, detail: copy.library.browseViews.lucky.detail, icon: Shuffle },
-  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
   { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
   { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Flame },
   { id: "topRated", label: copy.library.browseViews.topRated.label, detail: copy.library.browseViews.topRated.detail, icon: Star },
-  { id: "mostWatched", label: copy.library.browseViews.mostWatched.label, detail: copy.library.browseViews.mostWatched.detail, icon: Eye }
+  { id: "mostWatched", label: copy.library.browseViews.mostWatched.label, detail: copy.library.browseViews.mostWatched.detail, icon: Eye },
+  { id: "lucky", label: copy.library.browseViews.lucky.label, detail: copy.library.browseViews.lucky.detail, icon: Shuffle }
 ];
 
 const movieBrowseViews: Array<{
@@ -371,7 +398,6 @@ function viewsForBrowseChannel(channel: BrowseChannel) {
 
 function LibraryHome({
   creditPolicy,
-  cachedAssets,
   browseChannel,
   browseResults,
   browseLoading,
@@ -383,7 +409,8 @@ function LibraryHome({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
-  onOpenCachedAsset,
+  browseView,
+  onBrowseViewChange,
   onRefreshBrowse,
   onOpenDetail,
   onSummarize,
@@ -392,7 +419,6 @@ function LibraryHome({
   onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
-  cachedAssets: CacheAsset[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
   browseLoading: boolean;
@@ -404,15 +430,16 @@ function LibraryHome({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
-  onOpenCachedAsset: (assetKey: string) => void;
-  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId }) => void;
+  browseView: BrowseViewId;
+  onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
+  onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
-  const [activeView, setActiveView] = useState<BrowseViewId>("lucky");
+  const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -433,10 +460,6 @@ function LibraryHome({
     () => rankBrowseResults(activeSortView, browsableResults, historyStats, viewSeed),
     [activeSortView, browsableResults, historyStats, viewSeed]
   );
-  const rankedAssets = useMemo(
-    () => rankCachedAssets(activeSortView, cachedAssets),
-    [activeSortView, cachedAssets]
-  );
   const tspdtItems = useMemo(
     () => buildTspdtRankItems(channelResults),
     [channelResults]
@@ -453,23 +476,18 @@ function LibraryHome({
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
-    : browsingResults
-      ? rankedResults.length
-      : rankedAssets.length;
+    : rankedResults.length;
   const totalVisibleItems = Math.min(totalRankedItems, browseDisplayItemLimit);
   const loadedBrowseItemCount = showingTspdtRank ? channelResults.length : totalRankedItems;
   const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseServerItemLimit;
   const reachedBrowseViewLimit = totalVisibleItems >= browseDisplayItemLimit && (totalRankedItems > browseDisplayItemLimit || browseHasMore);
   const browseFullViewLoading = needsFullBrowseResults &&
+    rankedResults.length === 0 &&
     loadedBrowseItemCount < browseServerItemLimit &&
     (browseLoading || browseLoadingMore || canLoadMoreFromServer);
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
-  );
-  const visibleAssets = useMemo(
-    () => rankedAssets.slice(0, visibleItemCount),
-    [rankedAssets, visibleItemCount]
   );
   const visibleTspdtItems = useMemo(
     () => tspdtItems.slice(0, visibleItemCount),
@@ -490,9 +508,13 @@ function LibraryHome({
   }
 
   useEffect(() => {
-    setActiveView(viewsForBrowseChannel(browseChannel)[0].id);
-    setViewSeed(randomBrowseSeed());
-  }, [browseChannel]);
+    const nextViews = viewsForBrowseChannel(browseChannel);
+    const nextView = nextViews.some((view) => view.id === browseView) ? browseView : nextViews[0].id;
+    setActiveView(nextView);
+    if (nextView !== "lucky") {
+      setViewSeed(randomBrowseSeed());
+    }
+  }, [browseChannel, browseView]);
 
   useEffect(() => {
     onRefreshBrowseRef.current = onRefreshBrowse;
@@ -550,6 +572,43 @@ function LibraryHome({
       <div className="scrollbar-none flex gap-2 overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1">
         {channelViews.map((view) => {
           const Icon = view.icon;
+          if (view.id === "lucky") {
+            return (
+              <div className="flex flex-none overflow-hidden rounded-md border border-slate-800 bg-slate-950" key={view.id}>
+                <Button
+                  className="rounded-none border-r border-slate-800 px-2"
+                  type="button"
+                  size="sm"
+                  variant={activeSortView === view.id ? "secondary" : "ghost"}
+                  onClick={() => {
+                    setActiveView(view.id);
+                    setViewSeed(randomBrowseSeed());
+                    onBrowseViewChange(view.id, { refresh: true });
+                  }}
+                  title={copy.library.browseViews.lucky.detail}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="sr-only">{copy.library.browseViews.lucky.detail}</span>
+                </Button>
+                <Button
+                  className="rounded-none"
+                  type="button"
+                  size="sm"
+                  variant={activeSortView === view.id ? "secondary" : "ghost"}
+                  onClick={() => {
+                    if (activeSortView !== view.id) {
+                      setActiveView(view.id);
+                      onBrowseViewChange(view.id);
+                    }
+                  }}
+                  title={view.label}
+                >
+                  {view.label}
+                </Button>
+              </div>
+            );
+          }
+
           return (
             <Button
               className="flex-none"
@@ -558,13 +617,11 @@ function LibraryHome({
               size="sm"
               variant={activeSortView === view.id ? "secondary" : "ghost"}
               onClick={() => {
-                setActiveView(view.id);
-                setViewSeed(randomBrowseSeed());
-                onRefreshBrowse({
-                  mode: view.id === "lucky" ? "random" : "paged",
-                  limit: view.id === "lucky" ? browseRandomLimit : view.id === "tspdtRank" ? tspdtBrowseCatalogLimit : 100,
-                  view: view.id
-                });
+                if (activeSortView !== view.id) {
+                  setActiveView(view.id);
+                  setViewSeed(randomBrowseSeed());
+                  onBrowseViewChange(view.id);
+                }
               }}
               title={view.label}
             >
@@ -576,9 +633,7 @@ function LibraryHome({
       </div>
 
       <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
-        {showingTspdtRank && browseFullViewLoading ? (
-          <BrowseLoadingGrid />
-        ) : showingTspdtRank ? (
+        {showingTspdtRank ? (
           <>
             <TspdtRankView
               creditPolicy={creditPolicy}
@@ -604,7 +659,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={visibleTspdtItems.length}
               totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : browseFullViewLoading || browseInitialLoading ? (
@@ -639,29 +693,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={visibleResults.length}
               totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
-            />
-          </>
-        ) : visibleAssets.length ? (
-          <>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {visibleAssets.map((asset) => (
-                <BrowseAssetCard
-                  key={asset.assetKey}
-                  asset={asset}
-                  creditPolicy={creditPolicy}
-                  onOpen={onOpenCachedAsset}
-                />
-              ))}
-            </div>
-            <LazyLoadFooter
-              capped={reachedBrowseViewLimit}
-              hasMore={hasMoreItems || canLoadMoreFromServer}
-              loadMoreRef={loadMoreRef}
-              loading={browseLoadingMore}
-              shownCount={visibleAssets.length}
-              totalCount={totalRankedItems}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : canLoadMoreFromServer ? (
@@ -674,7 +705,6 @@ function LibraryHome({
               loading={browseLoadingMore}
               shownCount={0}
               totalCount={0}
-              onLoadMore={showMoreItems}
             />
           </>
         ) : (
@@ -691,8 +721,7 @@ function LazyLoadFooter({
   loadMoreRef,
   loading,
   shownCount,
-  totalCount,
-  onLoadMore
+  totalCount
 }: {
   capped: boolean;
   hasMore: boolean;
@@ -700,23 +729,34 @@ function LazyLoadFooter({
   loading: boolean;
   shownCount: number;
   totalCount: number;
-  onLoadMore: () => void;
 }) {
   if (!hasMore && totalCount <= browseInitialCount) {
     return null;
   }
 
+  if (hasMore) {
+    return (
+      <div
+        ref={loadMoreRef}
+        aria-busy={loading}
+        aria-label={loading ? copy.common.loading : copy.library.continueLoading}
+        className="flex min-h-12 items-center justify-center pt-1"
+      >
+        {loading ? (
+          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/80 px-3 py-2 text-xs font-semibold text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {copy.common.loading}
+          </span>
+        ) : (
+          <span className="sr-only">{copy.library.continueLoading}</span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div ref={loadMoreRef} className="flex justify-center pt-1">
-      {hasMore ? (
-        <Button type="button" variant="outline" size="sm" onClick={onLoadMore} disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
-          {loading ? copy.common.loading : copy.library.loadMore}
-          {totalCount > 0 ? <Badge variant="secondary">{shownCount}/{totalCount}{hasMore ? "+" : ""}</Badge> : null}
-        </Button>
-      ) : (
-        <Badge variant="muted">{capped ? copy.library.loadedLimit(shownCount) : copy.library.loadedAll(totalCount)}</Badge>
-      )}
+      <Badge variant="muted">{capped ? copy.library.loadedLimit(shownCount) : copy.library.loadedAll(totalCount)}</Badge>
     </div>
   );
 }
@@ -875,11 +915,11 @@ function TspdtRankRow({
     );
   }
 
-  const tags = cardTags(result);
+  const tags = genreTags(result).slice(0, 3);
   return (
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
-      <RankNumber rank={entry.rank} />
-      <div className="relative hidden lg:block">
+      <RankNumber align="top" rank={entry.rank} />
+      <div className="group relative hidden lg:block">
         <button
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           type="button"
@@ -914,6 +954,7 @@ function TspdtRankRow({
           />
         </div>
         <CompactRatingBadges result={result} />
+        <AgeRecommendationBadge result={result} />
         {tags.length ? (
           <div className="flex flex-wrap gap-1.5">
             {tags.map((tag) => (
@@ -931,6 +972,9 @@ function TspdtRankRow({
         trackedByAssetKey={trackedByAssetKey}
         onSelect={onSelect}
         onDownload={onDownload}
+        onShowAllVariants={() => onOpenDetail(result)}
+        reserveMoreRow
+        variantLimit={3}
       />
     </article>
   );
@@ -950,9 +994,9 @@ function hasCjkText(value: string) {
   return /[\u3400-\u9fff]/u.test(value);
 }
 
-function RankNumber({ rank }: { rank: number }) {
+function RankNumber({ rank, align = "center" }: { rank: number; align?: "center" | "top" }) {
   return (
-    <div className="flex items-center">
+    <div className={`flex ${align === "top" ? "items-start pt-3 lg:pt-4" : "items-center"}`}>
       <span className="inline-flex h-10 w-14 items-center justify-center rounded-md border border-amber-300/25 bg-amber-300/10 text-sm font-black tabular-nums text-amber-100">
         #{rank}
       </span>
@@ -1215,6 +1259,35 @@ function toTime(value?: string) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function yearFromString(value?: string) {
+  return value?.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+}
+
+function yearsFromString(value?: string) {
+  const maxPlausibleYear = new Date().getUTCFullYear() + 1;
+  return Array.from(value?.matchAll(/\b(19\d{2}|20\d{2})\b/g) ?? [], (match) => match[1])
+    .filter((year) => Number(year) <= maxPlausibleYear)
+    .reverse();
+}
+
+function urlSearchText(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const withoutQuery = value.split("?")[0];
+  try {
+    return decodeURIComponent(withoutQuery);
+  } catch {
+    return withoutQuery;
+  }
+}
+
+function yearFromTime(time: number) {
+  const year = new Date(time).getUTCFullYear();
+  return Number.isFinite(year) ? String(year) : undefined;
+}
+
 function historyStatsByAssetKey(historyItems: PlaybackHistoryEntry[]) {
   const stats = new Map<string, { count: number; lastPlayedAt: number }>();
   for (const item of historyItems) {
@@ -1242,7 +1315,11 @@ function sourceRating(result: SearchResult, source: "douban" | "imdb" | "rotten"
 }
 
 function seededBrowseRank(seed: number, result: SearchResult) {
-  const key = `${seed}:${result.assetKey}`;
+  return seededAssetRank(seed, result.assetKey);
+}
+
+function seededAssetRank(seed: number, assetKey: string) {
+  const key = `${seed}:${assetKey}`;
   let hash = 2166136261;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= key.charCodeAt(index);
@@ -1266,13 +1343,49 @@ function sourceRatingSort(source: "douban" | "imdb" | "rotten", seed: number) {
 }
 
 function releaseTime(result: SearchResult) {
-  const releaseDate = toTime(result.metadata?.releaseDate);
+  const metadata = result.metadata;
+  const work = metadata?.work;
+  const observedYear = yearFromString(result.updatedAt);
+  const trustedYearValues = [
+    result.title,
+    result.sourceBreadcrumb?.join(" "),
+    urlSearchText(result.sourceUrl),
+    metadata?.external?.omdb?.year,
+    metadata?.external?.omdb?.title,
+    metadata?.display?.title,
+    work?.display?.title,
+    metadata?.titles?.map((title) => title.title).join(" "),
+    work?.titles?.map((title) => title.title).join(" "),
+    ...(result.variants ?? []).flatMap((variant) => [
+      variant.label,
+      variant.sourceBreadcrumb?.join(" "),
+      urlSearchText(variant.sourceUrl)
+    ])
+  ].flatMap(yearsFromString);
+  const trustedYear = trustedYearValues.find((year) => year !== observedYear) ?? trustedYearValues[0];
+  const metadataYear = [
+    metadata?.work?.release?.year,
+    metadata?.release?.year,
+    metadata?.year,
+    metadata?.external?.omdb?.year,
+    metadata?.display?.year,
+    metadata?.work?.display?.year,
+    result.title
+  ].map(yearFromString).find((candidate) => candidate && candidate !== observedYear);
+  const year = trustedYear ?? metadataYear;
+  const releaseDate = [
+    metadata?.work?.release?.date,
+    metadata?.release?.date,
+    metadata?.releaseDate,
+    metadata?.external?.omdb?.released
+  ].map(toTime).find((time) => time > 0 &&
+    (!trustedYear || yearFromTime(time) === trustedYear) &&
+    (!observedYear || yearFromTime(time) !== observedYear || Boolean(trustedYear)));
   if (releaseDate) {
     return releaseDate;
   }
 
-  const year = Number.parseInt(result.metadata?.year ?? "", 10);
-  return Number.isFinite(year) ? toTime(`${year}-01-01`) : 0;
+  return year ? toTime(`${year}-01-01`) : 0;
 }
 
 function resultKeys(result: SearchResult) {
@@ -1290,17 +1403,6 @@ function resultLastPlayedAt(result: SearchResult, stats: Map<string, { count: nu
   return resultKeys(result).reduce((time, key) => Math.max(time, stats.get(key)?.lastPlayedAt ?? 0), 0);
 }
 
-function luckyRank(key: string) {
-  const existingRank = luckyRanks.get(key);
-  if (existingRank !== undefined) {
-    return existingRank;
-  }
-
-  const nextRank = Math.random();
-  luckyRanks.set(key, nextRank);
-  return nextRank;
-}
-
 function rankBrowseResults(
   view: BrowseViewId,
   results: ResultWithCache[],
@@ -1315,7 +1417,7 @@ function rankBrowseResults(
   const byLastPlayed = (left: SearchResult, right: SearchResult) => resultLastPlayedAt(right, stats) - resultLastPlayedAt(left, stats);
 
   if (view === "lucky") {
-    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
+    return ranked.sort((left, right) => seededBrowseRank(seed, left) - seededBrowseRank(seed, right));
   }
 
   if (view === "doubanRank") {
@@ -1347,57 +1449,6 @@ function rankBrowseResults(
   }
 
   return ranked.sort(byUpdated);
-}
-
-function assetActivityTime(asset: CacheAsset) {
-  return toTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt);
-}
-
-function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[]) {
-  const ranked = [...assets];
-  if (view === "lucky") {
-    return ranked.sort((left, right) => luckyRank(left.assetKey) - luckyRank(right.assetKey));
-  }
-
-  if (view === "mostWatched" || view === "popular") {
-    return ranked.sort((left, right) => toTime(right.lastPlayedAt) - toTime(left.lastPlayedAt) || assetActivityTime(right) - assetActivityTime(left));
-  }
-
-  if (view === "topRated" || view === "newGood") {
-    return ranked.sort((left, right) => (right.media?.contentLength ?? 0) - (left.media?.contentLength ?? 0) || assetActivityTime(right) - assetActivityTime(left));
-  }
-
-  return ranked.sort((left, right) => assetActivityTime(right) - assetActivityTime(left));
-}
-
-function BrowseAssetCard({
-  asset,
-  creditPolicy,
-  onOpen
-}: {
-  asset: CacheAsset;
-  creditPolicy: CreditPolicyResponse;
-  onOpen: (assetKey: string) => void;
-}) {
-  const credits = playbackCreditCost(asset.media?.contentLength, creditPolicy);
-
-  return (
-    <article className="grid min-w-0 content-between gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-4 shadow-2xl shadow-black/20">
-      <div className="min-w-0">
-        <p className="line-clamp-2 min-h-10 font-semibold leading-5 text-slate-50">{asset.title}</p>
-        <p className="mt-2 text-sm text-slate-400">
-          {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)}
-        </p>
-        <p className="mt-1 text-xs text-slate-500">
-          {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
-        </p>
-      </div>
-      <Button type="button" size="sm" onClick={() => onOpen(asset.assetKey)}>
-        <Play className="h-4 w-4" />
-        {formatCreditAmount(credits, creditPolicy.unitSymbol)}
-      </Button>
-    </article>
-  );
 }
 
 type RatingSource = "douban" | "imdb" | "rotten" | "metacritic";
@@ -1496,50 +1547,145 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
   );
 }
 
+type AgeConfidence = "high" | "medium" | "low";
+
+interface AgeRecommendation {
+  age: number;
+  label: string;
+  sourceLabel: string;
+  confidenceLabel?: string;
+  reason?: string;
+  riskTags: string[];
+  ratingLevel: string[];
+  variant: BadgeVariant;
+  tooltip: string;
+}
+
+function ageRecommendation(result: SearchResult): AgeRecommendation | undefined {
+  const metadata = result.metadata;
+  const age = metadata?.effectiveMinimumAge;
+  if (typeof age !== "number" || !Number.isFinite(age)) {
+    return undefined;
+  }
+
+  const label = copy.library.ageRecommendation(age);
+  const confidence = metadata?.aiAgeConfidence as AgeConfidence | undefined;
+  const confidenceLabel = confidence ? copy.library.ageConfidence[confidence] : undefined;
+  const sourceLabel = typeof metadata?.manualAgeOverride === "number" ? copy.library.manualAgeSource : copy.library.aiAgeSource;
+  const riskTags = visibleTags(metadata?.contentRiskTags).slice(0, 6);
+  const ratingLevel = visibleTags(metadata?.ratingLevel).slice(0, 2);
+  const reason = metadata?.aiAgeReason?.trim();
+  const variant: BadgeVariant = age >= 16 ? "danger" : age >= 13 ? "warning" : "default";
+  const tooltip = [
+    copy.library.ageRecommendationTitle,
+    label,
+    sourceLabel,
+    confidenceLabel,
+    ratingLevel.length ? `分级 ${ratingLevel.join(" / ")}` : undefined,
+    riskTags.length ? riskTags.join(" / ") : undefined,
+    reason
+  ].filter(Boolean).join(" / ");
+
+  return {
+    age,
+    label,
+    sourceLabel,
+    confidenceLabel,
+    reason,
+    riskTags,
+    ratingLevel,
+    variant,
+    tooltip
+  };
+}
+
+function AgeRecommendationBadge({ result, className = "" }: { result: SearchResult; className?: string }) {
+  const recommendation = ageRecommendation(result);
+  if (!recommendation) {
+    return null;
+  }
+
+  return (
+    <Badge
+      variant={recommendation.variant}
+      title={recommendation.tooltip}
+      aria-label={recommendation.tooltip}
+      className={`w-fit ${className}`}
+    >
+      <ShieldCheck className="h-3.5 w-3.5" />
+      {recommendation.label}
+    </Badge>
+  );
+}
+
+function AgeRecommendationPanel({ result }: { result: SearchResult }) {
+  const recommendation = ageRecommendation(result);
+  if (!recommendation) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-200">
+          <ShieldCheck className="h-4 w-4 text-emerald-200" />
+          {copy.library.ageRecommendationTitle}
+        </h3>
+        <Badge variant={recommendation.variant}>{recommendation.label}</Badge>
+        <Badge variant="muted">{recommendation.sourceLabel}</Badge>
+        {recommendation.confidenceLabel ? <Badge variant="secondary">{recommendation.confidenceLabel}</Badge> : null}
+        {recommendation.ratingLevel.map((tag) => (
+          <Badge key={`rating-level-${tag}`} variant="secondary">{tag}</Badge>
+        ))}
+      </div>
+      {recommendation.reason ? (
+        <p className="text-sm leading-6 text-slate-300">{recommendation.reason}</p>
+      ) : null}
+      {recommendation.riskTags.length ? (
+        <div className="flex flex-wrap gap-2">
+          {recommendation.riskTags.map((tag) => (
+            <Badge key={`age-risk-${tag}`} variant="muted">{tag}</Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function cardTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({
-      key: `genre-${tag}`,
-      tag,
-      variant: "secondary" as const,
-      className: genreBadgeClass(tag)
-    })),
+    ...genreTags(result),
     ...peopleTags(result).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ].slice(0, 3);
 }
 
+function genreTags(result: SearchResult) {
+  return visibleTags(result.metadata?.genres).map((tag) => ({
+    key: `genre-${tag}`,
+    tag,
+    variant: "secondary" as const,
+    className: genreBadgeClass(tag)
+  }));
+}
+
 function detailTags(result: SearchResult) {
   return [
-    ...visibleTags(result.metadata?.genres).map((tag) => ({
-      key: `genre-${tag}`,
-      tag,
-      variant: "secondary" as const,
-      className: genreBadgeClass(tag)
-    })),
+    ...genreTags(result),
     ...visibleTags(result.metadata?.people).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
   ];
 }
 
 function MoviePoster({ result }: { result: SearchResult }) {
-  const posterUrl = result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
-
   return (
     <div className="relative aspect-[2/3] overflow-hidden rounded-md bg-slate-900">
       <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-slate-900 to-emerald-950 text-4xl font-black text-emerald-100">
         {titleInitial(result.title)}
       </div>
-      {posterUrl ? (
-        <img
-          alt={result.title}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={posterUrl}
-          onError={(event) => {
-            event.currentTarget.hidden = true;
-          }}
-        />
-      ) : null}
+      <PosterImage
+        alt={result.title}
+        className="absolute inset-0 h-full w-full object-cover"
+        result={result}
+      />
     </div>
   );
 }
@@ -1556,15 +1702,15 @@ function PosterActions({
   className?: string;
 }) {
   return (
-    <div className={`absolute right-2 top-2 z-10 flex flex-col gap-1.5 ${className}`}>
-      <AiSummaryButton
-        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
-        onClick={onSummarize}
-      />
+    <div className={`pointer-events-none absolute right-2 top-2 z-10 flex flex-col gap-1.5 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${className}`}>
       <FavoriteButton
         active={favorite}
         className="h-8 w-8 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
         onClick={onToggleFavorite}
+      />
+      <AiSummaryButton
+        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        onClick={onSummarize}
       />
     </div>
   );
@@ -1580,7 +1726,8 @@ function VariantButtons({
   onDownload,
   onShowAllVariants,
   compact = false,
-  variantLimit
+  variantLimit,
+  reserveMoreRow = false
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
@@ -1592,19 +1739,72 @@ function VariantButtons({
   onShowAllVariants?: () => void;
   compact?: boolean;
   variantLimit?: number;
+  reserveMoreRow?: boolean;
 }) {
-  const variants = result.variants ?? [];
-  const visibleVariants = variantLimit ? variants.slice(0, variantLimit) : variants;
+  const variants = sortedVariants(result.variants ?? []);
+  const specGroups = variantLimit && onShowAllVariants ? variantSpecGroups(result.title, variants) : [];
+  if (specGroups.length > 0) {
+    const shouldReserveMoreGroupRow = Boolean(reserveMoreRow && variantLimit && specGroups.length > variantLimit);
+    const visibleGroupLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreGroupRow ? 1 : 0)) : specGroups.length;
+    const visibleGroups = specGroups.slice(0, visibleGroupLimit);
+    const hiddenGroupCount = Math.max(0, specGroups.length - visibleGroups.length);
+
+    return (
+      <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
+        {visibleGroups.map((group) => (
+          <Button
+            className={`min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-left text-slate-100 hover:bg-slate-800 ${compact ? "" : "h-auto py-2"}`}
+            type="button"
+            variant="outline"
+            size="sm"
+            key={group.key}
+            onClick={onShowAllVariants}
+            title={`${group.label} / ${group.episodeCount} 集`}
+            aria-label={`${group.label} / ${group.episodeCount} 集`}
+          >
+            <span className="flex min-w-0 flex-wrap gap-1.5">
+              {(group.labels.length > 0 ? group.labels : [group.label]).map((label) => (
+                <span
+                  className="inline-flex max-w-full items-center rounded-full border border-slate-600/70 bg-slate-950/55 px-2 py-0.5 text-[11px] font-semibold leading-4 text-slate-100 shadow-sm shadow-black/10"
+                  key={`${group.key}-${label}`}
+                  title={label}
+                >
+                  <span className="max-w-full truncate">{label}</span>
+                </span>
+              ))}
+            </span>
+            <Badge className="shrink-0" variant="muted">{group.episodeCount} 集</Badge>
+          </Button>
+        ))}
+        {hiddenGroupCount > 0 ? (
+          <Button
+            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onShowAllVariants}
+            title={copy.library.viewAllVariants}
+          >
+            {copy.library.moreVariants(hiddenGroupCount)}
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const shouldReserveMoreRow = Boolean(reserveMoreRow && variantLimit && onShowAllVariants && variants.length > variantLimit);
+  const visibleLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreRow ? 1 : 0)) : variants.length;
+  const visibleVariants = variants.slice(0, visibleLimit);
   const hiddenVariantCount = Math.max(0, variants.length - visibleVariants.length);
 
   if (variants.length === 0) {
-    return <Badge variant="danger">{copy.library.noVariants}</Badge>;
+    return <div aria-label={copy.library.noVariants} />;
   }
 
   return (
     <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
       {visibleVariants.map((variant) => {
-        const variantLabel = displayVariantLabel(result.title, variant.label);
+        const variantLabel = variantSpecText(result.title, variant, { compact });
         const pending = pendingAssetKeys.includes(variant.assetKey);
         const tracked = trackedByAssetKey.get(variant.assetKey);
         const displayAsset = tracked?.asset ?? variant.cache;
@@ -1656,7 +1856,9 @@ function VariantButtons({
                   style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
                 />
               ) : null}
-              <span className="relative z-10 min-w-0 max-w-full truncate">{variantLabel}</span>
+              <span className="relative z-10 min-w-0 max-w-full">
+                <VariantSpecTags compact={compact} title={result.title} variant={variant} />
+              </span>
               <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
                 {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 {!isActiveCacheHit ? (
@@ -1686,7 +1888,7 @@ function VariantButtons({
       {hiddenVariantCount > 0 ? (
         onShowAllVariants ? (
           <Button
-            className="min-h-10 justify-between rounded-full border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
             type="button"
             variant="outline"
             size="sm"
@@ -1701,6 +1903,62 @@ function VariantButtons({
       ) : null}
     </div>
   );
+}
+
+function sortedVariants(variants: MediaVariant[]) {
+  return [...variants].sort((left, right) => {
+    const leftEpisode = variantEpisodeNumber(left);
+    const rightEpisode = variantEpisodeNumber(right);
+    const leftHasEpisode = typeof leftEpisode === "number" && Number.isFinite(leftEpisode);
+    const rightHasEpisode = typeof rightEpisode === "number" && Number.isFinite(rightEpisode);
+
+    if (leftHasEpisode && rightHasEpisode && leftEpisode !== rightEpisode) {
+      return leftEpisode - rightEpisode;
+    }
+    if (leftHasEpisode !== rightHasEpisode) {
+      return leftHasEpisode ? -1 : 1;
+    }
+
+    return 0;
+  });
+}
+
+type VariantSpecGroup = {
+  key: string;
+  label: string;
+  labels: string[];
+  episodeCount: number;
+};
+
+function variantSpecGroupKey(variant: MediaVariant, fallbackIndex: number) {
+  return variant.sourceBreadcrumb?.[1] ??
+    variant.metadata?.mediaAssetPageId ??
+    variant.metadata?.sourceLabel ??
+    `variant-spec-${fallbackIndex}`;
+}
+
+function variantSpecGroups(title: string, variants: MediaVariant[]): VariantSpecGroup[] {
+  const episodeVariants = variants.filter((variant) => typeof variantEpisodeNumber(variant) === "number");
+  if (episodeVariants.length < 2) {
+    return [];
+  }
+
+  const groups = new Map<string, { key: string; label: string; labels: string[]; variants: MediaVariant[] }>();
+  episodeVariants.forEach((variant, index) => {
+    const key = variantSpecGroupKey(variant, index);
+    const labels = variantSpecGroupLabels(variant);
+    const label = variantSpecGroupText(title, variant);
+    const group = groups.get(key) ?? { key, label, labels, variants: [] };
+    group.variants.push(variant);
+    groups.set(key, group);
+  });
+
+  return [...groups.values()].map((group) => ({
+    key: group.key,
+    label: group.label,
+    labels: group.labels,
+    episodeCount: group.variants.length
+  }));
 }
 
 function MovieCard({
@@ -1735,7 +1993,7 @@ function MovieCard({
 
   return (
     <article className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4">
-      <div className="relative">
+      <div className="group relative">
         <button
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           type="button"
@@ -1763,6 +2021,7 @@ function MovieCard({
         </button>
 
         <CompactRatingBadges result={result} />
+        <AgeRecommendationBadge result={result} />
 
         {tags.length ? (
           <div className="flex flex-wrap gap-2">
@@ -1792,31 +2051,35 @@ function MovieCard({
 }
 
 function SummaryText({ summary }: { summary: string }) {
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const closeOnWheel = () => setOpen(false);
+    window.addEventListener("wheel", closeOnWheel, { passive: true });
+    return () => window.removeEventListener("wheel", closeOnWheel);
+  }, [open]);
 
   return (
     <>
-      <p
-        aria-describedby={tooltipOpen ? tooltipId : undefined}
-        className="line-clamp-3 h-[4.5rem] cursor-help rounded-sm text-sm leading-6 text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 sm:line-clamp-4 sm:h-24"
-        tabIndex={0}
-        onBlur={() => setTooltipOpen(false)}
-        onFocus={() => setTooltipOpen(true)}
-        onMouseEnter={() => setTooltipOpen(true)}
-        onMouseLeave={() => setTooltipOpen(false)}
+      <button
+        className="line-clamp-3 h-[4.5rem] w-full cursor-zoom-in rounded-sm text-left text-sm leading-6 text-slate-400 transition-colors hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 sm:line-clamp-4 sm:h-24"
+        type="button"
+        onClick={() => setOpen(true)}
       >
         {summary}
-      </p>
-      {tooltipOpen ? (
-        <div
-          className="fixed bottom-6 left-1/2 z-[200] max-h-[60vh] w-[min(56rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-md border border-slate-600 bg-slate-950 px-4 py-3 text-sm leading-7 text-slate-100 shadow-2xl shadow-black/50"
-          id={tooltipId}
-          role="tooltip"
-        >
-          {summary}
-        </div>
-      ) : null}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[72vh] w-[min(92vw,42rem)] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{copy.library.summaryTitle}</DialogTitle>
+          </DialogHeader>
+          <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{summary}</p>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -1852,6 +2115,38 @@ function FavoriteButton({ active, className = "", onClick }: { active: boolean; 
       aria-label={label}
     >
       <Star className={`h-4 w-4 ${active ? "fill-amber-300 text-amber-300" : ""}`} />
+    </Button>
+  );
+}
+
+function CollectionMarkButton({
+  active,
+  mark,
+  onClick
+}: {
+  active: boolean;
+  mark: Exclude<CollectionMark, "favorite">;
+  onClick: () => void;
+}) {
+  const label = mark === "wantToWatch"
+    ? active ? copy.favorites.unwantToWatch : copy.favorites.wantToWatch
+    : active ? copy.favorites.unwatched : copy.favorites.watched;
+  const Icon = mark === "wantToWatch" ? Eye : CheckCircle2;
+  const activeClass = mark === "wantToWatch"
+    ? "border-sky-300/40 bg-sky-300/10 text-sky-200 hover:bg-sky-300/20"
+    : "border-emerald-300/40 bg-emerald-300/10 text-emerald-200 hover:bg-emerald-300/20";
+
+  return (
+    <Button
+      className={active ? activeClass : ""}
+      type="button"
+      variant="outline"
+      size="icon"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      <Icon className={`h-4 w-4 ${active ? "fill-current" : ""}`} />
     </Button>
   );
 }
@@ -2004,6 +2299,7 @@ function MovieListView({
                 </td>
                 <td className="px-4 py-4 text-sm">
                   <p className="text-slate-300">{metadataLine(result)}</p>
+                  <AgeRecommendationBadge className="mt-2" result={result} />
                   {directorLine(result) ? (
                     <p className="mt-2 text-xs font-semibold text-slate-400">{copy.library.director(directorLine(result))}</p>
                   ) : null}
@@ -2051,10 +2347,12 @@ function MovieDetailView({
   pendingAssetKeys,
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
+  collectionEntry,
   trackedByAssetKey,
   onBack,
   onSummarize,
   onToggleFavorite,
+  onUpdateCollectionMark,
   onSelect,
   onDownload
 }: {
@@ -2063,10 +2361,12 @@ function MovieDetailView({
   pendingAssetKeys: string[];
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
+  collectionEntry?: FavoriteEntry;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onBack: () => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
+  onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -2087,6 +2387,16 @@ function MovieDetailView({
           <FavoriteButton
             active={favoriteAssetKeys.has(result.assetKey)}
             onClick={() => onToggleFavorite(result)}
+          />
+          <CollectionMarkButton
+            active={Boolean(collectionEntry?.wantToWatchAt)}
+            mark="wantToWatch"
+            onClick={() => onUpdateCollectionMark(result, "wantToWatch")}
+          />
+          <CollectionMarkButton
+            active={Boolean(collectionEntry?.watchedAt)}
+            mark="watched"
+            onClick={() => onUpdateCollectionMark(result, "watched")}
           />
           <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
         </div>
@@ -2132,6 +2442,8 @@ function MovieDetailView({
               ))}
             </div>
           ) : null}
+
+          <AgeRecommendationPanel result={result} />
 
           <div className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/80 p-4">
             <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>

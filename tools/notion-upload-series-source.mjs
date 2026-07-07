@@ -111,6 +111,14 @@ function pageTitle(page) {
   return "";
 }
 
+function publicTitle(title) {
+  return title.replace(/^(?:【敬请期待】|【仅供下载】)\s*/, "").trim();
+}
+
+function productionTitle(title) {
+  return title.replace(/^【敬请期待】\s*/, "").trim();
+}
+
 function titlePropertyName(page) {
   for (const [name, property] of Object.entries(page.properties ?? {})) {
     if (property.type === "title") {
@@ -201,7 +209,7 @@ async function updatePageTitle(notion, page, newTitle, apply) {
 async function updateMainPageProperties(notion, page, options) {
   const patch = {};
   const title = pageTitle(page);
-  const cleanedTitle = title.replace(/^【敬请期待】\s*/, "").trim();
+  const cleanedTitle = productionTitle(title);
   const targetTitle = options.mainTitle || (options.forceTitle ? cleanedTitle : "");
   if (targetTitle && targetTitle !== title) {
     patch[titlePropertyName(page)] = { title: richText(targetTitle) };
@@ -268,7 +276,7 @@ async function ensureSeriesTree(notion, page, options, archiveBytes) {
   if (!callout) throw new Error("No callout block found for playable/spec section.");
   if (!baseToggle) throw new Error("No 基地 toggle block found for source section.");
 
-  const title = (options.mainTitle || pageTitle(page)).replace(/^【敬请期待】\s*/, "").trim();
+  const title = publicTitle(options.mainTitle || pageTitle(page));
   const specTitle = options.specTitle || `${title} 普通话 繁简英 ${humanGb(archiveBytes)}`;
   const sourceSizeTitle = options.sourceSizeTitle || humanGb(archiveBytes);
 

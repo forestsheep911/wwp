@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
+import crypto from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 
@@ -72,6 +74,8 @@ const ratingLevelOptions = new Set([
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
+    pageIds: [],
+    doubanSubjects: new Map(),
     limit: Infinity,
     delayMs: DEFAULT_DELAY_MS,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -83,7 +87,13 @@ function parseArgs() {
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--dry-run") {
+    if (arg === "--page-id") {
+      options.pageIds.push(args[++index]);
+    } else if (arg === "--douban-subject") {
+      const [pageId, subjectId] = `${args[++index] ?? ""}`.split("=", 2);
+      if (!pageId || !subjectId) throw new Error("--douban-subject expects pageId=subjectId.");
+      options.doubanSubjects.set(pageId, subjectId);
+    } else if (arg === "--dry-run") {
       options.dryRun = true;
     } else if (arg === "--no-external") {
       options.noExternal = true;
@@ -114,6 +124,21 @@ function dotenv(name) {
     }
   }
   return process.env[name];
+}
+
+function installNotionDnsOverride() {
+  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+  if (!notionApiIp) return;
+  const originalLookup = dns.lookup.bind(dns);
+  dns.lookup = (hostname, options, callback) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") return options(null, notionApiIp, 4);
+      if (options?.all) return callback(null, [{ address: notionApiIp, family: 4 }]);
+      return callback(null, notionApiIp, 4);
+    }
+    return originalLookup(hostname, options, callback);
+  };
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
 function ensureLocalData() {
@@ -201,7 +226,7 @@ function bestDescription(jsonLdDescription, summary) {
 
 function cleanTitle(title) {
   return title
-    .replace(/^【敬请期待】\s*/, "")
+    .replace(/^(?:【敬请期待】|【仅供下载】)\s*/, "")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -327,6 +352,84 @@ async function fetchText(url, headers = {}, timeoutMs = 30000) {
     throw new Error(`HTTP ${response.status} for ${url}: ${text.slice(0, 120)}`);
   }
   return text;
+}
+
+function firstCookie(setCookie) {
+  return setCookie?.split(";")[0] ?? "";
+}
+
+function solveSha512Prefix(challenge, difficulty = 4) {
+  const target = "0".repeat(difficulty);
+  for (let nonce = 1; ; nonce += 1) {
+    const hash = crypto.createHash("sha512").update(`${challenge}${nonce}`).digest("hex");
+    if (hash.startsWith(target)) return nonce;
+  }
+}
+
+async function fetchDoubanSubjectHtml(url, headers = {}) {
+  const baseHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    Referer: "https://movie.douban.com/",
+    ...headers
+  };
+
+  let cookie = "";
+  let response = await fetch(url, {
+    redirect: "manual",
+    headers: baseHeaders
+  });
+  cookie = firstCookie(response.headers.get("set-cookie"));
+  let html = await response.text();
+
+  const location = response.headers.get("location");
+  if (response.status >= 300 && response.status < 400 && location) {
+    response = await fetch(location, {
+      redirect: "manual",
+      headers: {
+        ...baseHeaders,
+        Cookie: cookie,
+        Referer: url
+      }
+    });
+    html = await response.text();
+  }
+
+  const token = html.match(/name="tok" value="([^"]+)"/)?.[1];
+  const challenge = html.match(/name="cha" value="([^"]+)"/)?.[1];
+  const redirectUrl = html.match(/name="red" value="([^"]+)"/)?.[1];
+  if (!token || !challenge || !redirectUrl) {
+    return html;
+  }
+
+  const form = new URLSearchParams({
+    tok: token,
+    cha: challenge,
+    sol: `${solveSha512Prefix(challenge)}`,
+    red: redirectUrl
+  });
+  const challengeResponse = await fetch("https://sec.douban.com/c", {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      ...baseHeaders,
+      Cookie: cookie,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: response.url
+    },
+    body: form
+  });
+  cookie = [cookie, firstCookie(challengeResponse.headers.get("set-cookie"))].filter(Boolean).join("; ");
+
+  const finalResponse = await fetch(redirectUrl, {
+    headers: {
+      ...baseHeaders,
+      Cookie: cookie,
+      Referer: "https://sec.douban.com/"
+    }
+  });
+  return finalResponse.text();
 }
 
 async function fetchJson(url, headers = {}) {
@@ -492,7 +595,7 @@ function isoDurationToMinutes(value) {
 
 async function fetchDoubanMetadata(subjectId, cookie) {
   const url = `https://movie.douban.com/subject/${subjectId}/`;
-  const html = await fetchText(url, {
+  const html = await fetchDoubanSubjectHtml(url, {
     Cookie: cookie,
     Referer: "https://movie.douban.com/"
   });
@@ -541,6 +644,15 @@ async function fetchDoubanMetadata(subjectId, cookie) {
 async function fetchImdbRating(imdbId, timeoutMs) {
   if (!imdbId) {
     return undefined;
+  }
+  const omdbApiKey = dotenv("OMDB_API_KEY");
+  if (omdbApiKey) {
+    const url = new URL("https://www.omdbapi.com/");
+    url.searchParams.set("apikey", omdbApiKey);
+    url.searchParams.set("i", imdbId);
+    const payload = await fetchJson(url.toString());
+    const rating = Number(payload.imdbRating);
+    return Number.isFinite(rating) ? rating : undefined;
   }
   const markdown = await fetchText(`https://r.jina.ai/http://r.jina.ai/http://https://www.imdb.com/title/${imdbId}/ratings/`, {
     "Accept-Language": "en-US,en;q=0.9"
@@ -617,6 +729,21 @@ function buildPatch(page, metadata, imdbRating, posterFile) {
       rich_text: richText(metadata.imdbId, `https://www.imdb.com/title/${metadata.imdbId}/`)
     };
   }
+  if (!hasValue(properties, "IMDb ID") && metadata.imdbId) {
+    patch["IMDb ID"] = { rich_text: richText(metadata.imdbId) };
+  }
+  if (!hasValue(properties, "IMDb URL") && metadata.imdbId) {
+    patch["IMDb URL"] = { url: `https://www.imdb.com/title/${metadata.imdbId}/` };
+  }
+  if (!hasValue(properties, "Douban Subject ID") && metadata.subjectId) {
+    patch["Douban Subject ID"] = { rich_text: richText(metadata.subjectId) };
+  }
+  if (!hasValue(properties, "Douban URL") && metadata.subjectUrl) {
+    patch["Douban URL"] = { url: metadata.subjectUrl };
+  }
+  if (!hasValue(properties, "Poster URL") && metadata.posterUrl) {
+    patch["Poster URL"] = { url: metadata.posterUrl };
+  }
   const currentDescription = propText(properties["简介"]);
   if ((!currentDescription || (looksTruncated(currentDescription) && metadata.description.length > currentDescription.length)) && metadata.description) {
     patch["简介"] = { rich_text: richText(metadata.description) };
@@ -656,12 +783,25 @@ async function collectViewPages(notion, pageSize, limit) {
   return pages.slice(0, limit);
 }
 
+async function collectTargetPages(notion, options) {
+  if (options.pageIds.length > 0) {
+    return options.pageIds.map((id) => ({ id }));
+  }
+  return collectViewPages(notion, options.pageSize, options.limit);
+}
+
 async function processPage(notion, pageRef, options, cookie) {
   const page = await notion.pages.retrieve({ page_id: pageRef.id });
   const title = propText(page.properties.Title);
+  const chineseTitle = propText(page.properties["Simplified Chinese Title"]);
+  const releaseYear = propText(page.properties["Release Year"]);
+  const searchTitle = chineseTitle && releaseYear ? `${chineseTitle} (${releaseYear})` : chineseTitle || title;
   const existingInfo = [propText(page.properties["基本信息"]), propText(page.properties.note)].join(" ");
   const expectedType = propText(page.properties["影别"]);
-  const subjectResult = await findDoubanSubject(title, existingInfo, expectedType, cookie);
+  const forcedSubjectId = options.doubanSubjects.get(page.id) ?? options.doubanSubjects.get(page.id.replace(/-/g, ""));
+  const subjectResult = forcedSubjectId
+    ? { status: "ok", subject: { id: forcedSubjectId } }
+    : await findDoubanSubject(searchTitle, existingInfo, expectedType, cookie);
 
   if (subjectResult.status !== "ok") {
     return {
@@ -719,10 +859,11 @@ async function processPage(notion, pageRef, options, cookie) {
 async function main() {
   ensureLocalData();
   const options = parseArgs();
-  const notion = new Client({ auth: dotenv("NOTION_TOKEN") });
+  installNotionDnsOverride();
+  const notion = new Client({ auth: dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN"), timeoutMs: 120000 });
   const cookie = cookieHeader();
   const processed = options.forceProcessed ? new Set() : readProcessed();
-  const pages = await collectViewPages(notion, options.pageSize, options.limit);
+  const pages = await collectTargetPages(notion, options);
   const report = {
     startedAt: new Date().toISOString(),
     dryRun: options.dryRun,
@@ -730,7 +871,9 @@ async function main() {
     records: []
   };
 
-  console.log(`Loaded ${pages.length} candidate pages from view ${VIEW_ID}.`);
+  console.log(options.pageIds.length > 0
+    ? `Loaded ${pages.length} target pages from --page-id.`
+    : `Loaded ${pages.length} candidate pages from view ${VIEW_ID}.`);
 
   for (const pageRef of pages) {
     if (processed.has(pageRef.id)) {

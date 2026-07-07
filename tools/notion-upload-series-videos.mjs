@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import nodeFetch from "node-fetch";
 
 const DEFAULT_PAGE_ID = "39120ac12f0a80e69374d19602a6e59b";
 const DEFAULT_SOURCE_DIR = "C:\\Users\\fores\\OneDrive\\13_新时期\\boccaro\\trans";
@@ -10,25 +13,41 @@ const DEFAULT_PART_MIB = 20;
 function parseArgs() {
   const options = {
     pageId: DEFAULT_PAGE_ID,
+    title: "",
+    chineseTitle: "",
+    englishTitle: "",
+    year: undefined,
     sourceDir: DEFAULT_SOURCE_DIR,
     filePattern: "Teach.You.a.Lesson.S01E*.mp4",
     targetSpecPageId: "",
     specTitle: "",
     partMiB: DEFAULT_PART_MIB,
     maxFiles: Infinity,
+    create: false,
+    createEpisodes: false,
     apply: false
   };
+  let pageIdProvided = false;
 
   const args = process.argv.slice(2);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--page-id") options.pageId = args[++index];
+    if (arg === "--page-id") {
+      options.pageId = args[++index];
+      pageIdProvided = true;
+    }
+    else if (arg === "--title") options.title = args[++index];
+    else if (arg === "--chinese-title") options.chineseTitle = args[++index];
+    else if (arg === "--english-title") options.englishTitle = args[++index];
+    else if (arg === "--year") options.year = Number(args[++index]);
     else if (arg === "--source-dir") options.sourceDir = args[++index];
     else if (arg === "--file-pattern") options.filePattern = args[++index];
     else if (arg === "--target-spec-page-id") options.targetSpecPageId = args[++index];
     else if (arg === "--spec-title") options.specTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--max-files") options.maxFiles = Number(args[++index]);
+    else if (arg === "--create") options.create = true;
+    else if (arg === "--create-episodes") options.createEpisodes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -39,17 +58,22 @@ function parseArgs() {
   }
 
   options.sourceDir = path.resolve(options.sourceDir);
+  if (options.create && !pageIdProvided) options.pageId = "";
+  if (options.create && !options.title) throw new Error("--create requires --title.");
+  if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
   return options;
 }
 
 function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-series-videos.mjs [--apply] [--max-files 1]
+  node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --create-episodes
 
 Examples:
   node tools/notion-upload-series-videos.mjs
   node tools/notion-upload-series-videos.mjs --apply --max-files 1
   node tools/notion-upload-series-videos.mjs --apply
+  node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB" --create-episodes --apply
 `);
 }
 
@@ -62,6 +86,32 @@ function dotenv(name) {
     }
   }
   return process.env[name];
+}
+
+function installNotionDnsOverride() {
+  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+  if (!notionApiIp) return;
+  const originalLookup = dns.lookup.bind(dns);
+  dns.lookup = (hostname, options, callback) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") return options(null, notionApiIp, 4);
+      if (options?.all) return callback(null, [{ address: notionApiIp, family: 4 }]);
+      return callback(null, notionApiIp, 4);
+    }
+    return originalLookup(hostname, options, callback);
+  };
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
+
+function createNotionClient(token) {
+  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+  const options = { auth: token, timeoutMs: 600000 };
+  if (proxyUrl) {
+    options.fetch = nodeFetch;
+    options.agent = new HttpsProxyAgent(proxyUrl);
+    console.log(`proxy: ${proxyUrl}`);
+  }
+  return new Client(options);
 }
 
 function plainText(items = []) {
@@ -80,6 +130,13 @@ function titlePropertyName(page) {
     if (property.type === "title") return name;
   }
   return "title";
+}
+
+function dataSourceTitlePropertyName(dataSource) {
+  for (const [name, property] of Object.entries(dataSource.properties ?? {})) {
+    if (property.type === "title") return name;
+  }
+  return "Title";
 }
 
 function richText(content) {
@@ -162,7 +219,88 @@ async function listChildren(notion, blockId) {
   return blocks;
 }
 
+async function findLibrary(notion) {
+  const configuredDataSourceId = dotenv("NOTION_LIBRARY_DATA_SOURCE_ID");
+  if (configuredDataSourceId) {
+    const dataSource = await notion.dataSources.retrieve({ data_source_id: configuredDataSourceId });
+    return { dataSourceId: configuredDataSourceId, dataSource };
+  }
+
+  const root = dotenv("NOTION_LIBRARY_ROOT_PAGE_ID") || dotenv("PAGE_ID");
+  if (!root) throw new Error("NOTION_LIBRARY_DATA_SOURCE_ID or NOTION_LIBRARY_ROOT_PAGE_ID is required.");
+  const children = await listChildren(notion, root);
+  const database = children.find((block) => block.type === "child_database");
+  if (!database) throw new Error("No child database found under library root.");
+  const db = await notion.databases.retrieve({ database_id: database.id });
+  const dataSourceId = db.data_sources?.[0]?.id ?? database.id;
+  const dataSource = await notion.dataSources.retrieve({ data_source_id: dataSourceId });
+  return { dataSourceId, databaseId: database.id, dataSource };
+}
+
+async function findPageByTitle(notion, dataSourceId, title) {
+  const response = await notion.dataSources.query({
+    data_source_id: dataSourceId,
+    page_size: 5,
+    filter: { property: "Title", title: { equals: title } }
+  });
+  return response.results[0];
+}
+
+async function createSeriesPage(notion, library, options) {
+  const existing = await findPageByTitle(notion, library.dataSourceId, options.title);
+  if (existing) return existing;
+  if (!options.create) throw new Error(`Page not found: ${options.title}`);
+
+  const properties = {
+    [dataSourceTitlePropertyName(library.dataSource)]: { title: richText(options.title) }
+  };
+  const setRichTextProperty = (name, value) => {
+    if (value && library.dataSource.properties?.[name]) {
+      properties[name] = { rich_text: richText(value) };
+    }
+  };
+  setRichTextProperty("Simplified Chinese Title", options.chineseTitle);
+  setRichTextProperty("English Title", options.englishTitle);
+  if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
+  if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "TV Series" } };
+
+  console.log(`${options.apply ? "create" : "would create"} series page: ${options.title}`);
+  if (!options.apply) return { id: "(dry-run)", properties };
+
+  try {
+    return await notion.pages.create({
+      parent: { data_source_id: library.dataSourceId },
+      properties
+    });
+  } catch (error) {
+    if (!library.databaseId) throw error;
+    console.log(`data_source parent create failed; retry with database parent: ${error.message}`);
+    return await notion.pages.create({
+      parent: { database_id: library.databaseId },
+      properties
+    });
+  }
+}
+
+async function ensureChildPage(notion, parentPageId, title, apply) {
+  const children = await listChildren(notion, parentPageId);
+  const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
+  if (existing) return { id: existing.id, title: blockTitle(existing) };
+
+  console.log(`${apply ? "create" : "would create"} child page "${title}" under ${parentPageId}`);
+  if (!apply) return { id: "(dry-run)", title };
+  const page = await notion.pages.create({
+    parent: { page_id: parentPageId },
+    properties: { title: { title: richText(title) } }
+  });
+  return { id: page.id, title };
+}
+
 async function findSpecPage(notion, pageId, options) {
+  if (pageId === "(dry-run)" && options.create) {
+    return { id: "(dry-run)", title: options.specTitle || "待制作" };
+  }
+
   if (options.targetSpecPageId) {
     const page = await notion.pages.retrieve({ page_id: options.targetSpecPageId });
     return { id: page.id, title: pageTitle(page) };
@@ -173,7 +311,15 @@ async function findSpecPage(notion, pageId, options) {
     const specPages = (await listChildren(notion, callout.id)).filter((block) => block.type === "child_page");
     if (specPages.length > 0) return { id: specPages[0].id, title: blockTitle(specPages[0]) };
   }
-  throw new Error("No spec child page found under a callout block.");
+
+  const rootSpec = children.find((block) => block.type === "child_page");
+  if (rootSpec) return { id: rootSpec.id, title: blockTitle(rootSpec) };
+
+  if (options.create) {
+    const title = options.specTitle || "待制作";
+    return await ensureChildPage(notion, pageId, title, options.apply);
+  }
+  throw new Error("No spec child page found.");
 }
 
 async function collectEpisodePages(notion, specPageId) {
@@ -187,6 +333,7 @@ async function collectEpisodePages(notion, specPageId) {
 }
 
 async function updatePageTitle(notion, pageId, title, apply) {
+  if (pageId === "(dry-run)") return;
   const page = await notion.pages.retrieve({ page_id: pageId });
   const current = pageTitle(page);
   if (!title || current === title) return;
@@ -199,6 +346,27 @@ async function updatePageTitle(notion, pageId, title, apply) {
       }
     });
   }
+}
+
+async function ensureEpisodePages(notion, specPageId, episodePages, selectedFiles, apply, enabled) {
+  const missing = selectedFiles.filter((file) => !episodePages.has(file.episode));
+  if (missing.length === 0) return episodePages;
+  if (!enabled) {
+    throw new Error(`Missing episode pages for: ${missing.map((file) => file.name).join(", ")}`);
+  }
+  if (specPageId === "(dry-run)") {
+    for (const file of missing) {
+      console.log(`would create episode page Episode ${String(file.episode).padStart(2, "0")}`);
+      episodePages.set(file.episode, { id: "(dry-run)", title: `Episode ${String(file.episode).padStart(2, "0")}` });
+    }
+    return episodePages;
+  }
+  for (const file of missing) {
+    const episodeTitle = `Episode ${String(file.episode).padStart(2, "0")}`;
+    const page = await ensureChildPage(notion, specPageId, episodeTitle, apply);
+    episodePages.set(file.episode, page);
+  }
+  return episodePages;
 }
 
 function readManifest(manifestPath) {
@@ -328,17 +496,22 @@ async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply
 
 async function main() {
   const options = parseArgs();
+  installNotionDnsOverride();
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
   const files = collectSourceFiles(options);
   if (files.length === 0) throw new Error(`No matching files found: ${path.join(options.sourceDir, options.filePattern)}`);
   const selectedFiles = files.slice(0, options.maxFiles);
-  const notion = new Client({ auth: token, timeoutMs: 600000 });
-  const page = await notion.pages.retrieve({ page_id: options.pageId });
+  const notion = createNotionClient(token);
+  const library = options.create ? await findLibrary(notion) : undefined;
+  const page = options.pageId
+    ? await notion.pages.retrieve({ page_id: options.pageId })
+    : await createSeriesPage(notion, library, options);
   const specPage = await findSpecPage(notion, page.id, options);
-  const episodePages = await collectEpisodePages(notion, specPage.id);
+  let episodePages = specPage.id === "(dry-run)" ? new Map() : await collectEpisodePages(notion, specPage.id);
   const specTitle = options.specTitle || specLabelFromFiles(files) || specPage.title;
+  episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes);
 
   console.log(`page: ${pageTitle(page)} ${page.id}`);
   console.log(`spec page: ${specPage.title} ${specPage.id}`);
@@ -348,11 +521,6 @@ async function main() {
 
   await updatePageTitle(notion, specPage.id, specTitle, options.apply);
 
-  const missingEpisodes = selectedFiles.filter((file) => !episodePages.has(file.episode));
-  if (missingEpisodes.length > 0) {
-    throw new Error(`Missing episode pages for: ${missingEpisodes.map((file) => file.name).join(", ")}`);
-  }
-
   if (!options.apply) {
     for (const file of selectedFiles) {
       console.log(`would upload ${file.name} -> Episode ${String(file.episode).padStart(2, "0")}`);
@@ -360,7 +528,7 @@ async function main() {
     return;
   }
 
-  const manifestPath = path.join(".local-data", `notion-series-video-upload-${options.pageId.replace(/-/g, "")}.json`);
+  const manifestPath = path.join(".local-data", `notion-series-video-upload-${page.id.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
   for (const file of selectedFiles) {
     const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);

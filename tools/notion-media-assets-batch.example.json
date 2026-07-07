@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "maxAssets": 3,
+    "allowedAssetTypes": [
+      "playable_video",
+      "original_disc",
+      "source_archive",
+      "subtitle_package"
+    ]
+  },
+  "items": [
+    {
+      "label": "nausicaa",
+      "pageId": "replace-with-notion-page-id",
+      "expectedTitleContains": [
+        "风之谷"
+      ],
+      "maxAssets": 3,
+      "metadata": {
+        "resolution": "1080p",
+        "videoCodec": "hevc",
+        "container": "mp4",
+        "audioLanguages": [
+          "zh-Mandarin"
+        ],
+        "subtitleLanguages": [
+          "zh-Hant",
+          "en"
+        ],
+        "sourceLineage": [
+          "encode"
+        ]
+      }
+    }
+  ]
+}

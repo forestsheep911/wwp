@@ -3,6 +3,7 @@ import type {
   CacheAssetLookupResponse,
   CacheJob,
   CacheStatus,
+  MediaVariant,
   MediaDiagnostics,
   MemberAccessCode,
   SearchResult
@@ -192,9 +193,13 @@ export function titleInitial(title: string) {
 
 export function metadataLine(result: SearchResult) {
   const metadata = result.metadata;
+  const ageLabel = metadata?.effectiveMinimumAge !== undefined
+    ? `建议 ${metadata.effectiveMinimumAge}+`
+    : undefined;
   const parts = [
     metadata?.year,
     metadata?.type,
+    ageLabel,
     metadata?.ratingLevel?.[0],
     formatLongDate(metadata?.releaseDate)
   ].filter(Boolean);
@@ -217,8 +222,52 @@ export function peopleTags(result: SearchResult) {
   return visibleTags(result.metadata?.people).slice(0, 3);
 }
 
+function normalizedDisplayText(value?: string) {
+  const text = value?.trim();
+  if (!text || /^N\/?A$/i.test(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
+function isGeneratedLibrarySummary(value: string) {
+  return (
+    /\b\d+\s+playable specs?\s+found in this movie entry\b/i.test(value) ||
+    /^No playable specs were found\b/i.test(value) ||
+    /^已整理\s*\d+\s*个可播放规格/u.test(value) ||
+    /^这条影片暂时没有可播放规格/u.test(value) ||
+    /^Structured Media Assets row\b/i.test(value) ||
+    /^Media Assets? row\b/i.test(value)
+  );
+}
+
+function usableSummary(value?: string) {
+  const text = normalizedDisplayText(value);
+  if (!text || isGeneratedLibrarySummary(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
+function usableInfo(value?: string) {
+  const text = usableSummary(value);
+  if (!text || /^(?:draft|partial|complete|completed|ready|verified|unknown|none|metadata|meta|notion|omdb)$/i.test(text)) {
+    return undefined;
+  }
+
+  return text;
+}
+
 export function bestSummary(result: SearchResult) {
-  return result.metadata?.description ?? result.metadata?.info ?? result.summary;
+  return (
+    usableSummary(result.metadata?.description) ??
+    usableInfo(result.metadata?.info) ??
+    usableSummary(result.metadata?.external?.omdb?.plot) ??
+    usableSummary(result.summary) ??
+    copy.library.missingSummary
+  );
 }
 
 function looksTruncated(value: string) {
@@ -274,6 +323,182 @@ export function displayVariantLabel(title: string, label: string) {
   }
 
   return cleanedLabel || label;
+}
+
+const mediaLanguageLabels: Record<string, string> = {
+  "zh-Hans": "简中",
+  "zh-Hant": "繁中",
+  "zh-Mandarin": "国语",
+  "zh-Cantonese": "粤语",
+  en: "英语",
+  ja: "日语",
+  commentary: "评论音轨",
+  none: "无字幕"
+};
+
+const sourceLineageLabels: Record<string, string> = {
+  encode: "压制版",
+  remux: "Remux",
+  "Blu-ray": "蓝光",
+  "UHD Blu-ray": "UHD 蓝光",
+  "WEB-DL": "WEB-DL",
+  ISO: "ISO",
+  source_archive: "片源包"
+};
+
+function labelList(values?: string[]) {
+  return values
+    ?.map((value) => mediaLanguageLabels[value] ?? sourceLineageLabels[value] ?? value)
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function uniqueDisplayLabels(values: Array<string | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+export function variantHasSizeMetadata(variant?: MediaVariant) {
+  const metadata = variant?.metadata;
+  return Boolean(
+    metadata &&
+    (
+      (typeof metadata.approximateSizeGb === "number" && Number.isFinite(metadata.approximateSizeGb) && metadata.approximateSizeGb > 0) ||
+      (typeof metadata.exactByteSize === "number" && Number.isFinite(metadata.exactByteSize) && metadata.exactByteSize > 0)
+    )
+  );
+}
+
+function variantSizeLabel(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return undefined;
+  }
+
+  if (typeof metadata.approximateSizeGb === "number" && Number.isFinite(metadata.approximateSizeGb) && metadata.approximateSizeGb > 0) {
+    return `${metadata.approximateSizeGb.toLocaleString(undefined, { maximumFractionDigits: 2 })}GB`;
+  }
+
+  if (typeof metadata.exactByteSize === "number" && Number.isFinite(metadata.exactByteSize) && metadata.exactByteSize > 0) {
+    return formatBytes(metadata.exactByteSize);
+  }
+
+  return undefined;
+}
+
+function chineseEpisodeNumber(value: string) {
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  let total = 0;
+  let current = 0;
+
+  for (const char of value) {
+    if (char === "百") {
+      total += (current || 1) * 100;
+      current = 0;
+      continue;
+    }
+    if (char === "十") {
+      total += (current || 1) * 10;
+      current = 0;
+      continue;
+    }
+
+    const digit = digits[char];
+    if (digit === undefined) {
+      return undefined;
+    }
+    current = digit;
+  }
+
+  const number = total + current;
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function episodeNumberFromText(value: string) {
+  const patterns = [
+    /\bS\d{1,2}E(\d{1,3})\b/i,
+    /\b\d{1,2}x(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\b/i,
+    /\bE(?:P)?[\s._-]*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[集话話]/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const number = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isInteger(number) && number > 0) {
+      return number;
+    }
+  }
+
+  return chineseEpisodeNumber(value.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
+}
+
+export function variantEpisodeNumber(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  return metadata?.episodeNumber ?? episodeNumberFromText([
+    variant.label,
+    metadata?.sourceLabel,
+    metadata?.fileName,
+    metadata?.originalFileName
+  ].filter(Boolean).join(" "));
+}
+
+function variantEpisodeLabel(variant: MediaVariant) {
+  const number = variantEpisodeNumber(variant);
+
+  return typeof number === "number" && Number.isInteger(number) && number > 0 ? `第${number}集` : undefined;
+}
+
+export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean; includeEpisode?: boolean; includeSize?: boolean } = {}) {
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  const includeEpisode = options.includeEpisode ?? true;
+  const includeSize = options.includeSize ?? true;
+  const subtitles = metadata.noSubtitles
+    ? "无字幕"
+    : labelList(metadata.subtitleLanguages);
+  const labels = uniqueDisplayLabels([
+    includeEpisode ? variantEpisodeLabel(variant) : undefined,
+    subtitles ? `字幕 ${subtitles}` : undefined,
+    includeSize ? variantSizeLabel(variant) : undefined
+  ]);
+
+  return options.compact ? labels.slice(0, 3) : labels;
+}
+
+export function variantSpecGroupLabels(variant: MediaVariant) {
+  return variantSpecLabels(variant, { includeEpisode: false, includeSize: false });
+}
+
+export function variantSpecGroupText(title: string, variant: MediaVariant) {
+  const labels = variantSpecGroupLabels(variant);
+  if (labels.length > 0) {
+    return labels.join(" / ");
+  }
+
+  const sourceLabel = variant.sourceBreadcrumb?.[1] ?? variant.metadata?.sourceLabel ?? variant.label;
+  return displayVariantLabel(title, sourceLabel) || "默认规格";
+}
+
+export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
+  const labels = variantSpecLabels(variant, options);
+  return labels.length > 0 ? labels.join(" / ") : displayVariantLabel(title, variant.label);
 }
 
 export function mediaQuality(media?: MediaDiagnostics) {

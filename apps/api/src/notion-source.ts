@@ -1,10 +1,16 @@
 import { createHash } from "node:crypto";
+import dns from "node:dns";
 import { Client } from "@notionhq/client";
 import type {
+  MediaAssetType,
+  MediaAvailability,
   MediaVariant,
+  MediaVariantMetadata,
   MovieCreditEntry,
+  MovieBoxOffice,
   MovieMetadata,
   MoviePoster,
+  MovieTitleEntry,
   MovieWorkKind,
   RatingValue,
   SearchResult
@@ -35,6 +41,7 @@ interface LibraryMetadata {
   dataSourceId: string;
   titleProperty?: string;
   databaseTitle?: string;
+  properties?: JsonRecord;
 }
 
 interface ChildPageCandidate {
@@ -69,6 +76,8 @@ export interface NotionLibraryScanItem {
   title?: string;
   lastEditedTime: string;
   result?: SearchResult;
+  deleteAssetKey?: string;
+  skipped?: "hidden_from_website" | "no_playable_media";
   error?: string;
 }
 
@@ -93,14 +102,57 @@ const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
 const posterPropertyPattern = /\u6d77\u62a5|poster|cover|image|\u56fe\u7247/i;
 const descriptionPropertyPattern = /\u7b80\u4ecb|summary|description|synopsis|plot/i;
-const infoPropertyPattern = /\u57fa\u672c\u4fe1\u606f|info|metadata/i;
-const releaseDatePropertyPattern = /\u4e0a\u6620|release|premiere|date/i;
-const genrePropertyPattern = /\u65e8\u8da3|\u7c7b\u578b|genre|tag/i;
+const infoPropertyPattern = /^(?:\u57fa\u672c\u4fe1\u606f|basic\s*info(?:rmation)?|info)$/i;
+const releaseDatePropertyPattern = /^(?:\u4e0a\u6620\u65e5\u671f|\u9996\u64ad\u65e5\u671f)$/i;
+const genrePropertyPattern = /^(?:\u65e8\u8da3)$/i;
 const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
 const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
+const aiSuggestedMinimumAgePropertyPattern = /AI\s*(?:suggested\s*)?(?:minimum\s*)?age|AI建议最低年龄|ai\s*age/i;
+const aiAgeConfidencePropertyPattern = /AI年龄建议置信度|AI\s*age\s*confidence|age\s*confidence/i;
+const contentRiskTagsPropertyPattern = /内容风险标签|content\s*risk|risk\s*tags/i;
+const aiAgeReasonPropertyPattern = /AI年龄建议理由|AI\s*age\s*reason|age\s*reason/i;
+const manualAgeOverridePropertyPattern = /人工年龄覆盖|manual\s*age\s*override|age\s*override/i;
 const typePropertyPattern = /\u5f71\u522b|type|kind/i;
 const imdbPropertyPattern = /^imdb$/i;
+const simplifiedChineseTitlePropertyPattern = /^(?:simplified\s*chinese\s*title|chinese\s*title\s*\(simplified\)|zh[-_\s]*cn\s*title|\u7b80\u4f53\u4e2d\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u7b80\u4e2d(?:\s*(?:title|\u540d|\u7247\u540d))?)$/i;
+const traditionalChineseTaiwanTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:taiwan|tw)\)|taiwan(?:ese)?\s*chinese\s*title|zh[-_\s]*tw\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u53f0\u6e7e|\u53f0\u7063)|\u53f0(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u53f0\u6e7e(?:\u8bd1\u540d|\u7247\u540d)|\u53f0\u7063(?:\u8b6f\u540d|\u7247\u540d))$/i;
+const traditionalChineseHongKongTitlePropertyPattern = /^(?:traditional\s*chinese\s*title\s*\((?:hong\s*kong|hk)\)|hong\s*kong\s*chinese\s*title|zh[-_\s]*hk\s*title|\u7e41\u4f53\u4e2d\u6587.*(?:\u9999\u6e2f|\u6e2f)|\u6e2f(?:\u8bd1|\u8b6f)(?:\u540d|\u7247\u540d)?|\u9999\u6e2f(?:\u8bd1\u540d|\u8b6f\u540d|\u7247\u540d))$/i;
+const originalTitlePropertyPattern = /^(?:original\s*title|\u539f\u540d|\u539f\u7247\u540d|\u539f\u59cb\u7247\u540d)$/i;
+const englishTitlePropertyPattern = /^(?:english\s*title|\u82f1\u6587(?:\s*(?:title|\u540d|\u7247\u540d))?|\u82f1\u6587\u7247\u540d|\u82f1\u6587\u540d)$/i;
+const hideFromWebsitePropertyPattern =
+  /^(?:hide\s*from\s*website|do\s*not\s*sync\s*to\s*website|exclude\s*from\s*website|website\s*hidden|\u4e0d\u540c\u6b65\u5230\u7f51\u7ad9|\u4e0d\u540c\u6b65\u5230\u7db2\u7ad9|\u7f51\u7ad9\u4e0b\u7ebf|\u7db2\u7ad9\u4e0b\u7dda|\u4e0b\u7ebf|\u4e0b\u7dda)$/i;
+const mediaAvailabilityPropertyPattern =
+  /^(?:media\s*availability|playback\s*status|availability|\u5a92\u4f53\u53ef\u7528\u6027|\u64ad\u653e\u72b6\u6001|\u64ad\u653e\u72c0\u614b)$/i;
+const mediaAssetTypePropertyPattern = /^(?:asset\s*type|\u8d44\u4ea7\u7c7b\u578b|\u8cc7\u7522\u985e\u578b)$/i;
+const displayLabelPropertyPattern = /^(?:display\s*label|\u663e\u793a\u6807\u7b7e|\u986f\u793a\u6a19\u7c64)$/i;
+const editionPropertyPattern = /^(?:edition\s*\/?\s*version|edition|version|cut|\u7248\u672c|\u526a\u8f91\u7248)$/i;
+const episodeNumberPropertyPattern = /^(?:episode\s*number|episode|ep|\u96c6\u6570|\u96c6\u5e8f)$/i;
+const resolutionPropertyPattern = /^(?:resolution|\u5206\u8fa8\u7387|\u89e3\u50cf\u5ea6)$/i;
+const videoCodecPropertyPattern = /^(?:video\s*codec|codec|\u89c6\u9891\u7f16\u7801|\u8996\u983b\u7de8\u78bc)$/i;
+const containerPropertyPattern = /^(?:container|format|\u5c01\u88c5|\u683c\u5f0f)$/i;
+const approximateSizeGbPropertyPattern = /^(?:approx(?:imate)?\s*size\s*gb|size\s*gb|\u5927\u5c0f\s*gb)$/i;
+const exactByteSizePropertyPattern = /^(?:exact\s*(?:byte\s*)?size|file\s*size\s*bytes|bytes|\u5b57\u8282\u6570|\u5b57\u7bc0\u6578)$/i;
+const durationSecondsPropertyPattern = /^(?:duration\s*seconds|duration\s*s|seconds|\u65f6\u957f\u79d2|\u6642\u9577\u79d2)$/i;
+const frameRatePropertyPattern = /^(?:frame\s*rate|fps|\u5e27\u7387)$/i;
+const videoDynamicRangePropertyPattern = /^(?:hdr\s*\/?\s*sdr|dynamic\s*range|hdr|\u52a8\u6001\u8303\u56f4|\u52d5\u614b\u7bc4\u570d)$/i;
+const qualityTagPropertyPattern = /^(?:quality\s*tag|cq|crf|\u8d28\u91cf\u6807\u7b7e|\u756b\u8cea\u6a19\u7c64)$/i;
+const audioCodecPropertyPattern = /^(?:audio\s*codec|\u97f3\u9891\u7f16\u7801|\u97f3\u983b\u7de8\u78bc)$/i;
+const audioChannelLayoutPropertyPattern = /^(?:audio\s*channels?|channel\s*layout|\u58f0\u9053|\u8072\u9053)$/i;
+const audioLanguagesPropertyPattern = /^(?:audio\s*languages?|\u97f3\u8f68\u8bed\u8a00|\u97f3\u8ecc\u8a9e\u8a00)$/i;
+const subtitleLanguagesPropertyPattern = /^(?:subtitle\s*languages?|\u5b57\u5e55\u8bed\u8a00|\u5b57\u5e55\u8a9e\u8a00)$/i;
+const subtitleRegionsPropertyPattern = /^(?:subtitle\s*regions?|\u5b57\u5e55\u5730\u533a|\u5b57\u5e55\u5730\u5340)$/i;
+const sourceLineagePropertyPattern = /^(?:source\s*lineage|lineage|source|\u6765\u6e90\u94fe\u8def|\u4f86\u6e90\u93c8\u8def)$/i;
+const playbackVerifiedPropertyPattern = /^(?:playback\s*verified|\u64ad\u653e\u5df2\u9a8c\u8bc1|\u64ad\u653e\u5df2\u9a57\u8b49)$/i;
+const originalFileNamePropertyPattern = /^(?:original\s*file\s*name|file\s*name|\u539f\u59cb\u6587\u4ef6\u540d)$/i;
+const assetUrlPropertyPattern = /^(?:asset\s*url|media\s*url|url|\u8d44\u4ea7\s*url|\u8cc7\u7522\s*url)$/i;
+const sourcePageIdPropertyPattern = /^(?:source\s*page\s*id|\u6e90\u9875\u9762\s*id|\u6e90\u9801\u9762\s*id)$/i;
+const mediaBlockIdPropertyPattern = /^(?:media\s*block\s*id|\u5a92\u4f53\u5757\s*id|\u5a92\u9ad4\u584a\s*id)$/i;
+const developerMemoPropertyPattern = /^(?:developer\s*memo|operator\s*memo|memo|\u5907\u6ce8|\u5099\u8a3b)$/i;
+const boxOfficeDisplayPropertyPattern = /^(?:box\s*office|box\s*office\s*display|\u7968\u623f|\u7968\u623f\u663e\u793a)$/i;
+const boxOfficeAmountPropertyPattern = /box\s*office\s*amount|\u7968\u623f.*(?:amount|\u91d1\u989d|\u6570\u503c)/i;
+const boxOfficeCurrencyPropertyPattern = /box\s*office\s*currency|\u7968\u623f.*(?:currency|\u8d27\u5e01|\u5e01\u79cd)/i;
+const boxOfficeSourcePropertyPattern = /box\s*office\s*source|\u7968\u623f.*(?:source|\u6765\u6e90)/i;
 const ratingPropertyPattern = /\u8c46\u74e3\u8bc4\u5206|imdb\u8bc4\u5206|metascore|\u70c2\u756a\u8304|rating|score/i;
 const cjkPattern = /[\u3400-\u9fff]/;
 const specTitlePattern =
@@ -343,6 +395,192 @@ function cleanText(value: string) {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function publicTitleFromNotionTitle(title: string) {
+  return cleanText(title.replace(/^(?:【敬请期待】|【仅供下载】)\s*/u, ""));
+}
+
+function chineseEpisodeNumber(value: string) {
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  let total = 0;
+  let current = 0;
+  for (const char of value) {
+    if (char === "百") {
+      total += (current || 1) * 100;
+      current = 0;
+      continue;
+    }
+    if (char === "十") {
+      total += (current || 1) * 10;
+      current = 0;
+      continue;
+    }
+    const digit = digits[char];
+    if (digit === undefined) {
+      return undefined;
+    }
+    current = digit;
+  }
+
+  const number = total + current;
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function episodeNumberFromLabel(value: string) {
+  const cleaned = cleanText(value);
+  const patterns = [
+    /^(\d{1,3})$/,
+    /\bS\d{1,2}E(\d{1,3})\b/i,
+    /\b\d{1,2}x(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\b/i,
+    /\bE(?:P)?[\s._-]*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[集话話]/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    const number = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isInteger(number) && number > 0) {
+      return number;
+    }
+  }
+
+  const chineseNumber = chineseEpisodeNumber(cleaned.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
+  if (chineseNumber) {
+    return chineseNumber;
+  }
+
+  return undefined;
+}
+
+function canonicalEpisodeLabel(value: string) {
+  const number = episodeNumberFromLabel(value);
+  return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
+}
+
+function pushUnique(target: string[], value: string | undefined) {
+  if (value && !target.includes(value)) {
+    target.push(value);
+  }
+}
+
+function firstMatch(value: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const text = match?.[1] ?? match?.[0];
+    if (text) {
+      return cleanText(text);
+    }
+  }
+  return undefined;
+}
+
+function normalizeVideoCodec(value: string) {
+  if (/\b(?:h265|h\.265|hevc|x265)\b/i.test(value)) return "HEVC";
+  if (/\b(?:h264|h\.264|avc|x264)\b/i.test(value)) return "H.264";
+  if (/\bav1\b/i.test(value)) return "AV1";
+  return undefined;
+}
+
+function extensionFromFileName(value: string) {
+  return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
+}
+
+function mediaVariantMetadataFromText(label: string, fileName: string | undefined): MediaVariantMetadata | undefined {
+  const sourceLabel = cleanText(label);
+  const cleanedFileName = cleanText(fileName ?? "");
+  const combined = `${sourceLabel} ${cleanedFileName}`.trim();
+  const normalized = combined.toLowerCase();
+  const audioLanguages: string[] = [];
+  const subtitleLanguages: string[] = [];
+  const subtitleRegions: string[] = [];
+
+  if (/普通话|普通話|国语|國語|mandarin/.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
+  if (/粤语|粵語|cantonese/.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
+  if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio/i.test(combined)) pushUnique(audioLanguages, "ja");
+  if (/英语发音|英語發音|english audio|\.english\.|english\.audio/i.test(combined)) pushUnique(audioLanguages, "en");
+  if (/评论|評論|commentary|\bcmt\b|\bdc\d+\b/i.test(combined)) pushUnique(audioLanguages, "commentary");
+
+  if (/繁简英|繁簡英|chtchseng|chschteng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/简英|簡英|chseng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/繁英|chteng/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleLanguages, "en");
+  } else if (/简日|簡日|chsjp/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hans");
+    pushUnique(subtitleLanguages, "ja");
+  } else {
+    if (/简|簡|\bchs\b/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hans");
+    if (/繁|cht/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hant");
+  }
+  if (/繁港|chth/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleRegions, "HK");
+  }
+  if (/繁台|chtt/i.test(combined)) {
+    pushUnique(subtitleLanguages, "zh-Hant");
+    pushUnique(subtitleRegions, "TW");
+  }
+  if (/日语字幕|日語字幕|\bjp\b/i.test(combined)) pushUnique(subtitleLanguages, "ja");
+  if (/英语字幕|英語字幕|\beng\b/i.test(combined)) pushUnique(subtitleLanguages, "en");
+
+  const size = Number(sourceLabel.match(/(\d+(?:\.\d+)?)\s*GB/i)?.[1]);
+  const qualityTag = combined.match(/\b((?:I?CQ|CRF)[\s._-]?\d{1,2})\b/i)?.[1]?.replace(/[\s._-]+/g, "").toUpperCase();
+  const metadata: MediaVariantMetadata = {
+    availability: "playable",
+    edition: firstMatch(combined, [
+      /Open Matte/i,
+      /The Final Cut/i,
+      /Extended Collectors? Edition/i,
+      /Extended (?:Edition|Cut)/i,
+      /Theatrical/i,
+      /IMAX/i,
+      /公映比例/u,
+      /剧场版/u,
+      /加长版/u,
+      /蓝光加长版/u
+    ]),
+    resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    videoCodec: normalizeVideoCodec(combined),
+    container: extensionFromFileName(cleanedFileName),
+    approximateSizeGb: Number.isFinite(size) ? size : undefined,
+    qualityTag,
+    audioLanguages: audioLanguages.length > 0 ? audioLanguages : undefined,
+    subtitleLanguages: subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
+    subtitleRegions: subtitleRegions.length > 0 ? subtitleRegions : undefined,
+    commentary: audioLanguages.includes("commentary") || undefined,
+    noSubtitles: /无字幕|無字幕|no subtitles/i.test(combined) || undefined,
+    sourceLabel,
+    fileName: cleanedFileName || undefined
+  };
+
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== "";
+    })
+  ) as MediaVariantMetadata;
+}
+
 function clipText(value: string, limit: number) {
   const cleaned = cleanText(value);
   if (cleaned.length <= limit) {
@@ -396,6 +634,48 @@ function numberFromProperty(value: unknown) {
   return typeof formula?.number === "number" ? formula.number : undefined;
 }
 
+function checkboxFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const property = asRecord(rawProperty);
+    if (property?.type === "checkbox" && typeof property.checkbox === "boolean") {
+      return property.checkbox;
+    }
+  }
+
+  return undefined;
+}
+
+function pageHiddenFromWebsite(page: JsonRecord) {
+  return checkboxFromNamedProperty(asRecord(page.properties) ?? {}, hideFromWebsitePropertyPattern) === true;
+}
+
+function normalizeMediaAvailability(value: string | undefined): MediaAvailability | undefined {
+  const normalized = cleanText(value ?? "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "playable" || normalized === "可播放") {
+    return "playable";
+  }
+  if (normalized === "source_only" || normalized === "download_only" || normalized === "raw_only" || normalized === "仅供下载" || normalized === "只有原盘") {
+    return "source_only";
+  }
+  if (normalized === "needs_processing" || normalized === "needs_transcode" || normalized === "待加工" || normalized === "待处理") {
+    return "needs_processing";
+  }
+  if (normalized === "blocked" || normalized === "unusable" || normalized === "暂缓" || normalized === "不可用") {
+    return "blocked";
+  }
+  if (normalized === "unknown" || normalized === "未知") {
+    return "unknown";
+  }
+  return undefined;
+}
+
 function textFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: number) {
   for (const [name, rawProperty] of Object.entries(properties)) {
     if (!pattern.test(name)) {
@@ -439,6 +719,234 @@ function dateFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
   }
 
   return undefined;
+}
+
+function numberFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const number = numberFromProperty(rawProperty);
+    if (number !== undefined) {
+      return number;
+    }
+  }
+
+  return undefined;
+}
+
+function urlFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
+  for (const [name, rawProperty] of Object.entries(properties)) {
+    if (!pattern.test(name)) {
+      continue;
+    }
+
+    const property = asRecord(rawProperty);
+    if (!property) {
+      continue;
+    }
+
+    if (property.type === "url" && asString(property.url)) {
+      return asString(property.url);
+    }
+
+    const text = propertyText(property);
+    const url = text.match(urlPattern)?.[0];
+    if (url) {
+      return normalizeUrl(url);
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeMediaAssetType(value: string | undefined): MediaAssetType | undefined {
+  const normalized = cleanText(value ?? "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "playable_video" || normalized === "video" || normalized === "playable") {
+    return "playable_video";
+  }
+  if (normalized === "source_archive" || normalized === "source" || normalized === "archive") {
+    return "source_archive";
+  }
+  if (normalized === "original_disc" || normalized === "disc" || normalized === "iso") {
+    return "original_disc";
+  }
+  if (normalized === "subtitle_package" || normalized === "subtitle" || normalized === "subtitles") {
+    return "subtitle_package";
+  }
+  if (normalized === "extra" || normalized === "other") {
+    return "extra";
+  }
+  if (normalized === "unknown") {
+    return "unknown";
+  }
+  return undefined;
+}
+
+function normalizeMediaAssetCodec(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  return normalizeVideoCodec(value) ?? cleanText(value);
+}
+
+function mediaAssetMetadataFromProperties(
+  assetPageId: string,
+  properties: JsonRecord
+): MediaVariantMetadata {
+  const availability = normalizeMediaAvailability(
+    listFromNamedProperty(properties, mediaAvailabilityPropertyPattern, 1)?.[0]
+  );
+  const assetType = normalizeMediaAssetType(
+    listFromNamedProperty(properties, mediaAssetTypePropertyPattern, 1)?.[0]
+  );
+  const subtitleLanguages = listFromNamedProperty(properties, subtitleLanguagesPropertyPattern, 12);
+  const developerMemo = textFromNamedProperty(properties, developerMemoPropertyPattern, 600);
+  const originalFileName = textFromNamedProperty(properties, originalFileNamePropertyPattern, 600);
+  const metadata: MediaVariantMetadata = {
+    assetType,
+    mediaAssetPageId: assetPageId,
+    availability,
+    edition: textFromNamedProperty(properties, editionPropertyPattern, 120),
+    episodeNumber: numberFromNamedProperty(properties, episodeNumberPropertyPattern),
+    resolution: listFromNamedProperty(properties, resolutionPropertyPattern, 1)?.[0],
+    videoCodec: normalizeMediaAssetCodec(listFromNamedProperty(properties, videoCodecPropertyPattern, 1)?.[0]),
+    container: listFromNamedProperty(properties, containerPropertyPattern, 1)?.[0]?.toLowerCase(),
+    exactByteSize: numberFromNamedProperty(properties, exactByteSizePropertyPattern),
+    approximateSizeGb: numberFromNamedProperty(properties, approximateSizeGbPropertyPattern),
+    durationSeconds: numberFromNamedProperty(properties, durationSecondsPropertyPattern),
+    frameRate: textFromNamedProperty(properties, frameRatePropertyPattern, 40),
+    videoDynamicRange: listFromNamedProperty(properties, videoDynamicRangePropertyPattern, 1)?.[0],
+    qualityTag: textFromNamedProperty(properties, qualityTagPropertyPattern, 40),
+    audioCodec: listFromNamedProperty(properties, audioCodecPropertyPattern, 1)?.[0],
+    audioChannelLayout: textFromNamedProperty(properties, audioChannelLayoutPropertyPattern, 80),
+    audioLanguages: listFromNamedProperty(properties, audioLanguagesPropertyPattern, 12),
+    subtitleLanguages,
+    subtitleRegions: listFromNamedProperty(properties, subtitleRegionsPropertyPattern, 8),
+    sourceLineage: listFromNamedProperty(properties, sourceLineagePropertyPattern, 12),
+    noSubtitles: subtitleLanguages?.some((value) => /^(?:none|no subtitles|无字幕|無字幕)$/i.test(value)) ||
+      /无字幕|無字幕|no subtitles/i.test(`${developerMemo ?? ""} ${originalFileName ?? ""}`) ||
+      undefined,
+    playbackVerified: checkboxFromNamedProperty(properties, playbackVerifiedPropertyPattern),
+    hideFromWebsite: checkboxFromNamedProperty(properties, hideFromWebsitePropertyPattern),
+    sourceLabel: textFromNamedProperty(properties, displayLabelPropertyPattern, 180),
+    fileName: originalFileName,
+    originalFileName,
+    mediaBlockId: textFromNamedProperty(properties, mediaBlockIdPropertyPattern, 120),
+    developerMemo,
+    structuredSource: "media_assets"
+  };
+
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== "";
+    })
+  ) as MediaVariantMetadata;
+}
+
+function parseBoxOfficeAmount(value?: string) {
+  if (!value || /^N\/A$/i.test(value.trim())) {
+    return undefined;
+  }
+
+  const match = value.match(/(?:[$£€¥]\s*)?([\d,]+(?:\.\d+)?)/);
+  if (!match) {
+    return undefined;
+  }
+
+  const amount = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(amount) ? amount : undefined;
+}
+
+function currencyFromBoxOffice(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  if (/\$|USD|US\$|U\.S\./i.test(value)) {
+    return "USD";
+  }
+  if (/£|GBP/i.test(value)) {
+    return "GBP";
+  }
+  if (/€|EUR/i.test(value)) {
+    return "EUR";
+  }
+  if (/¥|JPY/i.test(value)) {
+    return "JPY";
+  }
+
+  return undefined;
+}
+
+function boxOfficeFromProperties(properties: JsonRecord, updatedAt: string): MovieBoxOffice | undefined {
+  const display = textFromNamedProperty(properties, boxOfficeDisplayPropertyPattern, 120);
+  const amount = numberFromNamedProperty(properties, boxOfficeAmountPropertyPattern) ?? parseBoxOfficeAmount(display);
+  const currency = textFromNamedProperty(properties, boxOfficeCurrencyPropertyPattern, 16) ?? currencyFromBoxOffice(display);
+  const source = textFromNamedProperty(properties, boxOfficeSourcePropertyPattern, 32);
+  if (!display && amount === undefined && !currency && !source) {
+    return undefined;
+  }
+
+  return {
+    display,
+    amount,
+    currency,
+    source: source?.toLowerCase() === "omdb" ? "omdb" : source ? "notion" : undefined,
+    updatedAt
+  };
+}
+
+function titleKey(entry: MovieTitleEntry) {
+  return `${entry.kind}:${entry.lang ?? ""}:${entry.region ?? ""}:${cleanText(entry.title).toLowerCase()}`;
+}
+
+function uniqueTitleEntries(entries: MovieTitleEntry[]) {
+  const seen = new Set<string>();
+  const titles: MovieTitleEntry[] = [];
+  for (const entry of entries) {
+    const title = cleanText(entry.title);
+    if (!title) {
+      continue;
+    }
+
+    const next = { ...entry, title };
+    const key = titleKey(next);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    titles.push(next);
+  }
+
+  return titles;
+}
+
+function movieTitleEntriesFromProperties(title: string, properties: JsonRecord) {
+  const simplifiedChineseTitle = textFromNamedProperty(properties, simplifiedChineseTitlePropertyPattern, 180);
+  const traditionalTaiwanTitle = textFromNamedProperty(properties, traditionalChineseTaiwanTitlePropertyPattern, 180);
+  const traditionalHongKongTitle = textFromNamedProperty(properties, traditionalChineseHongKongTitlePropertyPattern, 180);
+  const originalTitle = textFromNamedProperty(properties, originalTitlePropertyPattern, 180);
+  const englishTitle = textFromNamedProperty(properties, englishTitlePropertyPattern, 180);
+  const entries: Array<MovieTitleEntry | undefined> = [
+    { title, kind: "primary", source: "notion" },
+    simplifiedChineseTitle ? { title: simplifiedChineseTitle, kind: "localized", lang: "zh-Hans", source: "notion" } : undefined,
+    traditionalTaiwanTitle ? { title: traditionalTaiwanTitle, kind: "localized", lang: "zh-Hant", region: "TW", source: "notion" } : undefined,
+    traditionalHongKongTitle ? { title: traditionalHongKongTitle, kind: "localized", lang: "zh-Hant", region: "HK", source: "notion" } : undefined,
+    originalTitle ? { title: originalTitle, kind: "original", source: "notion" } : undefined,
+    englishTitle ? { title: englishTitle, kind: "alternate", lang: "en", source: "notion" } : undefined
+  ];
+
+  return uniqueTitleEntries(entries.filter((entry): entry is MovieTitleEntry => Boolean(entry)));
 }
 
 function ratingLabel(name: string) {
@@ -563,6 +1071,8 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
   const posters: MoviePoster[] = [];
   const seen = new Set<string>();
   const coverUrl = mediaUrlFromObject(page.cover);
+  const fileUrls: string[] = [];
+  const textUrls: string[] = [];
   pushPoster(posters, seen, coverUrl);
 
   for (const [name, rawProperty] of Object.entries(properties)) {
@@ -579,20 +1089,25 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
     if (type === "files") {
       for (const file of asArray(property.files)) {
         const url = mediaUrlFromObject(file);
-        pushPoster(posters, seen, url);
+        if (url) {
+          fileUrls.push(url);
+        }
       }
     }
 
     if (type === "url" && asString(property.url)) {
-      pushPoster(posters, seen, asString(property.url));
+      textUrls.push(asString(property.url) as string);
     }
 
     if (type === "rich_text") {
       for (const match of plainTextFromRichText(property.rich_text).matchAll(urlPattern)) {
-        pushPoster(posters, seen, normalizeUrl(match[0]));
+        textUrls.push(normalizeUrl(match[0]));
       }
     }
   }
+
+  fileUrls.forEach((url) => pushPoster(posters, seen, url));
+  textUrls.forEach((url) => pushPoster(posters, seen, url));
 
   return posters;
 }
@@ -619,6 +1134,20 @@ function movieMetadataFromPage(
   const updatedAt = asString(page.last_edited_time) || new Date().toISOString();
   const pageId = asString(page.id);
   const pageUrl = asString(page.url);
+  const boxOffice = boxOfficeFromProperties(properties, updatedAt);
+  const hideFromWebsite = checkboxFromNamedProperty(properties, hideFromWebsitePropertyPattern) === true;
+  const mediaAvailability = normalizeMediaAvailability(
+    listFromNamedProperty(properties, mediaAvailabilityPropertyPattern, 1)?.[0]
+  );
+  const aiSuggestedMinimumAge = numberFromNamedProperty(properties, aiSuggestedMinimumAgePropertyPattern);
+  const manualAgeOverride = numberFromNamedProperty(properties, manualAgeOverridePropertyPattern);
+  const effectiveMinimumAge = manualAgeOverride ?? aiSuggestedMinimumAge;
+  const titles = movieTitleEntriesFromProperties(title, properties);
+  const displayTitle =
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hans")?.title ??
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "TW")?.title ??
+    titles.find((entry) => entry.kind === "localized" && entry.lang === "zh-Hant" && entry.region === "HK")?.title ??
+    title;
   const workId = stableMovieWorkIdFromNotion(pageId, title, year);
   const externalIds = Object.fromEntries(
     Object.entries({
@@ -631,13 +1160,14 @@ function movieMetadataFromPage(
   const metadata: MovieMetadata = {
     workId,
     kind,
-    titles: [{ title, kind: "primary", source: "notion" }],
+    titles,
     release: {
       year,
       date: releaseDate,
       source: "notion"
     },
     credits,
+    boxOffice,
     sourceRefs: [{
       source: "notion",
       id: pageId,
@@ -656,7 +1186,7 @@ function movieMetadataFromPage(
       updatedAt
     },
     display: {
-      title,
+      title: displayTitle,
       year,
       directorLine: directors.join(" / ") || undefined,
       castLine: people.join(" / ") || undefined
@@ -664,7 +1194,7 @@ function movieMetadataFromPage(
     work: {
       workId,
       kind,
-      titles: [{ title, kind: "primary", source: "notion" }],
+      titles,
       release: {
         year,
         date: releaseDate,
@@ -674,6 +1204,7 @@ function movieMetadataFromPage(
       genres,
       credits,
       ratings: ratings.map((rating) => ({ ...rating, source: "notion" })),
+      boxOffice,
       media: {
         posters
       },
@@ -695,7 +1226,7 @@ function movieMetadataFromPage(
         updatedAt
       },
       display: {
-        title,
+        title: displayTitle,
         year,
         directorLine: directors.join(" / ") || undefined,
         castLine: people.join(" / ") || undefined
@@ -711,10 +1242,21 @@ function movieMetadataFromPage(
     directors,
     people,
     ratings,
+    boxOfficeDisplay: boxOffice?.display,
+    boxOfficeAmount: boxOffice?.amount,
+    boxOfficeCurrency: boxOffice?.currency,
     ratingLevel: listFromNamedProperty(properties, ratingLevelPropertyPattern, 3),
+    aiSuggestedMinimumAge,
+    aiAgeConfidence: listFromNamedProperty(properties, aiAgeConfidencePropertyPattern, 1)?.[0],
+    contentRiskTags: listFromNamedProperty(properties, contentRiskTagsPropertyPattern, 12),
+    aiAgeReason: textFromNamedProperty(properties, aiAgeReasonPropertyPattern, 600),
+    manualAgeOverride,
+    effectiveMinimumAge,
     info: textFromNamedProperty(properties, infoPropertyPattern, 180),
     description: textFromNamedProperty(properties, descriptionPropertyPattern, 4000),
     imdbId,
+    mediaAvailability,
+    hideFromWebsite,
     externalIds: hasExternalIds ? externalIds : undefined
   };
 
@@ -741,7 +1283,7 @@ function titleFromProperties(properties: JsonRecord) {
     if (record?.type === "title") {
       const title = plainTextFromRichText(record.title);
       if (title) {
-        return title;
+        return publicTitleFromNotionTitle(title);
       }
     }
   }
@@ -849,6 +1391,11 @@ function variantAssetKey(pageId: string, candidate: MediaCandidate, index: numbe
   return `notion-page-${pageId}-variant-${index + 1}-${hash}`;
 }
 
+function mediaAssetVariantAssetKey(sourcePageId: string | undefined, mediaAssetPageId: string) {
+  const pageId = sourcePageId || mediaAssetPageId;
+  return `notion-page-${pageId}-media-asset-${mediaAssetPageId.replace(/-/g, "")}`;
+}
+
 function pageIdFromAssetKey(assetKey: string) {
   return assetKey.match(notionAssetPageIdPattern)?.[1];
 }
@@ -866,6 +1413,10 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     summary: variant.summary,
     metadata: result.metadata
   };
+}
+
+function hasPlayableMedia(result: SearchResult) {
+  return (result.variants?.length ?? 0) > 0;
 }
 
 function findResultByAssetKey(results: SearchResult[], assetKey: string) {
@@ -1021,6 +1572,35 @@ function isTransientNotionError(error: unknown) {
     /\b(?:429|502|503|504)\b/.test(message);
 }
 
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) {
+    return;
+  }
+
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+}
+
 export class NotionSearchSource {
   readonly description: string;
   private readonly notion: Client;
@@ -1029,15 +1609,21 @@ export class NotionSearchSource {
     process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? process.env.NOTION_DATA_SOURCE_ID;
   private readonly configuredLibraryDatabaseId =
     process.env.NOTION_LIBRARY_DATABASE_ID ?? process.env.NOTION_MEDIA_DATABASE_ID;
+  private readonly configuredMediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID;
+  private readonly configuredMediaAssetsDatabaseId = process.env.NOTION_MEDIA_ASSETS_DATABASE_ID;
   private libraryMetadata?: Promise<LibraryMetadata | undefined>;
+  private mediaAssetsMetadata?: Promise<LibraryMetadata | undefined>;
 
   constructor(private readonly options = defaultOptions) {
+    installNotionDnsOverride();
     this.notion = new Client({
       auth: process.env.NOTION_READ_ONLY_TOKEN,
       timeoutMs: this.options.requestTimeoutMs
     });
     this.description = this.hasLibraryConfig()
-      ? "notion library database search"
+      ? this.hasMediaAssetsConfig()
+        ? "notion library database search with media assets"
+        : "notion library database search"
       : "notion read-only search";
   }
 
@@ -1100,12 +1686,43 @@ export class NotionSearchSource {
 
         const properties = asRecord(page.properties) ?? {};
         const title = titleFromProperties(properties);
-        try {
+        if (pageHiddenFromWebsite(page)) {
           yield {
             pageId: asString(page.id),
             title,
             lastEditedTime,
-            result: await this.pageToSearchResultWithRetry(page, { libraryMode: true })
+            deleteAssetKey: `notion-page-${asString(page.id)}`,
+            skipped: "hidden_from_website"
+          };
+          yielded += 1;
+          if (delayMs > 0) {
+            await sleep(delayMs);
+          }
+          continue;
+        }
+
+        try {
+          const result = await this.pageToSearchResultWithRetry(page, { libraryMode: true });
+          if (!hasPlayableMedia(result)) {
+            yield {
+              pageId: asString(page.id),
+              title,
+              lastEditedTime,
+              deleteAssetKey: `notion-page-${asString(page.id)}`,
+              skipped: "no_playable_media"
+            };
+            yielded += 1;
+            if (delayMs > 0) {
+              await sleep(delayMs);
+            }
+            continue;
+          }
+
+          yield {
+            pageId: asString(page.id),
+            title,
+            lastEditedTime,
+            result
           };
         } catch (error) {
           yield {
@@ -1139,9 +1756,15 @@ export class NotionSearchSource {
 
     const library = await this.getLibraryMetadata();
     const page = await this.notion.pages.retrieve({ page_id: pageId });
+    if (pageHiddenFromWebsite(page as JsonRecord)) {
+      return undefined;
+    }
     const result = await this.pageToSearchResult(page as JsonRecord, {
       libraryMode: Boolean(library)
     });
+    if (library && !hasPlayableMedia(result)) {
+      return undefined;
+    }
 
     const exact = findResultByAssetKey([result], input.assetKey);
     if (exact) {
@@ -1160,9 +1783,25 @@ export class NotionSearchSource {
     );
   }
 
+  private hasMediaAssetsConfig() {
+    return Boolean(
+      this.configuredMediaAssetsDataSourceId ||
+      this.configuredMediaAssetsDatabaseId
+    );
+  }
+
   private async getLibraryMetadata() {
     this.libraryMetadata ??= this.loadLibraryMetadata();
     return this.libraryMetadata;
+  }
+
+  private async getMediaAssetsMetadata() {
+    if (!this.hasMediaAssetsConfig()) {
+      return undefined;
+    }
+
+    this.mediaAssetsMetadata ??= this.loadMediaAssetsMetadata();
+    return this.mediaAssetsMetadata;
   }
 
   private async loadLibraryMetadata(): Promise<LibraryMetadata | undefined> {
@@ -1197,6 +1836,22 @@ export class NotionSearchSource {
     return this.loadDatabaseMetadata(asString(databaseBlock.id), databaseTitle);
   }
 
+  private async loadMediaAssetsMetadata(): Promise<LibraryMetadata | undefined> {
+    try {
+      if (this.configuredMediaAssetsDataSourceId) {
+        return this.loadDataSourceMetadata(this.configuredMediaAssetsDataSourceId);
+      }
+
+      if (this.configuredMediaAssetsDatabaseId) {
+        return this.loadDatabaseMetadata(this.configuredMediaAssetsDatabaseId);
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
   private async loadDatabaseMetadata(databaseId: string, databaseTitle?: string): Promise<LibraryMetadata> {
     const database = await this.notion.databases.retrieve({ database_id: databaseId });
     const dataSources = asArray(asRecord(database)?.data_sources);
@@ -1211,7 +1866,8 @@ export class NotionSearchSource {
       return {
         dataSourceId,
         titleProperty: this.findTitleProperty(properties),
-        databaseTitle
+        databaseTitle,
+        properties
       };
     } catch {
       return {
@@ -1259,10 +1915,14 @@ export class NotionSearchSource {
       }
     }
 
-    const pages = this.rankPages([...pagesById.values()], query).slice(0, this.options.searchPageSize);
+    const pages = this.rankPages([...pagesById.values()].filter((page) => !pageHiddenFromWebsite(page)), query)
+      .slice(0, this.options.searchPageSize);
     const results: SearchResult[] = [];
     for (const page of pages) {
-      results.push(await this.pageToSearchResult(page, { libraryMode: true }));
+      const result = await this.pageToSearchResult(page, { libraryMode: true });
+      if (hasPlayableMedia(result)) {
+        results.push(result);
+      }
     }
 
     return results;
@@ -1307,6 +1967,150 @@ export class NotionSearchSource {
     } while (startCursor && pages.length < options.limit);
 
     return pages.slice(0, options.limit);
+  }
+
+  private mediaAssetsWorkPropertyName(mediaAssets: LibraryMetadata) {
+    const properties = mediaAssets.properties ?? {};
+    if (properties.Work) {
+      return "Work";
+    }
+
+    for (const [name, property] of Object.entries(properties)) {
+      const type = asString(asRecord(property)?.type);
+      if (type === "relation" && /^(?:work|\u4f5c\u54c1|\u5f71\u7247)$/i.test(name)) {
+        return name;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async queryMediaAssetPagesForWork(workPageId: string) {
+    const mediaAssets = await this.getMediaAssetsMetadata();
+    const workProperty = mediaAssets ? this.mediaAssetsWorkPropertyName(mediaAssets) : undefined;
+    if (!mediaAssets || !workProperty) {
+      return [];
+    }
+
+    const queryForId = async (pageId: string) => {
+      const pages: JsonRecord[] = [];
+      let startCursor: string | undefined;
+
+      do {
+        const response = await this.notion.dataSources.query({
+          data_source_id: mediaAssets.dataSourceId,
+          page_size: 100,
+          start_cursor: startCursor,
+          filter: {
+            property: workProperty,
+            relation: {
+              contains: pageId
+            }
+          }
+        } as never);
+
+        pages.push(...response.results.filter(isPageResult));
+        startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+      } while (startCursor);
+
+      return pages;
+    };
+
+    try {
+      const pages = await queryForId(workPageId);
+      if (pages.length > 0 || !workPageId.includes("-")) {
+        return pages;
+      }
+
+      return queryForId(workPageId.replace(/-/g, ""));
+    } catch {
+      return [];
+    }
+  }
+
+  private async mediaCandidateFromBlockId(blockId: string | undefined) {
+    if (!blockId) {
+      return undefined;
+    }
+
+    try {
+      const block = await this.notion.blocks.retrieve({ block_id: blockId });
+      const candidates: MediaCandidate[] = [];
+      collectBlockCandidates(block as JsonRecord, candidates);
+      return uniqueCandidates(candidates).find(isLikelyPlayableCandidate) ?? chooseBestCandidate(candidates);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async mediaAssetPageToVariant(
+    page: JsonRecord,
+    index: number,
+    workTitle: string
+  ): Promise<MediaVariant | undefined> {
+    if (page.archived === true || page.in_trash === true) {
+      return undefined;
+    }
+
+    const properties = asRecord(page.properties) ?? {};
+    const mediaAssetPageId = asString(page.id);
+    const metadata = mediaAssetMetadataFromProperties(mediaAssetPageId, properties);
+    if (metadata.hideFromWebsite === true || metadata.availability !== "playable" || metadata.assetType !== "playable_video") {
+      return undefined;
+    }
+
+    const sourcePageId = textFromNamedProperty(properties, sourcePageIdPropertyPattern, 120);
+    const mediaBlockId = metadata.mediaBlockId;
+    const label = metadata.sourceLabel || titleFromProperties(properties);
+    const blockCandidate = await this.mediaCandidateFromBlockId(mediaBlockId);
+    const assetUrl = urlFromNamedProperty(properties, assetUrlPropertyPattern);
+    const candidate = blockCandidate ?? (
+      assetUrl
+        ? {
+            url: assetUrl,
+            label: metadata.originalFileName || label,
+            score: mediaScore(assetUrl, 80),
+            kind: "file" as const
+          }
+        : undefined
+    );
+
+    if (!candidate?.url || !isLikelyPlayableCandidate(candidate)) {
+      return undefined;
+    }
+
+    return {
+      assetKey: mediaAssetVariantAssetKey(sourcePageId, mediaAssetPageId),
+      label: label || `Media asset ${index + 1}`,
+      sourceUrl: candidate.url,
+      sourcePageId,
+      sourceBreadcrumb: [workTitle, label].filter(Boolean),
+      kind: candidate.kind,
+      summary: `Structured Media Assets row${metadata.playbackVerified ? " with verified playback" : ""}.`,
+      metadata: {
+        ...metadata,
+        mediaBlockId
+      }
+    };
+  }
+
+  private async mediaAssetVariantsForWork(workPageId: string, workTitle: string) {
+    const pages = await this.queryMediaAssetPagesForWork(workPageId);
+    const variants: MediaVariant[] = [];
+
+    for (const page of pages) {
+      const variant = await this.mediaAssetPageToVariant(page, variants.length, workTitle);
+      if (!variant) {
+        continue;
+      }
+
+      variants.push(variant);
+      if (variants.length >= this.options.variantLimit) {
+        break;
+      }
+    }
+
+    return variants;
   }
 
   private pageMatches(page: JsonRecord, query: string) {
@@ -1368,6 +2172,9 @@ export class NotionSearchSource {
 
     const results: SearchResult[] = [];
     for (const page of pages) {
+      if (pageHiddenFromWebsite(page)) {
+        continue;
+      }
       results.push(await this.pageToSearchResult(page));
     }
 
@@ -1553,9 +2360,13 @@ export class NotionSearchSource {
     const pageUrl = asString(page.url);
     const pageId = asString(page.id);
     const sourceBreadcrumb = [title].filter(Boolean);
-    const variants = context.libraryMode
+    const parsedVariants = context.libraryMode
       ? await this.libraryVariants(pageId, title, unique, childPages)
       : this.candidatesToVariants(pageId, unique, 0, sourceBreadcrumb);
+    const mediaAssetVariants = context.libraryMode
+      ? await this.mediaAssetVariantsForWork(pageId, title)
+      : [];
+    const variants = mediaAssetVariants.length > 0 ? mediaAssetVariants : parsedVariants;
     const sourceUrl = variants[0]?.sourceUrl || best?.url || pageUrl;
     const summary = context.libraryMode
       ? this.librarySummary(variants)
@@ -1612,6 +2423,7 @@ export class NotionSearchSource {
       }
 
       for (const episodePage of nestedChildPages) {
+        const episodeLabel = canonicalEpisodeLabel(episodePage.title);
         const episodeCandidates: MediaCandidate[] = [];
         await this.collectBlockTree(
           episodePage.id,
@@ -1632,9 +2444,9 @@ export class NotionSearchSource {
             episodeCandidate,
             variants.length,
             playableCandidates.length === 1
-              ? `${childPage.title} / ${episodePage.title}`
-              : `${childPage.title} / ${episodePage.title} / ${episodeCandidate.label}`,
-            [title, childPage.title, episodePage.title]
+              ? `${childPage.title} / ${episodeLabel}`
+              : `${childPage.title} / ${episodeLabel} / ${episodeCandidate.label}`,
+            [title, childPage.title, episodeLabel]
           ));
           if (variants.length >= this.options.variantLimit) {
             return variants;
@@ -1680,23 +2492,28 @@ export class NotionSearchSource {
     label?: string,
     sourceBreadcrumb?: string[]
   ): MediaVariant {
+    const variantLabel = label || candidate.label || `Option ${index + 1}`;
+    const metadata = mediaVariantMetadataFromText(variantLabel, candidate.label);
     return {
       assetKey: variantAssetKey(pageId, candidate, index),
-      label: label || candidate.label || `Option ${index + 1}`,
+      label: variantLabel,
       sourceUrl: candidate.url,
       sourcePageId: pageId,
       sourceBreadcrumb,
       kind: candidate.kind,
-      summary: candidateSummary(candidate)
+      summary: candidateSummary(candidate),
+      metadata: metadata
+        ? { ...metadata, structuredSource: "notion_page" }
+        : { structuredSource: "notion_page" }
     };
   }
 
   private librarySummary(variants: MediaVariant[]) {
     if (variants.length === 0) {
-      return "No playable specs were found in this movie entry.";
+      return "这条影片暂时没有可播放规格。";
     }
 
-    return `${variants.length} playable spec${variants.length === 1 ? "" : "s"} found in this movie entry.`;
+    return `已整理 ${variants.length} 个可播放规格，可直接选择版本观看。`;
   }
 
   private globalSummary(best?: MediaCandidate) {

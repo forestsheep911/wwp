@@ -85,7 +85,7 @@ table warm:
 
 - `job-ww-meta-index-full`: manual slow full crawl. Use this first and after
   large Notion reorganizations. It deletes index rows not seen in the full run.
-- `job-ww-meta-index-incremental`: scheduled crawl, default every six hours.
+- `job-ww-meta-index-incremental`: scheduled crawl, default every 30 minutes.
   It scans recent Notion rows by `last_edited_time`, with a small overlap
   window to avoid missing close updates.
 

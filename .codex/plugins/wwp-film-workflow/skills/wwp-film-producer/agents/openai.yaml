@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Film Producer"
+  short_description: "Route WWP film and series production tasks."
+  default_prompt: "Coordinate this WWP film workflow from input selection through Notion and Media Assets verification."

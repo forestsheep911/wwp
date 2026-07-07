@@ -55,14 +55,7 @@ import type { BrowseViewId } from "./cinema/types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const accessKeyStorageKey = "wwpdw-access-key";
-
-export interface HomeBrowseResponse extends SearchResponse {
-  homeCache?: {
-    status: "hit" | "miss" | "stale" | "refresh";
-    cachedAt?: string;
-    stale?: boolean;
-  };
-}
+const backendWakeTimeoutMs = 2500;
 
 export class ApiError extends Error {
   constructor(
@@ -101,6 +94,14 @@ export function errorMessage(error: unknown, fallback: string) {
 
 function apiUrl(path: string) {
   return `${apiBaseUrl}${path}`;
+}
+
+export async function wakeBackend() {
+  const response = await fetch(apiUrl("/health"), {
+    cache: "no-store",
+    signal: AbortSignal.timeout(backendWakeTimeoutMs)
+  });
+  return response.ok;
 }
 
 function createRequestId() {
@@ -243,24 +244,6 @@ export function browseAssets(
     params.set("view", options.view);
   }
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
-}
-
-export function browseHomeAssets(
-  limit = 60,
-  offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId } = {}
-) {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  if (options.mode) {
-    params.set("mode", options.mode);
-  }
-  if (options.channel && options.channel !== "recommended") {
-    params.set("channel", options.channel);
-  }
-  if (options.view) {
-    params.set("view", options.view);
-  }
-  return request<HomeBrowseResponse>(`/api/home-browse?${params.toString()}`);
 }
 
 export function getNowPlaying(options: { refresh?: boolean } = {}) {

@@ -53,6 +53,14 @@ export interface MovieExternalIds {
 }
 
 export type MovieWorkKind = "movie" | "series" | "season" | "episode" | "short" | "special" | "unknown";
+export type MediaAvailability = "playable" | "source_only" | "needs_processing" | "blocked" | "unknown";
+export type MediaAssetType =
+  | "playable_video"
+  | "source_archive"
+  | "original_disc"
+  | "subtitle_package"
+  | "extra"
+  | "unknown";
 
 export type MovieMetadataSource =
   | "manual"
@@ -71,6 +79,7 @@ export interface MovieTitleEntry {
   title: string;
   kind: MovieTitleKind;
   lang?: string;
+  region?: string;
   source?: MovieMetadataSource;
 }
 
@@ -124,6 +133,14 @@ export interface MovieMediaAssets {
   trailerUrl?: string;
 }
 
+export interface MovieBoxOffice {
+  display?: string;
+  amount?: number;
+  currency?: string;
+  source?: MovieMetadataSource;
+  updatedAt?: string;
+}
+
 export interface MovieSourceRef {
   source: MovieMetadataSource;
   id?: string;
@@ -159,6 +176,7 @@ export interface MovieWorkProfile {
   runtimeMinutes?: number;
   credits?: MovieCreditEntry[];
   ratings?: MovieRatingEntry[];
+  boxOffice?: MovieBoxOffice;
   media?: MovieMediaAssets;
   sourceRefs?: MovieSourceRef[];
   dataQuality?: MovieDataQuality;
@@ -293,6 +311,7 @@ export interface MovieMetadata {
   titles?: MovieTitleEntry[];
   release?: MovieReleaseInfo;
   credits?: MovieCreditEntry[];
+  boxOffice?: MovieBoxOffice;
   sourceRefs?: MovieSourceRef[];
   dataQuality?: MovieDataQuality;
   display?: MovieDisplayMetadata;
@@ -308,11 +327,22 @@ export interface MovieMetadata {
   directors?: string[];
   people?: string[];
   ratings?: RatingValue[];
+  boxOfficeDisplay?: string;
+  boxOfficeAmount?: number;
+  boxOfficeCurrency?: string;
   ratingLevel?: string[];
+  aiSuggestedMinimumAge?: number;
+  aiAgeConfidence?: string;
+  contentRiskTags?: string[];
+  aiAgeReason?: string;
+  manualAgeOverride?: number;
+  effectiveMinimumAge?: number;
   info?: string;
   description?: string;
   imdbId?: string;
   externalIds?: MovieExternalIds;
+  mediaAvailability?: MediaAvailability;
+  hideFromWebsite?: boolean;
   external?: ExternalMovieMetadata;
 }
 
@@ -352,7 +382,41 @@ export interface MediaVariant {
   sourceBreadcrumb?: string[];
   kind: "file" | "video" | "embed" | "url" | "text";
   summary: string;
+  metadata?: MediaVariantMetadata;
   cache?: CacheAsset;
+}
+
+export interface MediaVariantMetadata {
+  assetType?: MediaAssetType;
+  mediaAssetPageId?: string;
+  availability?: MediaAvailability;
+  edition?: string;
+  episodeNumber?: number;
+  resolution?: string;
+  videoCodec?: string;
+  container?: string;
+  exactByteSize?: number;
+  approximateSizeGb?: number;
+  durationSeconds?: number;
+  frameRate?: string;
+  videoDynamicRange?: string;
+  qualityTag?: string;
+  audioCodec?: string;
+  audioChannelLayout?: string;
+  audioLanguages?: string[];
+  subtitleLanguages?: string[];
+  subtitleRegions?: string[];
+  sourceLineage?: string[];
+  commentary?: boolean;
+  noSubtitles?: boolean;
+  playbackVerified?: boolean;
+  hideFromWebsite?: boolean;
+  sourceLabel?: string;
+  fileName?: string;
+  originalFileName?: string;
+  mediaBlockId?: string;
+  developerMemo?: string;
+  structuredSource?: "media_assets" | "notion_page";
 }
 
 export type Mp4FastStartStatus = "faststart" | "late_moov" | "unknown" | "not_mp4";

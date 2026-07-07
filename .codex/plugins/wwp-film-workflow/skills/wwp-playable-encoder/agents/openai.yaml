@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP Playable Encoder"
+  short_description: "Plan playable MP4 encodes and variants."
+  default_prompt: "Plan or run a WWP playable encode with subtitle, audio, QC, and stream-reuse decisions."
