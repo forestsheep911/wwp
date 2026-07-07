@@ -300,6 +300,7 @@ function CinemaApp() {
   const historyInitializedRef = useRef(false);
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
+  const searchDialogBaselineQueryRef = useRef(initialRoute.query);
   const forumThreadsAutoLoadRef = useRef(false);
   const browseRouteLoadRef = useRef("");
 
@@ -609,10 +610,28 @@ function CinemaApp() {
 
   function openSearchDialog() {
     setSearchDialogError("");
+    searchDialogBaselineQueryRef.current = query;
     if (query.trim() && results.length > 0) {
       setSearchPreviewResults(results);
     }
     setSearchOpen(true);
+  }
+
+  function handleSearchDialogOpenChange(open: boolean) {
+    if (open) {
+      openSearchDialog();
+      return;
+    }
+
+    const baselineQuery = searchDialogBaselineQueryRef.current;
+    setSearchOpen(false);
+    setSearchDialogError("");
+    setSearchPreviewLoading(false);
+    setSearchPreviewResults([]);
+    setQuery(baselineQuery);
+    if (baselineQuery.trim().length === 0) {
+      setResults([]);
+    }
   }
 
   function openSearchResult(result: ResultWithCache) {
@@ -2302,7 +2321,7 @@ function CinemaApp() {
         open={searchOpen}
         query={query}
         results={searchPreviewResults}
-        onOpenChange={setSearchOpen}
+        onOpenChange={handleSearchDialogOpenChange}
         onQueryChange={setQuery}
         onSearch={(event) => void runDialogSearch(event)}
         onSelectResult={openSearchResult}
