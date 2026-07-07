@@ -385,36 +385,31 @@ function variantSizeLabel(variant: MediaVariant) {
   return undefined;
 }
 
+function variantResolutionLabel(resolution?: string) {
+  const value = resolution?.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  return /^\d+p$/i.test(value) ? value.toLowerCase() : value.toUpperCase();
+}
+
 export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean } = {}) {
   const metadata = variant.metadata;
   if (!metadata) {
     return [];
   }
 
-  const audio = labelList(metadata.audioLanguages);
   const subtitles = metadata.noSubtitles
     ? "无字幕"
     : labelList(metadata.subtitleLanguages);
-  const lineage = labelList(metadata.sourceLineage);
   const labels = uniqueDisplayLabels([
-    metadata.episodeNumber ? `E${String(metadata.episodeNumber).padStart(2, "0")}` : undefined,
-    metadata.edition,
-    metadata.resolution?.toUpperCase(),
-    metadata.videoCodec,
-    metadata.videoDynamicRange,
-    metadata.container?.toUpperCase(),
-    variantSizeLabel(variant),
-    metadata.qualityTag,
-    audio ? `音轨 ${audio}` : undefined,
-    metadata.audioCodec,
-    metadata.audioChannelLayout,
+    variantResolutionLabel(metadata.resolution),
     subtitles ? `字幕 ${subtitles}` : undefined,
-    metadata.subtitleRegions?.length ? `字幕区 ${metadata.subtitleRegions.join(" / ")}` : undefined,
-    lineage,
-    metadata.playbackVerified ? "已核验" : undefined
+    variantSizeLabel(variant)
   ]);
 
-  return options.compact ? labels.slice(0, 5) : labels;
+  return options.compact ? labels.slice(0, 3) : labels;
 }
 
 export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
