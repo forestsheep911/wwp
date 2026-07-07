@@ -22,7 +22,6 @@ import type {
 import {
   adjustMemberCredits as adjustMemberCreditsApi,
   browseAssets,
-  browseHomeAssets,
   checkAccess,
   clearAccessKey,
   createAdminNotice,
@@ -143,11 +142,7 @@ const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
 const browseFullViewLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
-const browseCacheFallbackMs = 2200;
 type BrowseLoadMode = "paged" | "random";
-type BrowseOriginOutcome =
-  | { ok: true; response: SearchResponse }
-  | { ok: false; error: unknown };
 
 function canPreviewServiceWakeDialog() {
   if (!import.meta.env.DEV) {
@@ -1034,70 +1029,6 @@ function CinemaApp() {
     setBrowseLoadMode(response.mode ?? mode);
   }
 
-  function browseCacheFallbackTimeout() {
-    return new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("Browse cache fallback timed out.")), browseCacheFallbackMs);
-    });
-  }
-
-  async function browseAssetsWithCacheFallback(
-    limit: number,
-    offset: number,
-    options: { mode: BrowseLoadMode; channel: BrowseChannel; view?: BrowseViewId }
-  ) {
-    const originRequest = browseAssets(limit, offset, options);
-    const cacheEligible = offset === 0 && options.mode === "paged" && options.view !== "lucky";
-    if (cacheEligible) {
-      const cachedRequest = browseHomeAssets(limit, offset, options).catch(() => undefined);
-      const originOutcome: Promise<BrowseOriginOutcome> = originRequest
-        .then((response) => ({ ok: true, response }) as const)
-        .catch((error: unknown) => ({ ok: false, error }) as const);
-      const firstOutcome = await Promise.race([
-        originOutcome,
-        browseCacheFallbackTimeout().catch(() => undefined)
-      ]);
-
-      if (firstOutcome?.ok) {
-        return firstOutcome.response;
-      }
-
-      if (firstOutcome && !firstOutcome.ok && isUnauthorizedError(firstOutcome.error)) {
-        throw firstOutcome.error;
-      }
-
-      const cachedResponse = await cachedRequest;
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      const finalOutcome = await originOutcome;
-      if (finalOutcome.ok) {
-        return finalOutcome.response;
-      }
-
-      throw finalOutcome.error;
-    }
-
-    try {
-      return await originRequest;
-    } catch (browseError) {
-      if (isUnauthorizedError(browseError)) {
-        throw browseError;
-      }
-
-      const cachedResponse = await Promise.race([
-        browseHomeAssets(limit, offset, options),
-        browseCacheFallbackTimeout()
-      ]).catch(() => undefined);
-
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      throw browseError;
-    }
-  }
-
   async function refreshBrowseAssets(
     options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId; force?: boolean } = {}
   ) {
@@ -1129,9 +1060,7 @@ function CinemaApp() {
 
     try {
       const offset = append ? browseNextOffset : 0;
-      const response = append
-        ? await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView })
-        : await browseAssetsWithCacheFallback(limit, offset, { mode, channel: requestChannel, view: requestView });
+      const response = await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView });
 
       applyBrowseResponse(response, append, mode, cacheKey);
     } catch (browseError) {
@@ -2475,7 +2404,6 @@ function CinemaApp() {
             browseLoadingMore={browseLoadingMore}
             browseHasMore={browseHasMore}
             browseLoadMode={browseLoadMode}
-            cachedAssets={cachedAssets}
             historyItems={history}
             trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
@@ -2483,7 +2411,6 @@ function CinemaApp() {
             favoriteAssetKeys={favoriteAssetKeys}
             collectionMarksByAssetKey={collectionMarksByAssetKey}
             trackedByAssetKey={trackedByAssetKey}
-            onOpenCachedAsset={(assetKey) => void openPlayer(assetKey)}
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onToggleFavorite={toggleFavorite}
             onUpdateCollectionMark={updateCollectionMark}

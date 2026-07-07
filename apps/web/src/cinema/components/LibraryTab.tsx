@@ -11,14 +11,13 @@ import {
   LayoutGrid,
   List,
   Loader2,
-  Play,
   ShieldCheck,
   Sparkles,
   Star,
   Shuffle,
   Trophy
 } from "lucide-react";
-import type { CacheAsset, CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
+import type { CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
 import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -37,12 +36,10 @@ import {
   cacheLabel,
   cacheVariant,
   directorLine,
-  formatBytes,
   formatDateTime,
   formatLongDate,
   jobStatusLabel,
   jobVariant,
-  mediaQuality,
   metadataLine,
   peopleTags,
   titleInitial,
@@ -73,7 +70,6 @@ interface LibraryTabProps {
   browseLoadingMore: boolean;
   browseHasMore: boolean;
   browseLoadMode: "paged" | "random";
-  cachedAssets: CacheAsset[];
   historyItems: PlaybackHistoryEntry[];
   trackedItems: TrackedCacheItem[];
   pendingAssetKeys: string[];
@@ -81,7 +77,6 @@ interface LibraryTabProps {
   favoriteAssetKeys: Set<string>;
   collectionMarksByAssetKey: Map<string, FavoriteEntry>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
-  onOpenCachedAsset: (assetKey: string) => void;
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
   onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
@@ -109,7 +104,6 @@ export function LibraryTab({
   browseLoadingMore,
   browseHasMore,
   browseLoadMode,
-  cachedAssets,
   historyItems,
   trackedItems,
   pendingAssetKeys,
@@ -117,7 +111,6 @@ export function LibraryTab({
   favoriteAssetKeys,
   collectionMarksByAssetKey,
   trackedByAssetKey,
-  onOpenCachedAsset,
   onFocusedAssetHandled,
   onToggleFavorite,
   onUpdateCollectionMark,
@@ -244,7 +237,6 @@ export function LibraryTab({
       ) : !hasQuery && results.length === 0 ? (
         <LibraryHome
           creditPolicy={creditPolicy}
-          cachedAssets={cachedAssets}
           browseChannel={browseChannel}
           browseResults={browseResults}
           browseLoading={browseLoading}
@@ -256,7 +248,6 @@ export function LibraryTab({
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
-          onOpenCachedAsset={onOpenCachedAsset}
           browseView={browseView}
           onBrowseViewChange={onBrowseViewChange}
           onRefreshBrowse={onRefreshBrowse}
@@ -404,7 +395,6 @@ function viewsForBrowseChannel(channel: BrowseChannel) {
 
 function LibraryHome({
   creditPolicy,
-  cachedAssets,
   browseChannel,
   browseResults,
   browseLoading,
@@ -416,7 +406,6 @@ function LibraryHome({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
-  onOpenCachedAsset,
   browseView,
   onBrowseViewChange,
   onRefreshBrowse,
@@ -427,7 +416,6 @@ function LibraryHome({
   onDownload
 }: {
   creditPolicy: CreditPolicyResponse;
-  cachedAssets: CacheAsset[];
   browseChannel: BrowseChannel;
   browseResults: ResultWithCache[];
   browseLoading: boolean;
@@ -439,7 +427,6 @@ function LibraryHome({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
-  onOpenCachedAsset: (assetKey: string) => void;
   browseView: BrowseViewId;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
@@ -470,10 +457,6 @@ function LibraryHome({
     () => rankBrowseResults(activeSortView, browsableResults, historyStats, viewSeed),
     [activeSortView, browsableResults, historyStats, viewSeed]
   );
-  const rankedAssets = useMemo(
-    () => rankCachedAssets(activeSortView, cachedAssets, viewSeed),
-    [activeSortView, cachedAssets, viewSeed]
-  );
   const tspdtItems = useMemo(
     () => buildTspdtRankItems(channelResults),
     [channelResults]
@@ -490,9 +473,7 @@ function LibraryHome({
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
-    : browsingResults
-      ? rankedResults.length
-      : rankedAssets.length;
+    : rankedResults.length;
   const totalVisibleItems = Math.min(totalRankedItems, browseDisplayItemLimit);
   const loadedBrowseItemCount = showingTspdtRank ? channelResults.length : totalRankedItems;
   const canLoadMoreFromServer = browseHasMore && loadedBrowseItemCount < browseServerItemLimit;
@@ -504,10 +485,6 @@ function LibraryHome({
   const visibleResults = useMemo(
     () => rankedResults.slice(0, visibleItemCount),
     [rankedResults, visibleItemCount]
-  );
-  const visibleAssets = useMemo(
-    () => rankedAssets.slice(0, visibleItemCount),
-    [rankedAssets, visibleItemCount]
   );
   const visibleTspdtItems = useMemo(
     () => tspdtItems.slice(0, visibleItemCount),
@@ -712,27 +689,6 @@ function LibraryHome({
               loadMoreRef={loadMoreRef}
               loading={browseLoadingMore}
               shownCount={visibleResults.length}
-              totalCount={totalRankedItems}
-            />
-          </>
-        ) : visibleAssets.length ? (
-          <>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {visibleAssets.map((asset) => (
-                <BrowseAssetCard
-                  key={asset.assetKey}
-                  asset={asset}
-                  creditPolicy={creditPolicy}
-                  onOpen={onOpenCachedAsset}
-                />
-              ))}
-            </div>
-            <LazyLoadFooter
-              capped={reachedBrowseViewLimit}
-              hasMore={hasMoreItems || canLoadMoreFromServer}
-              loadMoreRef={loadMoreRef}
-              loading={browseLoadingMore}
-              shownCount={visibleAssets.length}
               totalCount={totalRankedItems}
             />
           </>
@@ -1490,57 +1446,6 @@ function rankBrowseResults(
   }
 
   return ranked.sort(byUpdated);
-}
-
-function assetActivityTime(asset: CacheAsset) {
-  return toTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt);
-}
-
-function rankCachedAssets(view: BrowseViewId, assets: CacheAsset[], seed: number) {
-  const ranked = [...assets];
-  if (view === "lucky") {
-    return ranked.sort((left, right) => seededAssetRank(seed, left.assetKey) - seededAssetRank(seed, right.assetKey));
-  }
-
-  if (view === "mostWatched" || view === "popular") {
-    return ranked.sort((left, right) => toTime(right.lastPlayedAt) - toTime(left.lastPlayedAt) || assetActivityTime(right) - assetActivityTime(left));
-  }
-
-  if (view === "topRated" || view === "newGood") {
-    return ranked.sort((left, right) => (right.media?.contentLength ?? 0) - (left.media?.contentLength ?? 0) || assetActivityTime(right) - assetActivityTime(left));
-  }
-
-  return ranked.sort((left, right) => assetActivityTime(right) - assetActivityTime(left));
-}
-
-function BrowseAssetCard({
-  asset,
-  creditPolicy,
-  onOpen
-}: {
-  asset: CacheAsset;
-  creditPolicy: CreditPolicyResponse;
-  onOpen: (assetKey: string) => void;
-}) {
-  const credits = playbackCreditCost(asset.media?.contentLength, creditPolicy);
-
-  return (
-    <article className="grid min-w-0 content-between gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-4 shadow-2xl shadow-black/20">
-      <div className="min-w-0">
-        <p className="line-clamp-2 min-h-10 font-semibold leading-5 text-slate-50">{asset.title}</p>
-        <p className="mt-2 text-sm text-slate-400">
-          {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)}
-        </p>
-        <p className="mt-1 text-xs text-slate-500">
-          {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
-        </p>
-      </div>
-      <Button type="button" size="sm" onClick={() => onOpen(asset.assetKey)}>
-        <Play className="h-4 w-4" />
-        {formatCreditAmount(credits, creditPolicy.unitSymbol)}
-      </Button>
-    </article>
-  );
 }
 
 type RatingSource = "douban" | "imdb" | "rotten" | "metacritic";
