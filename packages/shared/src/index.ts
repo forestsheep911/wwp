@@ -465,6 +465,8 @@ export interface CacheJob {
   sourceUrl?: string;
   sourcePageId?: string;
   sourceBreadcrumb?: string[];
+  sourceMediaBlockId?: string;
+  sourceMediaAssetPageId?: string;
   requestId?: string;
   lastRequestId?: string;
   lastRequestedAt?: string;

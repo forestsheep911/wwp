@@ -13,7 +13,8 @@ import {
   cacheAssetIdleTtlDays,
   createJob,
   isFreshReady,
-  isIdleReadyAsset
+  isIdleReadyAsset,
+  sourceTraceFromResult
 } from "./jobs.js";
 import type { CacheStore, CleanupExpiredResult, DeleteCacheEntryInput, DeleteCacheEntryResult } from "./types.js";
 
@@ -98,7 +99,8 @@ export class LocalCacheStore implements CacheStore {
         source: result.source,
         sourceUrl: result.sourceUrl,
         sourcePageId: result.sourcePageId,
-        sourceBreadcrumb: result.sourceBreadcrumb
+        sourceBreadcrumb: result.sourceBreadcrumb,
+        ...sourceTraceFromResult(result)
       });
 
       const asset: CacheAsset = {
@@ -144,6 +146,7 @@ export class LocalCacheStore implements CacheStore {
       }
 
       const now = new Date().toISOString();
+      const refreshedTrace = refreshedResult ? sourceTraceFromResult(refreshedResult) : undefined;
       const nextJob: CacheJob = {
         ...job,
         title: refreshedResult?.title ?? job.title,
@@ -151,6 +154,8 @@ export class LocalCacheStore implements CacheStore {
         sourceUrl: refreshedResult?.sourceUrl ?? job.sourceUrl,
         sourcePageId: refreshedResult?.sourcePageId ?? job.sourcePageId,
         sourceBreadcrumb: refreshedResult?.sourceBreadcrumb ?? job.sourceBreadcrumb,
+        sourceMediaBlockId: refreshedTrace?.sourceMediaBlockId ?? job.sourceMediaBlockId,
+        sourceMediaAssetPageId: refreshedTrace?.sourceMediaAssetPageId ?? job.sourceMediaAssetPageId,
         status: "queued",
         progress: 0,
         message: "Waiting for a cache worker.",

@@ -58,6 +58,7 @@ import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./a
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { getNowPlaying } from "./now-playing-source.js";
 import { createSearchSource } from "./search-source.js";
+import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
@@ -947,33 +948,41 @@ async function refreshRetrySource(job: CacheJob, context: RequestContext) {
   let method = searchSource.refreshAsset ? "source_page" : "title_search";
   let fallbackQuery: string | undefined;
   let fallbackResultCount: number | undefined;
+  let hintResult: SearchResult | undefined;
 
   logInfo("api.admin.cache_jobs.retry_source_refresh_start", {
     requestId: context.requestId,
     jobId: job.id,
     assetKey: job.assetKey,
     sourcePageId: job.sourcePageId,
+    sourceMediaBlockId: job.sourceMediaBlockId,
     breadcrumbDepth: job.sourceBreadcrumb?.length,
     method
   });
 
   try {
-    let refreshed = searchSource.refreshAsset
-      ? await searchSource.refreshAsset({
-        assetKey: job.assetKey,
-        sourcePageId: job.sourcePageId,
-        title: job.title,
-        sourceBreadcrumb: job.sourceBreadcrumb
-      })
-      : undefined;
-
-    if (!refreshed) {
+    if (!job.sourceMediaBlockId) {
       fallbackQuery = retrySearchQuery(job);
-      method = searchSource.refreshAsset ? "source_page_then_title_search" : "title_search";
       const results = await searchSource.search(fallbackQuery);
       fallbackResultCount = results.length;
       rememberResults(results);
-      refreshed = findSearchResultByAssetKey(results, job.assetKey);
+      hintResult = findSearchResultByAssetKey(results, job.assetKey);
+    }
+
+    let refreshed = searchSource.refreshAsset
+      ? await searchSource.refreshAsset(refreshAssetInputFromJob(job, hintResult))
+      : undefined;
+
+    if (!refreshed) {
+      method = searchSource.refreshAsset ? "source_page_then_title_search" : "title_search";
+      if (!fallbackQuery) {
+        fallbackQuery = retrySearchQuery(job);
+        const results = await searchSource.search(fallbackQuery);
+        fallbackResultCount = results.length;
+        rememberResults(results);
+        hintResult = findSearchResultByAssetKey(results, job.assetKey);
+      }
+      refreshed = hintResult;
     }
 
     if (!refreshed) {
@@ -997,6 +1006,7 @@ async function refreshRetrySource(job: CacheJob, context: RequestContext) {
       assetKey: job.assetKey,
       refreshedAssetKey: refreshed.assetKey,
       sourcePageId: refreshed.sourcePageId,
+      sourceMediaBlockId: (refreshed.metadata as { mediaBlockId?: string } | undefined)?.mediaBlockId,
       breadcrumbDepth: refreshed.sourceBreadcrumb?.length,
       method,
       sourceUrlChanged: refreshed.sourceUrl !== job.sourceUrl,
@@ -1024,7 +1034,8 @@ async function refreshResultSource(
   context: RequestContext,
   options: { logPrefix: string; indexReason: string }
 ): Promise<{ result: SearchResult; sourceRefreshed: boolean }> {
-  if (!searchSource.refreshAsset || !result.sourcePageId) {
+  const refreshInput = refreshAssetInputFromResult(result);
+  if (!searchSource.refreshAsset || (!refreshInput.sourcePageId && !refreshInput.mediaBlockId)) {
     return {
       result,
       sourceRefreshed: false
@@ -1033,12 +1044,7 @@ async function refreshResultSource(
 
   const startedAt = Date.now();
   try {
-    const refreshed = await searchSource.refreshAsset({
-      assetKey: result.assetKey,
-      sourcePageId: result.sourcePageId,
-      title: result.title,
-      sourceBreadcrumb: result.sourceBreadcrumb
-    });
+    const refreshed = await searchSource.refreshAsset(refreshInput);
 
     if (!refreshed) {
       logWarn(`${options.logPrefix}.source_refresh_miss`, {
@@ -1060,6 +1066,7 @@ async function refreshResultSource(
       assetKey: result.assetKey,
       refreshedAssetKey: refreshed.assetKey,
       sourcePageId: refreshed.sourcePageId,
+      sourceMediaBlockId: (refreshed.metadata as { mediaBlockId?: string } | undefined)?.mediaBlockId,
       sourceUrlChanged: refreshed.sourceUrl !== result.sourceUrl,
       durationMs: durationMs(startedAt)
     });

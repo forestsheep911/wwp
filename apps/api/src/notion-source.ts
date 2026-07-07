@@ -1748,7 +1748,32 @@ export class NotionSearchSource {
     sourcePageId?: string;
     title?: string;
     sourceBreadcrumb?: string[];
+    mediaBlockId?: string;
+    mediaAssetPageId?: string;
   }): Promise<SearchResult | undefined> {
+    if (input.mediaBlockId) {
+      const candidate = await this.mediaCandidateFromBlockId(input.mediaBlockId);
+      if (candidate?.url && isLikelyPlayableCandidate(candidate)) {
+        const metadata: MediaVariantMetadata = {
+          mediaBlockId: input.mediaBlockId,
+          mediaAssetPageId: input.mediaAssetPageId,
+          structuredSource: "media_assets"
+        };
+        return {
+          assetKey: input.assetKey,
+          title: input.title ?? input.sourceBreadcrumb?.join(" / ") ?? input.assetKey,
+          source: "Notion library",
+          sourceUrl: candidate.url,
+          sourcePageId: input.sourcePageId,
+          sourceBreadcrumb: input.sourceBreadcrumb,
+          durationLabel: "--",
+          updatedAt: new Date().toISOString(),
+          summary: candidateSummary(candidate),
+          metadata
+        };
+      }
+    }
+
     const pageId = input.sourcePageId ?? pageIdFromAssetKey(input.assetKey);
     if (!pageId) {
       return undefined;

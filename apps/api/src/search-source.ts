@@ -6,6 +6,8 @@ export interface RefreshAssetInput {
   sourcePageId?: string;
   title?: string;
   sourceBreadcrumb?: string[];
+  mediaBlockId?: string;
+  mediaAssetPageId?: string;
 }
 
 export interface SearchSource {

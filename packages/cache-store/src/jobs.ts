@@ -1,4 +1,17 @@
-import type { CacheJob } from "@wwpdw/shared";
+import type { CacheJob, SearchResult } from "@wwpdw/shared";
+
+type SourceTraceMetadata = {
+  mediaBlockId?: string;
+  mediaAssetPageId?: string;
+};
+
+export function sourceTraceFromResult(result: Pick<SearchResult, "metadata">) {
+  const metadata = (result.metadata ?? {}) as SourceTraceMetadata;
+  return {
+    sourceMediaBlockId: metadata.mediaBlockId,
+    sourceMediaAssetPageId: metadata.mediaAssetPageId
+  };
+}
 
 export function createJob(input: {
   assetKey: string;
@@ -7,6 +20,8 @@ export function createJob(input: {
   sourceUrl?: string;
   sourcePageId?: string;
   sourceBreadcrumb?: string[];
+  sourceMediaBlockId?: string;
+  sourceMediaAssetPageId?: string;
 }): CacheJob {
   const now = new Date().toISOString();
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -19,6 +34,8 @@ export function createJob(input: {
     sourceUrl: input.sourceUrl,
     sourcePageId: input.sourcePageId,
     sourceBreadcrumb: input.sourceBreadcrumb,
+    sourceMediaBlockId: input.sourceMediaBlockId,
+    sourceMediaAssetPageId: input.sourceMediaAssetPageId,
     status: "queued",
     progress: 0,
     message: "Waiting for a cache worker.",
