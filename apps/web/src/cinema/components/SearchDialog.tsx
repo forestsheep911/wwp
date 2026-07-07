@@ -58,13 +58,13 @@ export function SearchDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[86vh] w-[min(96vw,1040px)] gap-0 overflow-hidden p-0">
+      <DialogContent className="h-[calc(100dvh-0.75rem)] max-h-[calc(100dvh-0.75rem)] w-full gap-0 overflow-hidden rounded-t-2xl p-0 sm:h-auto sm:max-h-[86vh] sm:w-[min(96vw,1040px)] sm:rounded-lg">
         <DialogHeader className="sr-only">
           <DialogTitle>{copy.search.title}</DialogTitle>
           <DialogDescription>{copy.search.description}</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit}>
-          <div className="flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 pr-12">
+          <div className="flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 pr-14">
             <Search className="h-5 w-5 shrink-0 text-slate-500" />
             <Input
               autoFocus
@@ -76,7 +76,7 @@ export function SearchDialog({
             {loading ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-emerald-300" /> : null}
           </div>
 
-          <div className="grid min-h-[420px] bg-slate-950 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid min-h-0 bg-slate-950 lg:min-h-[420px] lg:grid-cols-[minmax(0,1fr)_360px]">
             <section className="min-h-0 border-slate-800 lg:border-r">
               <div className="flex h-12 items-center justify-between gap-3 border-b border-slate-900 px-4">
                 <p className="truncate text-sm font-semibold text-slate-400">
@@ -94,7 +94,7 @@ export function SearchDialog({
                 ) : null}
               </div>
 
-              <div className="max-h-[calc(86vh-7rem)] min-h-[368px] overflow-y-auto p-2">
+              <div className="max-h-[calc(100dvh-8rem)] min-h-0 overflow-y-auto p-2 sm:max-h-[calc(86vh-7rem)] sm:min-h-[368px]">
                 {error ? (
                   <div className="m-2 rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
                     {error}
@@ -158,7 +158,7 @@ function SearchResultRow({
 
   return (
     <button
-      className={`grid w-full grid-cols-[44px_minmax(0,1fr)] gap-3 rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+      className={`grid min-h-20 w-full grid-cols-[52px_minmax(0,1fr)] gap-3 rounded-xl px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:grid-cols-[44px_minmax(0,1fr)] sm:rounded-md sm:py-2.5 ${
         active ? "bg-slate-800/80 text-slate-50" : "text-slate-300 hover:bg-slate-900"
       }`}
       type="button"
@@ -254,7 +254,7 @@ function SearchLoadingRows() {
 
 function MiniPoster({ result }: { result: SearchResult }) {
   return (
-    <span className="relative aspect-[2/3] h-16 overflow-hidden rounded-md border border-slate-800 bg-slate-900">
+    <span className="relative aspect-[2/3] h-[4.75rem] overflow-hidden rounded-lg border border-slate-800 bg-slate-900 sm:h-16 sm:rounded-md">
       <span className="absolute inset-0 grid place-items-center text-lg font-black text-emerald-100">
         {titleInitial(result.title)}
       </span>

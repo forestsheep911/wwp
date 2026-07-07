@@ -77,7 +77,7 @@ export function ServiceWakeDialog({
       }}
     >
       <DialogContent
-        className="max-h-[92vh] w-[min(94vw,520px)] overflow-hidden p-0"
+        className="max-h-[calc(100dvh-0.75rem)] overflow-hidden p-0 sm:w-[min(94vw,520px)]"
         hideCloseButton={!dismissible}
         onEscapeKeyDown={(event) => {
           if (!dismissible) {
@@ -105,7 +105,7 @@ export function ServiceWakeDialog({
           </DialogHeader>
 
           <div className="grid gap-4 px-5 pb-5 pt-2">
-            <section className="grid gap-4 rounded-md border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/20">
+            <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl shadow-black/20 sm:rounded-md">
               <div className="flex items-center">
                 <span className="rounded-md border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 text-xs font-semibold text-cyan-100">
                   {currentQuestion.category}
@@ -133,7 +133,7 @@ export function ServiceWakeDialog({
                       aria-disabled={answered}
                       aria-pressed={isSelected}
                       className={cn(
-                        "group grid min-h-[4rem] grid-cols-[2rem_minmax(0,1fr)] items-center gap-3 rounded-md border px-3 py-2.5 text-left text-sm font-semibold leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300",
+                        "group grid min-h-[4.75rem] grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-3 rounded-xl border px-3 py-3 text-left text-sm font-semibold leading-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 sm:min-h-[4rem] sm:grid-cols-[2rem_minmax(0,1fr)] sm:rounded-md sm:py-2.5",
                         optionState === "idle" &&
                           "border-slate-700 bg-slate-900/70 text-slate-100 hover:border-emerald-300/70 hover:bg-slate-900",
                         optionState === "correct" &&
@@ -148,7 +148,7 @@ export function ServiceWakeDialog({
                     >
                       <span
                         className={cn(
-                          "flex h-8 w-8 items-center justify-center rounded-md border text-xs font-black",
+                          "flex h-10 w-10 items-center justify-center rounded-lg border text-sm font-black sm:h-8 sm:w-8 sm:rounded-md sm:text-xs",
                           optionState === "idle" && "border-slate-600 bg-slate-950 text-slate-300 group-hover:border-emerald-300/70 group-hover:text-emerald-100",
                           optionState === "correct" && "border-emerald-300/70 bg-emerald-300 text-slate-950",
                           optionState === "wrong" && "border-rose-300/80 bg-rose-300 text-slate-950",
@@ -166,7 +166,7 @@ export function ServiceWakeDialog({
 
             <div
               className={cn(
-                "min-h-[8.5rem] rounded-md border p-4 transition",
+                "min-h-[8.5rem] rounded-xl border p-4 transition sm:rounded-md",
                 answered
                   ? isCorrect
                     ? "border-emerald-300/35 bg-emerald-400/10"
@@ -196,8 +196,8 @@ export function ServiceWakeDialog({
                       <p className="mt-1 text-sm leading-6 text-slate-400">{currentQuestion.note}</p>
                     </div>
                   </div>
-                  <div className="flex justify-end">
-                    <Button ref={nextButtonRef} size="sm" type="button" onClick={goToNextQuestion}>
+                  <div className="grid gap-2 sm:flex sm:justify-end">
+                    <Button className="w-full sm:w-auto" ref={nextButtonRef} size="sm" type="button" onClick={goToNextQuestion}>
                       {copy.access.wake.next}
                       <ArrowRight className="h-4 w-4" />
                     </Button>

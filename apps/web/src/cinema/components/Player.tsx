@@ -168,9 +168,9 @@ export function Player({
   const isMock = playback.playbackUrl.startsWith("mock://");
 
   return (
-    <main className="min-h-screen px-3 py-4 sm:px-5 sm:py-6 md:px-8">
-      <div className="mx-auto grid max-w-6xl gap-5">
-        <div className="grid gap-3 sm:flex sm:items-center sm:justify-between">
+    <main className="min-h-[100dvh] px-0 py-0 sm:px-5 sm:py-6 md:px-8">
+      <div className="mx-auto grid max-w-6xl gap-4 sm:gap-5">
+        <div className="grid gap-3 px-3 pt-4 sm:flex sm:items-center sm:justify-between sm:px-0 sm:pt-0">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-emerald-300">{copy.player.nowPlaying}</p>
             <h1 className="mt-1 line-clamp-3 text-xl font-semibold text-slate-50 sm:text-2xl">{playback.title}</h1>
@@ -179,7 +179,7 @@ export function Player({
             {copy.player.back}
           </Button>
         </div>
-        <div className="overflow-hidden rounded-lg border border-slate-800 bg-black shadow-2xl">
+        <div className="overflow-hidden border-y border-slate-800 bg-black shadow-2xl sm:rounded-lg sm:border">
           {isMock ? (
             <div className="grid aspect-video place-items-center text-slate-400">
               <div className="grid place-items-center gap-3">
@@ -193,8 +193,10 @@ export function Player({
             <ArtPlayerView playback={playback} onRenewPlayback={onRenewPlayback} />
           )}
         </div>
-        <MediaDiagnosticsView media={playback.media} />
-        <p className="text-xs text-slate-500">{copy.player.expiresAt(formatLongDate(playback.expiresAt))}</p>
+        <div className="px-3 sm:px-0">
+          <MediaDiagnosticsView media={playback.media} />
+        </div>
+        <p className="px-3 pb-4 text-xs text-slate-500 sm:px-0 sm:pb-0">{copy.player.expiresAt(formatLongDate(playback.expiresAt))}</p>
       </div>
     </main>
   );

@@ -2243,7 +2243,7 @@ function CinemaApp() {
   const serviceWakePreviewButton = serviceWakePreviewEnabled ? (
     <button
       type="button"
-      className="fixed bottom-4 right-4 z-50 rounded-full border border-emerald-300/30 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-200 hover:bg-slate-900"
+      className="fixed bottom-4 right-4 z-50 hidden rounded-full border border-emerald-300/30 bg-slate-950/90 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-lg shadow-black/30 backdrop-blur transition hover:border-emerald-200 hover:bg-slate-900 sm:block"
       onClick={() => setServiceWakePreviewOpen(true)}
     >
       等待态预览

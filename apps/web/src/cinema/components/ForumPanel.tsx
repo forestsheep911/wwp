@@ -92,12 +92,12 @@ export function ForumPanel({
 }: ForumPanelProps) {
   return (
     <section className="grid gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-slate-50">{copy.forum.title}</h2>
           <p className="mt-1 text-sm text-slate-400">{copy.forum.description}</p>
         </div>
-        <Button type="button" variant="outline" onClick={onRefresh} disabled={loading || threadLoading}>
+        <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={onRefresh} disabled={loading || threadLoading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           {copy.common.refresh}
         </Button>
@@ -111,35 +111,35 @@ export function ForumPanel({
 
       <div className="grid gap-5 lg:grid-cols-[minmax(20rem,0.85fr)_minmax(0,1.35fr)]">
         <div className="grid min-w-0 content-start gap-4">
-          <form className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/70 p-4" onSubmit={onSubmitThread}>
+          <form className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md" onSubmit={onSubmitThread}>
             <div className="flex items-center gap-2">
               <PenLine className="h-4 w-4 text-emerald-300" />
               <p className="text-sm font-semibold text-slate-100">{copy.forum.newThread}</p>
             </div>
             <input
-              className="h-10 min-w-0 rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+              className="h-12 min-w-0 rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30 sm:h-10 sm:rounded-md sm:text-sm"
               maxLength={120}
               placeholder={copy.forum.titlePlaceholder}
               value={draftTitle}
               onChange={(event) => onDraftTitleChange(event.target.value)}
             />
             <textarea
-              className="min-h-28 resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+              className="min-h-32 resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base leading-7 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30 sm:min-h-28 sm:rounded-md sm:py-2 sm:text-sm sm:leading-6"
               maxLength={5000}
               placeholder={copy.forum.bodyPlaceholder}
               value={draftBody}
               onChange={(event) => onDraftBodyChange(event.target.value)}
             />
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
               <p className="text-xs text-slate-500">{draftBody.length}/5000</p>
-              <Button type="submit" disabled={submitting || !draftTitle.trim() || !draftBody.trim()}>
+              <Button className="w-full sm:w-auto" type="submit" disabled={submitting || !draftTitle.trim() || !draftBody.trim()}>
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
                 {copy.forum.publish}
               </Button>
             </div>
           </form>
 
-          <div className="overflow-hidden rounded-md border border-slate-800 bg-slate-950/60">
+          <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60 sm:rounded-md">
             <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
               <p className="text-sm font-semibold text-slate-100">{copy.forum.threadList}</p>
               <Badge variant="secondary">{threads.length}</Badge>
@@ -159,7 +159,7 @@ export function ForumPanel({
                   return (
                     <button
                       key={thread.id}
-                      className={`grid gap-2 px-4 py-3 text-left transition-colors ${
+                      className={`grid min-h-20 gap-2 px-4 py-3 text-left transition-colors ${
                         active ? "bg-emerald-400/10" : "bg-transparent hover:bg-slate-900/80"
                       }`}
                       type="button"
@@ -184,7 +184,7 @@ export function ForumPanel({
           </div>
         </div>
 
-        <article className="min-h-[18rem] min-w-0 rounded-md border border-slate-800 bg-slate-950/60">
+        <article className="min-h-[18rem] min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 sm:rounded-md">
           {threadLoading && !selectedThread ? (
             <div className="flex items-center gap-2 px-5 py-8 text-sm font-semibold text-slate-300">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -215,7 +215,7 @@ export function ForumPanel({
                 ) : (
                   <div className="grid gap-3">
                     {selectedThread.replies.map((reply) => (
-                      <div key={reply.id} className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/70 p-4">
+                      <div key={reply.id} className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:rounded-md">
                         <AuthorLine entry={reply} currentMemberId={currentMemberId} />
                         <p className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-200">{reply.body}</p>
                       </div>
@@ -230,15 +230,15 @@ export function ForumPanel({
                   {copy.forum.reply}
                 </div>
                 <textarea
-                  className="min-h-28 resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+                  className="min-h-32 resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-base leading-7 text-slate-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30 sm:min-h-28 sm:rounded-md sm:py-2 sm:text-sm sm:leading-6"
                   maxLength={5000}
                   placeholder={copy.forum.replyPlaceholder}
                   value={replyBody}
                   onChange={(event) => onReplyBodyChange(event.target.value)}
                 />
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
                   <p className="text-xs text-slate-500">{replyBody.length}/5000</p>
-                  <Button type="submit" disabled={replying || !replyBody.trim()}>
+                  <Button className="w-full sm:w-auto" type="submit" disabled={replying || !replyBody.trim()}>
                     {replying ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
                     {copy.forum.sendReply}
                   </Button>

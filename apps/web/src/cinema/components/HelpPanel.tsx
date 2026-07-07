@@ -90,12 +90,12 @@ export function HelpPanel() {
           <h2 className="text-lg font-semibold text-slate-50">{copy.help.title}</h2>
         </div>
 
-        <TabsList className="justify-start bg-slate-950/72">
+        <TabsList className="max-w-[calc(100vw-1.5rem)] justify-start overflow-x-auto rounded-xl bg-slate-950/72 sm:max-w-none sm:rounded-md">
           {helpViews.map((view) => {
             const Icon = view.icon;
             return (
               <TabsTrigger
-                className="data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950"
+                className="min-h-11 flex-none rounded-lg data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950 sm:min-h-8 sm:rounded-md"
                 key={view.id}
                 value={view.id}
               >
@@ -140,7 +140,7 @@ function HelpHome() {
           const Icon = rules[index] ?? Sparkles;
           return (
             <article
-              className="grid min-w-0 content-start gap-3 rounded-lg border border-slate-800 bg-slate-950/72 p-4"
+              className="grid min-w-0 content-start gap-3 rounded-xl border border-slate-800 bg-slate-950/72 p-4 sm:rounded-lg"
               key={rule.title}
             >
               <div className="flex items-center gap-2">
@@ -155,7 +155,7 @@ function HelpHome() {
         })}
       </section>
 
-      <section className="rounded-lg border border-emerald-300/20 bg-emerald-300/8 p-4">
+      <section className="rounded-xl border border-emerald-300/20 bg-emerald-300/8 p-4 sm:rounded-lg">
         <h3 className="text-sm font-semibold text-emerald-100">{copy.help.flowTitle}</h3>
         <p className="mt-2 text-sm leading-6 text-slate-300">
           {copy.help.flowBody}
@@ -183,7 +183,7 @@ function HelpFaq({
   onFaqQueryChange: (value: string) => void;
 }) {
   return (
-    <section className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/72 p-4">
+    <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/72 p-4 sm:rounded-lg">
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_20rem] md:items-end">
         <div className="grid gap-1">
           <h3 className="text-base font-semibold text-slate-50">{copy.help.faqTitle}</h3>
@@ -200,13 +200,13 @@ function HelpFaq({
         </label>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="scrollbar-none flex max-w-[calc(100vw-2rem)] gap-2 overflow-x-auto pb-1 sm:max-w-none">
         {copy.help.faqCategories.map((category) => {
           const active = faqCategory === category.id;
           return (
             <Button
               aria-pressed={active}
-              className="shrink-0"
+              className="min-h-11 shrink-0 rounded-lg sm:min-h-8 sm:rounded-md"
               key={category.id}
               type="button"
               variant={active ? "secondary" : "ghost"}
@@ -248,7 +248,7 @@ function HelpAcademy({
 }) {
   return (
     <section className="grid gap-4">
-      <div className="rounded-lg border border-slate-800 bg-slate-950/72 p-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-950/72 p-4 sm:rounded-lg">
         <h3 className="text-base font-semibold text-slate-50">{copy.help.lessonsTitle}</h3>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">{copy.help.lessonsDescription}</p>
       </div>
@@ -261,7 +261,7 @@ function HelpAcademy({
             return (
               <button
                 aria-pressed={active}
-                className={`grid min-w-0 content-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                className={`grid min-h-32 min-w-0 content-start gap-3 rounded-xl border p-4 text-left transition-colors sm:rounded-lg ${
                   active
                     ? "border-emerald-300/60 bg-emerald-300/10"
                     : "border-slate-800 bg-slate-950/72 hover:border-slate-700 hover:bg-slate-900/80"
@@ -294,7 +294,7 @@ function HelpAcademy({
           })}
         </div>
 
-        <aside className="h-fit rounded-lg border border-emerald-300/20 bg-emerald-300/8 p-4 xl:sticky xl:top-24">
+        <aside className="h-fit rounded-xl border border-emerald-300/20 bg-emerald-300/8 p-4 sm:rounded-lg xl:sticky xl:top-24">
           <div className="flex items-start justify-between gap-3">
             <div className="grid gap-1">
               <p className="text-xs font-semibold text-emerald-200">{selectedLesson.kicker}</p>

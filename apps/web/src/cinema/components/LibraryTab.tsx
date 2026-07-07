@@ -262,9 +262,9 @@ export function LibraryTab({
         />
       ) : (
         <>
-          <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+          <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
             <Button
-              className="flex-1 sm:flex-none"
+              className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
               type="button"
               size="sm"
               variant={viewMode === "gallery" ? "secondary" : "ghost"}
@@ -275,7 +275,7 @@ export function LibraryTab({
               {copy.library.gallery}
             </Button>
             <Button
-              className="flex-1 sm:flex-none"
+              className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
               type="button"
               size="sm"
               variant={viewMode === "list" ? "secondary" : "ghost"}
@@ -568,71 +568,73 @@ function LibraryHome({
   }, [browseLoadingMore, canLoadMoreFromServer, hasMoreItems, totalVisibleItems, visibleItemCount]);
 
   return (
-    <section className="grid gap-4">
-      <div className="scrollbar-none flex gap-2 overflow-x-auto rounded-md border border-slate-800 bg-slate-950 p-1">
-        {channelViews.map((view) => {
-          const Icon = view.icon;
-          if (view.id === "lucky") {
+    <section className="grid min-w-0 gap-4">
+      <div className="max-w-full overflow-x-clip">
+        <div className="scrollbar-none flex max-w-full flex-wrap gap-2 overflow-visible rounded-xl border border-slate-800 bg-slate-950 p-1 sm:max-w-none sm:flex-nowrap sm:overflow-x-auto sm:overscroll-x-contain sm:rounded-md">
+          {channelViews.map((view) => {
+            const Icon = view.icon;
+            if (view.id === "lucky") {
+              return (
+                <div className="flex flex-none overflow-hidden rounded-lg border border-slate-800 bg-slate-950 sm:rounded-md" key={view.id}>
+                  <Button
+                    className="min-w-11 rounded-none border-r border-slate-800 px-3 sm:min-w-8 sm:px-2"
+                    type="button"
+                    size="sm"
+                    variant={activeSortView === view.id ? "secondary" : "ghost"}
+                    onClick={() => {
+                      setActiveView(view.id);
+                      setViewSeed(randomBrowseSeed());
+                      onBrowseViewChange(view.id, { refresh: true });
+                    }}
+                    title={copy.library.browseViews.lucky.detail}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span className="sr-only">{copy.library.browseViews.lucky.detail}</span>
+                  </Button>
+                  <Button
+                    className="rounded-none px-3 sm:px-2"
+                    type="button"
+                    size="sm"
+                    variant={activeSortView === view.id ? "secondary" : "ghost"}
+                    onClick={() => {
+                      if (activeSortView !== view.id) {
+                        setActiveView(view.id);
+                        onBrowseViewChange(view.id);
+                      }
+                    }}
+                    title={view.label}
+                  >
+                    {view.label}
+                  </Button>
+                </div>
+              );
+            }
+
             return (
-              <div className="flex flex-none overflow-hidden rounded-md border border-slate-800 bg-slate-950" key={view.id}>
-                <Button
-                  className="rounded-none border-r border-slate-800 px-2"
-                  type="button"
-                  size="sm"
-                  variant={activeSortView === view.id ? "secondary" : "ghost"}
-                  onClick={() => {
+              <Button
+                className="flex-none"
+                key={view.id}
+                type="button"
+                size="sm"
+                variant={activeSortView === view.id ? "secondary" : "ghost"}
+                onClick={() => {
+                  if (activeSortView !== view.id) {
                     setActiveView(view.id);
                     setViewSeed(randomBrowseSeed());
-                    onBrowseViewChange(view.id, { refresh: true });
-                  }}
-                  title={copy.library.browseViews.lucky.detail}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span className="sr-only">{copy.library.browseViews.lucky.detail}</span>
-                </Button>
-                <Button
-                  className="rounded-none"
-                  type="button"
-                  size="sm"
-                  variant={activeSortView === view.id ? "secondary" : "ghost"}
-                  onClick={() => {
-                    if (activeSortView !== view.id) {
-                      setActiveView(view.id);
-                      onBrowseViewChange(view.id);
-                    }
-                  }}
-                  title={view.label}
-                >
-                  {view.label}
-                </Button>
-              </div>
+                    onBrowseViewChange(view.id);
+                  }
+                }}
+                title={view.label}
+              >
+                <Icon className="h-4 w-4" />
+                {view.label}
+              </Button>
             );
-          }
-
-          return (
-            <Button
-              className="flex-none"
-              key={view.id}
-              type="button"
-              size="sm"
-              variant={activeSortView === view.id ? "secondary" : "ghost"}
-              onClick={() => {
-                if (activeSortView !== view.id) {
-                  setActiveView(view.id);
-                  setViewSeed(randomBrowseSeed());
-                  onBrowseViewChange(view.id);
-                }
-              }}
-              title={view.label}
-            >
-              <Icon className="h-4 w-4" />
-              {view.label}
-            </Button>
-          );
-        })}
+          })}
+        </div>
       </div>
 
-      <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:p-4">
+      <div className="grid min-w-0 gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 sm:rounded-lg sm:p-4">
         {showingTspdtRank ? (
           <>
             <TspdtRankView
@@ -1702,14 +1704,14 @@ function PosterActions({
   className?: string;
 }) {
   return (
-    <div className={`pointer-events-none absolute right-2 top-2 z-10 flex flex-col gap-1.5 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${className}`}>
+    <div className={`absolute right-2 top-2 z-10 flex flex-col gap-2 opacity-100 transition-opacity duration-150 sm:pointer-events-none sm:gap-1.5 sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100 ${className}`}>
       <FavoriteButton
         active={favorite}
-        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        className="h-11 w-11 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95 sm:h-8 sm:w-8"
         onClick={onToggleFavorite}
       />
       <AiSummaryButton
-        className="h-8 w-8 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95"
+        className="h-11 w-11 border-slate-600/70 bg-slate-950/78 text-emerald-100 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95 sm:h-8 sm:w-8"
         onClick={onSummarize}
       />
     </div>
@@ -1750,10 +1752,10 @@ function VariantButtons({
     const hiddenGroupCount = Math.max(0, specGroups.length - visibleGroups.length);
 
     return (
-      <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
+    <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
         {visibleGroups.map((group) => (
           <Button
-            className={`min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-left text-slate-100 hover:bg-slate-800 ${compact ? "" : "h-auto py-2"}`}
+            className={`min-h-12 justify-between rounded-lg border-slate-700 bg-slate-900/80 px-3.5 text-left text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md sm:px-3 ${compact ? "" : "h-auto py-2.5 sm:py-2"}`}
             type="button"
             variant="outline"
             size="sm"
@@ -1778,7 +1780,7 @@ function VariantButtons({
         ))}
         {hiddenGroupCount > 0 ? (
           <Button
-            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            className="min-h-12 justify-between rounded-lg border-slate-700 bg-slate-900/80 px-3.5 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md sm:px-3"
             type="button"
             variant="outline"
             size="sm"
@@ -1839,9 +1841,9 @@ function VariantButtons({
           : undefined;
 
         return (
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2.5rem] gap-2" key={variant.assetKey}>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] gap-2 sm:grid-cols-[minmax(0,1fr)_2.5rem]" key={variant.assetKey}>
             <Button
-              className={`relative h-auto min-w-0 flex-col items-start overflow-hidden px-3 py-2 text-left sm:flex-row sm:items-center sm:justify-between ${compact ? "min-h-10" : ""}`}
+              className={`relative h-auto min-h-12 min-w-0 flex-col items-start overflow-hidden rounded-lg px-3.5 py-2.5 text-left sm:min-h-10 sm:rounded-md sm:px-3 sm:py-2 sm:flex-row sm:items-center sm:justify-between ${compact ? "" : ""}`}
               type="button"
               variant={displayAsset?.status === "ready" ? "default" : "secondary"}
               onClick={() => onSelect(result, variant)}
@@ -1870,7 +1872,7 @@ function VariantButtons({
               </span>
             </Button>
             <Button
-              className="h-full min-h-10 border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800"
+              className="h-full min-h-12 rounded-lg border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md"
               type="button"
               variant="outline"
               size="icon"
@@ -1888,7 +1890,7 @@ function VariantButtons({
       {hiddenVariantCount > 0 ? (
         onShowAllVariants ? (
           <Button
-            className="min-h-10 justify-between rounded-md border-slate-700 bg-slate-900/80 px-3 text-slate-100 hover:bg-slate-800"
+            className="min-h-12 justify-between rounded-lg border-slate-700 bg-slate-900/80 px-3.5 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md sm:px-3"
             type="button"
             variant="outline"
             size="sm"
@@ -1992,10 +1994,10 @@ function MovieCard({
   const summary = bestSummary(result);
 
   return (
-    <article className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4">
+    <article className="movie-card grid h-full grid-cols-[112px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4">
       <div className="group relative">
         <button
-          className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
           type="button"
           onClick={() => onOpenDetail(result)}
           title={copy.library.viewDetails}
@@ -2010,12 +2012,12 @@ function MovieCard({
       </div>
       <div className="grid min-w-0 content-start gap-3">
         <button
-          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          className="min-h-12 min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0"
           type="button"
           onClick={() => onOpenDetail(result)}
           title={copy.library.viewDetails}
         >
-          <h2 className="line-clamp-3 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
+          <h2 className="line-clamp-3 text-lg font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
             {result.title}
           </h2>
         </button>
@@ -2073,7 +2075,7 @@ function SummaryText({ summary }: { summary: string }) {
         {summary}
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[72vh] w-[min(92vw,42rem)] overflow-y-auto">
+        <DialogContent className="max-h-[calc(100dvh-0.75rem)] overflow-y-auto sm:max-h-[72vh] sm:w-[min(92vw,42rem)]">
           <DialogHeader>
             <DialogTitle>{copy.library.summaryTitle}</DialogTitle>
           </DialogHeader>
@@ -2087,7 +2089,7 @@ function SummaryText({ summary }: { summary: string }) {
 function AiSummaryButton({ className = "", onClick }: { className?: string; onClick: () => void }) {
   return (
     <Button
-      className={`h-8 w-8 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800 ${className}`}
+      className={`h-11 w-11 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800 sm:h-8 sm:w-8 ${className}`}
       type="button"
       variant="outline"
       size="icon"
@@ -2169,7 +2171,7 @@ function MovieSummaryDialog({
 }) {
   return (
     <Dialog open={state.open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(94vw,720px)]">
+      <DialogContent className="sm:w-[min(94vw,720px)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-emerald-300" />
@@ -2180,9 +2182,9 @@ function MovieSummaryDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex w-full rounded-md border border-slate-800 bg-slate-950 p-1 sm:w-fit">
+        <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
           <Button
-            className="flex-1 sm:flex-none"
+            className="min-h-11 flex-1 rounded-lg sm:min-h-8 sm:flex-none sm:rounded-md"
             type="button"
             size="sm"
             variant={state.mode === "spoiler_free" ? "secondary" : "ghost"}
@@ -2192,7 +2194,7 @@ function MovieSummaryDialog({
             {copy.library.spoilerFree}
           </Button>
           <Button
-            className="flex-1 sm:flex-none"
+            className="min-h-11 flex-1 rounded-lg sm:min-h-8 sm:flex-none sm:rounded-md"
             type="button"
             size="sm"
             variant={state.mode === "spoiler" ? "secondary" : "ghost"}
@@ -2203,14 +2205,14 @@ function MovieSummaryDialog({
           </Button>
         </div>
 
-        <div className="min-h-[180px] rounded-md border border-slate-800 bg-slate-950/80 p-4">
+        <div className="min-h-[180px] rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:rounded-md">
           {state.loading ? (
             <div className="flex min-h-[148px] items-center justify-center gap-2 text-sm font-semibold text-slate-300">
               <Loader2 className="h-4 w-4 animate-spin" />
               {copy.library.aiSummaryLoading}
             </div>
           ) : state.error ? (
-            <div className="rounded-md border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200">
+            <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm font-semibold text-rose-200 sm:rounded-md">
               {state.error}
             </div>
           ) : (
@@ -2377,13 +2379,13 @@ function MovieDetailView({
   const variantCount = result.variants?.length ?? 0;
 
   return (
-    <section className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/70 p-3 sm:p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+    <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4">
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
+        <Button className="w-full justify-start sm:w-auto" type="button" variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft className="h-4 w-4" />
           {copy.library.backToList}
         </Button>
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-4 items-center gap-2 sm:flex">
           <FavoriteButton
             active={favoriteAssetKeys.has(result.assetKey)}
             onClick={() => onToggleFavorite(result)}
@@ -2398,18 +2400,18 @@ function MovieDetailView({
             mark="watched"
             onClick={() => onUpdateCollectionMark(result, "watched")}
           />
-          <Badge variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
+          <Badge className="min-h-11 justify-center sm:min-h-0" variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
         </div>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <div className="max-w-[220px] overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+        <div className="mx-auto w-full max-w-[220px] overflow-hidden rounded-xl border border-slate-800 bg-slate-950 sm:rounded-lg">
           <MoviePoster result={result} />
         </div>
 
         <div className="grid min-w-0 content-start gap-4">
           <div className="min-w-0">
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="grid min-w-0 gap-3 sm:flex sm:items-start sm:gap-2">
               <h2 className="min-w-0 flex-1 text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
               <AiSummaryButton onClick={() => onSummarize(result)} />
             </div>
@@ -2445,7 +2447,7 @@ function MovieDetailView({
 
           <AgeRecommendationPanel result={result} />
 
-          <div className="grid gap-2 rounded-md border border-slate-800 bg-slate-950/80 p-4">
+          <div className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:rounded-md">
             <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>
             <p className="whitespace-pre-wrap text-sm leading-7 text-slate-300">{summary}</p>
           </div>
