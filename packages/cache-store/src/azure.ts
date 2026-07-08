@@ -40,7 +40,8 @@ import type {
   CacheStore,
   CleanupExpiredResult,
   DeleteCacheEntryInput,
-  DeleteCacheEntryResult
+  DeleteCacheEntryResult,
+  GetAssetOptions
 } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
@@ -555,11 +556,13 @@ export class AzureCacheStore implements CacheStore {
       .slice(0, limit);
   }
 
-  async getAsset(assetKey: string) {
+  async getAsset(assetKey: string, options: GetAssetOptions = {}) {
     await this.ensureReady();
-    const cached = this.assetLookupCache.get(assetKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.asset ? cloneAsset(cached.asset) : undefined;
+    if (!options.fresh) {
+      const cached = this.assetLookupCache.get(assetKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.asset ? cloneAsset(cached.asset) : undefined;
+      }
     }
 
     try {
@@ -594,7 +597,7 @@ export class AzureCacheStore implements CacheStore {
 
   async ensureCache(result: SearchResult) {
     await this.ensureReady();
-    const existingAsset = await this.getAsset(result.assetKey);
+    const existingAsset = await this.getAsset(result.assetKey, { fresh: true });
     const existingJob = existingAsset?.jobId ? await this.getJob(existingAsset.jobId) : undefined;
 
     if (existingAsset && isFreshReady(existingAsset) && existingJob) {
@@ -1135,7 +1138,7 @@ export class AzureCacheStore implements CacheStore {
 
   async getPlayback(assetKey: string) {
     await this.ensureReady();
-    const asset = await this.getAsset(assetKey);
+    const asset = await this.getAsset(assetKey, { fresh: true });
     if (!isFreshReady(asset) || !asset?.playbackUrl) {
       return undefined;
     }
@@ -1414,14 +1417,14 @@ export class AzureCacheStore implements CacheStore {
   }
 
   private cacheAssetLookup(assetKey: string, asset: CacheAsset | undefined) {
-    if (assetLookupCacheTtlMs <= 0) {
+    if (assetLookupCacheTtlMs <= 0 || !asset || asset.status !== "ready") {
       this.assetLookupCache.delete(assetKey);
       return;
     }
 
     this.assetLookupCache.set(assetKey, {
       expiresAt: Date.now() + assetLookupCacheTtlMs,
-      asset: asset ? cloneAsset(asset) : undefined
+      asset: cloneAsset(asset)
     });
   }
 

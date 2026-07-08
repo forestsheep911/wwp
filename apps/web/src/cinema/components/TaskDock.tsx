@@ -4,6 +4,7 @@ import type { CreditPolicyResponse, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
+import { trackedCacheNeedsStatusRefresh } from "../cache-flow";
 import { jobMessageLabel, jobStatusLabel, jobVariant } from "../format";
 import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
@@ -20,7 +21,7 @@ export function TaskDock({
   onOpenTasks: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const activeItems = items.filter(({ job }) => job.status !== "ready" && job.status !== "failed");
+  const activeItems = items.filter(trackedCacheNeedsStatusRefresh);
   const readyItems = items.filter(({ asset }) => asset?.status === "ready");
 
   if (items.length === 0) {

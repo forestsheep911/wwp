@@ -50,7 +50,7 @@ import {
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
-import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
+import { latestVariantAsset, pendingCacheStatusLabel, trackedCacheNeedsStatusRefresh } from "../cache-flow";
 import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
@@ -1822,15 +1822,15 @@ function VariantButtons({
         const progress = tracked?.job.progress ?? 0;
         const progressColor = tracked?.job.status === "failed"
           ? "bg-rose-500/22"
-          : tracked?.job.status === "ready"
+          : displayAsset?.status === "ready"
             ? "bg-emerald-500/24"
             : "bg-amber-400/20";
         const badgeVariant = pending
           ? "warning"
-          : tracked
+          : tracked && tracked.job.status !== "ready"
             ? jobVariant(tracked.job.status)
             : cacheVariant(displayAsset);
-        const isActiveCacheHit = pending || Boolean(tracked && tracked.job.status !== "failed" && tracked.job.status !== "ready");
+        const isActiveCacheHit = pending || trackedCacheNeedsStatusRefresh(tracked);
         const costLabel = displayAsset?.status === "ready"
             ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
             : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);

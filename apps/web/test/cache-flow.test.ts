@@ -6,6 +6,7 @@ import {
   latestVariantAsset,
   mergeCacheAssetIntoResults,
   pendingCacheStatusLabel,
+  trackedCacheNeedsStatusRefresh,
   variantIsPlaybackReady,
   variantToCacheTarget
 } from "../src/cinema/cache-flow";
@@ -126,6 +127,34 @@ test("latestVariantAsset prefers tracked ready assets over stale variant cache",
 
   assert.equal(latestVariantAsset(staleVariant, tracked)?.status, "ready");
   assert.equal(variantIsPlaybackReady(staleVariant, tracked), true);
+});
+
+test("trackedCacheNeedsStatusRefresh keeps polling ready jobs until their asset is ready", () => {
+  const staleTracked = {
+    job: {
+      id: "job-1",
+      assetKey: "movie-variant",
+      title: "测试影片 / 版本",
+      source: "Notion library",
+      status: "ready" as const,
+      progress: 100,
+      message: "可以播放。",
+      createdAt: "2026-07-08T00:00:00.000Z",
+      updatedAt: "2026-07-08T00:00:00.000Z"
+    },
+    asset: {
+      assetKey: "movie-variant",
+      title: "测试影片 / 版本",
+      source: "Notion library",
+      status: "uploading" as const,
+      jobId: "job-1",
+      lastRequestedAt: "2026-07-08T00:00:00.000Z"
+    }
+  };
+
+  assert.equal(trackedCacheNeedsStatusRefresh(staleTracked), true);
+  assert.equal(trackedCacheNeedsStatusRefresh({ ...staleTracked, asset: readyAsset("movie-variant") }), false);
+  assert.equal(trackedCacheNeedsStatusRefresh({ ...staleTracked, job: { ...staleTracked.job, status: "failed" } }), false);
 });
 
 test("pendingCacheStatusLabel shows immediate zero-progress feedback", () => {

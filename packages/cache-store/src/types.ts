@@ -32,13 +32,17 @@ export interface DeleteCacheEntryResult {
   errors: string[];
 }
 
+export interface GetAssetOptions {
+  fresh?: boolean;
+}
+
 export interface CacheStore {
   readonly backend: CacheBackend;
   readonly description: string;
   getHealth(): Promise<Record<string, unknown>>;
   listAssets(assetKeys: string[]): Promise<Record<string, CacheAsset>>;
   listCachedAssets(limit: number): Promise<CacheAsset[]>;
-  getAsset(assetKey: string): Promise<CacheAsset | undefined>;
+  getAsset(assetKey: string, options?: GetAssetOptions): Promise<CacheAsset | undefined>;
   getJob(jobId: string): Promise<CacheJob | undefined>;
   ensureCache(result: SearchResult): Promise<EnsureCacheResponse>;
   syncQueue(maxMessages: number): Promise<void>;

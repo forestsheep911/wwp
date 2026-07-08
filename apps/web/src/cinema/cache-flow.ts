@@ -49,6 +49,18 @@ export function variantIsPlaybackReady(variant: MediaVariant, tracked?: TrackedC
   return latestVariantAsset(variant, tracked)?.status === "ready";
 }
 
+export function trackedCacheNeedsStatusRefresh(item?: TrackedCacheItem) {
+  if (!item || item.job.status === "failed") {
+    return false;
+  }
+
+  if (item.job.status === "ready") {
+    return item.asset?.status !== "ready";
+  }
+
+  return true;
+}
+
 export function pendingCacheStatusLabel() {
   return `${copy.cache.status.queued} 0%`;
 }

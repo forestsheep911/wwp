@@ -93,6 +93,7 @@ import { copy } from "./cinema/i18n";
 import { triggerDirectDownload } from "./cinema/download";
 import {
   mergeCacheAssetIntoResults,
+  trackedCacheNeedsStatusRefresh,
   variantIsPlaybackReady,
   variantToCacheTarget
 } from "./cinema/cache-flow";
@@ -312,9 +313,14 @@ function CinemaApp() {
   const trackedPollKey = useMemo(
     () =>
       trackedItems
-        .filter((item) => item.job.status !== "ready" && item.job.status !== "failed")
-        .map((item) => `${item.job.id}:${item.job.status}`)
+        .filter(trackedCacheNeedsStatusRefresh)
+        .map((item) => `${item.job.id}:${item.job.status}:${item.asset?.status ?? "missing"}`)
         .join("|"),
+    [trackedItems]
+  );
+
+  const trackedPreparingItems = useMemo(
+    () => trackedItems.filter(trackedCacheNeedsStatusRefresh),
     [trackedItems]
   );
 
@@ -2043,7 +2049,7 @@ function CinemaApp() {
   }, [unlocked]);
 
   useEffect(() => {
-    const activeItems = trackedItems.filter((item) => item.job.status !== "ready" && item.job.status !== "failed");
+    const activeItems = trackedItems.filter(trackedCacheNeedsStatusRefresh);
     if (activeItems.length === 0) {
       return;
     }
@@ -2074,9 +2080,9 @@ function CinemaApp() {
 
         responses.forEach((response) => mergeCacheAssetIntoVisibleResults(response.asset));
 
-        if (responses.some((response) => response.job.status === "ready" || response.job.status === "failed")) {
+        if (responses.some((response) => response.asset?.status === "ready" || response.job.status === "failed")) {
           await refreshResultsInBackground();
-          if (activeTab === "cached" || activeTab === "favorites" || activeTab === "watchlist") {
+          if (activeTab === "cached" || activeTab === "favorites" || activeTab === "watchlist" || activeTab === "tasks") {
             await refreshCachedAssets();
           }
         }
@@ -2573,7 +2579,7 @@ function CinemaApp() {
             creditPolicy={creditPolicy}
             currentMemberId={member?.id}
             loadingCached={cachedAssetsLoading}
-            preparingItems={trackedItems}
+            preparingItems={trackedPreparingItems}
             onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
             onRefreshCached={() => void refreshCachedAssets()}
           />

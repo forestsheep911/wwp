@@ -1693,7 +1693,7 @@ async function handleCreditPreview(
       return;
     }
 
-    const existingAsset = await store.getAsset(assetKey);
+    const existingAsset = await store.getAsset(assetKey, { fresh: true });
     const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
     const readyHit = isFreshReady(existingAsset);
     const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
@@ -1722,7 +1722,7 @@ async function handleCreditPreview(
     return;
   }
 
-  const asset = await store.getAsset(assetKey);
+  const asset = await store.getAsset(assetKey, { fresh: true });
   if (!asset || !isFreshReady(asset)) {
     sendJson(response, 409, { error: "Asset is not ready for playback." });
     return;
@@ -1790,7 +1790,7 @@ async function handleEnsureCache(
 
   const result = await refreshResultBeforeCache(candidate, context);
 
-  const existingAsset = await store.getAsset(result.assetKey);
+  const existingAsset = await store.getAsset(result.assetKey, { fresh: true });
   const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
   const readyHit = isFreshReady(existingAsset);
   const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
@@ -2038,9 +2038,13 @@ async function handleStatus(jobId: string, response: http.ServerResponse, contex
     durationMs: durationMs(startedAt)
   });
 
+  const asset = await store.getAsset(job.assetKey, {
+    fresh: terminalJobStatuses.includes(job.status)
+  });
+
   sendJson(response, 200, {
     job,
-    asset: await store.getAsset(job.assetKey)
+    asset
   });
 }
 
@@ -2051,7 +2055,7 @@ async function handlePlayback(
   identity: AccessIdentity
 ) {
   const startedAt = Date.now();
-  const asset = await store.getAsset(assetKey);
+  const asset = await store.getAsset(assetKey, { fresh: true });
   if (!asset || !isFreshReady(asset)) {
     logWarn("api.playback.not_ready", {
       requestId: context.requestId,
@@ -2152,7 +2156,7 @@ async function handleAssetLookup(
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const asset = await store.getAsset(assetKey);
+  const asset = await store.getAsset(assetKey, { fresh: true });
   const payload: CacheAssetLookupResponse = {
     asset,
     playable: isFreshReady(asset)
