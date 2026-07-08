@@ -32,7 +32,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-manual-upload-organizer.mjs`
   - Inspect recently edited pages for root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. The report includes `suggestedTarget` page IDs for manual move/reupload destinations; series root uploads should point to episode child page IDs when episode numbers can be parsed. Use this before Media Assets writes when manual uploads may have landed on the work page root.
 - `tools/notion-media-assets-write-series.mjs`
-  - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. The writer must not treat a playable episode row as permission to un-hide website visibility.
+  - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. Use `--update-existing-missing` only when existing rows should be patched for empty structured fields from stronger evidence; it must not overwrite human values. The writer must not treat a playable episode row as permission to un-hide website visibility.
 - `tools/notion-media-assets-stats.mjs`
   - Read-only Media Assets stats/readback.
 - `tools/notion-media-assets-generate-batch.mjs`

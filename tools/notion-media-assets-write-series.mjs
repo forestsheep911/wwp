@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
@@ -15,6 +16,7 @@ function parseArgs() {
     maxAssets: 50,
     includeDirectSpec: false,
     allowPartialEpisodes: false,
+    updateExistingMissing: false,
     apply: false,
     resolveIp: ""
   };
@@ -33,6 +35,7 @@ function parseArgs() {
     else if (name === "--resolve-ip") options.resolveIp = value();
     else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
     else if (arg === "--allow-partial-episodes") options.allowPartialEpisodes = true;
+    else if (arg === "--update-existing-missing") options.updateExistingMissing = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -61,6 +64,7 @@ function printHelp() {
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --allow-partial-episodes --report .local-data/partial-series-preview.json
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-metadata.json --update-existing-missing --apply
 
 This writer is episode-aware. It creates Media Assets rows for real media blocks
 found under episode child pages. Empty episode placeholders are reported but not
@@ -68,7 +72,9 @@ written. Direct spec-page media is reported by default; with
 --include-direct-spec, direct media is written only when the media title or file
 name contains a parseable episode number. With --allow-partial-episodes, pages
 with some unparseable episode titles can still write the parseable episode rows;
-the unparseable rows remain issues.
+the unparseable rows remain issues. With --update-existing-missing, existing
+matched Media Assets rows are patched only for empty properties; existing human
+values are not overwritten.
 `);
 }
 
@@ -246,6 +252,7 @@ function parseAssetMetadata(label, fileName, episodeNumber) {
 
   if (/普通话|普通話|国语|國語|mandarin/i.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
   if (/粤语|粵語|cantonese/i.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
+  if (/韩语|韓語|korean audio|\.korean\.|korean\.audio|\.kor\b|\bkor\b/i.test(combined)) pushUnique(audioLanguages, "ko");
   if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio/i.test(combined)) pushUnique(audioLanguages, "ja");
   if (/英语发音|英語發音|english audio|\.english\.|english\.audio/i.test(combined)) pushUnique(audioLanguages, "en");
 
@@ -520,6 +527,49 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
+function isEmptyProperty(property) {
+  if (!property) return true;
+  if (property.type === "title") return (property.title ?? []).length === 0;
+  if (property.type === "rich_text") return (property.rich_text ?? []).length === 0;
+  if (property.type === "select") return !property.select;
+  if (property.type === "multi_select") return (property.multi_select ?? []).length === 0;
+  if (property.type === "number") return property.number === null || property.number === undefined;
+  if (property.type === "url") return !property.url;
+  if (property.type === "relation") return (property.relation ?? []).length === 0;
+  if (property.type === "files") return (property.files ?? []).length === 0;
+  if (property.type === "date") return !property.date;
+  if (property.type === "checkbox") return false;
+  return false;
+}
+
+function buildMissingProperties(dataSource, existingPage, candidate) {
+  const candidateProperties = buildAssetProperties(dataSource, candidate);
+  const existingProperties = existingPage.properties ?? {};
+  const patch = {};
+
+  for (const [name, value] of Object.entries(candidateProperties)) {
+    if (name === titlePropertyName(dataSource)) continue;
+    if (!dataSource.properties?.[name]) continue;
+    if (!isEmptyProperty(existingProperties[name])) continue;
+    patch[name] = value;
+  }
+
+  return patch;
+}
+
+async function updateExistingMissing(notion, dataSource, existingPage, candidate, apply) {
+  const patch = buildMissingProperties(dataSource, existingPage, candidate);
+  const fields = Object.keys(patch);
+  if (fields.length === 0) {
+    return { action: "skip_existing", pageId: existingPage.id, candidate };
+  }
+  if (!apply) {
+    return { action: "would_update_existing", pageId: existingPage.id, candidate, fields, properties: patch };
+  }
+  await notion.pages.update({ page_id: existingPage.id, properties: patch });
+  return { action: "updated_existing", pageId: existingPage.id, candidate, fields };
+}
+
 function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec, allowPartialEpisodes) {
   return (auditReport.pages ?? [])
     .filter((page) => (
@@ -671,11 +721,14 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
   return { candidates: applyMetadataOverrides(candidates, options.metadataOverrides ?? []), issues };
 }
 
-async function processCandidate(notion, dataSource, existingLookup, candidate, apply) {
+async function processCandidate(notion, dataSource, existingLookup, candidate, apply, updateExistingMissingEnabled) {
   const existing = existingLookup
     ? await existingLookup.find(candidate)
     : await findExistingAsset(notion, dataSource, candidate);
   if (existing) {
+    if (updateExistingMissingEnabled) {
+      return updateExistingMissing(notion, dataSource, existing, candidate, apply);
+    }
     return { action: "skip_existing", pageId: existing.id, candidate };
   }
   if (!apply) {
@@ -692,16 +745,20 @@ function summarizeReports(reports) {
     candidatesFound: summary.candidatesFound + report.candidatesFound,
     selected: summary.selected + report.selected,
     created: summary.created + report.created,
+    updatedExisting: summary.updatedExisting + report.updatedExisting,
     skippedExisting: summary.skippedExisting + report.skippedExisting,
     wouldCreate: summary.wouldCreate + report.wouldCreate,
+    wouldUpdateExisting: summary.wouldUpdateExisting + report.wouldUpdateExisting,
     issues: summary.issues + report.issues
   }), {
     pages: 0,
     candidatesFound: 0,
     selected: 0,
     created: 0,
+    updatedExisting: 0,
     skippedExisting: 0,
     wouldCreate: 0,
+    wouldUpdateExisting: 0,
     issues: 0
   });
 }
@@ -736,7 +793,14 @@ async function main() {
     remainingAssets -= selected.length;
     const actions = [];
     for (const candidate of selected) {
-      actions.push(await processCandidate(notion, mediaAssetsDataSource, existingLookup, candidate, options.apply));
+      actions.push(await processCandidate(
+        notion,
+        mediaAssetsDataSource,
+        existingLookup,
+        candidate,
+        options.apply,
+        options.updateExistingMissing
+      ));
     }
     reports.push({
       pageId: page.pageId,
@@ -745,8 +809,10 @@ async function main() {
       candidatesFound: candidates.length,
       selected: selected.length,
       created: actions.filter((action) => action.action === "created").length,
+      updatedExisting: actions.filter((action) => action.action === "updated_existing").length,
       skippedExisting: actions.filter((action) => action.action === "skip_existing").length,
       wouldCreate: actions.filter((action) => action.action === "would_create").length,
+      wouldUpdateExisting: actions.filter((action) => action.action === "would_update_existing").length,
       issues: issues.length,
       issueDetails: issues,
       actions
@@ -762,6 +828,7 @@ async function main() {
     skipPages: options.skipPages,
     includeDirectSpec: options.includeDirectSpec,
     allowPartialEpisodes: options.allowPartialEpisodes,
+    updateExistingMissing: options.updateExistingMissing,
     mediaAssetsDataSourceId: mediaAssetsDataSource.id,
     summary: summarizeReports(reports),
     reports
@@ -777,14 +844,24 @@ async function main() {
       candidatesFound: page.candidatesFound,
       selected: page.selected,
       created: page.created,
+      updatedExisting: page.updatedExisting,
       skippedExisting: page.skippedExisting,
       wouldCreate: page.wouldCreate,
+      wouldUpdateExisting: page.wouldUpdateExisting,
       issues: page.issues
     }))
   }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+export {
+  buildMissingProperties,
+  isEmptyProperty,
+  parseAssetMetadata
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

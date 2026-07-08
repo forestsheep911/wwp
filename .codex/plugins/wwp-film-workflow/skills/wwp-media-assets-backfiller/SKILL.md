@@ -23,9 +23,10 @@ Use this when the external Notion files already exist and the task is to reconci
 4. Compare only structurally valid media blocks against existing Media Assets rows.
 5. Prefer local produced files, samples, manifests, or prior ffprobe JSON for metadata.
 6. Use guarded batch manifests with page IDs when a title query can match sequels, remakes, or similarly named pages.
-7. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
-8. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
-9. Apply only after the dry-run is coherent, then read back the result.
+7. When a matching Media Assets row already exists, patch only empty structured fields from stronger local ffprobe/manifest evidence; never overwrite human values or visibility/review gates silently.
+8. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
+9. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
+10. Apply only after the dry-run is coherent, then read back the result.
 
 ## Guardrails
 
@@ -33,6 +34,7 @@ Use this when the external Notion files already exist and the task is to reconci
 - Metadata-only backfill should not move page structure or reupload files. When structure is wrong, produce a structure-fix report or route to an organizer/reupload step.
 - Notion API cannot move an existing Notion-hosted media block between pages in this workflow. Do not copy its temporary signed URL into a new durable block. Report the exact source block and required destination; if the matching local final MP4 exists, use an explicit upload/reupload path only when accepted.
 - Do not overwrite human fields when page title, spec page, and schema disagree; report the conflict and recommend a fix.
+- Treat `Hide from Website` and `Playback Verified` as review gates, not metadata blanks. Do not clear/set them merely because Media Assets were created or backfilled.
 - For source/archive rows, fill lineage, size, container/archive, and availability first. Only claim stream-level metadata when a real media file can be probed.
 - For Notion-hosted media, treat source page IDs and media block IDs as the durable link. Do not require a copied Asset URL when the underlying URL is temporary.
 
