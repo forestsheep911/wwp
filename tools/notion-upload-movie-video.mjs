@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import nodeFetch from "node-fetch";
 
 const DEFAULT_PAGE_ID = "19720ac12f0a8012ad6fedf37ce546a9";
 const DEFAULT_PART_MIB = 20;
@@ -14,6 +17,7 @@ function parseArgs() {
     targetTitle: "",
     partMiB: DEFAULT_PART_MIB,
     prepareOnly: false,
+    resolveIp: "",
     apply: false
   };
 
@@ -26,6 +30,7 @@ function parseArgs() {
     else if (arg === "--target-title") options.targetTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--prepare-only") options.prepareOnly = true;
+    else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -54,6 +59,7 @@ Examples:
 
 Options:
   --prepare-only  Create/reuse the target spec child page, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
+  --resolve-ip     Override api.notion.com DNS for route-specific Notion API failures.
 `);
 }
 
@@ -66,6 +72,32 @@ function dotenv(name) {
     }
   }
   return process.env[name];
+}
+
+function installNotionDnsOverride(resolveIp) {
+  const notionApiIp = resolveIp || dotenv("NOTION_API_RESOLVE_IP");
+  if (!notionApiIp) return;
+  const originalLookup = dns.lookup.bind(dns);
+  dns.lookup = (hostname, options, callback) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") return options(null, notionApiIp, 4);
+      if (options?.all) return callback(null, [{ address: notionApiIp, family: 4 }]);
+      return callback(null, notionApiIp, 4);
+    }
+    return originalLookup(hostname, options, callback);
+  };
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
+
+function createNotionClient(token) {
+  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+  const options = { auth: token, timeoutMs: 600000 };
+  if (proxyUrl) {
+    options.fetch = nodeFetch;
+    options.agent = new HttpsProxyAgent(proxyUrl);
+    console.log(`proxy: ${proxyUrl}`);
+  }
+  return new Client(options);
 }
 
 function plainText(items = []) {
@@ -341,6 +373,7 @@ async function appendVideo(notion, targetPageId, fileName, fileUploadId, apply) 
 
 async function main() {
   const options = parseArgs();
+  installNotionDnsOverride(options.resolveIp);
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
   if (options.file && !fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);
@@ -352,7 +385,7 @@ async function main() {
         size: fs.statSync(options.file).size
       }
     : null;
-  const notion = new Client({ auth: token, timeoutMs: 600000 });
+  const notion = createNotionClient(token);
   const page = await notion.pages.retrieve({ page_id: options.pageId });
   const targetTitle = options.targetTitle || (file
     ? `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`

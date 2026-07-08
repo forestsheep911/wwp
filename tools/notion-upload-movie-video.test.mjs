@@ -38,3 +38,31 @@ test("movie uploader accepts prepare-only target page creation without local fil
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("movie uploader installs Notion DNS override before client work", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "wwp-movie-upload-"));
+  try {
+    const result = spawnSync(process.execPath, [
+      scriptPath,
+      "--page-id",
+      "39720ac1-2f0a-8029-8d47-c61f4e32437d",
+      "--target-title",
+      "罪人 繁英 1.6GB",
+      "--prepare-only"
+    ], {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NOTION_WRITE_TOKEN: "",
+        NOTION_TOKEN: "",
+        NOTION_API_RESOLVE_IP: "203.0.113.10"
+      }
+    });
+
+    assert.match(result.stdout, /dns override: api\.notion\.com -> 203\.0\.113\.10/);
+    assert.match(result.stderr, /NOTION_WRITE_TOKEN or NOTION_TOKEN is required/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
