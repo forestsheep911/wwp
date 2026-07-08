@@ -89,14 +89,10 @@ test("variantSpecLabels formats Media Assets metadata as structured tags", () =>
   };
 
   assert.deepEqual(variantSpecLabels(variant), [
-    "1080P",
-    "HEVC",
-    "MP4",
-    "1.72GB",
-    "字幕 简中 / 英语",
-    "压制版"
+    "简 / 英",
+    "1.72G"
   ]);
-  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "1080P / HEVC / MP4 / 1.72GB / 字幕 简中 / 英语 / 压制版");
+  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简 / 英 / 1.72G");
   assert.equal(variantHasSizeMetadata(variant), true);
 });
 

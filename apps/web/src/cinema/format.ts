@@ -328,14 +328,14 @@ export function displayVariantLabel(title: string, label: string) {
 }
 
 const mediaLanguageLabels: Record<string, string> = {
-  "zh-Hans": "简中",
-  "zh-Hant": "繁中",
-  "zh-Mandarin": "国语",
-  "zh-Cantonese": "粤语",
-  en: "英语",
-  ja: "日语",
-  commentary: "评论音轨",
-  none: "无字幕"
+  "zh-Hans": "简",
+  "zh-Hant": "繁",
+  "zh-Mandarin": "国",
+  "zh-Cantonese": "粤",
+  en: "英",
+  ja: "日",
+  commentary: "评",
+  none: "无"
 };
 
 const sourceLineageLabels: Record<string, string> = {
@@ -377,11 +377,11 @@ function variantSizeLabel(variant: MediaVariant) {
   }
 
   if (typeof metadata.approximateSizeGb === "number" && Number.isFinite(metadata.approximateSizeGb) && metadata.approximateSizeGb > 0) {
-    return `${metadata.approximateSizeGb.toLocaleString(undefined, { maximumFractionDigits: 2 })}GB`;
+    return `${metadata.approximateSizeGb.toLocaleString(undefined, { maximumFractionDigits: 2 })}G`;
   }
 
   if (typeof metadata.exactByteSize === "number" && Number.isFinite(metadata.exactByteSize) && metadata.exactByteSize > 0) {
-    return formatBytes(metadata.exactByteSize);
+    return formatBytes(metadata.exactByteSize).replace(/\s*GB\b/u, "G");
   }
 
   return undefined;
@@ -473,11 +473,11 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
   const includeEpisode = options.includeEpisode ?? true;
   const includeSize = options.includeSize ?? true;
   const subtitles = metadata.noSubtitles
-    ? "无字幕"
+    ? "无"
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
     includeEpisode ? variantEpisodeLabel(variant) : undefined,
-    subtitles ? `字幕 ${subtitles}` : undefined,
+    subtitles,
     includeSize ? variantSizeLabel(variant) : undefined
   ]);
 
