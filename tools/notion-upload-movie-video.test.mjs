@@ -40,6 +40,21 @@ test("movie uploader accepts prepare-only target page creation without local fil
   }
 });
 
+test("movie uploader refuses the historical default page id", () => {
+  const result = spawnSync(process.execPath, [
+    scriptPath,
+    "--file",
+    "E:\\video_made\\movie.mp4",
+    "--target-page-id",
+    "39720ac1-2f0a-81e1-ad8b-ecbd139c1a8f"
+  ], {
+    encoding: "utf8"
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--page-id is required/);
+});
+
 test("movie uploader installs Notion DNS override before client work", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "wwp-movie-upload-"));
   try {

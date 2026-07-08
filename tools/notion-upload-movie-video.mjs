@@ -6,12 +6,11 @@ import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 
-const DEFAULT_PAGE_ID = "19720ac12f0a8012ad6fedf37ce546a9";
 const DEFAULT_PART_MIB = 20;
 
 function parseArgs() {
   const options = {
-    pageId: DEFAULT_PAGE_ID,
+    pageId: "",
     file: "",
     targetPageId: "",
     targetTitle: "",
@@ -20,11 +19,15 @@ function parseArgs() {
     resolveIp: "",
     apply: false
   };
+  let pageIdProvided = false;
 
   const args = process.argv.slice(2);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--page-id") options.pageId = args[++index];
+    if (arg === "--page-id") {
+      options.pageId = args[++index];
+      pageIdProvided = true;
+    }
     else if (arg === "--file") options.file = args[++index];
     else if (arg === "--target-page-id") options.targetPageId = args[++index];
     else if (arg === "--target-title") options.targetTitle = args[++index];
@@ -40,6 +43,9 @@ function parseArgs() {
     }
   }
 
+  if (!pageIdProvided) {
+    throw new Error("--page-id is required; refusing to use the historical default movie page.");
+  }
   if (!options.file && !options.prepareOnly) throw new Error("--file is required.");
   if (options.file) options.file = path.resolve(options.file);
   if (options.prepareOnly && !options.targetPageId && !options.targetTitle) {
@@ -50,12 +56,12 @@ function parseArgs() {
 
 function printHelp() {
   console.log(`Usage:
-  node tools/notion-upload-movie-video.mjs --file <mp4> [--apply]
+  node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file <mp4> [--apply]
   node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --target-title "影片 繁英 1.6GB" --prepare-only --apply
 
 Examples:
-  node tools/notion-upload-movie-video.mjs --file E:\\video_made\\movie.mp4
-  node tools/notion-upload-movie-video.mjs --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
+  node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie.mp4
+  node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
 
 Options:
   --prepare-only  Create/reuse the target spec child page before long encode or manual upload handoff, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
@@ -387,9 +393,10 @@ async function main() {
     : null;
   const notion = createNotionClient(token);
   const page = await notion.pages.retrieve({ page_id: options.pageId });
-  const targetTitle = options.targetTitle || (file
+  const inferredTargetTitle = file
     ? `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`
-    : "");
+    : "";
+  const targetTitle = options.targetTitle || (options.targetPageId ? "" : inferredTargetTitle);
   const target = await findTargetPage(notion, page.id, options, file?.name ?? "", targetTitle);
 
   console.log(`page: ${pageTitle(page)} ${page.id}`);
@@ -399,24 +406,24 @@ async function main() {
   console.log(`mode: ${options.apply ? "apply" : "dry-run"}${options.prepareOnly ? " prepare-only" : ""}`);
 
   if (options.prepareOnly) {
-    await updatePageTitle(notion, target.id, targetTitle, options.apply);
+    if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
     console.log("prepare-only: upload skipped");
     return;
   }
 
   if (target.alreadyExists) {
-    await updatePageTitle(notion, target.id, targetTitle, options.apply);
+    if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
     console.log("upload skipped; video block already exists on target page.");
     return;
   }
 
   if (!options.apply) {
-    await updatePageTitle(notion, target.id, targetTitle, options.apply);
+    if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
     console.log("upload skipped; pass --apply to upload and append.");
     return;
   }
 
-  await updatePageTitle(notion, target.id, targetTitle, options.apply);
+  if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
   const manifestPath = path.join(".local-data", `notion-movie-video-upload-${options.pageId.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
   const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);
