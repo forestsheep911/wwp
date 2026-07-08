@@ -9,6 +9,8 @@ Series have one more layer than movies:
 
 Media Assets must preserve episode relationships. Filename-only matching is not enough.
 
+Notion API cannot move uploaded media blocks between pages in this workflow. For manual upload handoff, create the series/season page, target spec page, and all expected episode child pages before the user uploads episode files.
+
 ## Mapping
 
 Build a dry-run map before applying Notion changes:
@@ -27,7 +29,7 @@ Do not proceed when episode page mapping is ambiguous.
 ## Production
 
 - Smoke-test one or a few episodes when subtitle timing, color, upload behavior, or naming is uncertain.
-- Before full-season encoding or manual upload handoff, prepare the target spec page and episode child pages with the series upload prepare-only flow.
+- Before full-season encoding or manual upload handoff, prepare the target spec page and episode child pages with the series upload prepare-only flow. Report the destination page IDs to the user.
 - Batch encode/upload only after the mapping and sample are sane.
 - Use episode-aware tools for upload and Media Assets writes.
 - When a series/season page does not exist, create it only through an explicit create path. The intended API shape is series/season page -> spec page -> episode page -> media block; legacy callout/toggle containers are not required for new API-created content.

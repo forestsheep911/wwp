@@ -31,7 +31,7 @@ Use this when the external Notion files already exist and the task is to reconci
 
 - Do not leave manually uploaded playable media naked on a work/season root page. Root media blocks are temporary landing blocks and must be organized into spec/episode child pages before final playable Media Assets rows are written.
 - Metadata-only backfill should not move page structure or reupload files. When structure is wrong, produce a structure-fix report or route to an organizer/reupload step.
-- If the API cannot safely move an existing Notion-hosted media block, do not copy its temporary signed URL into a new durable block. Report the exact source block and required destination; if the matching local final MP4 exists, use an explicit upload/reupload path only when accepted.
+- Notion API cannot move an existing Notion-hosted media block between pages in this workflow. Do not copy its temporary signed URL into a new durable block. Report the exact source block and required destination; if the matching local final MP4 exists, use an explicit upload/reupload path only when accepted.
 - Do not overwrite human fields when page title, spec page, and schema disagree; report the conflict and recommend a fix.
 - For source/archive rows, fill lineage, size, container/archive, and availability first. Only claim stream-level metadata when a real media file can be probed.
 - For Notion-hosted media, treat source page IDs and media block IDs as the durable link. Do not require a copied Asset URL when the underlying URL is temporary.

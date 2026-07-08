@@ -7,7 +7,8 @@
 - Movie shape: work page -> spec page -> playable video/file.
 - Series shape: series/season page -> spec page -> episode page -> playable video/file.
 - A video/file block directly under a movie work page, series page, or season page is only a temporary manual-upload landing spot. It is not final structure.
-- When a manual upload lands at the root, create or reuse the correct spec child page first, then put the playable media block under that page. For series, put the media under the episode page inside the spec page.
+- Notion API cannot move uploaded media blocks between pages in this workflow. Therefore planned manual uploads require the destination pages before upload: movie spec child page first, or series spec page plus episode child pages first.
+- When a manual upload lands at the root, create or reuse the correct spec/episode child page and report the required destination. The block remains structure-incomplete until the user manually moves/reuploads it or an explicit accepted local-file reupload is performed.
 - Do not create final playable Media Assets rows that point at root-level landing media blocks. Use those blocks only as evidence for an organizer report until the media is moved or reuploaded into the correct child-page structure.
 
 ## Spec Titles
@@ -33,11 +34,17 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 ## Early Page Creation
 
 - It is valid to create/reuse the work page and intended spec page before the playable upload is ready. This lets work-level metadata backfill run while encode, QC, or upload continues.
-- Treat destination preparation as the preflight gate for planned production, not only as a cleanup fallback after a bad manual upload.
+- Treat destination preparation as the mandatory preflight gate for planned production, not only as a cleanup fallback after a bad manual upload.
 - For accepted encodes, prepare the upload destination before long encode starts when manual upload is possible. Movie uploads need a spec child page. Series uploads need a spec page plus episode child pages. Give the user the exact target page title and ID.
-- Treat pre-created pages as the normal answer to API move limits. Do not plan around uploading media to the root page and moving it later.
+- Treat pre-created pages as required because uploaded media blocks cannot be moved by API. Do not plan around uploading media to the root page and moving it later.
 - Early work/spec pages are not evidence for playable Media Assets rows. Create playable Media Assets only after a real uploaded video/file block or a final local file with a planned upload has been verified.
 - When upload is deferred or unsuitable, record the operational state in notes/reporting or `Media Availability` only when the media workflow has enough evidence. Do not let metadata backfill infer availability.
+
+## Metadata Track
+
+- Work-level metadata is independent from playable Media Assets. If scanning finds a film or series worth cataloging and no work page exists, create/reuse the work page and run metadata enrichment even when playable production is blocked, deferred, or skipped.
+- Lack of playback resources should keep visibility/review gates conservative, but it should not prevent Douban, OMDb, TMDb, poster, basic info, or AI advisory fields from being filled.
+- Media Assets remain media-specific. Do not create playable rows without real uploaded/probed media evidence just because the work-level metadata is complete.
 
 ## Visibility and Review Gates
 
@@ -52,7 +59,7 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 - Identify video/file blocks and classify playable, episode playable, source archive, original disc, or unknown.
 - Prefer local samples, produced files, manifests, or existing ffprobe JSON. Ask before downloading Notion-hosted media solely to probe metadata.
 - Pure Media Assets backfill is metadata-only and should not move pages or reupload files. If uploaded playable media is still sitting at the page root or at the wrong hierarchy level, route to a manual-upload organization step before writing final playable rows.
-- When the current API/tool path cannot safely move an existing Notion-hosted media block, report the exact source page/block and required destination page. If the final local MP4 is available and the user accepts the cost, reupload to the correct child page instead of copying a temporary signed Notion URL.
+- Because API movement is unavailable, report the exact source page/block and required destination page for root-level uploads. If the final local MP4 is available and the user accepts the cost, reupload to the correct child page instead of copying a temporary signed Notion URL.
 - If page title, spec page, and schema disagree, report the conflict before changing human-authored fields.
 - For backfills after manual uploads, prefer durable Notion IDs and block IDs over copying transient file URLs into durable fields.
 

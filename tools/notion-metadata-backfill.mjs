@@ -994,6 +994,16 @@ async function collectTargetPages(notion, options) {
   return collectViewPages(notion, options.pageSize, options.limit);
 }
 
+function preferredDoubanSubjectId(properties, pageId, options = {}) {
+  const cliSubjectId =
+    options.doubanSubjects?.get(pageId) ??
+    options.doubanSubjects?.get(pageId.replace(/-/g, ""));
+  if (cliSubjectId) return cliSubjectId;
+
+  const existingSubjectId = propText(properties["Douban Subject ID"]) || propText(properties["Douban"]);
+  return existingSubjectId.match(/\d{4,12}/)?.[0];
+}
+
 async function processPage(notion, pageRef, options, cookie) {
   const page = await notion.pages.retrieve({ page_id: pageRef.id });
   const title = propText(page.properties.Title);
@@ -1002,7 +1012,7 @@ async function processPage(notion, pageRef, options, cookie) {
   const searchTitle = chineseTitle && releaseYear ? `${chineseTitle} (${releaseYear})` : chineseTitle || title;
   const existingInfo = [propText(page.properties["基本信息"]), propText(page.properties.note)].join(" ");
   const expectedType = propText(page.properties["影别"]);
-  const forcedSubjectId = options.doubanSubjects.get(page.id) ?? options.doubanSubjects.get(page.id.replace(/-/g, ""));
+  const forcedSubjectId = preferredDoubanSubjectId(page.properties, page.id, options);
   const subjectResult = forcedSubjectId
     ? { status: "ok", subject: { id: forcedSubjectId } }
     : await findDoubanSubject(searchTitle, existingInfo, expectedType, cookie);
@@ -1135,5 +1145,6 @@ export {
   buildPatch,
   parseInfoPairs,
   parseRuntimeMinutes,
+  preferredDoubanSubjectId,
   splitListValue
 };

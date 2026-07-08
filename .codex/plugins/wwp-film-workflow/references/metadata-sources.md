@@ -7,11 +7,12 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 1. Inspect existing Notion fields and page text.
 2. Parse old Douban-style basic-info text when present.
 3. Use existing IDs first: Douban Subject ID, IMDb ID, TMDb ID.
-4. If the accepted work page does not exist yet, create/reuse the work page and intended spec page before waiting for long encodes or uploads.
-5. Run identity maintenance so `WW Work ID`, parsed external IDs, schema, match status, and source/status fields are initialized.
-6. Fetch missing sourced fields from Douban, OMDb, and TMDb lanes as soon as the work page exists and the required IDs/credentials are available.
-7. Run AI advisory fields only after sourced metadata is present.
-8. Apply conservatively and verify readback.
+4. If a scanned work is worth cataloging and the work page does not exist yet, create/reuse the work page even when playable media is unavailable, unsuitable, or deferred.
+5. If playable or manual upload work is also planned, create/reuse the intended spec/episode pages before waiting for long encodes or uploads. This destination step is a media workflow requirement, not a metadata prerequisite.
+6. Run identity maintenance so `WW Work ID`, parsed external IDs, schema, match status, and source/status fields are initialized.
+7. Fetch missing sourced fields from Douban, OMDb, and TMDb lanes as soon as the work page exists and the required IDs/credentials are available.
+8. Run AI advisory fields only after sourced metadata is present.
+9. Apply conservatively and verify readback.
 
 ## Current Notion Field Contract
 
@@ -27,6 +28,7 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 - `Box Office`, `Box Office Amount`, `Box Office Currency`, and `Box Office Source` normally come from OMDb. Leave them empty when OMDb has `N/A` or no trusted source exists.
 - `Metadata Source`, `Metadata Status`, `Metadata Confidence`, `Match Status`, and `Metadata Updated At` should reflect the latest sourced metadata pass.
 - `Media Availability` is media-operations state. Sourced work metadata must not mark a work playable without uploaded/probed media evidence.
+- Work-level metadata may be complete while `Media Availability` remains `needs_processing`, `source_only`, `blocked`, or `unknown`.
 - `Hide from Website` is a visibility safety gate. Keep it true when the work has no playable verified media, upload/encoding/subtitle requirements are blocked, Media Assets are missing or inconsistent, or the user manually hid the work. Do not clear it just because metadata is now complete. If other specs look good but the flag is true, ask the user before clearing it.
 - `Needs Review` is a quality/review gate. Set it when sourced metadata conflicts, the match is ambiguous, `未映射类型` is non-empty, AI advisory confidence is low or marks review, schema/media state disagrees, or a manual decision is pending. Clear it only after the specific review reason is resolved and readback confirms the corrected state.
 - `AI建议最低年龄`, `AI年龄建议置信度`, `内容风险标签`, `AI年龄建议理由`, and `人工年龄覆盖` are advisory/family fields. Run the AI advisory step after sourced fields are present.

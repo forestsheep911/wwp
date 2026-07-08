@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPatch, parseInfoPairs } from "./notion-metadata-backfill.mjs";
+import { buildPatch, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
 
 function emptyProperty(type) {
   if (type === "number") return { type, number: null };
@@ -145,6 +145,33 @@ test("buildPatch does not overwrite existing human-filled structured fields", ()
   assert.equal(patch["Douban URL"], undefined);
   assert.equal(patch["Poster URL"], undefined);
   assert.deepEqual(patch["Metadata Source"].multi_select.map((item) => item.name), ["manual", "douban"]);
+});
+
+test("preferredDoubanSubjectId uses existing page identity before title search", () => {
+  const pageId = "39620ac1-2f0a-81e9-8469-e319231fc1b0";
+  const subjectId = preferredDoubanSubjectId(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "牡丹花下 The Beguiled (1971)", text: { content: "牡丹花下 The Beguiled (1971)" } }] },
+      "Douban Subject ID": filledRichText("1295702")
+    }).properties,
+    pageId,
+    { doubanSubjects: new Map() }
+  );
+
+  assert.equal(subjectId, "1295702");
+});
+
+test("preferredDoubanSubjectId allows explicit CLI subject override", () => {
+  const pageId = "39620ac1-2f0a-81e9-8469-e319231fc1b0";
+  const subjectId = preferredDoubanSubjectId(
+    pageWithProperties({
+      "Douban Subject ID": filledRichText("1295702")
+    }).properties,
+    pageId,
+    { doubanSubjects: new Map([[pageId, "26761325"]]) }
+  );
+
+  assert.equal(subjectId, "26761325");
 });
 
 test("parseInfoPairs handles compact Douban info labels", () => {

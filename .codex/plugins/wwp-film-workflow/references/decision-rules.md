@@ -20,8 +20,11 @@ Classify each candidate as:
 - possible duplicate or ambiguous match
 - series/season/episode workflow instead of movie workflow
 - source-only/archive workflow instead of playable workflow
+- metadata-only cataloging candidate when playable production is blocked, deferred, or not worth doing now
 
 Supplemental specs can be as valuable as new works when existing specs are weak. Do not apply a blanket "new films first" rule.
+
+Work-level metadata is a separate high-priority track. If a scanned work is worth collecting, do not skip cataloging just because the current source lacks subtitles, has color risk, is too large, or has no immediate playable path.
 
 ## Hard Gates
 
@@ -56,3 +59,4 @@ When a candidate is uncertain but not blocking the batch, record the question an
 - A queue watcher should compare the current input directory scan against a saved state file and report new, removed, and materially changed top-level entries.
 - New queue entries are candidates for analysis, not automatic encodes. Run the hard gates and priority signals before starting work.
 - During long encodes or uploads, use waiting time for Notion metadata, manual-upload organization, and Media Assets dry-runs instead of idling.
+- Queue scans may create metadata-only work pages for valuable missing works even when no encode is started.
