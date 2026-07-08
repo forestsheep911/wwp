@@ -138,7 +138,7 @@ export function CinemaLayout({
 
             <nav
               aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-auto lg:justify-center lg:gap-5"
+              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
             >
               {browseChannels.map((channel) => {
                 const active = activeTab === "library" && activeBrowseChannel === channel.id;
