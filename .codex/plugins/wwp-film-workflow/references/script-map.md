@@ -18,7 +18,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 ## Existing Repository Tools
 
 - `tools/notion-upload-movie-video.mjs`
-  - Upload a playable movie MP4 to an existing or target movie/spec page.
+  - Upload a playable movie MP4 to an existing or target movie/spec page. Use `--page-id <movie-page-id> --target-title "<spec title>" --prepare-only --apply` before long encode/manual handoff to create or reuse the destination spec child page without requiring a finished file.
 - `tools/notion-upload-movie-package.mjs`
   - Create/update movie package structures and upload playable/source pieces when explicitly configured. Newly created work pages default to `Hide from Website=true`, `Needs Review=true`, and `Media Availability=needs_processing`; use the explicit gate flags only when a workflow has a better evidenced state. For large Notion uploads, preserve the generated upload manifest and command log so an interrupted run can resume parts instead of restarting.
 - `tools/notion-upload-series-videos.mjs`

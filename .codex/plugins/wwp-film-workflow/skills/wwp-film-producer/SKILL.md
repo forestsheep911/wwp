@@ -21,7 +21,7 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 
 1. Confirm the user-specified input directory. Do not assume a fixed input path.
 2. Select candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk.
-3. For accepted candidates, create or reuse the Notion work page and intended spec page before long encode/upload work when they are missing. This also applies when upload is slow, deferred, or the playable video is not yet suitable to upload. When manual upload is likely, report the target spec page title and page ID before or while encoding so the user can upload the finished file to the correct child page rather than the work-page root.
+3. For accepted candidates, create or reuse the Notion work page and intended spec page before long encode/upload work when they are missing. This is the default fallback when the API cannot safely move an already uploaded media block: prepare the destination first, then encode or hand off manual upload. When manual upload is likely, report the target spec page title and page ID before encoding starts so the user can upload the finished file to the correct child page rather than the work-page root.
 4. Start work-level metadata backfill immediately after the work page exists: identity maintenance, Douban, OMDb when IMDb exists, AI family-age after sourced fields, and TMDb only when credentials or trusted hints exist. Let metadata backfill run while encoding, QC, or upload continues when the tasks do not depend on each other.
 5. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
 6. Run probe/QC before upload.
@@ -34,7 +34,7 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 - Existing Notion works should be reused; do not create duplicate work pages for supplemental specs.
 - Spec backfill can be as important as new-film creation when the existing specs are weak.
 - Do not block work-page creation and sourced metadata backfill on video upload readiness. Playable Media Assets rows still require real uploaded/probed media evidence.
-- Avoid root-level manual upload cleanup by preparing the page structure early. A planned movie encode should have a target spec child page; a planned series encode should have a target spec page plus episode child pages before the user is expected to upload files manually.
+- Avoid root-level manual upload cleanup by preparing the page structure early. A planned movie encode should have a target spec child page; a planned series encode should have a target spec page plus episode child pages before the user is expected to upload files manually. If the target page cannot be prepared, do not invite manual upload yet.
 - Source/original-disc upload is not the default playable production path.
 - Do not claim completion until Notion or Media Assets readback proves the external state.
 

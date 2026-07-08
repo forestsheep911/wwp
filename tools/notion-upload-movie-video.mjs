@@ -13,6 +13,7 @@ function parseArgs() {
     targetPageId: "",
     targetTitle: "",
     partMiB: DEFAULT_PART_MIB,
+    prepareOnly: false,
     apply: false
   };
 
@@ -24,6 +25,7 @@ function parseArgs() {
     else if (arg === "--target-page-id") options.targetPageId = args[++index];
     else if (arg === "--target-title") options.targetTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
+    else if (arg === "--prepare-only") options.prepareOnly = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -33,18 +35,25 @@ function parseArgs() {
     }
   }
 
-  if (!options.file) throw new Error("--file is required.");
-  options.file = path.resolve(options.file);
+  if (!options.file && !options.prepareOnly) throw new Error("--file is required.");
+  if (options.file) options.file = path.resolve(options.file);
+  if (options.prepareOnly && !options.targetPageId && !options.targetTitle) {
+    throw new Error("--prepare-only requires --target-title or --target-page-id.");
+  }
   return options;
 }
 
 function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-movie-video.mjs --file <mp4> [--apply]
+  node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --target-title "影片 繁英 1.6GB" --prepare-only --apply
 
 Examples:
   node tools/notion-upload-movie-video.mjs --file E:\\video_made\\movie.mp4
   node tools/notion-upload-movie-video.mjs --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
+
+Options:
+  --prepare-only  Create/reuse the target spec child page, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
 `);
 }
 
@@ -117,6 +126,7 @@ function titlePropertyName(page) {
 }
 
 async function updatePageTitle(notion, pageId, title, apply) {
+  if (pageId === "(dry-run)") return;
   if (!title) return;
   const page = await notion.pages.retrieve({ page_id: pageId });
   const current = pageTitle(page);
@@ -147,30 +157,59 @@ async function listChildren(notion, blockId) {
   return blocks;
 }
 
-async function findTargetPage(notion, rootPageId, options, filename) {
+async function targetCandidate(notion, childPageBlock) {
+  const grandChildren = await listChildren(notion, childPageBlock.id);
+  const videoNames = grandChildren.filter((block) => block.type === "video").map(blockTitle);
+  return { id: childPageBlock.id, title: blockTitle(childPageBlock), videoNames };
+}
+
+async function createTargetPage(notion, rootPageId, title, apply) {
+  console.log(`${apply ? "create" : "would create"} target spec page "${title}" under ${rootPageId}`);
+  if (!apply) return { id: "(dry-run)", title, created: false };
+  const page = await notion.pages.create({
+    parent: { page_id: rootPageId },
+    properties: {
+      title: { title: richText(title) }
+    }
+  });
+  return { id: page.id, title, created: true };
+}
+
+async function findTargetPage(notion, rootPageId, options, filename, plannedTitle) {
   if (options.targetPageId) {
     const targetPage = await notion.pages.retrieve({ page_id: options.targetPageId });
     return { id: targetPage.id, title: pageTitle(targetPage) };
   }
 
   const mainChildren = await listChildren(notion, rootPageId);
-  const candidates = [];
-  for (const callout of mainChildren.filter((block) => block.type === "callout")) {
+  const nestedCandidates = [];
+  const directCandidates = [];
+  for (const child of mainChildren.filter((block) => block.type === "child_page")) {
+    directCandidates.push(await targetCandidate(notion, child));
+  }
+  for (const callout of mainChildren.filter((block) => block.type === "callout" || block.type === "toggle")) {
     const children = await listChildren(notion, callout.id);
     for (const child of children.filter((block) => block.type === "child_page")) {
-      if (options.targetTitle && blockTitle(child) !== options.targetTitle) continue;
-      const grandChildren = await listChildren(notion, child.id);
-      const videoNames = grandChildren.filter((block) => block.type === "video").map(blockTitle);
-      candidates.push({ id: child.id, title: blockTitle(child), videoNames });
+      nestedCandidates.push(await targetCandidate(notion, child));
     }
   }
+  const candidates = [...nestedCandidates, ...directCandidates];
 
-  const comparable = comparableFilename(filename);
-  const already = candidates.find((candidate) =>
-    candidate.videoNames.some((name) => comparableFilename(name).includes(comparable))
-  );
-  if (already) {
-    return { id: already.id, alreadyExists: true, title: already.title };
+  if (plannedTitle && (options.targetTitle || options.prepareOnly)) {
+    const exact = candidates.find((candidate) => candidate.title === plannedTitle);
+    if (exact) return exact;
+    if (options.prepareOnly) return createTargetPage(notion, rootPageId, plannedTitle, options.apply);
+    throw new Error(`Target spec page not found: ${plannedTitle}. Run --prepare-only --apply first or pass --target-page-id.`);
+  }
+
+  if (filename) {
+    const comparable = comparableFilename(filename);
+    const already = candidates.find((candidate) =>
+      candidate.videoNames.some((name) => comparableFilename(name).includes(comparable))
+    );
+    if (already) {
+      return { id: already.id, alreadyExists: true, title: already.title };
+    }
   }
 
   const empty = candidates.find((candidate) => candidate.videoNames.length === 0);
@@ -304,23 +343,33 @@ async function main() {
   const options = parseArgs();
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
-  if (!fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);
+  if (options.file && !fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);
 
-  const file = {
-    path: options.file,
-    name: path.basename(options.file),
-    size: fs.statSync(options.file).size
-  };
+  const file = options.file
+    ? {
+        path: options.file,
+        name: path.basename(options.file),
+        size: fs.statSync(options.file).size
+      }
+    : null;
   const notion = new Client({ auth: token, timeoutMs: 600000 });
   const page = await notion.pages.retrieve({ page_id: options.pageId });
-  const target = await findTargetPage(notion, page.id, options, file.name);
-  const targetTitle = `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`;
+  const targetTitle = options.targetTitle || (file
+    ? `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`
+    : "");
+  const target = await findTargetPage(notion, page.id, options, file?.name ?? "", targetTitle);
 
   console.log(`page: ${pageTitle(page)} ${page.id}`);
-  console.log(`file: ${file.name} ${file.size} bytes`);
+  console.log(file ? `file: ${file.name} ${file.size} bytes` : "file: (none; prepare-only)");
   console.log(`target page: ${target.title ?? ""} ${target.id}`);
   console.log(`target title: ${targetTitle}`);
-  console.log(`mode: ${options.apply ? "apply" : "dry-run"}`);
+  console.log(`mode: ${options.apply ? "apply" : "dry-run"}${options.prepareOnly ? " prepare-only" : ""}`);
+
+  if (options.prepareOnly) {
+    await updatePageTitle(notion, target.id, targetTitle, options.apply);
+    console.log("prepare-only: upload skipped");
+    return;
+  }
 
   if (target.alreadyExists) {
     await updatePageTitle(notion, target.id, targetTitle, options.apply);
