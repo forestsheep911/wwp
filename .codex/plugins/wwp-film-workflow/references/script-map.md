@@ -30,7 +30,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-media-assets-write.mjs`
   - Write movie Media Assets rows from audited candidates. Prefer batch manifests with page IDs, expected-title guards, and ffprobe-backed `metadata` overrides for production apply runs. The writer must not treat a playable row as permission to un-hide website visibility; playback/QC review remains separate.
 - `tools/notion-manual-upload-organizer.mjs`
-  - Inspect recently edited pages for root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. Use this before Media Assets writes when manual uploads may have landed on the work page root.
+  - Inspect recently edited pages for root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. The report includes `suggestedTarget` page IDs for moving root media; series root uploads should point to episode child page IDs when episode numbers can be parsed. Use this before Media Assets writes when manual uploads may have landed on the work page root.
 - `tools/notion-media-assets-write-series.mjs`
   - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. The writer must not treat a playable episode row as permission to un-hide website visibility.
 - `tools/notion-media-assets-stats.mjs`

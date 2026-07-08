@@ -206,10 +206,81 @@ function sizeLabelFromName(name = "") {
   return match ? `${match[1]}GB` : "";
 }
 
+function variantLabelFromName(name = "") {
+  const match = name.match(/\b(track\d+)\b/iu);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function episodeNumberFromName(name = "") {
+  const text = String(name ?? "");
+  const match = text.match(/\bS\d{1,2}E(\d{1,3})\b/iu)
+    ?? text.match(/\bEpisode[\s._-]*(\d{1,3})\b/iu)
+    ?? text.match(/\bE(\d{1,3})\b/iu);
+  return match ? Number(match[1]) : undefined;
+}
+
 export function suggestedSpecTitle(workTitle, mediaName) {
-  return [shortWorkTitle(workTitle), languageLabelFromName(mediaName), sizeLabelFromName(mediaName)]
+  return [shortWorkTitle(workTitle), languageLabelFromName(mediaName), variantLabelFromName(mediaName), sizeLabelFromName(mediaName)]
     .filter(Boolean)
     .join(" ");
+}
+
+export function assignSuggestedTargets(rootLandingMedia, specPages) {
+  const byTitle = new Map((specPages ?? []).map((spec) => [spec.title, spec]));
+  return (rootLandingMedia ?? []).map((media) => {
+    if (!media.playable || !media.suggestedSpecTitle) return media;
+
+    const spec = byTitle.get(media.suggestedSpecTitle);
+    if (!spec) {
+      return {
+        ...media,
+        suggestedTarget: {
+          kind: "spec_page",
+          title: media.suggestedSpecTitle,
+          status: "missing_spec_page"
+        }
+      };
+    }
+
+    const episodeNumber = episodeNumberFromName(media.name);
+    if (episodeNumber !== undefined && (spec.episodePages ?? []).length > 0) {
+      const episode = spec.episodePages.find((item) => item.episodeNumber === episodeNumber);
+      if (episode) {
+        return {
+          ...media,
+          suggestedTarget: {
+            kind: "episode_page",
+            pageId: episode.pageId,
+            title: episode.title,
+            episodeNumber,
+            specPageId: spec.pageId,
+            specTitle: spec.title,
+            status: "ready"
+          }
+        };
+      }
+      return {
+        ...media,
+        suggestedTarget: {
+          kind: "episode_page",
+          episodeNumber,
+          specPageId: spec.pageId,
+          specTitle: spec.title,
+          status: "missing_episode_page"
+        }
+      };
+    }
+
+    return {
+      ...media,
+      suggestedTarget: {
+        kind: "spec_page",
+        pageId: spec.pageId,
+        title: spec.title,
+        status: "ready"
+      }
+    };
+  });
 }
 
 async function listChildren(notion, blockId) {
@@ -286,6 +357,14 @@ async function scanSpecLikeChild(notion, block, parentPath) {
   const title = blockTitle(block);
   const path = [...parentPath, `child_page:${title}`];
   const children = await listChildren(notion, block.id).catch(() => []);
+  const episodePages = children
+    .filter((child) => child.type === "child_page")
+    .map((child) => ({
+      pageId: child.id,
+      title: blockTitle(child),
+      episodeNumber: episodeNumberFromName(blockTitle(child))
+    }))
+    .filter((child) => child.episodeNumber !== undefined);
   const media = children
     .filter(isMediaBlock)
     .map((child) => summarizeMedia(child, [...path, child.type], "valid_spec_media"));
@@ -293,6 +372,7 @@ async function scanSpecLikeChild(notion, block, parentPath) {
     pageId: block.id,
     title,
     path,
+    episodePages,
     media
   };
 }
@@ -324,16 +404,19 @@ async function scanWorkPage(notion, page) {
     }
   }
 
-  const specMedia = [...specPages, ...nestedSpecPages].flatMap((item) => item.media);
+  const allSpecPages = [...specPages, ...nestedSpecPages];
+  const rootLandingMediaWithTargets = assignSuggestedTargets(rootLandingMedia, allSpecPages);
+  const specMedia = allSpecPages.flatMap((item) => item.media);
   return {
     pageId: page.id,
     title,
     lastEditedTime: page.last_edited_time,
-    rootLandingMedia,
-    specPages: [...specPages, ...nestedSpecPages].map((item) => ({
+    rootLandingMedia: rootLandingMediaWithTargets,
+    specPages: allSpecPages.map((item) => ({
       pageId: item.pageId,
       title: item.title,
       path: item.path,
+      episodePages: item.episodePages,
       mediaCount: item.media.length
     })),
     specMedia,
@@ -430,6 +513,7 @@ async function main() {
         sourceLike: media.sourceLike,
         name: media.name,
         suggestedSpecTitle: media.suggestedSpecTitle,
+        suggestedTarget: media.suggestedTarget,
         path: media.path.join(" > ")
       })),
       specPages: item.specPages
