@@ -14,6 +14,7 @@ test("movie uploader documents prepare-only mode", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--prepare-only/);
+  assert.match(result.stdout, /before long encode or manual upload handoff/i);
 });
 
 test("movie uploader accepts prepare-only target page creation without local file", () => {

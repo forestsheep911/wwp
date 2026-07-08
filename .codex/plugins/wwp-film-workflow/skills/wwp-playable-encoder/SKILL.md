@@ -23,10 +23,11 @@ Use this skill for playable outputs that people will watch directly. Source arch
 3. For uncertain color/subtitle timing, make a short sample before full encode.
 4. Treat dark/flat HDR-to-SDR samples as a blocker for final delivery until tone mapping or HDR-preserving output is chosen.
 5. Choose subtitle/audio variants using `../../references/encoding-rules.md`.
-6. Use `../../scripts/plan-stream-variants.mjs` when combining hard subtitles, soft subtitles, Mandarin/Cantonese/original/commentary audio, or director cuts.
-7. Generate QC artifacts, including contact sheets when helpful.
-8. Probe final files and preserve the JSON/manifest for Media Assets.
-9. Verify the final byte size is below the Notion playable upload limit before calling it upload-ready.
+6. Before starting a long encode, prepare the Notion destination through `wwp-notion-publisher` when the result may be API-uploaded or manually uploaded. Record the movie spec page ID, or the series spec and episode page IDs, so finished files have a precise upload target.
+7. Use `../../scripts/plan-stream-variants.mjs` when combining hard subtitles, soft subtitles, Mandarin/Cantonese/original/commentary audio, or director cuts.
+8. Generate QC artifacts, including contact sheets when helpful.
+9. Probe final files and preserve the JSON/manifest for Media Assets.
+10. Verify the final byte size is below the Notion playable upload limit before calling it upload-ready.
 
 ## Variant Rules
 
@@ -38,4 +39,4 @@ Use this skill for playable outputs that people will watch directly. Source arch
 
 ## Completion Gate
 
-Before handing off to Notion, report final path, exact byte size, whether it is below the Notion playable upload limit, ffprobe-derived metadata, selected subtitle/audio tracks, QC result, and any known limitations.
+Before handing off to Notion, report final path, exact byte size, whether it is below the Notion playable upload limit, target Notion page ID(s), ffprobe-derived metadata, selected subtitle/audio tracks, QC result, and any known limitations.

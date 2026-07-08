@@ -27,6 +27,7 @@ Do not proceed when episode page mapping is ambiguous.
 ## Production
 
 - Smoke-test one or a few episodes when subtitle timing, color, upload behavior, or naming is uncertain.
+- Before full-season encoding or manual upload handoff, prepare the target spec page and episode child pages with the series upload prepare-only flow.
 - Batch encode/upload only after the mapping and sample are sane.
 - Use episode-aware tools for upload and Media Assets writes.
 - When a series/season page does not exist, create it only through an explicit create path. The intended API shape is series/season page -> spec page -> episode page -> media block; legacy callout/toggle containers are not required for new API-created content.

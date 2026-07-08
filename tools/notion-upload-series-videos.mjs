@@ -79,7 +79,7 @@ Examples:
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB" --create-episodes --apply
 
 Options:
-  --prepare-only  Create/reuse the spec and episode page structure, then skip file uploads.
+  --prepare-only  Create/reuse the spec and episode page structure before long encode or manual upload handoff, then skip file uploads.
 `);
 }
 

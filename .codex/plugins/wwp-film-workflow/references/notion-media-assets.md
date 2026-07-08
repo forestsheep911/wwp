@@ -33,6 +33,7 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 ## Early Page Creation
 
 - It is valid to create/reuse the work page and intended spec page before the playable upload is ready. This lets work-level metadata backfill run while encode, QC, or upload continues.
+- Treat destination preparation as the preflight gate for planned production, not only as a cleanup fallback after a bad manual upload.
 - For accepted encodes, prepare the upload destination before long encode starts when manual upload is possible. Movie uploads need a spec child page. Series uploads need a spec page plus episode child pages. Give the user the exact target page title and ID.
 - Treat pre-created pages as the normal answer to API move limits. Do not plan around uploading media to the root page and moving it later.
 - Early work/spec pages are not evidence for playable Media Assets rows. Create playable Media Assets only after a real uploaded video/file block or a final local file with a planned upload has been verified.

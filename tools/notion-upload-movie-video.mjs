@@ -58,7 +58,7 @@ Examples:
   node tools/notion-upload-movie-video.mjs --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
 
 Options:
-  --prepare-only  Create/reuse the target spec child page, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
+  --prepare-only  Create/reuse the target spec child page before long encode or manual upload handoff, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
   --resolve-ip     Override api.notion.com DNS for route-specific Notion API failures.
 `);
 }
