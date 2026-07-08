@@ -25,7 +25,8 @@ function parseArgs() {
     maxFiles: Infinity,
     create: false,
     createEpisodes: false,
-    apply: false
+    apply: false,
+    prepareOnly: false
   };
   let pageIdProvided = false;
 
@@ -49,6 +50,7 @@ function parseArgs() {
     else if (arg === "--create") options.create = true;
     else if (arg === "--create-episodes") options.createEpisodes = true;
     else if (arg === "--apply") options.apply = true;
+    else if (arg === "--prepare-only") options.prepareOnly = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -59,7 +61,7 @@ function parseArgs() {
 
   options.sourceDir = path.resolve(options.sourceDir);
   if (options.create && !pageIdProvided) options.pageId = "";
-  if (options.create && !options.title) throw new Error("--create requires --title.");
+  if (options.create && !pageIdProvided && !options.title) throw new Error("--create requires --title.");
   if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
   return options;
 }
@@ -68,12 +70,16 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-series-videos.mjs [--apply] [--max-files 1]
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --create-episodes
+  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*.mp4" --spec-title "辐射 第二季 繁英" --create --create-episodes --prepare-only --apply
 
 Examples:
   node tools/notion-upload-series-videos.mjs
   node tools/notion-upload-series-videos.mjs --apply --max-files 1
   node tools/notion-upload-series-videos.mjs --apply
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB" --create-episodes --apply
+
+Options:
+  --prepare-only  Create/reuse the spec and episode page structure, then skip file uploads.
 `);
 }
 
@@ -517,9 +523,18 @@ async function main() {
   console.log(`spec page: ${specPage.title} ${specPage.id}`);
   console.log(`spec title: ${specTitle}`);
   console.log(`source files: ${files.length}; selected: ${selectedFiles.length}`);
-  console.log(`mode: ${options.apply ? "apply" : "dry-run"}`);
+  console.log(`mode: ${options.apply ? "apply" : "dry-run"}${options.prepareOnly ? " prepare-only" : ""}`);
 
   await updatePageTitle(notion, specPage.id, specTitle, options.apply);
+
+  if (options.prepareOnly) {
+    for (const file of selectedFiles) {
+      const episodePage = episodePages.get(file.episode);
+      console.log(`${options.apply ? "prepared" : "would prepare"} ${file.name} -> ${episodePage?.title ?? `Episode ${String(file.episode).padStart(2, "0")}`} ${episodePage?.id ?? "(missing)"}`);
+    }
+    console.log("prepare-only: upload skipped");
+    return;
+  }
 
   if (!options.apply) {
     for (const file of selectedFiles) {

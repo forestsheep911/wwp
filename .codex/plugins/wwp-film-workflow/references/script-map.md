@@ -6,6 +6,8 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 
 - `node .codex/plugins/wwp-film-workflow/scripts/scan-input-directory.mjs --root <input-dir> --output <scan.json>`
   - Summarizes top-level candidate folders, largest media files, subtitle sidecars, NFOs, and filename-derived flags before heavy probing.
+- `node .codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs --root <input-dir> --state <state.json> --once`
+  - Compares the latest scan with a saved state file and reports new, removed, or changed queue entries. It also accepts positional `root state output` arguments for npm-forwarding edge cases. Use `--interval-sec <seconds>` only when an active monitoring loop is desired.
 - `node .codex/plugins/wwp-film-workflow/scripts/probe-media.mjs --input <media> --output <json>`
   - Runs `ffprobe` and writes structured JSON for source/final media.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.ps1 -InputPath <media> -Output <png>`
@@ -20,13 +22,15 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-upload-movie-package.mjs`
   - Create/update movie package structures and upload playable/source pieces when explicitly configured. Newly created work pages default to `Hide from Website=true`, `Needs Review=true`, and `Media Availability=needs_processing`; use the explicit gate flags only when a workflow has a better evidenced state. For large Notion uploads, preserve the generated upload manifest and command log so an interrupted run can resume parts instead of restarting.
 - `tools/notion-upload-series-videos.mjs`
-  - Upload episode playable files with series-aware mapping. It can also create a new series/season page, spec page, and missing episode pages when explicitly called with `--create --title <title> --create-episodes`; default existing-page behavior remains unchanged.
+  - Upload episode playable files with series-aware mapping. It can also create a new series/season page, spec page, and missing episode pages when explicitly called with `--create --title <title> --create-episodes`; default existing-page behavior remains unchanged. Use `--prepare-only --apply` to create/reuse only the spec and episode page structure before encoding finishes or before a manual upload, with no file upload.
 - `tools/notion-upload-series-source.mjs`
   - Handle series source package/upload flow when explicitly requested.
 - `tools/notion-media-assets-audit.mjs`
   - Audit Notion pages for candidate playable/source Media Assets rows.
 - `tools/notion-media-assets-write.mjs`
   - Write movie Media Assets rows from audited candidates. Prefer batch manifests with page IDs, expected-title guards, and ffprobe-backed `metadata` overrides for production apply runs. The writer must not treat a playable row as permission to un-hide website visibility; playback/QC review remains separate.
+- `tools/notion-manual-upload-organizer.mjs`
+  - Inspect recently edited pages for root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. Use this before Media Assets writes when manual uploads may have landed on the work page root.
 - `tools/notion-media-assets-write-series.mjs`
   - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. The writer must not treat a playable episode row as permission to un-hide website visibility.
 - `tools/notion-media-assets-stats.mjs`

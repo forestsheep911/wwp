@@ -31,9 +31,11 @@
     "notion:asset-leftovers": "node tools/notion-media-assets-leftovers-report.mjs",
     "notion:asset-stats": "node tools/notion-media-assets-stats.mjs",
     "notion:asset-write": "node tools/notion-media-assets-write.mjs",
+    "notion:manual-upload-organizer": "node tools/notion-manual-upload-organizer.mjs",
     "notion:title-prefix-cleanup": "node tools/notion-title-prefix-cleanup.mjs",
     "notion:series-audit": "node tools/notion-series-structure-audit.mjs",
     "notion:series-asset-write": "node tools/notion-media-assets-write-series.mjs",
+    "film:queue-watch": "node .codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs",
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
     "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",
     "typecheck": "npm run typecheck --workspace @wwpdw/web && npm run typecheck --workspace @wwpdw/api && npm run typecheck --workspace @wwpdw/worker"

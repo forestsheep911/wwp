@@ -5,7 +5,7 @@ description: Use when WWP videos, episodes, source files, or original-disc archi
 
 # WWP Media Assets Backfiller
 
-Use this when the external Notion files already exist and the task is to reconcile structured Media Assets without reuploading or reorganizing pages.
+Use this when the external Notion files already exist and the task is to reconcile structured Media Assets. If playable media was manually uploaded into the wrong page level, route through the manual-upload organization rules before writing final rows.
 
 ## Triggers
 
@@ -18,17 +18,20 @@ Use this when the external Notion files already exist and the task is to reconci
 ## Workflow
 
 1. Scan recently updated Notion pages or the user-specified page set.
-2. Identify video/file blocks and classify them as playable, episode playable, source archive, original disc, or unknown.
-3. Compare against existing Media Assets rows.
-4. Prefer local produced files, samples, manifests, or prior ffprobe JSON for metadata.
-5. Use guarded batch manifests with page IDs when a title query can match sequels, remakes, or similarly named pages.
-6. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
-7. Produce a dry-run list of rows to create/update.
-8. Apply only after the dry-run is coherent, then read back the result.
+2. Identify video/file blocks and classify them as playable, episode playable, source archive, original disc, root landing media, or unknown.
+3. Treat root-level playable uploads as incomplete structure: movie media belongs under a spec child page; series media belongs under episode pages inside the spec page.
+4. Compare only structurally valid media blocks against existing Media Assets rows.
+5. Prefer local produced files, samples, manifests, or prior ffprobe JSON for metadata.
+6. Use guarded batch manifests with page IDs when a title query can match sequels, remakes, or similarly named pages.
+7. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
+8. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
+9. Apply only after the dry-run is coherent, then read back the result.
 
 ## Guardrails
 
-- Do not move page structure or reupload files during a backfill.
+- Do not leave manually uploaded playable media naked on a work/season root page. Root media blocks are temporary landing blocks and must be organized into spec/episode child pages before final playable Media Assets rows are written.
+- Metadata-only backfill should not move page structure or reupload files. When structure is wrong, produce a structure-fix report or route to an organizer/reupload step.
+- If the API cannot safely move an existing Notion-hosted media block, do not copy its temporary signed URL into a new durable block. Report the exact source block and required destination; if the matching local final MP4 exists, use an explicit upload/reupload path only when accepted.
 - Do not overwrite human fields when page title, spec page, and schema disagree; report the conflict and recommend a fix.
 - For source/archive rows, fill lineage, size, container/archive, and availability first. Only claim stream-level metadata when a real media file can be probed.
 - For Notion-hosted media, treat source page IDs and media block IDs as the durable link. Do not require a copied Asset URL when the underlying URL is temporary.

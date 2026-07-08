@@ -6,6 +6,9 @@
 - Historical base/toggle/callout layouts are compatibility targets for reading old pages, not required shape for new API output.
 - Movie shape: work page -> spec page -> playable video/file.
 - Series shape: series/season page -> spec page -> episode page -> playable video/file.
+- A video/file block directly under a movie work page, series page, or season page is only a temporary manual-upload landing spot. It is not final structure.
+- When a manual upload lands at the root, create or reuse the correct spec child page first, then put the playable media block under that page. For series, put the media under the episode page inside the spec page.
+- Do not create final playable Media Assets rows that point at root-level landing media blocks. Use those blocks only as evidence for an organizer report until the media is moved or reuploaded into the correct child-page structure.
 
 ## Spec Titles
 
@@ -45,7 +48,8 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 - For recent manual or remote uploads, scan recently updated Notion pages or the user-provided page set.
 - Identify video/file blocks and classify playable, episode playable, source archive, original disc, or unknown.
 - Prefer local samples, produced files, manifests, or existing ffprobe JSON. Ask before downloading Notion-hosted media solely to probe metadata.
-- Do not move pages or reupload files during a Media Assets backfill.
+- Pure Media Assets backfill is metadata-only and should not move pages or reupload files. If uploaded playable media is still sitting at the page root or at the wrong hierarchy level, route to a manual-upload organization step before writing final playable rows.
+- When the current API/tool path cannot safely move an existing Notion-hosted media block, report the exact source page/block and required destination page. If the final local MP4 is available and the user accepts the cost, reupload to the correct child page instead of copying a temporary signed Notion URL.
 - If page title, spec page, and schema disagree, report the conflict before changing human-authored fields.
 - For backfills after manual uploads, prefer durable Notion IDs and block IDs over copying transient file URLs into durable fields.
 

@@ -44,7 +44,15 @@ Raise priority for:
 - Hong Kong films with Cantonese plus Chinese subtitles
 - director cuts, commentary tracks with Chinese assistance, or missing Mandarin/Cantonese specs
 - existing works lacking a better 3-4GB-ish playable when the source quality supports it
+- existing works that have only high-bitrate files but lack a compact 1.0-1.8GB-ish playable for easier streaming
+- newly arrived input-directory entries detected by a queue watcher, after they pass the same subtitle, quality, Notion-state, and risk gates
 
 ## Deferred Decisions
 
 When a candidate is uncertain but not blocking the batch, record the question and continue with deterministic items. Ask the user at the end of the batch with enough evidence: source, subtitles, audio, Notion state, expected output, and risk.
+
+## Queue Monitoring
+
+- A queue watcher should compare the current input directory scan against a saved state file and report new, removed, and materially changed top-level entries.
+- New queue entries are candidates for analysis, not automatic encodes. Run the hard gates and priority signals before starting work.
+- During long encodes or uploads, use waiting time for Notion metadata, manual-upload organization, and Media Assets dry-runs instead of idling.
