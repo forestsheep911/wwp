@@ -50,6 +50,7 @@ import {
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
+import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
 import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
@@ -1809,9 +1810,9 @@ function VariantButtons({
         const variantLabel = variantSpecText(result.title, variant, { compact });
         const pending = pendingAssetKeys.includes(variant.assetKey);
         const tracked = trackedByAssetKey.get(variant.assetKey);
-        const displayAsset = tracked?.asset ?? variant.cache;
+        const displayAsset = latestVariantAsset(variant, tracked);
         const displayStatus = pending
-          ? copy.cache.status.queued
+          ? pendingCacheStatusLabel()
           : tracked && tracked.job.status !== "ready"
             ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
             : displayAsset && displayAsset.status !== "ready"

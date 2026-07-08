@@ -92,6 +92,11 @@ import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
 import { triggerDirectDownload } from "./cinema/download";
 import {
+  mergeCacheAssetIntoResults,
+  variantIsPlaybackReady,
+  variantToCacheTarget
+} from "./cinema/cache-flow";
+import {
   cinemaHistoryState,
   defaultBrowseView,
   historyStateRoute,
@@ -499,21 +504,6 @@ function CinemaApp() {
     }), "replace");
   }
 
-  function variantToResult(result: SearchResult, variant: MediaVariant): SearchResult {
-    return {
-      assetKey: variant.assetKey,
-      title: `${result.title} / ${variant.label}`,
-      source: result.source,
-      sourceUrl: variant.sourceUrl,
-      sourcePageId: variant.sourcePageId ?? result.sourcePageId,
-      sourceBreadcrumb: variant.sourceBreadcrumb ?? result.sourceBreadcrumb,
-      durationLabel: result.durationLabel,
-      updatedAt: result.updatedAt,
-      summary: variant.summary,
-      metadata: result.metadata
-    };
-  }
-
   function mergeTrackedItem(currentItem: TrackedCacheItem, nextItem: TrackedCacheItem): TrackedCacheItem {
     return {
       ...nextItem,
@@ -533,6 +523,33 @@ function CinemaApp() {
         ...currentItems.filter((item) => item.job.id !== nextItem.job.id)
       ].slice(0, 10);
     });
+  }
+
+  function mergeCacheAssetIntoBrowseCache(asset?: CacheAsset) {
+    if (!asset) {
+      return;
+    }
+
+    for (const [cacheKey, entry] of browseViewCacheRef.current) {
+      const results = mergeCacheAssetIntoResults(entry.results, asset);
+      if (results !== entry.results) {
+        browseViewCacheRef.current.set(cacheKey, {
+          ...entry,
+          results
+        });
+      }
+    }
+  }
+
+  function mergeCacheAssetIntoVisibleResults(asset?: CacheAsset) {
+    if (!asset) {
+      return;
+    }
+
+    setResults((currentResults) => mergeCacheAssetIntoResults(currentResults, asset));
+    setBrowseResults((currentResults) => mergeCacheAssetIntoResults(currentResults, asset));
+    setSearchPreviewResults((currentResults) => mergeCacheAssetIntoResults(currentResults, asset));
+    mergeCacheAssetIntoBrowseCache(asset);
   }
 
   function handleRequestError(errorValue: unknown, fallback: string) {
@@ -744,8 +761,9 @@ function CinemaApp() {
   }
 
   async function selectResult(result: ResultWithCache, variant: MediaVariant) {
-    const target = variantToResult(result, variant);
-    if (variant.cache?.status === "ready") {
+    const target = variantToCacheTarget(result, variant);
+    const tracked = trackedByAssetKey.get(variant.assetKey);
+    if (variantIsPlaybackReady(variant, tracked)) {
       await requestCreditAction({
         kind: "playback",
         assetKey: variant.assetKey,
@@ -754,14 +772,21 @@ function CinemaApp() {
       return;
     }
 
-    await requestCreditAction({
-      kind: "cache",
-      target
-    });
+    setCacheRequestAssetKeys((currentKeys) => (
+      currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
+    ));
+    try {
+      await requestCreditAction({
+        kind: "cache",
+        target
+      });
+    } finally {
+      setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
+    }
   }
 
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
-    const target = variantToResult(result, variant);
+    const target = variantToCacheTarget(result, variant);
     setError("");
     setDownloadRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
@@ -794,6 +819,7 @@ function CinemaApp() {
         asset: response.asset,
         result: target
       });
+      mergeCacheAssetIntoVisibleResults(response.asset);
       if (response.asset.status === "ready") {
         await openPlayer(response.asset.assetKey, target);
       }
@@ -2045,6 +2071,8 @@ function CinemaApp() {
           setJob(focusedResponse.job);
           setAsset(focusedResponse.asset);
         }
+
+        responses.forEach((response) => mergeCacheAssetIntoVisibleResults(response.asset));
 
         if (responses.some((response) => response.job.status === "ready" || response.job.status === "failed")) {
           await refreshResultsInBackground();
