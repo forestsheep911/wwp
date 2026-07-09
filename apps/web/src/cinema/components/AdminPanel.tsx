@@ -205,7 +205,7 @@ export function AdminPanel({
       ) : null}
 
       <Tabs defaultValue="cached">
-        <TabsList className="max-w-[calc(100vw-1.5rem)] sm:max-w-full">
+        <TabsList className="max-w-[calc(100vw-1.5rem)] sm:flex sm:w-full sm:max-w-full">
           <TabsTrigger value="cached">
             <Database className="h-4 w-4" />
             {copy.admin.tabs.cached}
