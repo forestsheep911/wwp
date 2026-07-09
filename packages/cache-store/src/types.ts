@@ -2,6 +2,7 @@ import type {
   CacheAsset,
   CacheJob,
   EnsureCacheResponse,
+  MoviePoster,
   PlaybackResponse,
   SearchResult
 } from "@wwpdw/shared";
@@ -36,6 +37,10 @@ export interface GetAssetOptions {
   fresh?: boolean;
 }
 
+export interface CacheMoviePostersOptions {
+  refreshPosters?: () => Promise<MoviePoster[] | undefined>;
+}
+
 export interface CacheStore {
   readonly backend: CacheBackend;
   readonly description: string;
@@ -53,7 +58,7 @@ export interface CacheStore {
   saveJob(job: CacheJob): Promise<void>;
   saveAsset(asset: CacheAsset): Promise<void>;
   finalizeReadyAsset(job: CacheJob): Promise<CacheAsset>;
-  cacheMoviePosters(result: SearchResult): Promise<SearchResult>;
+  cacheMoviePosters(result: SearchResult, options?: CacheMoviePostersOptions): Promise<SearchResult>;
   hydrateMoviePosterUrls(result: SearchResult): Promise<SearchResult>;
   getPlayback(assetKey: string): Promise<PlaybackResponse | undefined>;
   cleanupExpired(now?: Date): Promise<CleanupExpiredResult>;

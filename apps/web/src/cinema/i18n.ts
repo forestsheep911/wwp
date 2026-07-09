@@ -429,7 +429,7 @@ export const zhCN = {
       {
         category: "credit",
         question: "为什么准备和播放可能分开扣？",
-        answer: "准备缓存是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量。两件事消耗的资源不同，所以会分开确认。"
+        answer: "准备缓存是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量，按约 100MB 计 1🍀。两件事消耗的资源不同，所以会分开确认。"
       },
       {
         category: "cache",
@@ -669,7 +669,7 @@ export const zhCN = {
       playbackReplay: "这个视频已经在免费重看窗口内，本次播放免费。",
       playbackReplayWithTime: (remaining: string) => `这个视频已经在免费重看窗口内，本次播放免费，还剩 ${remaining}。`,
       cacheCharge: (credits: string) => `让服务器准备这个视频，需要花费 ${credits}。准备完成后会再确认播放花费。`,
-      playbackCharge: (credits: string, hours: number) => `这个视频已经准备好，开始播放需要花费 ${credits}。首次点击后，${hours} 小时内重看同一视频免费。`
+      playbackCharge: (credits: string, hours: number) => `这个视频已经准备好，播放按约 100MB 计 1🍀，本次需要花费 ${credits}。首次点击后，${hours} 小时内重看同一视频免费。`
     }
   },
   admin: {
@@ -789,7 +789,8 @@ export const zhCN = {
     failedRetry: "准备失败，可以重新准备。",
     errors: {
       blockListInvalid: "缓存写入失败，请重新准备。",
-      assetNotReady: "这条影片还没有准备好播放。"
+      assetNotReady: "这条影片还没有准备好播放。",
+      playbackSizeMissing: "视频大小信息缺失，暂时无法计算播放花费。请重新准备或联系管理员。"
     }
   },
   fallbackErrors: {

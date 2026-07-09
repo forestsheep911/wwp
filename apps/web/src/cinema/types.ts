@@ -2,11 +2,11 @@ import type {
   CacheAsset,
   CacheAssetLookupResponse,
   CacheJob,
-  CreditPolicyResponse,
   MemberAccessCode,
   MemberInvitation,
   SearchResult
 } from "@wwpdw/shared";
+export { defaultCreditPolicy, playbackCreditCost } from "@wwpdw/shared";
 
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
 export type AppTab =
@@ -68,21 +68,10 @@ export type ManagedMemberInvitation = MemberInvitation & { code?: string };
 
 export type HistoryAssetStatusMap = Record<string, CacheAssetLookupResponse | undefined>;
 
-export const defaultCreditPolicy: CreditPolicyResponse = {
-  unitSymbol: "🍀",
-  cacheCredits: 1,
-  playbackCreditBytes: 1000 * 1000 * 1000,
-  playbackReplayFreeHours: 24
-};
-
-export function playbackCreditCost(contentLength: number | undefined, policy: CreditPolicyResponse) {
-  if (!contentLength || !Number.isFinite(contentLength) || contentLength <= 0) {
-    return 1;
+export function formatCreditAmount(amount: number | undefined, unitSymbol: string) {
+  if (amount === undefined) {
+    return "信息缺失";
   }
 
-  return Math.max(1, Math.ceil(contentLength / policy.playbackCreditBytes));
-}
-
-export function formatCreditAmount(amount: number, unitSymbol: string) {
   return `${amount}${unitSymbol}`;
 }

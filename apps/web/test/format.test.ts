@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { MediaVariant, SearchResult } from "@wwpdw/shared";
 import {
+  basicInfoLine,
   bestDetailSummary,
   bestSummary,
   variantHasSizeMetadata,
@@ -67,6 +68,18 @@ test("bestSummary ignores metadata status labels and falls back to a real plot",
       }
     })),
     "A real plot from a metadata provider."
+  );
+});
+
+test("basicInfoLine hides long slash-separated cast dumps", () => {
+  assert.equal(
+    basicInfoLine(result({
+      metadata: {
+        description: "一段真正的影片简介。",
+        info: "安德鲁·加菲尔德 / 克莱尔·芙伊 / 妮可拉·考夫兰 / 杰西卡·古宁 / 朗可卡·莎格蕾 / 依莱·阿诺斯 / 珍妮弗·穆德 / 菲尼克斯·拉罗什 / 马克·希普 / 达斯汀·德姆瑞·伯恩斯"
+      }
+    })),
+    ""
   );
 });
 

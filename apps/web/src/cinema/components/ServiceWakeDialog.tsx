@@ -89,6 +89,9 @@ export function ServiceWakeDialog({
             event.preventDefault();
           }
         }}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
         onPointerDownOutside={(event) => {
           if (!dismissible) {
             event.preventDefault();

@@ -36,6 +36,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Progress } from "../../components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { creditInputDisplayValue, parseCreditInputValue } from "../admin-credit-input";
 import {
   booleanLabel,
   cacheErrorLabel,
@@ -706,8 +707,8 @@ function AdminMembersPanel({
                   min={1}
                   max={10000}
                   type="number"
-                  value={memberBulkCredits}
-                  onChange={(event) => setMemberBulkCredits(Number(event.target.value))}
+                  value={creditInputDisplayValue(memberBulkCredits)}
+                  onChange={(event) => setMemberBulkCredits(parseCreditInputValue(event.target.value))}
                 />
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
@@ -765,8 +766,8 @@ function AdminMembersPanel({
                       min={0}
                       max={10000}
                       type="number"
-                      value={memberCreditEdits[code.id] ?? code.credits.remaining}
-                      onChange={(event) => setMemberCreditEdit(code.id, Number(event.target.value))}
+                      value={creditInputDisplayValue(memberCreditEdits[code.id] ?? code.credits.remaining)}
+                      onChange={(event) => setMemberCreditEdit(code.id, parseCreditInputValue(event.target.value))}
                     />
                     <Button
                       className="w-full lg:w-auto"
@@ -881,8 +882,8 @@ function AdminInvitesPanel({
                   min={0}
                   max={10000}
                   type="number"
-                  value={memberCredits}
-                  onChange={(event) => setMemberCredits(Number(event.target.value))}
+                  value={creditInputDisplayValue(memberCredits)}
+                  onChange={(event) => setMemberCredits(parseCreditInputValue(event.target.value))}
                 />
               </div>
               <Button className="w-full sm:w-auto" type="submit" disabled={adminLoading}>

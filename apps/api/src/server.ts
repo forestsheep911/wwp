@@ -40,6 +40,7 @@ import {
   type MemberCreditUsageResponse,
   type MemberNoticeListResponse,
   type MediaVariant,
+  type MoviePoster,
   type MovieSummaryRequest,
   type MovieRequestsResponse,
   type MovieRequestStatus,
@@ -50,6 +51,8 @@ import {
   type SetMemberCreditsRequest,
   type UpdateMovieRequestStatusRequest,
   type UpdateMemberProfileRequest,
+  defaultCreditPolicy,
+  playbackCreditCost,
   validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
@@ -116,9 +119,9 @@ const omdbCache = new Map<string, Promise<RatingValue[]>>();
 const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
-const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? 1)));
-const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? 24)));
-const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? 1000 * 1000 * 1000)));
+const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? defaultCreditPolicy.cacheCredits)));
+const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? defaultCreditPolicy.playbackReplayFreeHours)));
+const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? defaultCreditPolicy.playbackCreditBytes)));
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminMovieRequestMemberId = "admin";
 const adminMovieRequestMemberName = "Admin";
@@ -840,6 +843,44 @@ function resultNeedsSourceRefreshOnHit(result: SearchResult) {
   return Boolean(result.sourcePageId) && !resultHasMediaAssetsVariants(result);
 }
 
+function posterStableKey(poster: MoviePoster) {
+  return poster.originalUrl ?? poster.url ?? poster.blobName;
+}
+
+function isCachedBlobPoster(poster: MoviePoster) {
+  return poster.source === "blob" && Boolean(poster.blobName);
+}
+
+function mergeCachedPosters(existing: SearchResult, refreshed: SearchResult) {
+  const existingPosters = existing.metadata?.posters ?? [];
+  const cachedPosters = existingPosters.filter(isCachedBlobPoster);
+  if (cachedPosters.length === 0) {
+    return refreshed;
+  }
+
+  const seen = new Set<string>();
+  const posters: MoviePoster[] = [];
+  for (const poster of [...cachedPosters, ...(refreshed.metadata?.posters ?? [])]) {
+    const key = posterStableKey(poster);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    posters.push(poster);
+  }
+
+  return {
+    ...refreshed,
+    metadata: {
+      ...refreshed.metadata,
+      posterUrl: existing.metadata?.posterUrl?.includes(".blob.core.windows.net")
+        ? existing.metadata.posterUrl
+        : refreshed.metadata?.posterUrl,
+      posters
+    }
+  };
+}
+
 async function refreshIndexedMediaAssetResults(query: string, results: SearchResult[]) {
   if (!searchIndexRefreshMediaAssetsOnHit || !searchSource.refreshAsset || results.length === 0) {
     return results;
@@ -862,7 +903,7 @@ async function refreshIndexedMediaAssetResults(query: string, results: SearchRes
 
       if (refreshed) {
         refreshedCount += 1;
-        return refreshed;
+        return mergeCachedPosters(result, refreshed);
       }
     } catch (error) {
       logWarn("api.search.index_media_assets_refresh_failed", {
@@ -1614,17 +1655,13 @@ function creditLimitErrorMessage() {
   return "This member pass does not have enough 🍀 left.";
 }
 
-function playbackCreditCost(contentLength: number | undefined) {
-  if (!contentLength || !Number.isFinite(contentLength) || contentLength <= 0) {
-    return 1;
-  }
-
-  return Math.max(1, Math.ceil(contentLength / playbackCreditBytes));
+function playbackSizeMissingErrorMessage() {
+  return "Video size information is missing, so playback credit cost cannot be calculated.";
 }
 
 function creditPolicyPayload(): CreditPolicyResponse {
   return {
-    unitSymbol: "🍀",
+    unitSymbol: defaultCreditPolicy.unitSymbol,
     cacheCredits: cacheCreditCost,
     playbackCreditBytes,
     playbackReplayFreeHours
@@ -1728,6 +1765,18 @@ async function handleCreditPreview(
     return;
   }
 
+  const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload());
+  if (identity.role === "member" && playbackCredits === undefined) {
+    logWarn("api.credit.preview_playback_size_missing", {
+      requestId: context.requestId,
+      assetKey,
+      media: asset.media,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: playbackSizeMissingErrorMessage() });
+    return;
+  }
+
   const usage = await memberCreditUsage(identity, 200);
   const now = Date.now();
   const recentPlayback = usage?.entries.find((entry) => {
@@ -1742,7 +1791,7 @@ async function handleCreditPreview(
     action: "playback",
     assetKey,
     title: asset.title,
-    credits: playbackCreditCost(asset.media?.contentLength),
+    credits: playbackCredits ?? 0,
     identity: usage?.code
       ? { ...identity, credits: usage.code.credits }
       : identity,
@@ -2068,10 +2117,22 @@ async function handlePlayback(
   }
 
   const shouldChargeMember = identity.role === "member" && Boolean(identity.memberId);
-  const playbackCredits = playbackCreditCost(asset?.media?.contentLength);
+  const playbackCredits = playbackCreditCost(asset?.media?.contentLength, creditPolicyPayload());
+  if (shouldChargeMember && playbackCredits === undefined) {
+    logWarn("api.playback.credit_size_missing", {
+      requestId: context.requestId,
+      memberId: identity.memberId,
+      assetKey,
+      media: asset.media,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: playbackSizeMissingErrorMessage() });
+    return;
+  }
+
   const chargeResult = shouldChargeMember
     ? await accessStore.chargeMemberPlayback(identity.memberId!, {
-      credits: playbackCredits,
+      credits: playbackCredits!,
       assetKey: asset.assetKey,
       title: asset.title,
       requestId: context.requestId,

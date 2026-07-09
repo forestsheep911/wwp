@@ -11,7 +11,7 @@ import {
   DialogTitle
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
-import { bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from "../format";
+import { basicInfoLine, bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import type { ResultWithCache } from "../types";
@@ -184,6 +184,7 @@ function SearchResultRow({
 
 function SearchPreview({ result }: { result: ResultWithCache }) {
   const summary = bestSummary(result);
+  const info = basicInfoLine(result);
   const variantCount = result.variants?.length ?? 0;
   const playableVariantCount = result.variants?.filter((variant) => variant.cache?.status === "ready").length ?? 0;
 
@@ -196,6 +197,7 @@ function SearchPreview({ result }: { result: ResultWithCache }) {
         <div className="min-w-0">
           <h3 className="line-clamp-3 text-xl font-semibold leading-tight text-slate-50">{result.title}</h3>
           <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
+          {info ? <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-500">{info}</p> : null}
         </div>
         <p className="line-clamp-5 text-sm leading-6 text-slate-400">{summary}</p>
         {variantCount > 0 ? (

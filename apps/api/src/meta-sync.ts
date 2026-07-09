@@ -6,6 +6,7 @@ import {
   logInfo,
   logWarn
 } from "@wwpdw/shared";
+import type { SearchResult } from "@wwpdw/shared";
 import {
   buildMovieCatalogFromResults,
   buildTspdtBrowseState,
@@ -133,6 +134,19 @@ const cacheStore = createCacheStore();
 const tspdtBrowseStore = createTspdtBrowseStore();
 const notionSource = new NotionSearchSource();
 
+function refreshPostersForResult(result: SearchResult) {
+  let refreshed: Promise<SearchResult | undefined> | undefined;
+  return async () => {
+    refreshed ??= notionSource.refreshAsset({
+      assetKey: result.assetKey,
+      sourcePageId: result.sourcePageId,
+      title: result.title,
+      sourceBreadcrumb: result.sourceBreadcrumb
+    });
+    return (await refreshed)?.metadata?.posters;
+  };
+}
+
 async function runSync() {
   const startedAt = Date.now();
   const options = syncOptions();
@@ -196,7 +210,9 @@ async function runSync() {
         }
       } else {
         const result = options.posterCacheEnabled
-          ? await cacheStore.cacheMoviePosters(item.result)
+          ? await cacheStore.cacheMoviePosters(item.result, {
+            refreshPosters: refreshPostersForResult(item.result)
+          })
           : item.result;
         await searchIndex.upsertResult(result);
         run.saved += 1;

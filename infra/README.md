@@ -93,7 +93,7 @@ The index stores metadata and source page ids. Cache requests still refresh the
 selected Notion page before queueing work so temporary Notion file URLs are not
 trusted beyond the search interaction.
 
-Member passes use a simple 🍀 balance to control cache and playback cost and do not expire by date. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` and the same member can replay the same asset for `MEMBER_PLAYBACK_REPLAY_FREE_HOURS` without another playback charge. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
+Member passes use a simple 🍀 balance to control cache and playback cost and do not expire by date. New cache jobs spend `MEMBER_CACHE_CREDIT_COST`; cache hits and already-running jobs are free. Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)`, currently 1🍀 per started 100MB, and the same member can replay the same asset for `MEMBER_PLAYBACK_REPLAY_FREE_HOURS` without another playback charge. New passes start with `MEMBER_DEFAULT_CREDITS` unless the admin enters a different balance.
 
 The Admin tab has a dedicated ready cached-video list, can retry failed cache jobs, and can delete failed/ready/stuck cache entries. Retry first refreshes the Notion media URL by the stored source page id when possible, then re-queues the same job. Deleting a ready entry removes the Blob plus the matching Table asset/job records.
 

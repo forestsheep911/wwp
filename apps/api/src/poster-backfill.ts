@@ -98,11 +98,14 @@ function parseArgs(): Options {
 }
 
 function posterUrl(result: SearchResult) {
-  return result.metadata?.posterUrl ?? result.metadata?.posters?.[0]?.url;
+  return result.metadata?.posterUrl ??
+    result.metadata?.posters?.[0]?.url ??
+    result.metadata?.work?.media?.posters?.[0]?.url;
 }
 
 function posterSource(result: SearchResult) {
-  return result.metadata?.posters?.[0]?.source;
+  return result.metadata?.posters?.[0]?.source ??
+    result.metadata?.work?.media?.posters?.[0]?.source;
 }
 
 function isNotionTemporaryUrl(url?: string) {
@@ -115,7 +118,10 @@ function needsPosterBackfill(result: SearchResult, options: Options) {
   }
 
   const url = posterUrl(result);
-  const posters = result.metadata?.posters ?? [];
+  const posters = [
+    ...(result.metadata?.posters ?? []),
+    ...(result.metadata?.work?.media?.posters ?? [])
+  ];
   if (!url) {
     return options.includeMissing;
   }
@@ -167,6 +173,18 @@ async function main() {
   const searchIndex = createSearchIndexStore();
   const cacheStore = createCacheStore();
   const notionSource = new NotionSearchSource();
+  const refreshPostersForResult = (result: SearchResult) => {
+    let refreshed: Promise<SearchResult | undefined> | undefined;
+    return async () => {
+      refreshed ??= notionSource.refreshAsset({
+        assetKey: result.assetKey,
+        sourcePageId: result.sourcePageId,
+        title: result.title,
+        sourceBreadcrumb: result.sourceBreadcrumb
+      });
+      return (await refreshed)?.metadata?.posters;
+    };
+  };
   const stats = await searchIndex.getStats();
   const scanLimit = options.scanLimit ?? (options.query ? 100 : stats.entryCount);
   const candidates = await searchIndex.search(options.query, scanLimit);
@@ -206,7 +224,9 @@ async function main() {
       } else if (!options.apply) {
         records.push(recordFor(result, "would_update", undefined, refreshed));
       } else {
-        const cached = await cacheStore.cacheMoviePosters(refreshed);
+        const cached = await cacheStore.cacheMoviePosters(refreshed, {
+          refreshPosters: refreshPostersForResult(refreshed)
+        });
         await searchIndex.upsertResult(cached);
         records.push(recordFor(result, "updated", undefined, cached));
       }

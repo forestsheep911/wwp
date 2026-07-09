@@ -36,7 +36,9 @@ import {
   readyAssetIdleReference,
   sourceTraceFromResult
 } from "./jobs.js";
+import { posterDownloadCandidates, posterRequestHeaders } from "./poster-cache.js";
 import type {
+  CacheMoviePostersOptions,
   CacheStore,
   CleanupExpiredResult,
   DeleteCacheEntryInput,
@@ -247,6 +249,13 @@ function isAzureBlobUrl(url: string) {
 
 function firstBlobPosterUrl(posters: MoviePoster[]) {
   return posters.find((poster) => isAzureBlobUrl(poster.url))?.url;
+}
+
+function moviePosterCandidates(result: SearchResult) {
+  return [
+    ...(result.metadata?.posters ?? []),
+    ...(result.metadata?.work?.media?.posters ?? [])
+  ];
 }
 
 function parseHeaderNumber(value: string | null) {
@@ -915,18 +924,26 @@ export class AzureCacheStore implements CacheStore {
     return asset;
   }
 
-  async cacheMoviePosters(result: SearchResult) {
+  async cacheMoviePosters(result: SearchResult, options: CacheMoviePostersOptions = {}) {
     await this.ensureReady();
     const metadata = result.metadata;
-    if (!metadata || !metadata.posters?.length) {
+    const posters = moviePosterCandidates(result);
+    if (!metadata || posters.length === 0) {
       return result;
     }
 
-    const posters = metadata.posters;
     const maxPosters = Math.max(0, Math.floor(this.config.posterMaxPerMovie));
     const visiblePosters = maxPosters > 0 ? posters.slice(0, maxPosters) : posters;
+    let refreshedPosters: Promise<MoviePoster[] | undefined> | undefined;
+    const refreshPosterSource = options.refreshPosters;
+    const refreshPosters = refreshPosterSource
+      ? () => {
+        refreshedPosters ??= refreshPosterSource();
+        return refreshedPosters;
+      }
+      : undefined;
     const cachedPosters = await Promise.all(
-      visiblePosters.map((poster, index) => this.cacheMoviePoster(result.assetKey, poster, index))
+      visiblePosters.map((poster, index) => this.cacheMoviePoster(result.assetKey, poster, index, posters, refreshPosters))
     );
     await this.deleteStalePosterBlobs(
       result.assetKey,
@@ -946,11 +963,11 @@ export class AzureCacheStore implements CacheStore {
   async hydrateMoviePosterUrls(result: SearchResult) {
     await this.ensureReady();
     const metadata = result.metadata;
-    if (!metadata || !metadata.posters?.length) {
+    const posters = moviePosterCandidates(result);
+    if (!metadata || posters.length === 0) {
       return result;
     }
 
-    const posters = metadata.posters;
     const expiresOn = new Date(Date.now() + this.config.posterSasMinutes * 60 * 1000);
     const hydratedPosters = await Promise.all(
       posters.map(async (poster) => {
@@ -976,18 +993,74 @@ export class AzureCacheStore implements CacheStore {
     };
   }
 
-  private async cacheMoviePoster(assetKey: string, poster: MoviePoster, index: number): Promise<MoviePoster> {
-    const sourceUrl = poster.originalUrl ?? poster.url;
-    if (!sourceUrl || poster.blobName) {
+  private async cacheMoviePoster(
+    assetKey: string,
+    poster: MoviePoster,
+    index: number,
+    posters: MoviePoster[],
+    refreshPosters?: () => Promise<MoviePoster[] | undefined>
+  ): Promise<MoviePoster> {
+    if (poster.blobName) {
       return poster;
     }
 
+    const candidates = await posterDownloadCandidates({
+      poster,
+      index,
+      posters
+    });
+
+    if (candidates.length === 0) {
+      return poster;
+    }
+
+    let lastError: unknown;
+    const triedUrls = new Set<string>();
+    for (const candidate of candidates) {
+      triedUrls.add(candidate.url);
+      try {
+        return await this.cacheMoviePosterFromUrl(assetKey, candidate.poster, index, candidate.url);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (refreshPosters) {
+      const refreshedCandidates = await posterDownloadCandidates({
+        poster,
+        index,
+        posters,
+        refreshPosters
+      });
+
+      for (const candidate of refreshedCandidates.filter((item) => !triedUrls.has(item.url))) {
+        try {
+          return await this.cacheMoviePosterFromUrl(assetKey, candidate.poster, index, candidate.url);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+    }
+
+    logWarn("cache.poster.upload_failed", {
+      assetKey,
+      index,
+      source: poster.source,
+      ...errorLogFields(lastError)
+    });
+    return poster;
+  }
+
+  private async cacheMoviePosterFromUrl(
+    assetKey: string,
+    poster: MoviePoster,
+    index: number,
+    sourceUrl: string
+  ): Promise<MoviePoster> {
     try {
       const response = await fetch(sourceUrl, {
         redirect: "follow",
-        headers: {
-          "User-Agent": "wwpdw-poster-cache/0.1"
-        }
+        headers: posterRequestHeaders(sourceUrl)
       });
 
       if (!response.ok) {
@@ -1031,13 +1104,7 @@ export class AzureCacheStore implements CacheStore {
         cachedAt: new Date().toISOString()
       };
     } catch (error) {
-      logWarn("cache.poster.upload_failed", {
-        assetKey,
-        index,
-        source: poster.source,
-        ...errorLogFields(error)
-      });
-      return poster;
+      throw error;
     }
   }
 
@@ -1148,6 +1215,19 @@ export class AzureCacheStore implements CacheStore {
       return undefined;
     }
 
+    if (!asset.media?.contentLength || asset.media.contentLength <= 0) {
+      const blockBlob = this.containerClient.getBlockBlobClient(blobName);
+      const job = asset.jobId ? await this.getJob(asset.jobId) : undefined;
+      asset.media = await this.inspectCachedBlob(blockBlob, {
+        job,
+        blobName,
+        contentType: asset.media?.contentType,
+        sourceContentType: asset.media?.sourceContentType,
+        sourceContentLength: asset.media?.sourceContentLength,
+        sourceAcceptRanges: asset.media?.sourceAcceptRanges
+      });
+    }
+
     const playedAt = new Date();
     asset.lastPlayedAt = playedAt.toISOString();
     asset.expiresAt = addDays(playedAt, cacheAssetIdleTtlDays()).toISOString();
@@ -1219,7 +1299,7 @@ export class AzureCacheStore implements CacheStore {
   private async inspectCachedBlob(
     blockBlob: BlockBlobClient,
     input: {
-      job: CacheJob;
+      job?: Pick<CacheJob, "id" | "assetKey">;
       blobName: string;
       contentType?: string;
       sourceContentType?: string;
@@ -1278,8 +1358,8 @@ export class AzureCacheStore implements CacheStore {
           }
           : undefined;
         logWarn("cache.blob.range_probe_failed", {
-          jobId: input.job.id,
-          assetKey: input.job.assetKey,
+          jobId: input.job?.id,
+          assetKey: input.job?.assetKey,
           blobName: input.blobName,
           ...errorLogFields(error)
         });
@@ -1288,8 +1368,8 @@ export class AzureCacheStore implements CacheStore {
       return diagnostics;
     } catch (error) {
       logWarn("cache.blob.diagnostics_failed", {
-        jobId: input.job.id,
-        assetKey: input.job.assetKey,
+        jobId: input.job?.id,
+        assetKey: input.job?.assetKey,
         blobName: input.blobName,
         ...errorLogFields(error)
       });

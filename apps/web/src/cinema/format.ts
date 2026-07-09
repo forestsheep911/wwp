@@ -253,9 +253,32 @@ function usableSummary(value?: string) {
   return text;
 }
 
+function looksLikePeopleDump(value: string) {
+  const slashParts = value
+    .split(/\s*\/\s*/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (slashParts.length < 6 || value.length < 72) {
+    return false;
+  }
+
+  const compactNameParts = slashParts.filter((part) => (
+    part.length <= 24 &&
+    !/\d/u.test(part) &&
+    !/[。！？!?；;，,]/u.test(part)
+  ));
+
+  return compactNameParts.length / slashParts.length >= 0.75;
+}
+
 function usableInfo(value?: string) {
   const text = usableSummary(value);
-  if (!text || /^(?:draft|partial|complete|completed|ready|verified|unknown|none|metadata|meta|notion|omdb)$/i.test(text)) {
+  if (
+    !text ||
+    /^(?:draft|partial|complete|completed|ready|verified|unknown|none|metadata|meta|notion|omdb)$/i.test(text) ||
+    looksLikePeopleDump(text)
+  ) {
     return undefined;
   }
 
@@ -270,6 +293,15 @@ export function bestSummary(result: SearchResult) {
     usableSummary(result.summary) ??
     copy.library.missingSummary
   );
+}
+
+export function basicInfoLine(result: SearchResult) {
+  const info = usableInfo(result.metadata?.info);
+  if (!info || bestSummary(result) === info) {
+    return "";
+  }
+
+  return info;
 }
 
 function looksTruncated(value: string) {
@@ -538,6 +570,10 @@ export function cacheErrorLabel(message: string) {
 
   if (message.includes("Asset is not ready for playback")) {
     return copy.cache.errors.assetNotReady;
+  }
+
+  if (message.includes("playback credit cost cannot be calculated")) {
+    return copy.cache.errors.playbackSizeMissing;
   }
 
   return cacheMessageLabel(message);

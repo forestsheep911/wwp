@@ -672,6 +672,28 @@ export interface CreditPolicyResponse {
   playbackReplayFreeHours: number;
 }
 
+export const defaultCreditPolicy: CreditPolicyResponse = {
+  unitSymbol: "🍀",
+  cacheCredits: 10,
+  playbackCreditBytes: 100 * 1000 * 1000,
+  playbackReplayFreeHours: 24
+};
+
+export function hasBillablePlaybackSize(contentLength: number | undefined): contentLength is number {
+  return Boolean(contentLength && Number.isFinite(contentLength) && contentLength > 0);
+}
+
+export function playbackCreditCost(
+  contentLength: number | undefined,
+  policy: Pick<CreditPolicyResponse, "playbackCreditBytes">
+) {
+  if (!hasBillablePlaybackSize(contentLength)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.ceil(contentLength / policy.playbackCreditBytes));
+}
+
 export type MovieRequestStatus = "new" | "planned" | "fulfilled" | "dismissed";
 
 export interface MovieRequestEntry {

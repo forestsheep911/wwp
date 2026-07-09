@@ -148,6 +148,7 @@ const browsePageLimit = 48;
 const browseCatalogPageLimit = 100;
 const browseFullViewLimit = 300;
 const tspdtBrowseCatalogLimit = 2000;
+const defaultMemberCredits = 200;
 type BrowseLoadMode = "paged" | "random";
 
 function canPreviewServiceWakeDialog() {
@@ -289,7 +290,7 @@ function CinemaApp() {
   const [adminLoading, setAdminLoading] = useState(false);
   const [cacheJobsLoading, setCacheJobsLoading] = useState(false);
   const [adminKeyInput, setAdminKeyInput] = useState("");
-  const [memberCredits, setMemberCredits] = useState(20);
+  const [memberCredits, setMemberCredits] = useState(defaultMemberCredits);
   const [memberBulkCredits, setMemberBulkCredits] = useState(1);
   const [memberCreditEdits, setMemberCreditEdits] = useState<Record<string, number>>({});
   const [memberCodes, setMemberCodes] = useState<ManagedMemberCode[]>([]);
@@ -1420,13 +1421,13 @@ function CinemaApp() {
     setAdminError("");
     try {
       const response = await createSignupInvitation({
-        credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : 20
+        credits: Number.isFinite(memberCredits) && memberCredits >= 0 ? memberCredits : defaultMemberCredits
       });
       setMemberInvitations((currentInvitations) => [
         response.invitation,
         ...currentInvitations.filter((invitation) => invitation.id !== response.invitation.id)
       ]);
-      setMemberCredits(20);
+      setMemberCredits(defaultMemberCredits);
       showToast({
         title: copy.toast.signupInviteCreated.title,
         description: copy.toast.signupInviteCreated.description,

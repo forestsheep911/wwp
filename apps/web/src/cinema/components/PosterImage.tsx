@@ -2,29 +2,58 @@ import { useEffect, useMemo, useState } from "react";
 import type { SearchResult } from "@wwpdw/shared";
 
 const posterFallbackMs = 3200;
+const notionTemporaryPosterPattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 
 function isBlobPosterUrl(url: string) {
   return /^https:\/\/[^/?#]+\.blob\.core\.windows\.net\//i.test(url);
 }
 
+function isHttpsPosterUrl(url: string) {
+  return /^https:\/\//i.test(url);
+}
+
+function isNotionTemporaryPosterUrl(url: string) {
+  return notionTemporaryPosterPattern.test(url);
+}
+
+function posterPriority(url: string) {
+  if (isBlobPosterUrl(url)) {
+    return 0;
+  }
+
+  if (!isHttpsPosterUrl(url)) {
+    return 99;
+  }
+
+  return isNotionTemporaryPosterUrl(url) ? 2 : 1;
+}
+
 function posterUrls(result: SearchResult) {
   const candidates = [
-    ...(result.metadata?.posters?.map((poster) => ({
-      url: poster.url,
-      allowed: isBlobPosterUrl(poster.url)
-    })) ?? []),
+    ...(result.metadata?.posters?.map((poster) => poster.url) ?? []),
+    ...(result.metadata?.work?.media?.posters?.map((poster) => poster.url) ?? []),
     ...(result.metadata?.posterUrl
-      ? [{
-        url: result.metadata.posterUrl,
-        allowed: isBlobPosterUrl(result.metadata.posterUrl)
-      }]
+      ? [result.metadata.posterUrl]
       : [])
-  ].filter((item) => Boolean(item.url) && item.allowed);
+  ]
+    .filter((url): url is string => Boolean(url))
+    .map((url) => ({
+      url,
+      priority: posterPriority(url)
+    }))
+    .filter((item) => item.priority < 99);
 
-  return [...new Map(
-    candidates
-      .map((item) => [item.url, item.url])
-  ).values()];
+  const uniqueCandidates = new Map<string, number>();
+  for (const candidate of candidates) {
+    const existingPriority = uniqueCandidates.get(candidate.url);
+    if (existingPriority === undefined || candidate.priority < existingPriority) {
+      uniqueCandidates.set(candidate.url, candidate.priority);
+    }
+  }
+
+  return [...uniqueCandidates.entries()]
+    .sort(([, leftPriority], [, rightPriority]) => leftPriority - rightPriority)
+    .map(([url]) => url);
 }
 
 export function PosterImage({

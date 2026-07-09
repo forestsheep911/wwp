@@ -85,14 +85,15 @@ The API still uses `x-wwpdw-access-key` internally.
 
 Default pass allowance settings:
 
-- `MEMBER_DEFAULT_CREDITS=20`
-- `MEMBER_CACHE_CREDIT_COST=1`
+- `MEMBER_DEFAULT_CREDITS=200`
+- `MEMBER_CACHE_CREDIT_COST=10`
 - `MEMBER_PLAYBACK_REPLAY_FREE_HOURS=24`
-- `MEMBER_PLAYBACK_CREDIT_BYTES=1000000000`
+- `MEMBER_PLAYBACK_CREDIT_BYTES=100000000`
 
 Search, cache hits, and joining an already-running cache job are free. Creating
 a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST` 🍀.
-Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` 🍀, but the
+Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` 🍀, currently
+1🍀 per started 100MB, but the
 same member can replay the same asset within `MEMBER_PLAYBACK_REPLAY_FREE_HOURS`
 without another playback charge. Admin keys bypass member allowance checks. A
 member request that exceeds the remaining balance returns HTTP 429 before it

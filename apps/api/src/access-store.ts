@@ -47,6 +47,7 @@ interface StoredMemberCode {
   codePreview: string;
   createdAt: string;
   expiresAt: string;
+  creditScaleVersion?: number;
   creditBalance?: number;
   creditLimit?: number;
   creditsUsed?: number;
@@ -123,6 +124,7 @@ interface StoredMemberInvitation {
   claimedByMemberId?: string;
   claimedByMemberName?: string;
   name?: string;
+  creditScaleVersion?: number;
   creditBalance?: number;
   memberId?: string;
   memberName?: string;
@@ -139,6 +141,9 @@ type PayloadEntity = {
 const defaultAccountName = "stwwcachee9219db7";
 const defaultMemberTableName = "membercodes";
 const memberCreditUnitSymbol = "🍀";
+const memberCreditMax = 100000;
+const currentCreditScaleVersion = 2;
+const legacyCreditScaleFactor = 10;
 const usageRetentionMs = 90 * 24 * 60 * 60 * 1000;
 const resetInvitationTtlMs = 7 * 24 * 60 * 60 * 1000;
 const noExpiryAt = "9999-12-31T23:59:59.999Z";
@@ -208,7 +213,11 @@ function positiveInt(value: unknown, fallback: number, options: { min?: number; 
 }
 
 function defaultCredits() {
-  return positiveInt(process.env.MEMBER_DEFAULT_CREDITS, 20, { min: 0, max: 10000 });
+  return positiveInt(process.env.MEMBER_DEFAULT_CREDITS, 200, { min: 0, max: memberCreditMax });
+}
+
+function legacyDefaultCredits() {
+  return Math.max(0, Math.floor(defaultCredits() / legacyCreditScaleFactor));
 }
 
 function usageEvents(code: StoredMemberCode) {
@@ -223,6 +232,50 @@ function usageCredits(events: StoredMemberCreditUsage[]) {
   return events.reduce((total, event) => total + Math.max(0, event.credits), 0);
 }
 
+function scaledLegacyCredits(value: number | undefined, fallback = 0) {
+  const legacyValue = positiveInt(value, fallback, { min: 0, max: 1000000 });
+  return positiveInt(legacyValue * legacyCreditScaleFactor, fallback * legacyCreditScaleFactor, {
+    min: 0,
+    max: memberCreditMax
+  });
+}
+
+function migrateStoredCodeCreditScale(code: StoredMemberCode) {
+  const scaleVersion = positiveInt(code.creditScaleVersion, 1, { min: 1, max: currentCreditScaleVersion });
+  if (scaleVersion >= currentCreditScaleVersion) {
+    return;
+  }
+
+  if (scaleVersion < 2) {
+    code.creditBalance = scaledLegacyCredits(code.creditBalance, legacyDefaultCredits());
+    if (code.creditLimit !== undefined) {
+      code.creditLimit = scaledLegacyCredits(code.creditLimit);
+    }
+    if (code.creditsUsed !== undefined) {
+      code.creditsUsed = scaledLegacyCredits(code.creditsUsed);
+    }
+    code.usage = usageEvents(code).map((event) => ({
+      ...event,
+      credits: scaledLegacyCredits(event.credits)
+    }));
+  }
+
+  code.creditScaleVersion = currentCreditScaleVersion;
+}
+
+function migrateStoredInvitationCreditScale(invitation: StoredMemberInvitation) {
+  const scaleVersion = positiveInt(invitation.creditScaleVersion, 1, { min: 1, max: currentCreditScaleVersion });
+  if (scaleVersion >= currentCreditScaleVersion) {
+    return;
+  }
+
+  if (scaleVersion < 2 && invitation.creditBalance !== undefined) {
+    invitation.creditBalance = scaledLegacyCredits(invitation.creditBalance, legacyDefaultCredits());
+  }
+
+  invitation.creditScaleVersion = currentCreditScaleVersion;
+}
+
 function pruneUsage(code: StoredMemberCode, now = new Date()) {
   const cutoff = now.getTime() - usageRetentionMs;
   code.usage = usageEvents(code).filter((event) => {
@@ -234,11 +287,12 @@ function pruneUsage(code: StoredMemberCode, now = new Date()) {
 function prepareStoredCode(code: StoredMemberCode, now = new Date()) {
   code.usage = usageEvents(code);
   if (code.creditBalance === undefined) {
-    const legacyLimit = positiveInt(code.creditLimit, defaultCredits(), { min: 0, max: 10000 });
+    const legacyLimit = positiveInt(code.creditLimit, legacyDefaultCredits(), { min: 0, max: 10000 });
     const legacyUsed = positiveInt(code.creditsUsed, usageCredits(code.usage), { min: 0, max: 1000000 });
     code.creditBalance = Math.max(0, legacyLimit - legacyUsed);
   }
-  code.creditBalance = positiveInt(code.creditBalance, defaultCredits(), { min: 0, max: 10000 });
+  migrateStoredCodeCreditScale(code);
+  code.creditBalance = positiveInt(code.creditBalance, defaultCredits(), { min: 0, max: memberCreditMax });
   pruneUsage(code, now);
   return code;
 }
@@ -296,7 +350,8 @@ function storedMemberCode(input: { name: string; rawCode: string; credits?: numb
     codePreview: codePreview(input.rawCode),
     createdAt: now,
     expiresAt: noExpiryAt,
-    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: 10000 }),
+    creditScaleVersion: currentCreditScaleVersion,
+    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: memberCreditMax }),
     usage: []
   };
   return stored;
@@ -310,7 +365,8 @@ function storedSignupInvitation(input: { rawCode: string; credits?: number }): S
     codeHash: hashCode(input.rawCode),
     codePreview: codePreview(input.rawCode),
     createdAt: now,
-    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: 10000 })
+    creditScaleVersion: currentCreditScaleVersion,
+    creditBalance: positiveInt(input.credits, defaultCredits(), { min: 0, max: memberCreditMax })
   };
 }
 
@@ -506,13 +562,13 @@ function listMovieRequestEntries(requests: StoredMovieRequest[], input: ListMovi
 
 function setCreditsOnStoredCode(code: StoredMemberCode, credits: number) {
   prepareStoredCode(code);
-  code.creditBalance = positiveInt(credits, 0, { min: 0, max: 10000 });
+  code.creditBalance = positiveInt(credits, 0, { min: 0, max: memberCreditMax });
   return publicCode(code);
 }
 
 function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInput): MemberCreditChargeResult {
   const now = new Date();
-  const credits = positiveInt(input.credits, 1, { min: 1, max: 10000 });
+  const credits = positiveInt(input.credits, 1, { min: 1, max: memberCreditMax });
   prepareStoredCode(code, now);
   const summary = creditSummary(code, now);
   const denial = memberCreditDenial(summary, credits);
@@ -667,6 +723,7 @@ function publicInvitation(
   invitation: StoredMemberInvitation,
   members: Record<string, StoredMemberCode> = {}
 ): MemberInvitation {
+  migrateStoredInvitationCreditScale(invitation);
   const claimedMember = invitation.claimedByMemberId ? members[invitation.claimedByMemberId] : undefined;
   const targetMember = invitation.memberId ? members[invitation.memberId] : undefined;
   const credits = invitation.creditBalance === undefined
@@ -674,7 +731,7 @@ function publicInvitation(
     : {
       unit: "clover" as const,
       unitSymbol: memberCreditUnitSymbol,
-      remaining: positiveInt(invitation.creditBalance, defaultCredits(), { min: 0, max: 10000 })
+      remaining: positiveInt(invitation.creditBalance, defaultCredits(), { min: 0, max: memberCreditMax })
     };
   return {
     id: invitation.id,
@@ -971,6 +1028,7 @@ class LocalAccessStore implements AccessStore {
           reason: "invalid_invite" as const
         };
       }
+      migrateStoredInvitationCreditScale(invitation);
 
       if (this.accessHashExists(state, hashCode(input.passcode))) {
         return {
@@ -1059,7 +1117,7 @@ class LocalAccessStore implements AccessStore {
   async adjustMemberCredits(delta: number) {
     return this.updateState((state) => {
       let adjustedCount = 0;
-      const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: 10000 }) * Math.sign(delta);
+      const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: memberCreditMax }) * Math.sign(delta);
       for (const code of Object.values(state.codes)) {
         if (statusFor(code) !== "active") {
           continue;
@@ -1492,6 +1550,7 @@ class AzureAccessStore implements AccessStore {
         reason: "invalid_invite" as const
       };
     }
+    migrateStoredInvitationCreditScale(invitation);
 
     if (await this.accessHashExists(hashCode(input.passcode))) {
       return {
@@ -1588,7 +1647,7 @@ class AzureAccessStore implements AccessStore {
 
   async adjustMemberCredits(delta: number) {
     await this.ensureReady();
-    const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: 10000 }) * Math.sign(delta);
+    const boundedDelta = positiveInt(Math.abs(delta), 0, { min: 0, max: memberCreditMax }) * Math.sign(delta);
     const storedCodes: StoredMemberCode[] = [];
     const entities = this.table.listEntities<PayloadEntity>({
       queryOptions: {

@@ -31,6 +31,7 @@ import {
 } from "../../components/ui/dialog";
 import { Progress } from "../../components/ui/progress";
 import {
+  basicInfoLine,
   bestSummary,
   bestDetailSummary,
   cacheLabel,
@@ -1489,6 +1490,7 @@ type DisplayRating = {
   shortLabel: string;
   value: string;
   className: string;
+  href?: string;
 };
 
 function ratingCandidates(result: SearchResult) {
@@ -1515,17 +1517,107 @@ function displayRatings(result: SearchResult): DisplayRating[] {
     .map((source) => {
       const config = ratingSourceConfig[source];
       const rating = ratings.find((item) => config.match.test(item.label));
-      return rating
-        ? {
+      if (!rating) {
+        return undefined;
+      }
+
+      const displayRating: DisplayRating = {
           source,
           sourceLabel: config.label,
           shortLabel: config.shortLabel,
           value: rating.value,
           className: config.className
-        }
-        : undefined;
+      };
+      const href = ratingHref(result, source);
+      if (href) {
+        displayRating.href = href;
+      }
+      return displayRating;
     })
     .filter((rating): rating is DisplayRating => Boolean(rating));
+}
+
+function ratingHref(result: SearchResult, source: RatingSource) {
+  const metadata = result.metadata;
+  const externalIds = [
+    metadata?.externalIds,
+    metadata?.work?.externalIds
+  ];
+
+  if (source === "imdb") {
+    const imdbId = extractImdbId(
+      firstString([
+        metadata?.imdbId,
+        metadata?.externalIds?.imdb,
+        metadata?.work?.externalIds?.imdb,
+        metadata?.external?.omdb?.imdbId,
+        extractImdbId(result.sourceUrl)
+      ])
+    );
+    return imdbId ? `https://www.imdb.com/title/${imdbId}/` : undefined;
+  }
+
+  if (source === "douban") {
+    const subjectId = extractDoubanSubjectId(
+      firstString([
+        metadata?.externalIds?.douban,
+        metadata?.work?.externalIds?.douban,
+        extractDoubanSubjectId(result.sourceUrl)
+      ])
+    );
+    return subjectId ? `https://movie.douban.com/subject/${subjectId}/` : undefined;
+  }
+
+  if (source === "rotten") {
+    return ratingSiteUrlFromExternalId(externalIds, ["rotten", "rottentomatoes", "rottenTomatoes"], "https://www.rottentomatoes.com/m/") ??
+      `https://www.rottentomatoes.com/search?search=${encodeURIComponent(ratingSearchQuery(result))}`;
+  }
+
+  if (source === "metacritic") {
+    return ratingSiteUrlFromExternalId(externalIds, ["metacritic", "metaCritic"], "https://www.metacritic.com/movie/") ??
+      `https://www.metacritic.com/search/${encodeURIComponent(ratingSearchQuery(result))}/`;
+  }
+}
+
+function ratingSiteUrlFromExternalId(externalIds: Array<Record<string, string | undefined> | undefined>, keys: string[], baseUrl: string) {
+  const normalizedKeys = new Set(keys.map((key) => key.toLowerCase()));
+  for (const ids of externalIds) {
+    for (const [key, value] of Object.entries(ids ?? {})) {
+      if (!normalizedKeys.has(key.toLowerCase()) || !value) {
+        continue;
+      }
+
+      if (/^https?:\/\//i.test(value)) {
+        return value;
+      }
+
+      const slug = value.trim().replace(/^\/+|\/+$/g, "");
+      return slug ? `${baseUrl}${encodeURIComponent(slug).replace(/%2F/gi, "/")}` : undefined;
+    }
+  }
+}
+
+function ratingSearchQuery(result: SearchResult) {
+  const title = firstString([
+    result.metadata?.display?.title,
+    result.metadata?.work?.display?.title,
+    result.metadata?.external?.omdb?.title,
+    result.title
+  ]) ?? result.title;
+  const year = firstString([
+    result.metadata?.display?.year,
+    result.metadata?.work?.display?.year,
+    result.metadata?.release?.year,
+    result.metadata?.work?.release?.year,
+    result.metadata?.year,
+    yearFromString(result.title),
+    yearFromString(result.metadata?.external?.omdb?.year)
+  ]);
+  return [title, year].filter(Boolean).join(" ");
+}
+
+function firstString(values: Array<string | undefined>) {
+  return values.find((value) => value?.trim())?.trim();
 }
 
 function CompactRatingBadges({ result }: { result: SearchResult }) {
@@ -1537,14 +1629,29 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {ratings.map((rating) => (
-        <span
-          key={`${rating.source}-${rating.value}`}
-          className={`inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none ${rating.className}`}
-          title={`${rating.sourceLabel} ${rating.value}`}
-          aria-label={`${rating.sourceLabel} ${rating.value}`}
-        >
-          {rating.value}
-        </span>
+        rating.href ? (
+          <a
+            key={`${rating.source}-${rating.value}`}
+            className={`inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${rating.className}`}
+            href={rating.href}
+            target="_blank"
+            rel="noreferrer"
+            title={`${rating.sourceLabel} ${rating.value}`}
+            aria-label={`${rating.sourceLabel} ${rating.value}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {rating.value}
+          </a>
+        ) : (
+          <span
+            key={`${rating.source}-${rating.value}`}
+            className={`inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none ${rating.className}`}
+            title={`${rating.sourceLabel} ${rating.value}`}
+            aria-label={`${rating.sourceLabel} ${rating.value}`}
+          >
+            {rating.value}
+          </span>
+        )
       ))}
     </div>
   );
@@ -1656,10 +1763,7 @@ function AgeRecommendationPanel({ result }: { result: SearchResult }) {
 }
 
 function cardTags(result: SearchResult) {
-  return [
-    ...genreTags(result),
-    ...peopleTags(result).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
-  ].slice(0, 3);
+  return genreTags(result).slice(0, 3);
 }
 
 function genreTags(result: SearchResult) {
@@ -1672,10 +1776,7 @@ function genreTags(result: SearchResult) {
 }
 
 function detailTags(result: SearchResult) {
-  return [
-    ...genreTags(result),
-    ...visibleTags(result.metadata?.people).map((tag) => ({ key: `people-${tag}`, tag, variant: "muted" as const, className: undefined }))
-  ];
+  return genreTags(result);
 }
 
 function MoviePoster({ result }: { result: SearchResult }) {
@@ -1993,6 +2094,7 @@ function MovieCard({
 }) {
   const tags = cardTags(result);
   const summary = bestSummary(result);
+  const info = basicInfoLine(result);
 
   return (
     <article className="movie-card grid h-full grid-cols-[112px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4">
@@ -2024,6 +2126,7 @@ function MovieCard({
         </button>
 
         <CompactRatingBadges result={result} />
+        {info ? <p className="line-clamp-2 text-xs leading-5 text-slate-500">{info}</p> : null}
         <AgeRecommendationBadge result={result} />
 
         {tags.length ? (
@@ -2376,6 +2479,7 @@ function MovieDetailView({
   const tags = detailTags(result);
   const ratings = displayRatings(result);
   const directors = directorLine(result);
+  const info = basicInfoLine(result);
   const summary = bestDetailSummary(result);
   const variantCount = result.variants?.length ?? 0;
 
@@ -2417,6 +2521,7 @@ function MovieDetailView({
               <AiSummaryButton onClick={() => onSummarize(result)} />
             </div>
             <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
+            {info ? <p className="mt-2 text-sm leading-6 text-slate-400">{info}</p> : null}
             {directors ? (
               <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>
             ) : null}
@@ -2425,15 +2530,30 @@ function MovieDetailView({
           {ratings.length ? (
             <div className="flex flex-wrap gap-2">
               {ratings.map((rating) => (
-                <span
-                  key={`detail-rating-${rating.source}-${rating.value}`}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-none ${rating.className}`}
-                  title={`${rating.sourceLabel} ${rating.value}`}
-                  aria-label={`${rating.sourceLabel} ${rating.value}`}
-                >
-                  <span className="font-semibold opacity-80">{rating.sourceLabel}</span>
-                  <span>{rating.value}</span>
-                </span>
+                rating.href ? (
+                  <a
+                    key={`detail-rating-${rating.source}-${rating.value}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-none transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${rating.className}`}
+                    href={rating.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`${rating.sourceLabel} ${rating.value}`}
+                    aria-label={`${rating.sourceLabel} ${rating.value}`}
+                  >
+                    <span className="font-semibold opacity-80">{rating.sourceLabel}</span>
+                    <span>{rating.value}</span>
+                  </a>
+                ) : (
+                  <span
+                    key={`detail-rating-${rating.source}-${rating.value}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-none ${rating.className}`}
+                    title={`${rating.sourceLabel} ${rating.value}`}
+                    aria-label={`${rating.sourceLabel} ${rating.value}`}
+                  >
+                    <span className="font-semibold opacity-80">{rating.sourceLabel}</span>
+                    <span>{rating.value}</span>
+                  </span>
+                )
               ))}
             </div>
           ) : null}
