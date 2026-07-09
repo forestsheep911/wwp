@@ -1,4 +1,5 @@
 import "./env.js";
+import dns from "node:dns";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,32 @@ const rootPageId = process.env.NOTION_LIBRARY_ROOT_PAGE_ID ?? process.env.PAGE_I
 const configuredDataSourceId = process.env.NOTION_LIBRARY_DATA_SOURCE_ID ?? process.env.NOTION_DATA_SOURCE_ID;
 const configuredDatabaseId = process.env.NOTION_LIBRARY_DATABASE_ID ?? process.env.NOTION_MEDIA_DATABASE_ID;
 const notionRequestTimeoutMs = Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000);
+let notionDnsOverrideInstalled = false;
+
+function installNotionDnsOverride() {
+  const notionApiIp = process.env.NOTION_API_RESOLVE_IP?.trim();
+  if (!notionApiIp || notionDnsOverrideInstalled) return;
+  const originalLookup = dns.lookup.bind(dns) as (...args: unknown[]) => unknown;
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    if (hostname === "api.notion.com") {
+      if (typeof options === "function") {
+        options(null, notionApiIp, 4);
+        return;
+      }
+      if (typeof callback === "function") {
+        if (options && typeof options === "object" && "all" in options && options.all) {
+          callback(null, [{ address: notionApiIp, family: 4 }]);
+          return;
+        }
+        callback(null, notionApiIp, 4);
+        return;
+      }
+    }
+    return originalLookup(hostname, options, callback);
+  }) as typeof dns.lookup;
+  notionDnsOverrideInstalled = true;
+  console.log(`dns override: api.notion.com -> ${notionApiIp}`);
+}
 
 const auditFields = [
   "WW Work ID",
@@ -62,6 +89,9 @@ const auditFields = [
   "Writers",
   "Cast",
   "分级",
+  "IMDB评分",
+  "Metascore",
+  "烂番茄新鲜度",
   "Poster URL",
   "Box Office",
   "Box Office Amount",
@@ -98,6 +128,9 @@ const sourceStrategy: Record<string, string[]> = {
   "Writers": ["OMDb", "TMDb credits"],
   "Cast": ["OMDb", "TMDb credits", "Douban"],
   "分级": ["OMDb Rated", "manual review"],
+  "IMDB评分": ["OMDb imdbRating", "IMDb ratings dataset", "IMDb official page"],
+  "Metascore": ["OMDb Metascore", "Metacritic official page", "IMDb official page Metascore", "trusted ratings JSON"],
+  "烂番茄新鲜度": ["OMDb Rotten Tomatoes", "Rotten Tomatoes official page", "trusted ratings JSON"],
   "Poster URL": ["OMDb", "TMDb", "Douban"],
   "Box Office": ["OMDb", "manual review"],
   "Box Office Amount": ["OMDb", "manual review"],
@@ -338,6 +371,9 @@ function summarize(pages: PageAudit[]) {
     "Writers",
     "Cast",
     "分级",
+    "IMDB评分",
+    "Metascore",
+    "烂番茄新鲜度",
     "Poster URL",
     "Box Office",
     "Box Office Amount",
@@ -409,6 +445,7 @@ async function main() {
     throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_WRITE_TOKEN, or NOTION_TOKEN.");
   }
 
+  installNotionDnsOverride();
   const notion = new Client({ auth: notionToken, timeoutMs: notionRequestTimeoutMs });
   const library = await loadLibrary(notion, options);
   const missingSchema = notionManagedProperties

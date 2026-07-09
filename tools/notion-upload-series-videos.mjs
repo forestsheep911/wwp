@@ -24,6 +24,7 @@ function parseArgs() {
     partMiB: DEFAULT_PART_MIB,
     maxFiles: Infinity,
     create: false,
+    createSpec: false,
     createEpisodes: false,
     apply: false,
     prepareOnly: false
@@ -48,6 +49,7 @@ function parseArgs() {
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--max-files") options.maxFiles = Number(args[++index]);
     else if (arg === "--create") options.create = true;
+    else if (arg === "--create-spec") options.createSpec = true;
     else if (arg === "--create-episodes") options.createEpisodes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--prepare-only") options.prepareOnly = true;
@@ -80,6 +82,7 @@ Examples:
 
 Options:
   --prepare-only  Create/reuse the spec and episode page structure before long encode or manual upload handoff, then skip file uploads.
+  --create-spec   With --spec-title, create/reuse that exact spec page instead of renaming the first existing spec.
 `);
 }
 
@@ -313,12 +316,25 @@ async function findSpecPage(notion, pageId, options) {
   }
 
   const children = await listChildren(notion, pageId);
+  const calloutSpecPages = [];
   for (const callout of children.filter((block) => block.type === "callout")) {
     const specPages = (await listChildren(notion, callout.id)).filter((block) => block.type === "child_page");
-    if (specPages.length > 0) return { id: specPages[0].id, title: blockTitle(specPages[0]) };
+    calloutSpecPages.push(...specPages);
   }
 
-  const rootSpec = children.find((block) => block.type === "child_page");
+  const rootSpecPages = children.filter((block) => block.type === "child_page");
+  const allSpecPages = [...calloutSpecPages, ...rootSpecPages];
+  if (options.createSpec) {
+    if (!options.specTitle) throw new Error("--create-spec requires --spec-title.");
+    const exactSpec = allSpecPages.find((block) => blockTitle(block) === options.specTitle);
+    if (exactSpec) return { id: exactSpec.id, title: blockTitle(exactSpec) };
+    if (options.create) return await ensureChildPage(notion, pageId, options.specTitle, options.apply);
+    throw new Error(`Spec page not found for --spec-title: ${options.specTitle}`);
+  }
+
+  if (calloutSpecPages.length > 0) return { id: calloutSpecPages[0].id, title: blockTitle(calloutSpecPages[0]) };
+
+  const rootSpec = rootSpecPages[0];
   if (rootSpec) return { id: rootSpec.id, title: blockTitle(rootSpec) };
 
   if (options.create) {

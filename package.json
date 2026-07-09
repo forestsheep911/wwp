@@ -21,6 +21,8 @@
     "notion:metadata": "npm --workspace @wwpdw/api run notion:metadata --",
     "notion:audit": "npm --workspace @wwpdw/api run notion:audit --",
     "notion:omdb": "npm --workspace @wwpdw/api run notion:omdb --",
+    "notion:imdb-rating": "node tools/notion-imdb-rating-enrichment.mjs",
+    "notion:critic-ratings": "node tools/notion-critic-rating-enrichment.mjs",
     "notion:family-age": "npm --workspace @wwpdw/api run notion:family-age --",
     "notion:title-cleanup": "npm --workspace @wwpdw/api run notion:title-cleanup --",
     "notion:genre-cleanup": "npm --workspace @wwpdw/api run notion:genre-cleanup --",

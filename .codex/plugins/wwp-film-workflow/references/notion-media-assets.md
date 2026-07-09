@@ -29,6 +29,7 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 - Apply only after the dry-run matches the intended work/spec/page.
 - Read back created/updated rows or run stats/audit before claiming completion.
 - Rerun idempotency checks when a writer supports them.
+- If an apply report contains created Media Assets page IDs but an immediate rerun still reports the same item as `would_create`, do not apply again blindly. Directly retrieve the created page ID first; Notion data-source query/filter visibility can lag or behave inconsistently for newly created rows. Treat the item as unsafe to rewrite until direct readback or a later query proves whether the row is indexed.
 - Notion-hosted media URLs are often temporary signed URLs. Do not treat an empty persistent `Asset URL` field as a failure when `Source Page ID`, `Media Block ID`, filename, work relation, and readback metadata are present.
 
 ## Early Page Creation

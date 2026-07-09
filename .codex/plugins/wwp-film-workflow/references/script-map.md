@@ -14,6 +14,20 @@ Use plugin helper scripts for generic media mechanics and existing repository to
   - Runs `ffmpeg` to create a contact sheet from evenly spaced timestamps.
 - `node .codex/plugins/wwp-film-workflow/scripts/plan-stream-variants.mjs --matrix <json>`
   - Explains which planned variants need video encode, audio encode, remux, or cannot reuse streams.
+- `node .codex/plugins/wwp-film-workflow/scripts/imdb-rating-inspect.mjs tt43592244`
+  - Looks up IMDb ratings by IMDb ID. Prefer the official IMDb non-commercial `title.ratings.tsv.gz` dataset; optionally falls back to IMDb title-page JSON-LD. Use when OMDb rejects a current IMDb ID or returns stale/missing `imdbRating`.
+- `node tools/notion-imdb-rating-enrichment.mjs --page-id <page> --imdb-id <ttid>`
+  - Dry-run/apply Notion IMDb score fallback writes after OMDb. It fills only an empty `IMDB评分` field from `imdb-rating-inspect.mjs`, appends source labels such as `imdb-datasets` or `imdb-page`, and records vote-count evidence in `Developer Memo` when that field is empty. It must not overwrite existing human or OMDb values.
+- `node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --imdb-id <ttid> --discover-only`
+  - Discovers Rotten Tomatoes and Metacritic official page URLs from Wikidata external IDs. Use this when OMDb lacks critic fields and an IMDb ID exists. Discovery is not enough to write scores; verify page identity and parse the official page next.
+- `node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --rotten-url <url> --metacritic-url <url>`
+  - Parses official Rotten Tomatoes and Metacritic pages for critic scores when OMDb is missing stale critic fields. Rotten Tomatoes parsing supports `media-scorecard-json`, `<score-board>`, and official JSON-LD `AggregateRating`; Metacritic parsing supports current `global-score-value`, legacy `metascore_w`, and official JSON-LD `AggregateRating`. It also accepts `--imdb-id <ttid>` to discover official page URLs through Wikidata before parsing. Use confirmed official page URLs, saved official-page HTML, or Wikidata-discovered official URLs; do not apply title-search guesses without verifying title/year/page identity.
+- `node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --imdb-url <url-or-html>`
+  - Parses IMDb official title-page HTML for displayed Metascore when OMDb/Metacritic direct-page paths are missing or stale. Record this as `imdb-page-metascore`; do not use it for Rotten Tomatoes.
+- `node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --ratings-json <trusted-evidence.json>`
+  - Reads trusted structured fallback values for Rotten Tomatoes and Metascore when official lookups are blocked but licensed export data or manually verified evidence exists. Each value must include a source label such as `licensed-source:<name>` or `manual-evidence:<name>` plus URL/date evidence. This is a last fallback, not a substitute for identity matching.
+- `node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --title "<title>" --year <year> --search-only`
+  - Emits Rotten Tomatoes and Metacritic official search URLs for candidate discovery when Wikidata has no critic-site external IDs. Search output is never score evidence; use it only to find a same-title/same-year official page, then parse that confirmed page or saved HTML before writing a score.
 
 ## Existing Repository Tools
 
@@ -49,6 +63,8 @@ Use plugin helper scripts for generic media mechanics and existing repository to
   - Manually apply explicit Douban Subject IDs and posters.
 - `tools/omdb-inspect.mjs`
   - Inspect OMDb payloads.
+- `node tools/notion-critic-rating-enrichment.mjs --page-id <page> --imdb-id <ttid>`
+  - Dry-run/apply Notion critic-score fallback writes after OMDb. It fills only empty `烂番茄新鲜度` and `Metascore` from `critic-rating-inspect.mjs` results, appends source labels such as `rotten-tomatoes-page`, `metacritic-page`, `imdb-page-metascore`, `licensed-source:<name>`, or `manual-evidence:<name>`, and writes an evidence memo when the memo field is empty. Use `--rotten-url`, `--metacritic-url`, `--imdb-url`, or `--ratings-json` when official URLs, saved official HTML, trusted exports, or manually verified evidence are already confirmed. `--search-only` reports official search URLs but does not write scores.
 - `npx tsx apps/api/src/notion-metadata-maintenance.ts --page-id <page> --pages --limit 1 --report <json>`
   - Initialize/repair identity fields such as `WW Work ID`, parsed external IDs, schema, match/status/source/confidence, and title-derived fields. Use `--apply` only after dry-run.
 - `npx tsx apps/api/src/notion-omdb-enrichment.ts --page-id <page> --limit 1 --max-updates 1 --report <json>`
