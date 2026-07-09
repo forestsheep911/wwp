@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, CircleHelp, Loader2, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, CheckCircle2, CircleHelp, Loader2, Pause, XCircle } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 import { cn } from "../../lib/utils";
@@ -7,6 +7,7 @@ import { copy } from "../i18n";
 import { createWakeQuizOrder, wakeQuizQuestions } from "../wake-quiz";
 
 export const serviceWakeDelayMs = 1600;
+export const serviceWakeAutoNextDelayMs = 2000;
 
 const optionLetters = ["A", "B", "C", "D"] as const;
 
@@ -22,39 +23,18 @@ export function ServiceWakeDialog({
   const [quizOrder, setQuizOrder] = useState(() => createWakeQuizOrder());
   const [questionCursor, setQuestionCursor] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState<number | undefined>();
-  const nextButtonRef = useRef<HTMLButtonElement>(null);
+  const [autoAdvancePaused, setAutoAdvancePaused] = useState(false);
+  const advanceButtonRef = useRef<HTMLButtonElement>(null);
   const currentQuestion = wakeQuizQuestions[quizOrder[questionCursor] ?? 0];
   const answered = selectedIndex !== undefined;
+  const autoAdvanceActive = answered && !autoAdvancePaused;
   const correctOption = currentQuestion.options[currentQuestion.answerIndex];
   const selectedOption = selectedIndex !== undefined ? currentQuestion.options[selectedIndex] : undefined;
   const isCorrect = selectedIndex === currentQuestion.answerIndex;
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    setQuizOrder(createWakeQuizOrder(Date.now()));
-    setQuestionCursor(0);
+  const goToNextQuestion = useCallback(() => {
     setSelectedIndex(undefined);
-  }, [open]);
-
-  useEffect(() => {
-    if (answered) {
-      nextButtonRef.current?.focus();
-    }
-  }, [answered, questionCursor]);
-
-  function answerQuestion(optionIndex: number) {
-    if (selectedIndex !== undefined) {
-      return;
-    }
-
-    setSelectedIndex(optionIndex);
-  }
-
-  function goToNextQuestion() {
-    setSelectedIndex(undefined);
+    setAutoAdvancePaused(false);
     setQuestionCursor((currentCursor) => {
       const nextCursor = currentCursor + 1;
 
@@ -65,6 +45,47 @@ export function ServiceWakeDialog({
       setQuizOrder(createWakeQuizOrder(Date.now()));
       return 0;
     });
+  }, [quizOrder.length]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setQuizOrder(createWakeQuizOrder(Date.now()));
+    setQuestionCursor(0);
+    setSelectedIndex(undefined);
+    setAutoAdvancePaused(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (answered) {
+      advanceButtonRef.current?.focus();
+    }
+  }, [answered, questionCursor]);
+
+  useEffect(() => {
+    if (!autoAdvanceActive) {
+      return;
+    }
+
+    const timer = window.setTimeout(goToNextQuestion, serviceWakeAutoNextDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [autoAdvanceActive, goToNextQuestion, questionCursor]);
+
+  function answerQuestion(optionIndex: number) {
+    if (selectedIndex !== undefined) {
+      return;
+    }
+
+    setSelectedIndex(optionIndex);
+    setAutoAdvancePaused(false);
+  }
+
+  function pauseAutoAdvance() {
+    if (answered) {
+      setAutoAdvancePaused(true);
+    }
   }
 
   return (
@@ -200,9 +221,15 @@ export function ServiceWakeDialog({
                     </div>
                   </div>
                   <div className="grid gap-2 sm:flex sm:justify-end">
-                    <Button className="w-full sm:w-auto" ref={nextButtonRef} size="sm" type="button" onClick={goToNextQuestion}>
-                      {copy.access.wake.next}
-                      <ArrowRight className="h-4 w-4" />
+                    <Button
+                      className="w-full sm:w-auto"
+                      ref={advanceButtonRef}
+                      size="sm"
+                      type="button"
+                      onClick={autoAdvancePaused ? goToNextQuestion : pauseAutoAdvance}
+                    >
+                      {autoAdvancePaused ? copy.access.wake.next : copy.access.wake.pause}
+                      {autoAdvancePaused ? <ArrowRight className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>

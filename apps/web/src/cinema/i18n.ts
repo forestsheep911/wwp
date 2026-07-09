@@ -53,8 +53,9 @@ export const zhCN = {
       wrong: "差一点",
       yourAnswer: "你的答案",
       correctAnswer: "正确答案",
+      pause: "暂停",
       next: "下一题",
-      idle: "银幕还在亮起来。当前题不会计时，答完会立即给出结果和解析。"
+      idle: "银幕还在亮起来。当前题不会计时，答完会给出结果和解析。"
     },
     errors: {
       enterPasscode: "请输入通行码。",

@@ -63,8 +63,7 @@ import {
   setMemberCredits as setMemberCreditsApi,
   updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
-  setAccessKey,
-  wakeBackend
+  setAccessKey
 } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
@@ -84,7 +83,7 @@ import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { SearchDialog } from "./cinema/components/SearchDialog";
-import { ServiceWakeDialog, serviceWakeDelayMs } from "./cinema/components/ServiceWakeDialog";
+import { ServiceWakeDialog } from "./cinema/components/ServiceWakeDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
 import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
@@ -114,6 +113,7 @@ import {
   themeStorageKey,
   writeJsonStorage
 } from "./cinema/storage";
+import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import type {
   AppTab,
   AppTheme,
@@ -275,7 +275,6 @@ function CinemaApp() {
   const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
   const [searchDialogError, setSearchDialogError] = useState("");
-  const [showServiceWakeDialog, setShowServiceWakeDialog] = useState(false);
   const [serviceWakePreviewOpen, setServiceWakePreviewOpen] = useState(() => shouldOpenServiceWakePreview());
   const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
@@ -346,18 +345,12 @@ function CinemaApp() {
     return marks;
   }, [favorites]);
 
-  const serviceWakeActive = unlocked && (
-    authRestoring ||
-    (activeTab === "library" && query.trim().length === 0 && browseLoading && browseResults.length === 0) ||
-    (activeTab === "watchlist" && browseLoading && browseResults.length === 0) ||
-    ((activeTab === "cached" || activeTab === "favorites" || activeTab === "tasks") && cachedAssetsLoading && cachedAssets.length === 0) ||
-    (activeTab === "forum" && forumLoading && forumThreads.length === 0)
-  );
+  const coldStartWakeDialog = useColdStartWakeDialog({ enabled: authRestoring || unlocked });
   const serviceWakePreviewEnabled = canPreviewServiceWakeDialog();
-  const serviceWakeDialogOpen = serviceWakePreviewOpen || (showServiceWakeDialog && serviceWakeActive);
+  const serviceWakeDialogOpen = serviceWakePreviewOpen || coldStartWakeDialog.open;
 
   function handleServiceWakeDialogOpenChange(open: boolean) {
-    setShowServiceWakeDialog(open);
+    coldStartWakeDialog.setOpen(open);
     if (!open) {
       setServiceWakePreviewOpen(false);
     }
@@ -368,19 +361,6 @@ function CinemaApp() {
     document.documentElement.style.colorScheme = theme;
     writeJsonStorage(themeStorageKey, theme);
   }, [theme]);
-
-  useEffect(() => {
-    if (!serviceWakeActive) {
-      setShowServiceWakeDialog(false);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setShowServiceWakeDialog(true);
-    }, serviceWakeDelayMs);
-
-    return () => window.clearTimeout(timer);
-  }, [serviceWakeActive]);
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
     if (route.tab === "admin" && role && role !== "admin") {
@@ -1970,14 +1950,6 @@ function CinemaApp() {
       return;
     }
 
-    void wakeBackend().catch(() => undefined);
-  }, [unlocked]);
-
-  useEffect(() => {
-    if (!unlocked) {
-      return;
-    }
-
     function handleSearchShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -2311,7 +2283,7 @@ function CinemaApp() {
 
   const serviceWakeDialog = (
     <ServiceWakeDialog
-      dismissible={serviceWakePreviewOpen && !serviceWakeActive}
+      dismissible={serviceWakePreviewOpen && !coldStartWakeDialog.open}
       open={serviceWakeDialogOpen}
       onOpenChange={handleServiceWakeDialogOpenChange}
     />

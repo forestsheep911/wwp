@@ -55,7 +55,7 @@ import type { BrowseViewId } from "./cinema/types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const accessKeyStorageKey = "wwpdw-access-key";
-const backendWakeTimeoutMs = 2500;
+const backendWakeTimeoutMs = 90_000;
 
 export class ApiError extends Error {
   constructor(

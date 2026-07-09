@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
 import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
@@ -16,7 +16,8 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { copy } from "../i18n";
 import type { AppTheme } from "../types";
-import { ServiceWakeDialog, serviceWakeDelayMs } from "./ServiceWakeDialog";
+import { useColdStartWakeDialog } from "../use-service-wake";
+import { ServiceWakeDialog } from "./ServiceWakeDialog";
 
 type AccessMode = "login" | "register" | "reset";
 
@@ -68,22 +69,9 @@ export function AccessGate({
   const [confirmValue, setConfirmValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showWakeDialog, setShowWakeDialog] = useState(false);
+  const coldStartWakeDialog = useColdStartWakeDialog({ enabled: loading });
   const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
   const passcodeStrengthHint = mode !== "login" ? memberPasscodeStrengthHint(value.trim()) : undefined;
-
-  useEffect(() => {
-    if (!loading) {
-      setShowWakeDialog(false);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setShowWakeDialog(true);
-    }, serviceWakeDelayMs);
-
-    return () => window.clearTimeout(timer);
-  }, [loading]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -184,7 +172,7 @@ export function AccessGate({
 
   return (
     <main className="relative grid min-h-[100dvh] place-items-end px-3 pb-0 pt-16 sm:place-items-center sm:px-5 sm:py-10">
-      <ServiceWakeDialog open={showWakeDialog && loading} onOpenChange={setShowWakeDialog} />
+      <ServiceWakeDialog open={coldStartWakeDialog.open && loading} onOpenChange={coldStartWakeDialog.setOpen} />
       <Button
         className="absolute right-5 top-5"
         type="button"
