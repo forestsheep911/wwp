@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { importScan } from "../../../../tools/lib/film-ledger-discovery.mjs";
+import { createLedgerRepository } from "../../../../tools/lib/film-ledger-repository.mjs";
+import { openLedger } from "../../../../tools/lib/film-ledger-schema.mjs";
 
 function usage() {
   console.log(`Usage:
-  node scripts/watch-input-directory.mjs --root <input-dir> [--state .local-data/wwp-queue-state.json] [--once]
+  node scripts/watch-input-directory.mjs --root <input-dir> [--state .local-data/wwp-queue-state.json] [--ledger film-ledger.sqlite] [--once]
   node scripts/watch-input-directory.mjs --root <input-dir> --interval-sec 300 [--max-iterations 0]
   node scripts/watch-input-directory.mjs <input-dir> [state.json] [output.json]
 
@@ -34,6 +37,7 @@ function parseArgs(argv) {
     else if (name === "--root" || name === "-r") options.root = value();
     else if (name === "--state") options.statePath = value();
     else if (name === "--output") options.outputPath = value();
+    else if (name === "--ledger") options.ledgerPath = value();
     else if (name === "--max-samples") options.maxSamples = Number(value());
     else if (name === "--interval-sec") options.intervalSec = Number(value());
     else if (name === "--max-iterations") options.maxIterations = Number(value());
@@ -186,6 +190,15 @@ async function main() {
     const diff = baseline
       ? { added: [], removed: [], changed: [] }
       : diffState(previous.entries, scan.entries);
+    let ledger;
+    if (options.ledgerPath) {
+      const db = openLedger(options.ledgerPath);
+      try {
+        ledger = importScan(createLedgerRepository(db), scan).summary;
+      } finally {
+        db.close();
+      }
+    }
 
     const state = {
       root: scan.root,
@@ -206,6 +219,7 @@ async function main() {
         removed: diff.removed.length,
         changed: diff.changed.length
       },
+      ...(ledger ? { ledger } : {}),
       added: diff.added,
       removed: diff.removed,
       changed: diff.changed
