@@ -85,3 +85,53 @@ test("green Dolby Vision correction never imports as qc_passed", () => {
     assert.equal(f.repo.findVariantByOutputPath("E:\\video_made\\green-dv.mp4").production_state, "qc_failed");
   } finally { f.close(); }
 });
+
+test("green DV evidence defaults qc_passed variants to qc_failed but permits explicit deferred", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Green DV Defaults", year: 2024 });
+    const failed = f.repo.ensureVariant({ workId: work.id, specKey: "failed", displayTitle: "Green DV failed", outputPath: "E:\\failed.mp4" });
+    const deferred = f.repo.ensureVariant({ workId: work.id, specKey: "deferred", displayTitle: "Green DV deferred", outputPath: "E:\\deferred.mp4" });
+    for (const variant of [failed, deferred]) {
+      for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) f.repo.transitionProduction(variant.id, state);
+    }
+
+    applyCorrectionsManifest(f.repo, { variants: [{ outputPath: "E:\\failed.mp4", failureCode: "green_dv_cast" }] });
+    applyCorrectionsManifest(f.repo, { variants: [{ outputPath: "E:\\deferred.mp4", failureCode: "color_failure", productionState: "deferred" }] });
+
+    assert.equal(f.repo.findVariantByOutputPath("E:\\failed.mp4").production_state, "qc_failed");
+    assert.equal(f.repo.findVariantByOutputPath("E:\\deferred.mp4").production_state, "deferred");
+  } finally { f.close(); }
+});
+
+test("organizer report rejects malformed shapes with stable validation errors", () => {
+  const f = fixture();
+  try {
+    assert.throws(() => migrateOrganizerReport(f.repo, null), {
+      name: "TypeError", message: "organizer report must be an object with a pages array"
+    });
+    assert.throws(() => migrateOrganizerReport(f.repo, { pages: [null] }), {
+      name: "TypeError", message: "organizer report pages[0] must be an object"
+    });
+    assert.throws(() => migrateOrganizerReport(f.repo, { pages: [{ pageId: "work", title: "Work", rootLandingMedia: {} }] }), {
+      name: "TypeError", message: "organizer report pages[0].rootLandingMedia must be an array"
+    });
+  } finally { f.close(); }
+});
+
+test("repeating an identical correction is a no-op without a duplicate review event", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Idempotent", year: 2025 });
+    const variant = f.repo.ensureVariant({ workId: work.id, specKey: "main", displayTitle: "Idempotent", audioVariant: "mandarin", outputPath: "E:\\idempotent.mp4" });
+    const manifest = { variants: [{ outputPath: "E:\\idempotent.mp4", audioVariant: "cantonese", productionState: "qc_failed", failureCode: "wrong_audio_variant" }] };
+
+    assert.deepEqual(applyCorrectionsManifest(f.repo, manifest), { corrected: 1 });
+    const afterFirst = f.repo.findVariantByOutputPath("E:\\idempotent.mp4");
+    assert.deepEqual(applyCorrectionsManifest(f.repo, manifest), { corrected: 0 });
+    const afterSecond = f.repo.findVariantByOutputPath("E:\\idempotent.mp4");
+
+    assert.deepEqual(afterSecond, afterFirst);
+    assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id }).filter(event => event.event_type === "human_review_correction").length, 1);
+  } finally { f.close(); }
+});

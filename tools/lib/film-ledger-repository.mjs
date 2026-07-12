@@ -249,6 +249,17 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       if (correction.productionState && !new Set(["qc_failed", "deferred"]).has(correction.productionState)) {
         throw new Error("migration productionState must be qc_failed or deferred");
       }
+      const desired = {
+        audioVariant: correction.audioVariant ?? current.audio_variant,
+        productionState: correction.productionState ?? current.production_state,
+        failureCode: correction.failureCode ?? current.failure_code,
+        failureDetail: correction.failureDetail ?? current.failure_detail
+      };
+      const unchanged = desired.audioVariant === current.audio_variant
+        && desired.productionState === current.production_state
+        && desired.failureCode === current.failure_code
+        && desired.failureDetail === current.failure_detail;
+      if (unchanged) return { row: current, applied: false };
       const at = timestamp();
       db.prepare(`UPDATE variants SET audio_variant=COALESCE(?, audio_variant),
         production_state=COALESCE(?, production_state), failure_code=COALESCE(?, failure_code),
@@ -257,7 +268,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
           correction.failureCode ?? null, correction.failureDetail ?? null, at, variantId);
       insertEvent.run("variant", variantId, "human_review_correction",
         stableJson({ from: { audioVariant: current.audio_variant, productionState: current.production_state }, correction }), at);
-      return getVariant.get(variantId);
+      return { row: getVariant.get(variantId), applied: true };
     });
   }
 

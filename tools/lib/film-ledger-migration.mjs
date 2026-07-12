@@ -16,10 +16,31 @@ function stableSpecKey(workPageId, specPageId, episodePageId, displayTitle) {
   return `migration-${createHash("sha256").update(JSON.stringify({ workPageId, specPageId, episodePageId, displayTitle })).digest("hex").slice(0, 16)}`;
 }
 
+function validateOrganizerReport(reportPayload) {
+  if (!reportPayload || typeof reportPayload !== "object" || Array.isArray(reportPayload) || !Array.isArray(reportPayload.pages)) {
+    throw new TypeError("organizer report must be an object with a pages array");
+  }
+  for (const [pageIndex, page] of reportPayload.pages.entries()) {
+    const pagePath = `organizer report pages[${pageIndex}]`;
+    if (!page || typeof page !== "object" || Array.isArray(page)) throw new TypeError(`${pagePath} must be an object`);
+    if (typeof page.pageId !== "string" || page.pageId.length === 0) throw new TypeError(`${pagePath}.pageId must be a non-empty string`);
+    if (typeof page.title !== "string") throw new TypeError(`${pagePath}.title must be a string`);
+    if (!Array.isArray(page.rootLandingMedia)) throw new TypeError(`${pagePath}.rootLandingMedia must be an array`);
+    for (const [mediaIndex, media] of page.rootLandingMedia.entries()) {
+      const mediaPath = `${pagePath}.rootLandingMedia[${mediaIndex}]`;
+      if (!media || typeof media !== "object" || Array.isArray(media)) throw new TypeError(`${mediaPath} must be an object`);
+      if (!media.suggestedTarget || typeof media.suggestedTarget !== "object" || Array.isArray(media.suggestedTarget)) {
+        throw new TypeError(`${mediaPath}.suggestedTarget must be an object`);
+      }
+    }
+  }
+}
+
 function organizerRecords(reportPayload) {
+  validateOrganizerReport(reportPayload);
   const records = [];
-  for (const page of reportPayload?.pages ?? []) {
-    for (const media of page.rootLandingMedia ?? []) {
+  for (const page of reportPayload.pages) {
+    for (const media of page.rootLandingMedia) {
       const target = media.suggestedTarget;
       if (!page.pageId || target?.status !== "ready") continue;
       const specPageId = target.kind === "episode_page" ? target.specPageId : target.pageId;
@@ -63,8 +84,12 @@ export function applyCorrectionsManifest(repo, manifest) {
     if (!correction?.outputPath) throw new TypeError("every correction requires outputPath");
     const variant = repo.findVariantByOutputPath(path.normalize(correction.outputPath));
     if (!variant) throw new Error(`correction outputPath is not registered: ${correction.outputPath}`);
-    repo.applyMigrationCorrection(variant.id, correction);
-    corrected += 1;
+    const evidence = `${correction.failureCode ?? ""} ${correction.failureDetail ?? ""} ${correction.colorRisk ?? ""}`;
+    const hasColorFailureEvidence = /green|dolby.?vision|\bdv\b|colou?r/i.test(evidence);
+    const normalized = hasColorFailureEvidence && correction.productionState == null
+      ? { ...correction, productionState: "qc_failed" }
+      : correction;
+    if (repo.applyMigrationCorrection(variant.id, normalized).applied) corrected += 1;
   }
   return { corrected };
 }
