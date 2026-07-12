@@ -53,6 +53,33 @@ test("explicit organizer page registration remains not_ready", () => {
   } finally { f.close(); }
 });
 
+test("organizer migration updates one variant when its display title changes", () => {
+  const f = fixture();
+  try {
+    const report = (suggestedSpecTitle) => ({ pages: [{
+      pageId: "work-page", title: "Example (2025)", rootLandingMedia: [{
+        blockId: "media-block", name: "Example.2025.mp4", suggestedSpecTitle,
+        suggestedTarget: { status: "ready", kind: "spec_page", pageId: "spec-page" }
+      }]
+    }] });
+    migrateOrganizerReport(f.repo, report("Old title"));
+    migrateOrganizerReport(f.repo, report("New title"));
+    assert.equal(f.db.prepare("SELECT count(*) count FROM variants").get().count, 1);
+    assert.equal(f.db.prepare("SELECT display_title FROM variants").get().display_title, "New title");
+  } finally { f.close(); }
+});
+
+test("correction lookup normalizes Windows case and trailing separators", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Windows path", year: 2025 });
+    f.repo.ensureVariant({ workId: work.id, specKey: "main", displayTitle: "Windows path", outputPath: "E:\\Video_Made\\Example.mp4\\" });
+    assert.deepEqual(applyCorrectionsManifest(f.repo, { variants: [{
+      outputPath: "e:\\video_made\\example.mp4", audioVariant: "cantonese", productionState: "qc_failed"
+    }] }), { corrected: 1 });
+  } finally { f.close(); }
+});
+
 test("human-confirmed Cantonese overrides filename Mandarin and records review", () => {
   const f = fixture();
   try {

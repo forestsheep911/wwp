@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { normalizeLedgerPath } from "./film-ledger-repository.mjs";
 
 function fingerprintMaterial(entry) {
   return {
@@ -30,7 +31,8 @@ function validatePayload(payload) {
 
 export function importScan(repo, payload) {
   validatePayload(payload);
-  const root = repo.upsertInputRoot(payload.root, { lastScanAt: payload.scannedAt ?? new Date().toISOString() });
+  const normalizedRoot = normalizeLedgerPath(payload.root);
+  const root = repo.upsertInputRoot(normalizedRoot, { lastScanAt: payload.scannedAt ?? new Date().toISOString() });
   const existing = new Map(repo.listSourcesForRoot(root.id).map(source => [source.relative_path, source]));
   const seen = new Set();
   const summary = { inserted: 0, unchanged: 0, changed: 0, missing: 0 };
@@ -44,7 +46,9 @@ export function importScan(repo, payload) {
     const source = repo.upsertDiscoveredSource({
       inputRootId: root.id,
       relativePath: entry.relativePath,
-      absolutePath: path.resolve(payload.root, entry.relativePath),
+      absolutePath: /^[a-z]:[\\/]/i.test(normalizedRoot)
+        ? normalizeLedgerPath(path.win32.resolve(normalizedRoot, entry.relativePath))
+        : path.resolve(normalizedRoot, entry.relativePath),
       fingerprint,
       sourceKind: entry.flags?.looksSeries ? "series_folder" : "folder",
       subtitleEvidence: { count: entry.subtitleCount ?? 0, hints: entry.subtitleHints ?? [] },

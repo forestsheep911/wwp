@@ -1,5 +1,13 @@
 import { withTransaction } from "./film-ledger-schema.mjs";
 import { assertProductionTransition, assertPublicationTransition, normalizeLimit } from "./film-ledger-domain.mjs";
+import path from "node:path";
+
+export function normalizeLedgerPath(value) {
+  const input = String(value);
+  if (!/^[a-z]:[\\/]/i.test(input)) return input;
+  const normalized = path.win32.normalize(input.replaceAll("/", "\\"));
+  return normalized.replace(/(?<!^[a-z]:)\\+$/i, "").toLowerCase();
+}
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -23,6 +31,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   const insertEvent = db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)");
 
   function upsertInputRoot(rootPath, options = {}) {
+    rootPath = normalizeLedgerPath(rootPath);
     const at = timestamp();
     db.prepare(`INSERT INTO input_roots (path, enabled, last_scan_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?)
@@ -80,6 +89,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
 
   function ensureVariant(input) {
     const at = timestamp();
+    const outputPath = input.outputPath == null ? null : normalizeLedgerPath(input.outputPath);
     db.prepare(`INSERT INTO variants (work_id, source_id, spec_key, display_title, audio_variant, subtitle_variant, cut_variant,
         target_size_bytes, output_path, probe_path, next_review_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -91,7 +101,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         next_review_at=COALESCE(excluded.next_review_at, variants.next_review_at), updated_at=excluded.updated_at`)
       .run(input.workId, input.sourceId ?? null, input.specKey, input.displayTitle, input.audioVariant ?? "unknown",
         input.subtitleVariant ?? "unknown", input.cutVariant ?? "theatrical", input.targetSizeBytes ?? null,
-        input.outputPath ?? null, input.probePath ?? null, input.nextReviewAt ?? null, at, at);
+        outputPath, input.probePath ?? null, input.nextReviewAt ?? null, at, at);
     return db.prepare("SELECT * FROM variants WHERE work_id = ? AND spec_key = ?").get(input.workId, input.specKey);
   }
 
@@ -106,7 +116,8 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         qc_artifact_path=COALESCE(?, qc_artifact_path), failure_code=?, failure_detail=?,
         next_review_at=?, publication_state=CASE WHEN ?='qc_passed' THEN 'not_ready' ELSE publication_state END,
         updated_at=? WHERE id=?`)
-        .run(to, details.outputPath ?? null, details.outputSizeBytes ?? null, details.probePath ?? null,
+        .run(to, details.outputPath == null ? null : normalizeLedgerPath(details.outputPath),
+          details.outputSizeBytes ?? null, details.probePath ?? null,
           details.qcArtifactPath ?? null, details.failureCode ?? null, details.failureDetail ?? null,
           details.nextReviewAt ?? null, to, at, variantId);
       insertEvent.run("variant", variantId, "production_state_changed",
@@ -239,7 +250,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function findVariantByOutputPath(outputPath) {
-    return db.prepare("SELECT * FROM variants WHERE output_path = ?").get(outputPath) ?? null;
+    return db.prepare("SELECT * FROM variants WHERE output_path = ?").get(normalizeLedgerPath(outputPath)) ?? null;
   }
 
   function applyMigrationCorrection(variantId, correction) {

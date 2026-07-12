@@ -55,3 +55,14 @@ test("importScan counts duplicate scan entries deterministically", () => {
     assert.equal(f.db.prepare("SELECT count(*) count FROM sources").get().count, 1);
   } finally { f.close(); }
 });
+
+test("Windows input roots normalize drive case and trailing separators while POSIX remains case-sensitive", () => {
+  const f = fixture();
+  try {
+    importScan(f.repo, { root: "X:\\Queue\\", entries: [entry()] });
+    importScan(f.repo, { root: "x:\\queue", entries: [entry()] });
+    importScan(f.repo, { root: "/Media/Queue/", entries: [entry({ relativePath: "Upper" })] });
+    importScan(f.repo, { root: "/media/queue", entries: [entry({ relativePath: "Lower" })] });
+    assert.equal(f.db.prepare("SELECT count(*) count FROM input_roots").get().count, 3);
+  } finally { f.close(); }
+});

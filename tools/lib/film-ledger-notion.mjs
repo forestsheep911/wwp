@@ -86,12 +86,55 @@ function relationIds(property) {
   return property?.type === "relation" ? (property.relation ?? []).map(item => item.id) : [];
 }
 
+function selectName(property) {
+  return property?.type === "select" ? property.select?.name ?? "" : "";
+}
+
+function checkboxValue(property) {
+  return property?.type === "checkbox" ? property.checkbox : undefined;
+}
+
+function mediaFilename(block) {
+  const caption = plainText(block?.[block?.type]?.caption).trim();
+  if (caption) return caption;
+  try { return decodeURIComponent(new URL(mediaUrl(block)).pathname.split("/").at(-1) ?? ""); }
+  catch { return ""; }
+}
+
+function parentPageId(page) {
+  return page?.parent?.type === "page_id" ? page.parent.page_id : null;
+}
+
+function recordedStructureMatches(pages, target) {
+  const expectedIds = [target.work_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
+  if (pages.some((page, index) => page?.id !== expectedIds[index])) return false;
+  const spec = pages.find(page => page.id === target.spec_page_id);
+  if (parentPageId(spec) !== target.work_page_id) return false;
+  if (target.episode_page_id) {
+    const episode = pages.find(page => page.id === target.episode_page_id);
+    if (parentPageId(episode) !== target.spec_page_id) return false;
+  }
+  return true;
+}
+
+function playbackAssetComplete(page) {
+  const properties = page?.properties ?? {};
+  return selectName(properties["Asset Type"]) === "playable_video"
+    && selectName(properties["Media Availability"]).toLowerCase() === "available"
+    && Boolean(selectName(properties["Video Codec"]))
+    && Boolean(selectName(properties.Container))
+    && properties["Asset URL"]?.type === "url" && Boolean(properties["Asset URL"].url)
+    && checkboxValue(properties["Playback Verified"]) === true
+    && checkboxValue(properties["Hide from Website"]) === false
+    && checkboxValue(properties["Needs Review"]) !== true;
+}
+
 function matchesRecordedAsset(page, { workPageId, sourcePageId, mediaBlockId }) {
   const properties = page?.properties ?? {};
   if (!relationIds(properties.Work).includes(workPageId)) return false;
   const sourceMatches = propertyPlainText(properties["Source Page ID"]) === sourcePageId;
   const mediaMatches = Boolean(mediaBlockId) && propertyPlainText(properties["Media Block ID"]) === mediaBlockId;
-  return sourceMatches || mediaMatches;
+  return (sourceMatches || mediaMatches) && playbackAssetComplete(page);
 }
 
 async function listRecordedPageChildren(client, pageId) {
@@ -115,10 +158,11 @@ export function createNotionTargetAdapter(client, {
   return {
     async inspectTarget(target) {
       const recordedIds = [target.work_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
-      await Promise.all(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
+      const pages = await Promise.all(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
-      const media = blocks.find(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block));
+      const media = blocks.find(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block)
+        && (!target.expected_filename || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase()));
       const traceFilters = [{ property: "Source Page ID", rich_text: { equals: contentPageId } }];
       if (media?.id) traceFilters.push({ property: "Media Block ID", rich_text: { equals: media.id } });
       const assets = await client.dataSources.query({
@@ -131,13 +175,13 @@ export function createNotionTargetAdapter(client, {
           ]
         }
       });
-      const asset = (assets.results ?? []).find(page => matchesRecordedAsset(page, {
+      const asset = media ? (assets.results ?? []).find(page => matchesRecordedAsset(page, {
         workPageId: target.work_page_id,
         sourcePageId: contentPageId,
         mediaBlockId: media?.id
-      })) ?? null;
+      })) ?? null : null;
       return {
-        structureVerified: recordedIds.length >= 2,
+        structureVerified: recordedIds.length >= 2 && recordedStructureMatches(pages, target),
         mediaBlockId: media?.id ?? null,
         mediaVerified: Boolean(media),
         mediaAssetPageId: asset?.id ?? null,

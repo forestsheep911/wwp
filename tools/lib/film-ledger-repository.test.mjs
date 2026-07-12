@@ -92,6 +92,16 @@ test("qc-passed work leaves production and remains due for publication", () => {
   } finally { f.close(); }
 });
 
+test("production output paths use the same Windows identity as correction lookup", () => {
+  const f = fixture();
+  try {
+    const { variant } = seed(f.repo, "Path");
+    for (const state of ["evaluated", "selected", "encoding"]) f.repo.transitionProduction(variant.id, state);
+    f.repo.transitionProduction(variant.id, "qc_passed", { outputPath: "E:\\Video_Made\\Example.mp4\\" });
+    assert.equal(f.repo.findVariantByOutputPath("e:\\video_made\\example.mp4")?.id, variant.id);
+  } finally { f.close(); }
+});
+
 test("candidate queries honor due dates, exclusions, priority, and bounds", () => {
   const f = fixture();
   try {

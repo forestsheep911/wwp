@@ -12,8 +12,8 @@ function titleIdentity(value) {
   return { canonicalTitle: match?.[1]?.trim() || title, year: match ? Number(match[2]) : null };
 }
 
-function stableSpecKey(workPageId, specPageId, episodePageId, displayTitle) {
-  return `migration-${createHash("sha256").update(JSON.stringify({ workPageId, specPageId, episodePageId, displayTitle })).digest("hex").slice(0, 16)}`;
+function stableSpecKey(workPageId, specPageId, episodePageId) {
+  return `migration-${createHash("sha256").update(JSON.stringify({ workPageId, specPageId, episodePageId })).digest("hex").slice(0, 16)}`;
 }
 
 function validateOrganizerReport(reportPayload) {
@@ -61,7 +61,7 @@ export function migrateOrganizerReport(repo, reportPayload) {
     const displayTitle = media.suggestedSpecTitle || media.name || `Imported target ${specPageId}`;
     const variant = repo.ensureVariant({
       workId: work.id,
-      specKey: stableSpecKey(page.pageId, specPageId, episodePageId, displayTitle),
+      specKey: stableSpecKey(page.pageId, specPageId, episodePageId),
       displayTitle,
       outputPath: media.outputPath
     });

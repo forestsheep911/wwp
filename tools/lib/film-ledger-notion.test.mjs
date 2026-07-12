@@ -30,6 +30,26 @@ function seedTarget(repo, suffix, nextCheckAt = null) {
   return variant;
 }
 
+function publishableAsset(overrides = {}) {
+  return {
+    id: "asset-1",
+    properties: {
+      Work: { type: "relation", relation: [{ id: "work-1" }] },
+      "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "episode-1" }] },
+      "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] },
+      "Asset Type": { type: "select", select: { name: "playable_video" } },
+      "Media Availability": { type: "select", select: { name: "available" } },
+      "Video Codec": { type: "select", select: { name: "hevc" } },
+      Container: { type: "select", select: { name: "mp4" } },
+      "Asset URL": { type: "url", url: "https://example.test/video.mp4" },
+      "Playback Verified": { type: "checkbox", checkbox: true },
+      "Hide from Website": { type: "checkbox", checkbox: false },
+      "Needs Review": { type: "checkbox", checkbox: false },
+      ...overrides
+    }
+  };
+}
+
 test("reconciler checks only due recorded targets and stops at three", async () => {
   const f = fixture();
   try {
@@ -124,17 +144,17 @@ test("all four evidence gates advance legally to sync_ready while incomplete evi
 test("adapter uses only recorded pages and a relation-constrained Media Assets query", async () => {
   const calls = [];
   const client = {
-    pages: { async retrieve(input) { calls.push(["pages.retrieve", input]); return { id: input.page_id }; } },
-    blocks: { children: { async list(input) { calls.push(["blocks.children.list", input]); return { results: [{ id: "media-1", type: "video", video: { file: { url: "https://example.test/video.mp4" } } }], has_more: false }; } } },
+    pages: { async retrieve(input) { calls.push(["pages.retrieve", input]); return { id: input.page_id, parent: input.page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: input.page_id === "spec-1" ? "work-1" : "spec-1" } }; } },
+    blocks: { children: { async list(input) { calls.push(["blocks.children.list", input]); return { results: [{ id: "media-1", type: "video", video: { caption: [{ plain_text: "Example.2025.mp4" }], file: { url: "https://example.test/video.mp4" } } }], has_more: false }; } } },
     dataSources: { async query(input) { calls.push(["dataSources.query", input]); return { results: [
       { id: "wrong-asset", properties: { Work: { type: "relation", relation: [{ id: "work-1" }] }, "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "other-episode" }] }, "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "other-media" }] } } },
-      { id: "asset-1", properties: { Work: { type: "relation", relation: [{ id: "work-1" }] }, "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "episode-1" }] }, "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] } } }
+      publishableAsset()
     ], has_more: false }; } },
     databases: { async query() { throw new Error("database-wide query forbidden"); } },
     search: async () => { throw new Error("search forbidden"); }
   };
   const adapter = createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" });
-  const result = await adapter.inspectTarget({ work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1" });
+  const result = await adapter.inspectTarget({ work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1", expected_filename: "Example.2025.mp4" });
   assert.equal(result.mediaVerified, true);
   assert.equal(result.assetsVerified, true);
   assert.deepEqual(calls.slice(0, 4), [
@@ -155,6 +175,54 @@ test("adapter uses only recorded pages and a relation-constrained Media Assets q
   }]);
   assert.equal(result.mediaAssetPageId, "asset-1");
   assert.equal(calls.length, 5);
+});
+
+test("adapter rejects an arbitrary sibling media block when expected filename does not match", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
+    blocks: { children: { async list() { return { results: [{ id: "sibling-media", type: "video", video: { caption: [{ plain_text: "Other.Movie.mp4" }], file: { url: "https://example.test/other.mp4" } } }] }; } } },
+    dataSources: { async query() { return { results: [publishableAsset({ "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "spec-1" }] } })] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.Movie.mp4"
+  });
+  assert.equal(result.mediaVerified, false);
+  assert.equal(result.mediaBlockId, null);
+  assert.equal(result.assetsVerified, false);
+});
+
+test("adapter verifies recorded page parent relationships instead of retrieval alone", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: { type: "page_id", page_id: "wrong-parent" } }; } },
+    blocks: { children: { async list() { return { results: [] }; } } },
+    dataSources: { async query() { return { results: [] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1"
+  });
+  assert.equal(result.structureVerified, false);
+});
+
+test("adapter rejects minimally linked or review-gated Media Assets rows", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
+    blocks: { children: { async list() { return { results: [{ id: "media-1", type: "video", video: { caption: [{ plain_text: "Expected.mp4" }], file: { url: "https://example.test/video.mp4" } } }] }; } } },
+    dataSources: { async query() { return { results: [{
+      id: "minimal-asset", properties: {
+        Work: { type: "relation", relation: [{ id: "work-1" }] },
+        "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "spec-1" }] },
+        "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] },
+        "Playback Verified": { type: "checkbox", checkbox: false },
+        "Hide from Website": { type: "checkbox", checkbox: true },
+        "Needs Review": { type: "checkbox", checkbox: true }
+      }
+    }] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.mp4"
+  });
+  assert.equal(result.assetsVerified, false);
+  assert.equal(result.mediaAssetPageId, null);
 });
 
 test("adapter rejects same-work Media Assets rows without target-specific evidence", async () => {
