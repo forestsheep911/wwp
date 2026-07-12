@@ -196,7 +196,49 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
   }
 
+  function listDueNotionTargets({ limit = 3, now: dueAt = timestamp() } = {}) {
+    return db.prepare(`SELECT notion_targets.*, variants.publication_state, variants.production_state
+      FROM notion_targets JOIN variants ON variants.id=notion_targets.variant_id
+      WHERE variants.production_state='qc_passed' AND variants.publication_state<>'sync_ready'
+        AND (notion_targets.next_check_at IS NULL OR notion_targets.next_check_at <= ?)
+      ORDER BY notion_targets.updated_at ASC, notion_targets.variant_id ASC LIMIT ?`)
+      .all(dueAt, normalizeLimit(limit, 3, 3));
+  }
+
+  function getSchedulerState(key) {
+    return db.prepare("SELECT value FROM scheduler_state WHERE key=?").get(key)?.value ?? null;
+  }
+
+  function setSchedulerState(key, value, updatedAt = timestamp()) {
+    db.prepare(`INSERT INTO scheduler_state (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(key, value, updatedAt);
+  }
+
+  function recordNotionInspection(variantId, evidence, inspectedAt = timestamp(), nextCheckAt = null) {
+    db.prepare(`UPDATE notion_targets SET
+      media_block_id=CASE WHEN ? THEN ? ELSE media_block_id END,
+      media_asset_page_id=CASE WHEN ? THEN ? ELSE media_asset_page_id END,
+      structure_verified_at=CASE WHEN ? THEN ? ELSE structure_verified_at END,
+      media_verified_at=CASE WHEN ? THEN ? ELSE media_verified_at END,
+      assets_verified_at=CASE WHEN ? THEN ? ELSE assets_verified_at END,
+      next_check_at=?, attempt_count=CASE WHEN ? IS NULL THEN 0 ELSE attempt_count + 1 END,
+      last_error_code=NULL, last_error_detail=NULL, updated_at=? WHERE variant_id=?`)
+      .run(evidence.mediaVerified === true ? 1 : 0, evidence.mediaBlockId ?? null,
+        evidence.assetsVerified === true ? 1 : 0, evidence.mediaAssetPageId ?? null,
+        evidence.structureVerified === true ? 1 : 0, inspectedAt,
+        evidence.mediaVerified === true ? 1 : 0, inspectedAt,
+        evidence.assetsVerified === true ? 1 : 0, inspectedAt,
+        nextCheckAt, nextCheckAt, inspectedAt, variantId);
+  }
+
+  function recordNotionFailure(variantId, { code, detail, nextCheckAt }, failedAt = timestamp()) {
+    db.prepare(`UPDATE notion_targets SET next_check_at=?, attempt_count=attempt_count + 1,
+      last_error_code=?, last_error_detail=?, updated_at=? WHERE variant_id=?`)
+      .run(nextCheckAt, code, detail, failedAt, variantId);
+  }
+
   return { upsertInputRoot, upsertDiscoveredSource, ensureWork, ensureVariant, transitionProduction,
     transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates,
-    getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing };
+    getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
+    getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure };
 }

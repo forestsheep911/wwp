@@ -1,0 +1,152 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { openLedger } from "./film-ledger-schema.mjs";
+import { createLedgerRepository } from "./film-ledger-repository.mjs";
+import { createNotionTargetAdapter, reconcileDueTargets } from "./film-ledger-notion.mjs";
+
+const NOW = "2026-07-12T00:00:00.000Z";
+
+function fixture() {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-ledger-notion-"));
+  const db = openLedger(path.join(dir, "ledger.sqlite"));
+  const repo = createLedgerRepository(db, { now: () => NOW });
+  return { db, repo, close() { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+function seedTarget(repo, suffix, nextCheckAt = null) {
+  const work = repo.ensureWork({ canonicalTitle: `Example ${suffix}`, year: 2025, workType: "movie" });
+  const variant = repo.ensureVariant({ workId: work.id, specKey: `main-${suffix}`, displayTitle: `Example ${suffix}` });
+  for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) repo.transitionProduction(variant.id, state);
+  repo.transitionPublication(variant.id, "structure_pending");
+  repo.registerNotionTarget(variant.id, {
+    workPageId: `work-${suffix}`,
+    specPageId: `spec-${suffix}`,
+    episodePageId: suffix === "episode" ? `episode-${suffix}` : undefined,
+    nextCheckAt
+  });
+  return variant;
+}
+
+test("reconciler checks only due recorded targets and stops at three", async () => {
+  const f = fixture();
+  try {
+    for (const suffix of ["a", "b", "c", "d"]) seedTarget(f.repo, suffix);
+    seedTarget(f.repo, "future", "2026-07-13T00:00:00.000Z");
+    const visited = [];
+    const adapter = { async inspectTarget(target) {
+      visited.push(target.spec_page_id);
+      return { structureVerified: true, mediaBlockId: null, mediaVerified: false, mediaAssetPageId: null, assetsVerified: false, evidence: {} };
+    } };
+    const result = await reconcileDueTargets(f.repo, adapter, { limit: 99, now: NOW });
+    assert.equal(result.checked, 3);
+    assert.deepEqual(visited, ["spec-a", "spec-b", "spec-c"]);
+  } finally { f.close(); }
+});
+
+test("429 persists a global sixty-minute breaker and force explicitly bypasses it", async () => {
+  const f = fixture();
+  try {
+    seedTarget(f.repo, "a");
+    seedTarget(f.repo, "b");
+    let calls = 0;
+    const adapter = { async inspectTarget() { calls += 1; throw Object.assign(new Error("rate limited"), { code: "rate_limited", status: 429 }); } };
+    const result = await reconcileDueTargets(f.repo, adapter, { now: NOW });
+    assert.equal(result.rateLimited, true);
+    assert.equal(calls, 1);
+    await assert.rejects(reconcileDueTargets(f.repo, adapter, { now: "2026-07-12T00:10:00.000Z" }), /circuit breaker open until 2026-07-12T01:00:00.000Z/);
+    await reconcileDueTargets(f.repo, { async inspectTarget() { calls += 1; return { structureVerified: false, mediaVerified: false, assetsVerified: false, evidence: {} }; } },
+      { now: "2026-07-12T00:10:00.000Z", forceAfter429: true, limit: 1 });
+    assert.equal(calls, 2);
+  } finally { f.close(); }
+});
+
+test("failed inspections mutate only retry metadata and authentication stops the batch", async () => {
+  const f = fixture();
+  try {
+    const first = seedTarget(f.repo, "a");
+    seedTarget(f.repo, "b");
+    f.repo.recordNotionInspection(first.id, { structureVerified: true, mediaBlockId: "old-block", mediaVerified: true, assetsVerified: false }, NOW);
+    let calls = 0;
+    const result = await reconcileDueTargets(f.repo, { async inspectTarget() {
+      calls += 1;
+      throw Object.assign(new Error("unauthorized"), { code: "unauthorized", status: 401 });
+    } }, { now: "2026-07-12T00:01:00.000Z" });
+    assert.equal(result.authFailed, true);
+    assert.equal(calls, 1);
+    const target = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(first.id);
+    assert.equal(target.media_block_id, "old-block");
+    assert.equal(target.media_verified_at, NOW);
+    assert.equal(target.attempt_count, 1);
+    assert.equal(target.next_check_at, "2026-07-12T00:06:00.000Z");
+  } finally { f.close(); }
+});
+
+test("ordinary failures retry per target and continue the batch", async () => {
+  const f = fixture();
+  try {
+    const first = seedTarget(f.repo, "a");
+    const second = seedTarget(f.repo, "b");
+    const visited = [];
+    const result = await reconcileDueTargets(f.repo, { async inspectTarget(target) {
+      visited.push(target.variant_id);
+      if (target.variant_id === first.id) throw Object.assign(new Error("temporary"), { code: "service_unavailable" });
+      return { structureVerified: false, mediaVerified: false, assetsVerified: false, evidence: {} };
+    } }, { now: NOW, limit: 2 });
+    assert.deepEqual(visited, [first.id, second.id]);
+    assert.equal(result.failed, 1);
+    assert.equal(result.pending, 1);
+    const failed = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(first.id);
+    assert.equal(failed.next_check_at, "2026-07-12T00:05:00.000Z");
+    assert.equal(failed.last_error_code, "service_unavailable");
+  } finally { f.close(); }
+});
+
+test("all four evidence gates advance legally to sync_ready while incomplete evidence stays pending", async () => {
+  const f = fixture();
+  try {
+    const complete = seedTarget(f.repo, "complete");
+    const incomplete = seedTarget(f.repo, "incomplete");
+    const adapter = { async inspectTarget(target) {
+      if (target.variant_id === incomplete.id) return { structureVerified: true, mediaVerified: true, mediaBlockId: "m2", assetsVerified: false, evidence: {} };
+      return { structureVerified: true, mediaVerified: true, mediaBlockId: "m1", assetsVerified: true, mediaAssetPageId: "asset-1", evidence: {} };
+    } };
+    await reconcileDueTargets(f.repo, adapter, { now: NOW });
+    assert.equal(f.db.prepare("SELECT publication_state FROM variants WHERE id=?").get(complete.id).publication_state, "sync_ready");
+    assert.equal(f.db.prepare("SELECT publication_state FROM variants WHERE id=?").get(incomplete.id).publication_state, "assets_pending");
+    assert.deepEqual(f.repo.getEvents({ entityType: "variant", entityId: complete.id }).filter(event => event.event_type === "publication_state_changed").map(event => JSON.parse(event.payload_json).to),
+      ["structure_pending", "upload_pending", "upload_seen", "assets_pending", "verification_pending", "sync_ready"]);
+  } finally { f.close(); }
+});
+
+test("adapter uses only recorded pages and a relation-constrained Media Assets query", async () => {
+  const calls = [];
+  const client = {
+    pages: { async retrieve(input) { calls.push(["pages.retrieve", input]); return { id: input.page_id }; } },
+    blocks: { children: { async list(input) { calls.push(["blocks.children.list", input]); return { results: [{ id: "media-1", type: "video", video: { file: { url: "https://example.test/video.mp4" } } }], has_more: false }; } } },
+    dataSources: { async query(input) { calls.push(["dataSources.query", input]); return { results: [{ id: "asset-1" }], has_more: false }; } },
+    databases: { async query() { throw new Error("database-wide query forbidden"); } },
+    search: async () => { throw new Error("search forbidden"); }
+  };
+  const adapter = createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" });
+  const result = await adapter.inspectTarget({ work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1" });
+  assert.equal(result.mediaVerified, true);
+  assert.equal(result.assetsVerified, true);
+  assert.deepEqual(calls.slice(0, 4), [
+    ["pages.retrieve", { page_id: "work-1" }],
+    ["pages.retrieve", { page_id: "spec-1" }],
+    ["pages.retrieve", { page_id: "episode-1" }],
+    ["blocks.children.list", { block_id: "episode-1", page_size: 100 }]
+  ]);
+  assert.deepEqual(calls[4], ["dataSources.query", {
+    data_source_id: "assets-ds", page_size: 10,
+    filter: { or: [
+      { property: "Work", relation: { contains: "work-1" } },
+      { property: "Spec", relation: { contains: "spec-1" } },
+      { property: "Episode", relation: { contains: "episode-1" } }
+    ] }
+  }]);
+  assert.equal(calls.length, 5);
+});

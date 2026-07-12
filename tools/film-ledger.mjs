@@ -4,6 +4,7 @@ import path from "node:path";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 import { importScan } from "./lib/film-ledger-discovery.mjs";
+import { createNotionTargetAdapter, reconcileDueTargets } from "./lib/film-ledger-notion.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
@@ -12,7 +13,7 @@ function parse(argv) {
   const positionals = [];
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--variant", "--work-page", "--spec-page", "--episode-page",
     "--output-path", "--output-size", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail"]);
-  const booleans = new Set(["--json", "--pass", "--fail"]);
+  const booleans = new Set(["--json", "--pass", "--fail", "--force-after-429"]);
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (values.has(arg)) {
@@ -49,7 +50,7 @@ function variantRecord(db, id) {
   return row;
 }
 
-function main() {
+async function main() {
   let parsed;
   try { parsed = parse(process.argv.slice(2)); }
   catch (error) { console.error(error.message); process.exitCode = 2; return; }
@@ -93,6 +94,15 @@ function main() {
         specPageId: requireOption(options, "spec_page", "--spec-page"), episodePageId: options.episode_page });
       if (variant.publication_state === "not_ready") repo.transitionPublication(id, "structure_pending", { targetRegistered: true });
       output(target, options.json, `registered Notion target for variant ${id}`);
+    } else if (command === "reconcile-notion") {
+      const limit = options.limit === undefined ? 3 : Number(options.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 3) throw new Error("--limit must be between 1 and 3");
+      const { Client } = await import("@notionhq/client");
+      const auth = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+      if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
+      const adapter = createNotionTargetAdapter(new Client({ auth }));
+      const result = await reconcileDueTargets(repo, adapter, { limit, forceAfter429: options.force_after_429 === true });
+      output(result, options.json, `checked=${result.checked} completed=${result.completed} pending=${result.pending} failed=${result.failed}`);
     } else throw new Error(`unknown command: ${command}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -100,4 +110,4 @@ function main() {
   } finally { db?.close(); }
 }
 
-main();
+await main();

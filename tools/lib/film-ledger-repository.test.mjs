@@ -128,3 +128,22 @@ test("status summary reports production and publication states", () => {
     assert.deepEqual(f.repo.getStatusSummary(), { production: { discovered: 1 }, publication: { not_ready: 1 }, totals: { variants: 1, syncReady: 0 } });
   } finally { f.close(); }
 });
+
+test("Notion reconciliation persistence separates evidence from failures and stores scheduler state", () => {
+  const f = fixture();
+  try {
+    const { variant } = seed(f.repo);
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) f.repo.transitionProduction(variant.id, state);
+    f.repo.transitionPublication(variant.id, "structure_pending");
+    f.repo.registerNotionTarget(variant.id, { workPageId: "w", specPageId: "s" });
+    assert.equal(f.repo.listDueNotionTargets({ limit: 9 }).length, 1);
+    f.repo.recordNotionInspection(variant.id, { structureVerified: true, mediaVerified: true, mediaBlockId: "block" }, "2026-07-12T00:00:00.000Z", "2026-07-12T00:05:00.000Z");
+    f.repo.recordNotionFailure(variant.id, { code: "temporary", detail: "failed", nextCheckAt: "2026-07-12T00:20:00.000Z" });
+    const target = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variant.id);
+    assert.equal(target.media_block_id, "block");
+    assert.equal(target.media_verified_at, "2026-07-12T00:00:00.000Z");
+    assert.equal(target.last_error_code, "temporary");
+    f.repo.setSchedulerState("notion_backoff_until", "2026-07-12T01:00:00.000Z");
+    assert.equal(f.repo.getSchedulerState("notion_backoff_until"), "2026-07-12T01:00:00.000Z");
+  } finally { f.close(); }
+});

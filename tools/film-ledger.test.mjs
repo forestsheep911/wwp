@@ -77,3 +77,13 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
     assert.equal(shown.target.spec_page_id, "spec");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("CLI reconcile-notion enforces a maximum of three before loading an adapter", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-reconcile-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const result = run(["--db", db, "reconcile-notion", "--limit", "4", "--json"], dir);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--limit must be between 1 and 3/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
