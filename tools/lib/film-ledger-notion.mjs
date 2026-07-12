@@ -120,10 +120,9 @@ function recordedStructureMatches(pages, target) {
 function playbackAssetComplete(page) {
   const properties = page?.properties ?? {};
   return selectName(properties["Asset Type"]) === "playable_video"
-    && selectName(properties["Media Availability"]).toLowerCase() === "available"
+    && selectName(properties["Media Availability"]).toLowerCase() === "playable"
     && Boolean(selectName(properties["Video Codec"]))
     && Boolean(selectName(properties.Container))
-    && properties["Asset URL"]?.type === "url" && Boolean(properties["Asset URL"].url)
     && checkboxValue(properties["Playback Verified"]) === true
     && checkboxValue(properties["Hide from Website"]) === false
     && checkboxValue(properties["Needs Review"]) !== true;
