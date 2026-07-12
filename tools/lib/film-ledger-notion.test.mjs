@@ -126,7 +126,10 @@ test("adapter uses only recorded pages and a relation-constrained Media Assets q
   const client = {
     pages: { async retrieve(input) { calls.push(["pages.retrieve", input]); return { id: input.page_id }; } },
     blocks: { children: { async list(input) { calls.push(["blocks.children.list", input]); return { results: [{ id: "media-1", type: "video", video: { file: { url: "https://example.test/video.mp4" } } }], has_more: false }; } } },
-    dataSources: { async query(input) { calls.push(["dataSources.query", input]); return { results: [{ id: "asset-1" }], has_more: false }; } },
+    dataSources: { async query(input) { calls.push(["dataSources.query", input]); return { results: [
+      { id: "wrong-asset", properties: { Work: { type: "relation", relation: [{ id: "work-1" }] }, "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "other-episode" }] }, "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "other-media" }] } } },
+      { id: "asset-1", properties: { Work: { type: "relation", relation: [{ id: "work-1" }] }, "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "episode-1" }] }, "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] } } }
+    ], has_more: false }; } },
     databases: { async query() { throw new Error("database-wide query forbidden"); } },
     search: async () => { throw new Error("search forbidden"); }
   };
@@ -142,11 +145,34 @@ test("adapter uses only recorded pages and a relation-constrained Media Assets q
   ]);
   assert.deepEqual(calls[4], ["dataSources.query", {
     data_source_id: "assets-ds", page_size: 10,
-    filter: { or: [
+    filter: { and: [
       { property: "Work", relation: { contains: "work-1" } },
-      { property: "Spec", relation: { contains: "spec-1" } },
-      { property: "Episode", relation: { contains: "episode-1" } }
+      { or: [
+        { property: "Source Page ID", rich_text: { equals: "episode-1" } },
+        { property: "Media Block ID", rich_text: { equals: "media-1" } }
+      ] }
     ] }
   }]);
+  assert.equal(result.mediaAssetPageId, "asset-1");
   assert.equal(calls.length, 5);
+});
+
+test("adapter rejects same-work Media Assets rows without target-specific evidence", async () => {
+  const client = {
+    pages: { async retrieve(input) { return { id: input.page_id }; } },
+    blocks: { children: { async list() { return { results: [{ id: "media-1", type: "video", video: { file: { url: "https://example.test/video.mp4" } } }], has_more: false }; } } },
+    dataSources: { async query() { return { results: [{
+      id: "other-spec-asset",
+      properties: {
+        Work: { type: "relation", relation: [{ id: "work-1" }] },
+        "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "other-spec" }] },
+        "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "other-media" }] }
+      }
+    }] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: null
+  });
+  assert.equal(result.assetsVerified, false);
+  assert.equal(result.mediaAssetPageId, null);
 });

@@ -72,6 +72,28 @@ function mediaUrl(block) {
   return value?.file?.url || value?.external?.url || "";
 }
 
+function plainText(items) {
+  return (items ?? []).map(item => item?.plain_text ?? item?.text?.content ?? "").join("");
+}
+
+function propertyPlainText(property) {
+  if (property?.type === "rich_text") return plainText(property.rich_text);
+  if (property?.type === "title") return plainText(property.title);
+  return "";
+}
+
+function relationIds(property) {
+  return property?.type === "relation" ? (property.relation ?? []).map(item => item.id) : [];
+}
+
+function matchesRecordedAsset(page, { workPageId, sourcePageId, mediaBlockId }) {
+  const properties = page?.properties ?? {};
+  if (!relationIds(properties.Work).includes(workPageId)) return false;
+  const sourceMatches = propertyPlainText(properties["Source Page ID"]) === sourcePageId;
+  const mediaMatches = Boolean(mediaBlockId) && propertyPlainText(properties["Media Block ID"]) === mediaBlockId;
+  return sourceMatches || mediaMatches;
+}
+
 async function listRecordedPageChildren(client, pageId) {
   const results = [];
   let cursor;
@@ -86,8 +108,7 @@ async function listRecordedPageChildren(client, pageId) {
 }
 
 export function createNotionTargetAdapter(client, {
-  mediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID,
-  relationProperties = { work: "Work", spec: "Spec", episode: "Episode" }
+  mediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID
 } = {}) {
   if (!client?.pages?.retrieve || !client?.blocks?.children?.list || !client?.dataSources?.query) throw new TypeError("Notion client lacks required targeted APIs");
   if (!mediaAssetsDataSourceId) throw new Error("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID is required");
@@ -98,20 +119,30 @@ export function createNotionTargetAdapter(client, {
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
       const media = blocks.find(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block));
-      const relations = [
-        [relationProperties.work, target.work_page_id],
-        [relationProperties.spec, target.spec_page_id],
-        [relationProperties.episode, target.episode_page_id]
-      ].filter(([, id]) => Boolean(id)).map(([property, id]) => ({ property, relation: { contains: id } }));
-      const assets = await client.dataSources.query({ data_source_id: mediaAssetsDataSourceId, page_size: 10, filter: { or: relations } });
-      const asset = assets.results?.[0] ?? null;
+      const traceFilters = [{ property: "Source Page ID", rich_text: { equals: contentPageId } }];
+      if (media?.id) traceFilters.push({ property: "Media Block ID", rich_text: { equals: media.id } });
+      const assets = await client.dataSources.query({
+        data_source_id: mediaAssetsDataSourceId,
+        page_size: 10,
+        filter: {
+          and: [
+            { property: "Work", relation: { contains: target.work_page_id } },
+            traceFilters.length === 1 ? traceFilters[0] : { or: traceFilters }
+          ]
+        }
+      });
+      const asset = (assets.results ?? []).find(page => matchesRecordedAsset(page, {
+        workPageId: target.work_page_id,
+        sourcePageId: contentPageId,
+        mediaBlockId: media?.id
+      })) ?? null;
       return {
         structureVerified: recordedIds.length >= 2,
         mediaBlockId: media?.id ?? null,
         mediaVerified: Boolean(media),
         mediaAssetPageId: asset?.id ?? null,
         assetsVerified: Boolean(asset),
-        evidence: { inspectedPageIds: recordedIds, contentPageId, mediaAssetRelationCount: relations.length }
+        evidence: { inspectedPageIds: recordedIds, contentPageId, mediaBlockId: media?.id ?? null }
       };
     }
   };

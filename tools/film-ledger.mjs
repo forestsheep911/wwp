@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 import { importScan } from "./lib/film-ledger-discovery.mjs";
@@ -50,6 +51,19 @@ function variantRecord(db, id) {
   return row;
 }
 
+async function loadNotionAdapter() {
+  const injectedModule = process.env.WWP_FILM_LEDGER_NOTION_ADAPTER_MODULE;
+  if (injectedModule) {
+    const module = await import(pathToFileURL(path.resolve(injectedModule)).href);
+    if (typeof module.createAdapter !== "function") throw new Error("injected Notion adapter module must export createAdapter");
+    return module.createAdapter();
+  }
+  const { Client } = await import("@notionhq/client");
+  const auth = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+  if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
+  return createNotionTargetAdapter(new Client({ auth }));
+}
+
 async function main() {
   let parsed;
   try { parsed = parse(process.argv.slice(2)); }
@@ -97,11 +111,8 @@ async function main() {
     } else if (command === "reconcile-notion") {
       const limit = options.limit === undefined ? 3 : Number(options.limit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 3) throw new Error("--limit must be between 1 and 3");
-      const { Client } = await import("@notionhq/client");
-      const auth = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
-      if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
-      const adapter = createNotionTargetAdapter(new Client({ auth }));
-      const result = await reconcileDueTargets(repo, adapter, { limit, forceAfter429: options.force_after_429 === true });
+      const adapter = await loadNotionAdapter();
+      const result = await reconcileDueTargets(repo, adapter, { limit, forceAfter429: options["force-after-429"] === true });
       output(result, options.json, `checked=${result.checked} completed=${result.completed} pending=${result.pending} failed=${result.failed}`);
     } else throw new Error(`unknown command: ${command}`);
   } catch (error) {

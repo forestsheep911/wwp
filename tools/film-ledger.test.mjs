@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const cli = path.resolve("tools/film-ledger.mjs");
-function run(args, cwd) { return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: "utf8" }); }
+function run(args, cwd, env = {}) { return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: "utf8", env: { ...process.env, ...env } }); }
 
 test("CLI initializes and reports a clean JSON status", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-"));
@@ -85,5 +85,40 @@ test("CLI reconcile-notion enforces a maximum of three before loading an adapter
     const result = run(["--db", db, "reconcile-notion", "--limit", "4", "--json"], dir);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /--limit must be between 1 and 3/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI --force-after-429 bypasses an open breaker and invokes the adapter", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-force-breaker-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const markerPath = path.join(dir, "adapter-called.txt");
+    const adapterPath = path.join(dir, "offline-adapter.mjs");
+    writeFileSync(adapterPath, `import { writeFileSync } from "node:fs";
+export function createAdapter() {
+  return { async inspectTarget() {
+    writeFileSync(process.env.WWP_LEDGER_ADAPTER_MARKER, "called");
+    return { structureVerified: false, mediaVerified: false, assetsVerified: false, evidence: {} };
+  } };
+}`);
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db, { now: () => "2026-07-12T00:00:00.000Z" });
+    const work = repo.ensureWork({ canonicalTitle: "Force", year: 2025, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "main", displayTitle: "Force" });
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) repo.transitionProduction(variant.id, state);
+    repo.transitionPublication(variant.id, "structure_pending");
+    repo.registerNotionTarget(variant.id, { workPageId: "work", specPageId: "spec" });
+    repo.setSchedulerState("notion_backoff_until", "2099-01-01T00:00:00.000Z");
+    db.close();
+
+    const result = run(["--db", dbPath, "reconcile-notion", "--force-after-429", "--json"], dir, {
+      WWP_FILM_LEDGER_NOTION_ADAPTER_MODULE: adapterPath,
+      WWP_LEDGER_ADAPTER_MARKER: markerPath
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).checked, 1);
+    assert.equal(existsSync(markerPath), true);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
