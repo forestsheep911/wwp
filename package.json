@@ -38,6 +38,8 @@
     "notion:series-audit": "node tools/notion-series-structure-audit.mjs",
     "notion:series-asset-write": "node tools/notion-media-assets-write-series.mjs",
     "film:queue-watch": "node .codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs",
+    "film:ledger": "node tools/film-ledger.mjs",
+    "film:ledger:test": "node --test tools/lib/film-ledger-*.test.mjs tools/film-ledger.test.mjs",
     "backfill:tspdt-imdb": "npm run backfill:tspdt-imdb --workspace @wwpdw/api",
     "build": "npm run build --workspace @wwpdw/web && npm run build --workspace @wwpdw/api && npm run build --workspace @wwpdw/worker",
     "typecheck": "npm run typecheck --workspace @wwpdw/web && npm run typecheck --workspace @wwpdw/api && npm run typecheck --workspace @wwpdw/worker"
