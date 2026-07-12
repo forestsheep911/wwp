@@ -186,7 +186,17 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return { production, publication, totals: { variants: totals.variants, syncReady: totals.syncReady ?? 0 } };
   }
 
+  function listSourcesForRoot(inputRootId) {
+    return db.prepare("SELECT * FROM sources WHERE input_root_id = ? ORDER BY id").all(inputRootId);
+  }
+
+  function markSourceMissing(sourceId, missing = true) {
+    const at = timestamp();
+    db.prepare("UPDATE sources SET missing = ?, updated_at = ? WHERE id = ?").run(missing ? 1 : 0, at, sourceId);
+    return db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
+  }
+
   return { upsertInputRoot, upsertDiscoveredSource, ensureWork, ensureVariant, transitionProduction,
     transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates,
-    getStatusSummary, getEvents };
+    getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing };
 }

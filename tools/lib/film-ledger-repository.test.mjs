@@ -59,6 +59,23 @@ test("null-year works and renamed sources remain idempotent", () => {
   } finally { f.close(); }
 });
 
+test("source reconciliation lists one root and can mark missing then reopen", () => {
+  const f = fixture();
+  try {
+    const firstRoot = f.repo.upsertInputRoot("X:\\queue-a");
+    const secondRoot = f.repo.upsertInputRoot("X:\\queue-b");
+    const first = f.repo.upsertDiscoveredSource({ inputRootId: firstRoot.id, relativePath: "first", absolutePath: "X:\\queue-a\\first", fingerprint: "first", sourceKind: "folder" });
+    const second = f.repo.upsertDiscoveredSource({ inputRootId: firstRoot.id, relativePath: "second", absolutePath: "X:\\queue-a\\second", fingerprint: "second", sourceKind: "folder" });
+    f.repo.upsertDiscoveredSource({ inputRootId: secondRoot.id, relativePath: "other", absolutePath: "X:\\queue-b\\other", fingerprint: "other", sourceKind: "folder" });
+
+    assert.deepEqual(f.repo.listSourcesForRoot(firstRoot.id).map(source => source.id), [first.id, second.id]);
+    assert.equal(f.repo.markSourceMissing(first.id).missing, 1);
+    assert.equal(f.repo.listSourcesForRoot(firstRoot.id)[0].missing, 1);
+    assert.equal(f.repo.markSourceMissing(first.id, false).missing, 0);
+    assert.equal(f.repo.listSourcesForRoot(firstRoot.id)[0].missing, 0);
+  } finally { f.close(); }
+});
+
 test("qc-passed work leaves production and remains due for publication", () => {
   const f = fixture();
   try {
