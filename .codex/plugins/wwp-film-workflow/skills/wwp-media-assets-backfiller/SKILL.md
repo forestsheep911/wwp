@@ -17,16 +17,18 @@ Use this when the external Notion files already exist and the task is to reconci
 
 ## Workflow
 
-1. Scan recently updated Notion pages or the user-specified page set.
-2. Identify video/file blocks and classify them as playable, episode playable, source archive, original disc, root landing media, or unknown.
-3. Treat root-level playable uploads as incomplete structure: movie media belongs under a spec child page; series media belongs under episode pages inside the spec page.
-4. Compare only structurally valid media blocks against existing Media Assets rows.
-5. Prefer local produced files, samples, manifests, or prior ffprobe JSON for metadata.
-6. Use guarded batch manifests with page IDs when a title query can match sequels, remakes, or similarly named pages.
-7. When a matching Media Assets row already exists, patch only empty structured fields from stronger local ffprobe/manifest evidence; never overwrite human values or visibility/review gates silently.
-8. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
-9. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
-10. Apply only after the dry-run is coherent, then read back the result.
+1. Register the exact work/spec/episode page IDs for an unknown manual upload. Use `tools/notion-manual-upload-organizer.mjs` only as an explicit one-shot diagnostic for a user-specified page set; never run a full/recent-page background watcher.
+2. Record the target in the local ledger. An explicit registration remains `not_ready`; it does not prove media or Media Assets evidence.
+3. Run `node tools/film-ledger.mjs reconcile-notion --limit 3 --json`. The reconciler checks at most three due targets and accesses only page IDs already stored in the ledger.
+4. Identify video/file blocks and classify them as playable, episode playable, source archive, original disc, root landing media, or unknown.
+5. Treat root-level playable uploads as incomplete structure: movie media belongs under a spec child page; series media belongs under episode pages inside the spec page.
+6. Compare only structurally valid media blocks against existing Media Assets rows.
+7. Prefer local produced files, samples, manifests, or prior ffprobe JSON for metadata.
+8. Use guarded batch manifests with page IDs when a title query can match sequels, remakes, or similarly named pages.
+9. When a matching Media Assets row already exists, patch only empty structured fields from stronger local ffprobe/manifest evidence; never overwrite human values or visibility/review gates silently.
+10. If no local probe source exists, ask before downloading Notion-hosted files just to probe them.
+11. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
+12. Apply only after the dry-run is coherent, then read back the result and reconcile the recorded target again. `qc_passed` prevents duplicate encoding; only `sync_ready` exits ordinary observation queues.
 
 ## Guardrails
 
@@ -37,6 +39,7 @@ Use this when the external Notion files already exist and the task is to reconci
 - Treat `Hide from Website` and `Playback Verified` as review gates, not metadata blanks. Do not clear/set them merely because Media Assets were created or backfilled.
 - For source/archive rows, fill lineage, size, container/archive, and availability first. Only claim stream-level metadata when a real media file can be probed.
 - For Notion-hosted media, treat source page IDs and media block IDs as the durable link. Do not require a copied Asset URL when the underlying URL is temporary.
+- Do not infer upload completion from an API failure or an absent recent-page result. A Notion 429 opens the ledger's global 60-minute circuit breaker; retry only after the recorded due time unless a human explicitly forces the check.
 
 ## Reference
 

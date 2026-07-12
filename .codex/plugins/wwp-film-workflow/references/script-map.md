@@ -7,7 +7,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `node .codex/plugins/wwp-film-workflow/scripts/scan-input-directory.mjs --root <input-dir> --output <scan.json>`
   - Summarizes top-level candidate folders, largest media files, subtitle sidecars, NFOs, and filename-derived flags before heavy probing.
 - `node .codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs --root <input-dir> --state <state.json> --once`
-  - Compares the latest scan with a saved state file and reports new, removed, or changed queue entries. It also accepts positional `root state output` arguments for npm-forwarding edge cases. Use `--interval-sec <seconds>` only when an active monitoring loop is desired.
+  - Compares the latest scan with a saved state file and reports new, removed, or changed queue entries. Pass `--ledger .local-data/wwp-film-workflow.sqlite` so every scan writes source discoveries to the local ledger before the JSON baseline is replaced. It also accepts positional `root state output` arguments for npm-forwarding edge cases. Use `--interval-sec <seconds>` only when an active monitoring loop is desired.
 - `node .codex/plugins/wwp-film-workflow/scripts/probe-media.mjs --input <media> --output <json>`
   - Runs `ffprobe` and writes structured JSON for source/final media.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.ps1 -InputPath <media> -Output <png>`
@@ -31,6 +31,13 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 
 ## Existing Repository Tools
 
+- `node tools/film-ledger.mjs migrate-local-data --queue-state <state.json> [--queue-state <state.json> ...] --organizer-report <report.json> [--corrections <manifest.json>]`
+  - One-time, explicit baseline import. Queue states create input roots and source discoveries only; they never auto-select work. Organizer reports register only explicit work/spec/episode page IDs and media block IDs. Human corrections require an exact output path and append a review event. This command is not a watcher and must not be run automatically.
+- `node tools/film-ledger.mjs next --stage production --limit 5 --json`
+  - Reads the bounded local production queue. `qc_passed` variants are excluded here to prevent duplicate encoding.
+- `node tools/film-ledger.mjs reconcile-notion --limit 3 --json`
+  - Inspects at most three due ledger targets by their recorded page IDs. There is no automatic full-database or recently-edited-page Notion watcher. Continue reconciliation until the four evidence gates produce `sync_ready`; `qc_passed` alone is not the final exit.
+
 - `tools/notion-upload-movie-video.mjs`
   - Upload a playable movie MP4 to an existing or target movie/spec page. Use `--page-id <movie-page-id> --target-title "<spec title>" --prepare-only --apply` before long encode or manual upload handoff to create or reuse the destination spec child page without requiring a finished file. This is required for manual upload handoff because Notion API cannot move uploaded media blocks between pages.
 - `tools/notion-upload-movie-package.mjs`
@@ -44,7 +51,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-media-assets-write.mjs`
   - Write movie Media Assets rows from audited candidates. Prefer batch manifests with page IDs, expected-title guards, and ffprobe-backed `metadata` overrides for production apply runs. The writer must not treat a playable row as permission to un-hide website visibility; playback/QC review remains separate.
 - `tools/notion-manual-upload-organizer.mjs`
-  - Inspect recently edited pages for root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. The report includes `suggestedTarget` page IDs for manual move/reupload destinations; series root uploads should point to episode child page IDs when episode numbers can be parsed. Use this before Media Assets writes when manual uploads may have landed on the work page root.
+  - Explicit one-shot diagnostic for a user-specified page set. Inspect root-level manual video/file uploads, report incomplete structure, and prepare/verify target spec pages before manual upload. The report includes `suggestedTarget` page IDs for manual move/reupload destinations; series root uploads should point to episode child page IDs when episode numbers can be parsed. Do not launch this tool in a background loop and do not use its recent-page mode as an automatic watcher. Unknown manual uploads must first be identified by a human and registered with exact work/spec/episode page IDs in the ledger.
 - `tools/notion-media-assets-write-series.mjs`
   - Write episode-aware series Media Assets rows. Use `--metadata-manifest <json>` when final `ffprobe` data should override filename-derived metadata for episode outputs. Use `--update-existing-missing` only when existing rows should be patched for empty structured fields from stronger evidence; it must not overwrite human values. The writer must not treat a playable episode row as permission to un-hide website visibility.
 - `tools/notion-media-assets-stats.mjs`

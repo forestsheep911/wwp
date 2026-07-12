@@ -6,6 +6,7 @@ import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 import { importScan } from "./lib/film-ledger-discovery.mjs";
 import { createNotionTargetAdapter, reconcileDueTargets } from "./lib/film-ledger-notion.mjs";
+import { applyCorrectionsManifest, migrateOrganizerReport, migrateQueueState } from "./lib/film-ledger-migration.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
@@ -13,13 +14,18 @@ function parse(argv) {
   const options = { db: DEFAULT_DB, json: false };
   const positionals = [];
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--variant", "--work-page", "--spec-page", "--episode-page",
-    "--output-path", "--output-size", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail"]);
+    "--output-path", "--output-size", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail",
+    "--queue-state", "--organizer-report", "--corrections"]);
+  const repeated = new Set(["--queue-state", "--organizer-report"]);
   const booleans = new Set(["--json", "--pass", "--fail", "--force-after-429"]);
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (values.has(arg)) {
       if (argv[i + 1] == null || argv[i + 1].startsWith("--")) throw new Error(`${arg} requires a value`);
-      options[arg.slice(2).replaceAll("-", "_")] = argv[++i];
+      const key = arg.slice(2).replaceAll("-", "_");
+      const value = argv[++i];
+      if (repeated.has(arg)) (options[key] ??= []).push(value);
+      else options[key] = value;
     } else if (booleans.has(arg)) options[arg.slice(2)] = true;
     else if (arg.startsWith("--")) throw new Error(`unknown argument: ${arg}`);
     else positionals.push(arg);
@@ -114,6 +120,27 @@ async function main() {
       const adapter = await loadNotionAdapter();
       const result = await reconcileDueTargets(repo, adapter, { limit, forceAfter429: options["force-after-429"] === true });
       output(result, options.json, `checked=${result.checked} completed=${result.completed} pending=${result.pending} failed=${result.failed}`);
+    } else if (command === "migrate-local-data") {
+      const queueStates = options.queue_state ?? [];
+      const organizerReports = options.organizer_report ?? [];
+      if (queueStates.length === 0 && organizerReports.length === 0 && !options.corrections) {
+        throw new Error("at least one --queue-state, --organizer-report, or --corrections is required");
+      }
+      const summary = { inserted: 0, unchanged: 0, changed: 0, missing: 0 };
+      for (const file of queueStates) {
+        const result = migrateQueueState(repo, JSON.parse(readFileSync(file, "utf8")));
+        for (const key of Object.keys(summary)) summary[key] += result.summary[key];
+      }
+      let targetsRegistered = 0;
+      for (const file of organizerReports) {
+        targetsRegistered += migrateOrganizerReport(repo, JSON.parse(readFileSync(file, "utf8"))).registered;
+      }
+      const corrections = options.corrections
+        ? applyCorrectionsManifest(repo, JSON.parse(readFileSync(options.corrections, "utf8"))).corrected
+        : 0;
+      const result = { queueStates: queueStates.length, organizerReports: organizerReports.length, corrections,
+        sources: summary, targetsRegistered };
+      output(result, options.json, `queue_states=${result.queueStates} targets=${targetsRegistered} corrections=${corrections}`);
     } else throw new Error(`unknown command: ${command}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

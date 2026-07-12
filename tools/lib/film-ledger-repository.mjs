@@ -81,16 +81,17 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function ensureVariant(input) {
     const at = timestamp();
     db.prepare(`INSERT INTO variants (work_id, source_id, spec_key, display_title, audio_variant, subtitle_variant, cut_variant,
-        target_size_bytes, probe_path, next_review_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        target_size_bytes, output_path, probe_path, next_review_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(work_id, spec_key) DO UPDATE SET source_id=COALESCE(excluded.source_id, variants.source_id),
         display_title=excluded.display_title, audio_variant=excluded.audio_variant, subtitle_variant=excluded.subtitle_variant,
         cut_variant=excluded.cut_variant, target_size_bytes=COALESCE(excluded.target_size_bytes, variants.target_size_bytes),
+        output_path=COALESCE(excluded.output_path, variants.output_path),
         probe_path=COALESCE(excluded.probe_path, variants.probe_path),
         next_review_at=COALESCE(excluded.next_review_at, variants.next_review_at), updated_at=excluded.updated_at`)
       .run(input.workId, input.sourceId ?? null, input.specKey, input.displayTitle, input.audioVariant ?? "unknown",
         input.subtitleVariant ?? "unknown", input.cutVariant ?? "theatrical", input.targetSizeBytes ?? null,
-        input.probePath ?? null, input.nextReviewAt ?? null, at, at);
+        input.outputPath ?? null, input.probePath ?? null, input.nextReviewAt ?? null, at, at);
     return db.prepare("SELECT * FROM variants WHERE work_id = ? AND spec_key = ?").get(input.workId, input.specKey);
   }
 
@@ -237,8 +238,32 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .run(nextCheckAt, code, detail, failedAt, variantId);
   }
 
+  function findVariantByOutputPath(outputPath) {
+    return db.prepare("SELECT * FROM variants WHERE output_path = ?").get(outputPath) ?? null;
+  }
+
+  function applyMigrationCorrection(variantId, correction) {
+    return withTransaction(db, () => {
+      const current = getVariant.get(variantId);
+      if (!current) throw new Error(`variant not found: ${variantId}`);
+      if (correction.productionState && !new Set(["qc_failed", "deferred"]).has(correction.productionState)) {
+        throw new Error("migration productionState must be qc_failed or deferred");
+      }
+      const at = timestamp();
+      db.prepare(`UPDATE variants SET audio_variant=COALESCE(?, audio_variant),
+        production_state=COALESCE(?, production_state), failure_code=COALESCE(?, failure_code),
+        failure_detail=COALESCE(?, failure_detail), updated_at=? WHERE id=?`)
+        .run(correction.audioVariant ?? null, correction.productionState ?? null,
+          correction.failureCode ?? null, correction.failureDetail ?? null, at, variantId);
+      insertEvent.run("variant", variantId, "human_review_correction",
+        stableJson({ from: { audioVariant: current.audio_variant, productionState: current.production_state }, correction }), at);
+      return getVariant.get(variantId);
+    });
+  }
+
   return { upsertInputRoot, upsertDiscoveredSource, ensureWork, ensureVariant, transitionProduction,
     transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
-    getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure };
+    getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
+    findVariantByOutputPath, applyMigrationCorrection };
 }

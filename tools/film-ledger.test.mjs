@@ -43,6 +43,27 @@ test("CLI supports the default database and emits clean JSON", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI migrate-local-data accepts repeated baselines and an explicit corrections manifest", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-migrate-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const queueA = path.join(dir, "queue-a.json");
+    const queueB = path.join(dir, "queue-b.json");
+    const report = path.join(dir, "report.json");
+    const corrections = path.join(dir, "corrections.json");
+    const baseline = (root, name) => ({ root, scannedAt: "2026-07-12T00:00:00.000Z", entries: [{ name, relativePath: name,
+      fileCount: 1, mediaCount: 1, subtitleCount: 0, nfoCount: 0, totalBytes: 1, largestMedia: [], flags: {} }] });
+    writeFileSync(queueA, JSON.stringify(baseline("X:\\queue", "One")));
+    writeFileSync(queueB, JSON.stringify(baseline("Y:\\queue", "Two")));
+    writeFileSync(report, JSON.stringify({ pages: [] }));
+    writeFileSync(corrections, JSON.stringify({ variants: [] }));
+    const result = run(["--db", db, "migrate-local-data", "--queue-state", queueA, "--queue-state", queueB,
+      "--organizer-report", report, "--corrections", corrections, "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { queueStates: 2, organizerReports: 1, corrections: 0, sources: { inserted: 2, unchanged: 0, changed: 0, missing: 0 }, targetsRegistered: 0 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI next, show, record-qc, and register-target cover the ledger workflow", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-workflow-"));
   try {
