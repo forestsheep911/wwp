@@ -12,6 +12,16 @@ export function titleYear(value) {
   return Number(clean(value).match(YEAR_PATTERN)?.[1]) || undefined;
 }
 
+export function workSeason(input = {}) {
+  const text = [input.title, input.canonicalTitle, input.chineseTitle, input.englishTitle, input.originalTitle, ...(input.aliases ?? [])]
+    .filter(Boolean)
+    .join(" ");
+  const arabic = text.match(/(?:第\s*|\bseason\s*|\bs)0*(\d+)\s*(?:季\b|\b)/i)?.[1];
+  if (arabic) return Number(arabic);
+  const chinese = text.match(/第([一二三四五六七八九十])季/)?.[1];
+  return chinese ? "一二三四五六七八九十".indexOf(chinese) + 1 : undefined;
+}
+
 export function normalizeWorkAlias(value) {
   return clean(value)
     .replace(YEAR_PATTERN, "")
@@ -55,7 +65,11 @@ function idMatches(candidate, existing, key) {
 
 export function matchExistingWork(candidate, existing) {
   for (const key of ["doubanId", "imdbId", "tmdbId", "wwWorkId"]) {
-    if (idMatches(candidate, existing, key)) return { matched: true, strength: "exact_id", key };
+    if (!idMatches(candidate, existing, key)) continue;
+    const candidateSeason = workSeason(candidate);
+    const existingSeason = workSeason(existing);
+    if (candidateSeason && existingSeason && candidateSeason !== existingSeason) continue;
+    return { matched: true, strength: "exact_id", key };
   }
 
   const candidateAliases = new Set(collectWorkAliases(candidate));
