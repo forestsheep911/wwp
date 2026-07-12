@@ -44,6 +44,8 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 ## Guardrails
 
 - Existing Notion works should be reused; do not create duplicate work pages for supplemental specs.
+- Before creating any work page, run the multi-alias identity preflight in `../../references/work-title-identity-rules.md`. Search Chinese, English, original, regional, filename/source, season, yearless, and temporary-title forms plus all known external IDs. A weak or noncanonical old title is still an existing work and must be repaired instead of duplicated.
+- Canonicalize work titles from the verified Douban display title when available; otherwise use a verified authoritative fallback and include the foreign/original title and release year. Title cleanup is independent from playable readiness.
 - Spec backfill can be as important as new-film creation when the existing specs are weak.
 - Metadata collection is not gated by playable readiness. If a scanned work is worth cataloging, create or repair its work-level metadata even when no video is ready to upload.
 - Do not block work-page creation and sourced metadata backfill on video upload readiness. Playable Media Assets rows still require real uploaded/probed media evidence.
@@ -58,3 +60,4 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 - Notion and Media Assets rules: `../../references/notion-media-assets.md`
 - Metadata sources: `../../references/metadata-sources.md`
 - Script inventory: `../../references/script-map.md`
+- Work title and duplicate prevention: `../../references/work-title-identity-rules.md`
