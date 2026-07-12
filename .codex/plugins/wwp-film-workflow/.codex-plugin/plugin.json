@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"
@@ -16,6 +16,6 @@
       "skills",
       "scripts"
     ],
-    "defaultPrompt": "Use the WWP film workflow to evaluate a user-specified input directory, produce playable versions, publish to Notion, and verify Media Assets."
+    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow from registered input roots through metadata, playable production, Notion publishing, Media Assets, and final readback verification."
   }
 }

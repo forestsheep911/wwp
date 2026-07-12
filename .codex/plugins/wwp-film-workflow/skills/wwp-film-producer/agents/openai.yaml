@@ -1,4 +1,4 @@
 interface:
   display_name: "WWP Film Producer"
-  short_description: "Route WWP film and series production tasks."
-  default_prompt: "Coordinate this WWP film workflow from input selection through Notion and Media Assets verification."
+  short_description: "Start and route the complete WWP film-library workflow."
+  default_prompt: "开始制作影视库：从已登记输入目录开始，推进扫描、建档、元数据、压制、Notion 页面、Media Assets 和最终读回验证。"
