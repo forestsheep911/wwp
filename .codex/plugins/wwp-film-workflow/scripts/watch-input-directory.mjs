@@ -194,7 +194,11 @@ async function main() {
     if (options.ledgerPath) {
       const db = openLedger(options.ledgerPath);
       try {
-        ledger = importScan(createLedgerRepository(db), scan).summary;
+        const repo = createLedgerRepository(db);
+        if (process.env.WWP_TEST_FAIL_LEDGER_IMPORT === "1") {
+          repo.upsertInputRoot = () => { throw new Error("test ledger import failure"); };
+        }
+        ledger = importScan(repo, scan).summary;
       } finally {
         db.close();
       }

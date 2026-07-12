@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -107,6 +107,8 @@ test("watch-input-directory does not update JSON state when ledger import fails"
     mkdirSync(path.join(root, "Movie.One.2025"), { recursive: true });
     writeFileSync(path.join(root, "Movie.One.2025", "Movie.One.2025.mkv"), Buffer.alloc(1024));
     const state = path.join(root, "state.json");
+    const ledger = path.join(root, "film-ledger.sqlite");
+    const movedLedger = path.join(root, "film-ledger-moved.sqlite");
     const previousState = '{"sentinel":true}\n';
     writeFileSync(state, previousState, "utf8");
 
@@ -117,12 +119,18 @@ test("watch-input-directory does not update JSON state when ledger import fails"
       "--state",
       state,
       "--ledger",
-      root,
+      ledger,
       "--once"
-    ], { encoding: "utf8" });
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, WWP_TEST_FAIL_LEDGER_IMPORT: "1" }
+    });
 
     assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /test ledger import failure/);
     assert.equal(readFileSync(state, "utf8"), previousState);
+    renameSync(ledger, movedLedger);
+    renameSync(movedLedger, ledger);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
