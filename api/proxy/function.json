@@ -5,8 +5,8 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": ["get"],
-      "route": "home-browse"
+      "methods": ["get", "head", "post", "put", "patch", "delete", "options"],
+      "route": "{*path}"
     },
     {
       "type": "http",
