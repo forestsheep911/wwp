@@ -2,10 +2,16 @@ const allowedMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE",
 const requestHeaders = ["content-type", "cookie", "if-modified-since", "if-none-match", "range", "x-request-id", "x-wwpdw-csrf-token"];
 const responseHeaders = ["accept-ranges", "cache-control", "content-range", "content-type", "etag", "last-modified", "location", "retry-after", "x-request-id"];
 const healthProxyTimeoutMs = 25_000;
+const maxAbortSignalTimeoutMs = 4_294_967_295;
+
+function urlUsesAllowedProtocol(parsed) {
+  const isLocalHttp = parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+  return parsed.protocol === "https:" || isLocalHttp;
+}
 
 function normalizedBaseUrl(value) {
   const parsed = new URL(value);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+  if (!urlUsesAllowedProtocol(parsed)) {
     throw new Error("Proxy upstream must use HTTPS");
   }
   parsed.pathname = parsed.pathname.replace(/\/$/, "");
@@ -16,7 +22,7 @@ function normalizedBaseUrl(value) {
 
 function normalizedPublicOrigin(value) {
   const parsed = new URL(value);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+  if (!urlUsesAllowedProtocol(parsed)) {
     throw new Error("Public web origin must use HTTPS");
   }
   return parsed.origin;
@@ -24,8 +30,8 @@ function normalizedPublicOrigin(value) {
 
 function normalizedTimeoutMs(value) {
   const timeoutMs = value == null ? 90_000 : Number(value);
-  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new Error("BFF timeout must be a finite positive integer");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > maxAbortSignalTimeoutMs) {
+    throw new Error("BFF timeout must be a safe positive integer within the AbortSignal timeout range");
   }
   return timeoutMs;
 }
@@ -135,6 +141,7 @@ module.exports = {
   buildUpstreamUrl,
   createProxyHandler,
   healthProxyTimeoutMs,
+  maxAbortSignalTimeoutMs,
   proxyTimeoutMsForPath,
   rewriteSessionCookie
 };

@@ -5,6 +5,7 @@ const {
   buildUpstreamUrl,
   createProxyHandler,
   healthProxyTimeoutMs,
+  maxAbortSignalTimeoutMs,
   proxyTimeoutMsForPath,
   rewriteSessionCookie
 } = require("./proxy");
@@ -233,6 +234,67 @@ test("malformed or insecure remote BFF URLs fail configuration with 503", async 
   }
 });
 
+test("non-HTTP URL protocols fail configuration even for local hosts", async () => {
+  const cases = [
+    {
+      name: "FTP upstream on localhost",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "ftp://localhost",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example"
+      }
+    },
+    {
+      name: "WebSocket upstream on loopback",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "ws://127.0.0.1",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example"
+      }
+    },
+    {
+      name: "file upstream",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "file://localhost/tmp",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example"
+      }
+    },
+    {
+      name: "FTP public origin on localhost",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "ftp://localhost"
+      }
+    },
+    {
+      name: "WebSocket public origin on loopback",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "ws://127.0.0.1"
+      }
+    },
+    {
+      name: "file public origin",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "file://localhost/tmp"
+      }
+    }
+  ];
+
+  for (const { name, env } of cases) {
+    let fetched = false;
+    const ctx = context("auth/check");
+    await createProxyHandler({
+      env,
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response();
+      }
+    })(ctx, request("auth/check"));
+    assert.equal(ctx.res.status, 503, name);
+    assert.equal(fetched, false, `${name} must fail before fetch`);
+  }
+});
+
 test("invalid BFF timeout values fail configuration with 503", async () => {
   for (const timeoutValue of ["0", "-1", "1.5", "NaN", "Infinity"]) {
     let fetched = false;
@@ -250,5 +312,28 @@ test("invalid BFF timeout values fail configuration with 503", async () => {
     })(ctx, request("auth/check"));
     assert.equal(ctx.res.status, 503, `invalid timeout ${timeoutValue}`);
     assert.equal(fetched, false, `invalid timeout ${timeoutValue} must fail before fetch`);
+  }
+});
+
+test("BFF timeouts outside AbortSignal.timeout range fail before ordinary and health fetches", async () => {
+  assert.equal(maxAbortSignalTimeoutMs, 4_294_967_295);
+  for (const path of ["auth/check", "health"]) {
+    for (const timeoutValue of ["4294967296", "9007199254740992"]) {
+      let fetched = false;
+      const ctx = context(path);
+      await createProxyHandler({
+        env: {
+          WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+          WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example",
+          WWPDW_BFF_TIMEOUT_MS: timeoutValue
+        },
+        fetchImpl: async () => {
+          fetched = true;
+          return new Response();
+        }
+      })(ctx, request(path));
+      assert.equal(ctx.res.status, 503, `${path} with timeout ${timeoutValue}`);
+      assert.equal(fetched, false, `${path} with timeout ${timeoutValue} must fail before fetch`);
+    }
   }
 });
