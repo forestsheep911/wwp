@@ -14,7 +14,9 @@ const candidatePaths = [
 
 for (const candidatePath of candidatePaths) {
   if (existsSync(candidatePath)) {
-    config({ path: candidatePath, override: true });
+    // Process environment must win so deployment and isolated smoke tests can
+    // safely override local developer defaults from .env.
+    config({ path: candidatePath, override: false });
     break;
   }
 }

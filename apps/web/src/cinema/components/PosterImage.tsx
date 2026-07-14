@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SearchResult } from "@wwpdw/shared";
-
-const posterFallbackMs = 3200;
+import { posterIndexAfterImageEvent } from "../poster-state";
 const notionTemporaryPosterPattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 
 function isBlobPosterUrl(url: string) {
@@ -66,24 +65,12 @@ export function PosterImage({
   result: SearchResult;
 }) {
   const urls = useMemo(() => posterUrls(result), [result]);
-  const [posterIndex, setPosterIndex] = useState(0);
-  const src = urls[posterIndex];
+  const [posterIndex, setPosterIndex] = useState<number | undefined>(0);
+  const src = posterIndex === undefined ? undefined : urls[posterIndex];
 
   useEffect(() => {
     setPosterIndex(0);
   }, [result.assetKey, urls]);
-
-  useEffect(() => {
-    if (!src || posterIndex >= urls.length - 1) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setPosterIndex((current) => (current === posterIndex ? current + 1 : current));
-    }, posterFallbackMs);
-
-    return () => window.clearTimeout(timer);
-  }, [posterIndex, src, urls.length]);
 
   if (!src) {
     return null;
@@ -96,8 +83,11 @@ export function PosterImage({
       loading="lazy"
       referrerPolicy="no-referrer"
       src={src}
+      onLoad={() => {
+        setPosterIndex((current) => posterIndexAfterImageEvent(current, urls.length, "load"));
+      }}
       onError={() => {
-        setPosterIndex((current) => current + 1);
+        setPosterIndex((current) => posterIndexAfterImageEvent(current, urls.length, "error"));
       }}
     />
   );

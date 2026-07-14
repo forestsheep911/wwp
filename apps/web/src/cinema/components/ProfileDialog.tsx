@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Loader2, UserCircle } from "lucide-react";
+import { Loader2, LogOut, UserCircle } from "lucide-react";
+import type { BrowserSession } from "../../api";
 import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
 import {
@@ -22,6 +23,9 @@ interface ProfileDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (name: string, newPasscode?: string) => void;
+  sessions?: BrowserSession[];
+  sessionsLoading?: boolean;
+  onRevokeSession?: (id: string) => void;
 }
 
 export function ProfileDialog({
@@ -30,7 +34,10 @@ export function ProfileDialog({
   member,
   open,
   onOpenChange,
-  onSubmit
+  onSubmit,
+  sessions = [],
+  sessionsLoading = false,
+  onRevokeSession
 }: ProfileDialogProps) {
   const [name, setName] = useState("");
   const [newPasscode, setNewPasscode] = useState("");
@@ -138,6 +145,18 @@ export function ProfileDialog({
             {copy.profile.save}
           </Button>
         </form>
+        <section className="grid gap-2 border-t border-slate-700/60 pt-4">
+          <div>
+            <h3 className="text-sm font-semibold">已登录的设备</h3>
+            <p className="text-xs text-slate-400">可随时退出不再使用的浏览器；修改通行码会退出其他全部设备。</p>
+          </div>
+          {sessionsLoading ? <p className="text-sm text-slate-400">正在加载设备…</p> : sessions.map((session) => (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/60 px-3 py-2" key={session.id}>
+              <div className="min-w-0 text-sm"><p className="truncate font-medium">{session.device ?? "未知设备"}{session.current ? "（当前设备）" : ""}</p><p className="truncate text-xs text-slate-400">最近活跃：{new Date(session.lastSeenAt).toLocaleString()}</p></div>
+              <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => onRevokeSession?.(session.id)}><LogOut className="h-4 w-4" />退出</Button>
+            </div>
+          ))}
+        </section>
       </DialogContent>
     </Dialog>
   );

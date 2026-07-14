@@ -2,13 +2,12 @@ import { type FormEvent, useState } from "react";
 import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
 import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
-  checkAccess,
+  login,
   clearAccessKey,
   errorMessage,
   isUnauthorizedError,
   registerMember,
   resetMemberPasscode,
-  setAccessKey
 } from "../../api";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -111,7 +110,6 @@ export function AccessGate({
           name: nameValue,
           passcode: candidate
         });
-        setAccessKey(candidate);
         onUnlock(response.auth);
         return;
       }
@@ -137,7 +135,6 @@ export function AccessGate({
           inviteCode: inviteValue,
           newPasscode: candidate
         });
-        setAccessKey(candidate);
         onUnlock({
           ok: true,
           role: "member",
@@ -150,8 +147,7 @@ export function AccessGate({
         return;
       }
 
-      setAccessKey(candidate);
-      const auth = await checkAccess();
+      const auth = await login(candidate);
       onUnlock(auth);
     } catch (accessError) {
       if (isUnauthorizedError(accessError)) {

@@ -54,7 +54,6 @@ import type { BrowseChannel } from "./cinema/types";
 import type { BrowseViewId } from "./cinema/types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
-const accessKeyStorageKey = "wwpdw-access-key";
 const backendWakeTimeoutMs = 90_000;
 
 export class ApiError extends Error {
@@ -68,17 +67,10 @@ export class ApiError extends Error {
   }
 }
 
-export function getAccessKey() {
-  return sessionStorage.getItem(accessKeyStorageKey) ?? "";
-}
-
-export function setAccessKey(value: string) {
-  sessionStorage.setItem(accessKeyStorageKey, value);
-}
-
-export function clearAccessKey() {
-  sessionStorage.removeItem(accessKeyStorageKey);
-}
+let csrfToken = "";
+export function getAccessKey() { return ""; }
+export function setAccessKey(_value: string) { /* authentication is server-cookie-only */ }
+export function clearAccessKey() { csrfToken = ""; }
 
 export function isUnauthorizedError(error: unknown) {
   return error instanceof ApiError && error.statusCode === 401;
@@ -109,14 +101,14 @@ function createRequestId() {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const accessKey = getAccessKey();
   const requestId = createRequestId();
   const response = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       "x-request-id": requestId,
-      ...(accessKey ? { "x-wwpdw-access-key": accessKey } : {}),
+      ...(!["GET", "HEAD"].includes(init?.method ?? "GET") && csrfToken ? { "x-wwpdw-csrf-token": csrfToken } : {}),
       ...init?.headers
     }
   });
@@ -135,35 +127,60 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function checkAccess() {
-  return request<AuthCheckResponse>(apiUrl("/api/auth/check"));
+  return request<AuthCheckResponse & { csrfToken?: string }>(apiUrl("/api/auth/check")).then((auth) => {
+    csrfToken = auth.csrfToken ?? "";
+    return auth;
+  });
 }
+
+export function login(passcode: string) {
+  return request<AuthCheckResponse & { csrfToken?: string }>(apiUrl("/api/auth/login"), { method: "POST", body: JSON.stringify({ passcode }) }).then((auth) => {
+    csrfToken = auth.csrfToken ?? "";
+    return auth;
+  });
+}
+
+export function logout() { return request<{ ok: true }>(apiUrl("/api/auth/logout"), { method: "POST" }).finally(() => { csrfToken = ""; }); }
+
+export interface BrowserSession {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  idleExpiresAt: string;
+  device?: string;
+  ipAddress?: string;
+  current: boolean;
+}
+
+export function listSessions() { return request<{ sessions: BrowserSession[] }>(apiUrl("/api/auth/sessions")); }
+export function revokeSession(id: string) { return request<{ ok: true }>(apiUrl(`/api/auth/sessions/${encodeURIComponent(id)}`), { method: "DELETE" }); }
 
 export function registerMember(input: RegisterMemberRequest) {
   return request<RegisterMemberResponse>(apiUrl("/api/auth/register"), {
     method: "POST",
     body: JSON.stringify(input)
-  });
+  }).then((response) => { csrfToken = (response as RegisterMemberResponse & { csrfToken?: string }).csrfToken ?? ""; return response; });
 }
 
 export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
   return request<ChangeMemberPasscodeResponse>(apiUrl("/api/auth/passcode"), {
     method: "POST",
     body: JSON.stringify(input)
-  });
+  }).then((response) => { csrfToken = (response as ChangeMemberPasscodeResponse & { csrfToken?: string }).csrfToken ?? csrfToken; return response; });
 }
 
 export function updateMemberProfile(input: UpdateMemberProfileRequest) {
   return request<UpdateMemberProfileResponse>(apiUrl("/api/member/profile"), {
     method: "POST",
     body: JSON.stringify(input)
-  });
+  }).then((response) => { csrfToken = (response as UpdateMemberProfileResponse & { csrfToken?: string }).csrfToken ?? csrfToken; return response; });
 }
 
 export function resetMemberPasscode(input: ResetMemberPasscodeRequest) {
   return request<ResetMemberPasscodeResponse>(apiUrl("/api/auth/reset-passcode"), {
     method: "POST",
     body: JSON.stringify(input)
-  });
+  }).then((response) => { csrfToken = (response as ResetMemberPasscodeResponse & { csrfToken?: string }).csrfToken ?? ""; return response; });
 }
 
 export function listOwnCreditUsage(limit = 50) {

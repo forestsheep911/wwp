@@ -15,6 +15,7 @@ param(
     [string]$BailianKeyVaultSecretName = "BAILIAN-API-KEY",
     [string]$BailianContainerSecretName = "bailian-api-key",
     [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
+    [string]$AllowedWebOrigins = $env:WWPDW_ALLOWED_WEB_ORIGINS,
     [string]$BailianApiKey = $env:BAILIAN_API_KEY,
     [string]$AiSummaryModelPreset = $env:WWPDW_AI_SUMMARY_MODEL_PRESET,
     [string]$AiSummaryModel = $env:WWPDW_AI_SUMMARY_MODEL,
@@ -221,6 +222,15 @@ if ($NotionMediaAssetsDataSourceId) {
 if ($OmdbApiKey) {
     $envVars += "OMDB_API_KEY=$OmdbApiKey"
 }
+
+if ($AllowedWebOrigins) {
+    $envVars += "WWPDW_ALLOWED_WEB_ORIGINS=$AllowedWebOrigins"
+} else {
+    Write-Warning "WWPDW_ALLOWED_WEB_ORIGINS is empty; browser cookie authentication will fail closed. Set it to the Static Web App origin before deployment."
+}
+$envVars += "WWPDW_SESSION_IDLE_SECONDS=2592000"
+$envVars += "WWPDW_SESSION_ABSOLUTE_SECONDS=7776000"
+$envVars += "WWPDW_SESSION_RENEWAL_SECONDS=86400"
 
 if ($AiSummaryModelPreset) {
     $envVars += "WWPDW_AI_SUMMARY_MODEL_PRESET=$AiSummaryModelPreset"

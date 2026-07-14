@@ -58,16 +58,21 @@ import {
 import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
+import { stableBrowseTie } from "./browse-order.js";
+import { BrowseSnapshotCache } from "./browse-snapshot.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { getNowPlaying } from "./now-playing-source.js";
 import { createSearchSource } from "./search-source.js";
 import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
+import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
+import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
 const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
+const sessionStore = createSessionStore();
 const workerTrigger = new CacheWorkerTrigger();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
@@ -91,6 +96,7 @@ const searchResultCache = new Map<string, {
   lastUsedAt: number;
   results: SearchResult[];
 }>();
+const browseSnapshotCache = new BrowseSnapshotCache<SearchResult>(30_000);
 type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 type BrowseViewId =
   | "lucky"
@@ -116,7 +122,6 @@ const pendingSearches = new Map<string, Promise<{
   cacheStatus: SearchLoadStatus;
 }>>();
 const omdbCache = new Map<string, Promise<RatingValue[]>>();
-const accessHeaderName = "x-wwpdw-access-key";
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
 const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? defaultCreditPolicy.cacheCredits)));
@@ -134,15 +139,13 @@ interface RequestContext {
   method: string;
   path: string;
   startedAt: number;
+  session?: AuthenticatedSession;
 }
 
-function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
+function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown, headers: Record<string, string> = {}) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": `content-type,${accessHeaderName},${requestIdHeaderName}`,
-    "Access-Control-Expose-Headers": requestIdHeaderName,
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+    ...headers
   });
   response.end(JSON.stringify(payload));
 }
@@ -304,16 +307,12 @@ function requestIdFromHeader(request: http.IncomingMessage) {
 }
 
 async function resolveAccess(request: http.IncomingMessage): Promise<AccessIdentity | undefined> {
-  const suppliedKey = headerValue(request.headers[accessHeaderName]);
-  if (!suppliedKey) {
-    return undefined;
-  }
-
-  if (isAdminKey(suppliedKey)) {
-    return { role: "admin" };
-  }
-
-  return accessStore.findMemberByCode(suppliedKey);
+  const session = await sessionStore.authenticate(readCookie(request));
+  if (!session) return undefined;
+  const subject = session.subject;
+  return subject.role === "admin"
+    ? { role: "admin" }
+    : { role: "member", memberId: subject.memberId, memberName: subject.memberName };
 }
 
 async function requireAccess(
@@ -330,13 +329,24 @@ async function requireAccess(
     return undefined;
   }
 
-  const identity = await resolveAccess(request);
+  const session = await sessionStore.authenticate(readCookie(request));
+  const identity = session?.subject.role === "admin"
+    ? { role: "admin" as const }
+    : session?.subject.role === "member"
+      ? { role: "member" as const, memberId: session.subject.memberId, memberName: session.subject.memberName }
+      : undefined;
   if (!identity) {
     logWarn("api.auth.denied", {
       requestId: context.requestId,
       path: context.path
     });
     sendJson(response, 401, { error: "Access key did not match." });
+    return undefined;
+  }
+
+  context.session = session!;
+  if (!["GET", "HEAD", "OPTIONS"].includes(request.method ?? "") && (!requestOrigin(request) || !csrfValid(request, session!.csrfToken))) {
+    sendJson(response, 403, { error: "Cross-site request verification failed." });
     return undefined;
   }
 
@@ -396,6 +406,24 @@ function memberIdentityFromCode(code: Pick<MemberAccessCode, "id" | "name" | "cr
     memberName: code.name,
     credits: code.credits
   };
+}
+
+function sessionSubject(identity: AccessIdentity): SessionSubject {
+  return identity.role === "admin"
+    ? { role: "admin", authProvider: "passcode" }
+    : { role: "member", memberId: identity.memberId!, memberName: identity.memberName!, authProvider: "passcode" };
+}
+
+async function sendAuthenticatedSession(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  statusCode: number,
+  identity: AccessIdentity,
+  payload: Record<string, unknown> = {}
+) {
+  const device = requestDevice(request);
+  const issued = await sessionStore.create(sessionSubject(identity), { ipAddress: requestIp(request), device: device.device, userAgent: device.userAgent });
+  sendJson(response, statusCode, { ...payload, auth: authPayload(identity), csrfToken: issued.csrfToken }, { "Set-Cookie": sessionCookie(issued.cookieValue, issued.record.idleExpiresAt) });
 }
 
 function passcodeValidationError(passcode: string) {
@@ -1468,9 +1496,9 @@ function requestBrowseView(url: URL): BrowseViewId {
 
 function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {
   const ranked = [...results];
-  const byUpdated = (left: SearchResult, right: SearchResult) => browseTime(right.updatedAt) - browseTime(left.updatedAt);
-  const byRating = (left: SearchResult, right: SearchResult) => browseNumericRating(right) - browseNumericRating(left);
-  const byRelease = (left: SearchResult, right: SearchResult) => browseReleaseTime(right) - browseReleaseTime(left);
+  const byUpdated = (left: SearchResult, right: SearchResult) => browseTime(right.updatedAt) - browseTime(left.updatedAt) || stableBrowseTie(left, right);
+  const byRating = (left: SearchResult, right: SearchResult) => browseNumericRating(right) - browseNumericRating(left) || stableBrowseTie(left, right);
+  const byRelease = (left: SearchResult, right: SearchResult) => browseReleaseTime(right) - browseReleaseTime(left) || stableBrowseTie(left, right);
 
   if (view === "doubanRank") {
     return ranked.sort((left, right) => browseSourceRating(right, "douban") - browseSourceRating(left, "douban") || byUpdated(left, right));
@@ -1525,8 +1553,14 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
+  const snapshotKey = `${channel}:${view}`;
+  let sortedResults = mode === "paged" ? browseSnapshotCache.get(snapshotKey) : undefined;
 
-  if (searchIndexEnabled) {
+  if (sortedResults) {
+    browseSource = "snapshot";
+  }
+
+  if (!sortedResults && searchIndexEnabled) {
     try {
       searchResults = mode === "random"
         ? channel === "recommended"
@@ -1542,7 +1576,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     }
   }
 
-  if (searchResults.length === 0) {
+  if (!sortedResults && searchResults.length === 0) {
     const liveResults = await searchSource.search("");
     const filteredLiveResults = filterBrowseResults(liveResults, channel);
     searchResults = mode === "random" ? sampleSearchResults(filteredLiveResults, limit) : filteredLiveResults.slice(0, fetchLimit);
@@ -1550,8 +1584,13 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     browseSource = mode === "random" ? "live_random" : "live";
   }
 
-  const channelResults = mode === "random" ? searchResults : filterBrowseResults(searchResults, channel);
-  const sortedResults = mode === "random" ? channelResults : sortBrowseResults(channelResults, view);
+  if (!sortedResults) {
+    const channelResults = mode === "random" ? searchResults : filterBrowseResults(searchResults, channel);
+    sortedResults = mode === "random" ? channelResults : sortBrowseResults(channelResults, view);
+    if (mode === "paged") {
+      browseSnapshotCache.set(snapshotKey, sortedResults);
+    }
+  }
   const pageResults = mode === "random" ? sortedResults.slice(0, limit) : sortedResults.slice(offset, offset + limit);
   const hasMore = mode === "random" ? false : sortedResults.length > offset + limit;
   rememberResults(pageResults);
@@ -1578,6 +1617,9 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     hasMore,
     nextOffset: hasMore ? offset + results.length : undefined,
     mode
+  }, {
+    "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+    Vary: "Cookie"
   });
 }
 
@@ -2386,6 +2428,7 @@ async function handleRegisterMember(
   }
 
   const identity = memberIdentityFromCode(result.code);
+  await sessionStore.revokeSubject(sessionSubject(identity), undefined, "passcode_reset");
   await recordLoginAudit(request, identity, context);
   logInfo("api.auth.register", {
     requestId: context.requestId,
@@ -2394,10 +2437,7 @@ async function handleRegisterMember(
     remainingCredits: result.code.credits.remaining,
     durationMs: durationMs(startedAt)
   });
-  sendJson(response, 201, {
-    auth: authPayload(identity),
-    code: result.code
-  });
+  await sendAuthenticatedSession(request, response, 201, identity, { code: result.code });
 }
 
 async function handleUpdateMemberProfile(
@@ -2453,7 +2493,21 @@ async function handleUpdateMemberProfile(
     passcodeChanged: Boolean(newPasscode),
     durationMs: durationMs(startedAt)
   });
-  sendJson(response, 200, { code: result.code });
+  if (newPasscode) await sessionStore.revokeSubject(sessionSubject(identity), context.session?.id, "passcode_changed");
+  await sendAuthenticatedSession(request, response, 200, identity, { code: result.code });
+}
+
+async function handleLogin(request: http.IncomingMessage, response: http.ServerResponse, context: RequestContext) {
+  const body = await readBody<{ passcode?: string }>(request);
+  const passcode = body.passcode?.trim() ?? "";
+  const identity = isAdminKey(passcode) ? { role: "admin" as const } : await accessStore.findMemberByCode(passcode);
+  if (!identity) {
+    logWarn("api.auth.login_denied", { requestId: context.requestId });
+    sendJson(response, 401, { error: "Access key did not match." });
+    return;
+  }
+  await recordLoginAudit(request, identity, context);
+  await sendAuthenticatedSession(request, response, 200, identity);
 }
 
 async function handleChangeMemberPasscode(
@@ -2500,7 +2554,8 @@ async function handleChangeMemberPasscode(
     memberId: result.code.id,
     durationMs: durationMs(startedAt)
   });
-  sendJson(response, 200, { code: result.code });
+  await sessionStore.revokeSubject(sessionSubject(identity), context.session?.id, "passcode_changed");
+  await sendAuthenticatedSession(request, response, 200, identity, { code: result.code });
 }
 
 async function handleResetMemberPasscode(
@@ -2542,7 +2597,7 @@ async function handleResetMemberPasscode(
     memberId: result.code.id,
     durationMs: durationMs(startedAt)
   });
-  sendJson(response, 200, { code: result.code });
+  await sendAuthenticatedSession(request, response, 200, identity, { code: result.code });
 }
 
 function creditUsagePayload(usage: MemberCreditUsageList): MemberCreditUsageResponse {
@@ -3283,10 +3338,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     startedAt
   };
   response.setHeader(requestIdHeaderName, requestId);
+  const corsAllowed = applyCors(request, response);
 
   try {
     if (request.method === "OPTIONS") {
-      sendJson(response, 204, {});
+      sendJson(response, corsAllowed ? 204 : 403, corsAllowed ? {} : { error: "Origin is not allowed." });
       return;
     }
 
@@ -3315,6 +3371,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "POST" && pathname === "/api/auth/login") {
+      await handleLogin(request, response, context);
+      return;
+    }
+
     let identity: AccessIdentity | undefined;
     if (pathname.startsWith("/api/")) {
       identity = await requireAccess(request, response, context);
@@ -3324,13 +3385,60 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "GET" && pathname === "/api/auth/check") {
-      await recordLoginAudit(request, identity!, context);
       logInfo("api.auth.check", {
         requestId,
         role: identity?.role,
         memberId: identity?.memberId
       });
-      sendJson(response, 200, authPayload(identity!));
+      sendJson(response, 200, { ...authPayload(identity!), csrfToken: context.session!.csrfToken });
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/auth/logout") {
+      await sessionStore.revoke(context.session!.id, "logout");
+      sendJson(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/auth/logout-all") {
+      await sessionStore.revokeSubject(sessionSubject(identity!), context.session!.id, "logout_all");
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/auth/sessions") {
+      const sessions = await sessionStore.listForSubject(sessionSubject(identity!));
+      sendJson(response, 200, { sessions: sessions.map(({ secretHash, csrfToken, ...session }) => ({ ...session, current: session.id === context.session!.id })) });
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/sessions") {
+      if (!requireAdmin(identity, response, context)) return;
+      const sessions = await sessionStore.listActive();
+      sendJson(response, 200, { sessions: sessions.map(({ secretHash, csrfToken, ...session }) => session) });
+      return;
+    }
+
+    if (request.method === "DELETE" && pathname.startsWith("/api/admin/sessions/")) {
+      if (!requireAdmin(identity, response, context)) return;
+      const sessionId = pathname.slice("/api/admin/sessions/".length);
+      if (!await sessionStore.revoke(sessionId, "admin_revoked")) {
+        sendJson(response, 404, { error: "Session was not found." });
+        return;
+      }
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "DELETE" && pathname.startsWith("/api/auth/sessions/")) {
+      const sessionId = pathname.slice("/api/auth/sessions/".length);
+      const sessions = await sessionStore.listForSubject(sessionSubject(identity!));
+      if (!sessions.some((session) => session.id === sessionId)) {
+        sendJson(response, 404, { error: "Session was not found." });
+        return;
+      }
+      await sessionStore.revoke(sessionId, "device_logout");
+      sendJson(response, 200, { ok: true }, sessionId === context.session!.id ? { "Set-Cookie": clearSessionCookie() } : {});
       return;
     }
 

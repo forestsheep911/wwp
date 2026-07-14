@@ -55,16 +55,19 @@ import {
   listOwnMovieRequests,
   listOwnNotices,
   listOwnCreditUsage,
+  listSessions,
   markOwnNoticeRead,
   previewCredit,
   revokeMemberAccessCode,
   retryCacheJob,
+  revokeSession,
   searchAssets,
   setMemberCredits as setMemberCreditsApi,
   updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
   setAccessKey
 } from "./api";
+import type { BrowserSession } from "./api";
 import { AccessGate } from "./cinema/components/AccessGate";
 import { AdminPanel } from "./cinema/components/AdminPanel";
 import { CacheTasksPanel } from "./cinema/components/CacheTasksPanel";
@@ -113,6 +116,12 @@ import {
   themeStorageKey,
   writeJsonStorage
 } from "./cinema/storage";
+import { browseCacheKey, readBrowseCache, writeBrowseCache } from "./cinema/browse-cache";
+import {
+  browseResponseIsCurrent,
+  shouldLoadBrowseRoute,
+  type BrowseRequest
+} from "./cinema/browse-state";
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import type {
   AppTab,
@@ -207,9 +216,9 @@ function hasCollectionMarks(entry: FavoriteEntry) {
 function CinemaApp() {
   const { showToast } = useToast();
   const [initialRoute] = useState<CinemaRoute>(() => routeFromLocation());
-  const [hasStoredAccessKey] = useState(() => Boolean(getAccessKey()));
-  const [unlocked, setUnlocked] = useState(hasStoredAccessKey);
-  const [authRestoring, setAuthRestoring] = useState(hasStoredAccessKey);
+  const [hasStoredAccessKey] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [role, setRole] = useState<AccessRole | undefined>();
   const [member, setMember] = useState<AuthCheckResponse["member"]>();
   const [activeTab, setActiveTab] = useState<AppTab>(initialRoute.tab);
@@ -236,6 +245,8 @@ function CinemaApp() {
   const [downloadRequestAssetKeys, setDownloadRequestAssetKeys] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [sessions, setSessions] = useState<BrowserSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [creditUsageOpen, setCreditUsageOpen] = useState(false);
@@ -309,6 +320,7 @@ function CinemaApp() {
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
   const forumThreadsAutoLoadRef = useRef(false);
   const browseRouteLoadRef = useRef("");
+  const browseRequestRef = useRef<BrowseRequest>({ id: 0, key: "" });
 
   const trackedPollKey = useMemo(
     () =>
@@ -1039,7 +1051,8 @@ function CinemaApp() {
     response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode },
     append: boolean,
     mode: BrowseLoadMode,
-    cacheKey?: string
+    cacheKey?: string,
+    persistentCacheKey?: string
   ) {
     setBrowseResults((currentResults) => {
       const currentKeys = new Set(currentResults.map((result) => result.assetKey));
@@ -1047,12 +1060,16 @@ function CinemaApp() {
         ? [...currentResults, ...response.results.filter((result) => !currentKeys.has(result.assetKey))]
         : response.results;
       if (cacheKey) {
-        browseViewCacheRef.current.set(cacheKey, {
+        const entry = {
           results: nextResults,
           hasMore: Boolean(response.hasMore),
           nextOffset: response.nextOffset ?? 0,
           mode: response.mode ?? mode
-        });
+        };
+        browseViewCacheRef.current.set(cacheKey, entry);
+        if (persistentCacheKey) {
+          void writeBrowseCache(persistentCacheKey, entry);
+        }
       }
       return nextResults;
     });
@@ -1070,10 +1087,32 @@ function CinemaApp() {
     const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
     const requestChannel = options.channel ?? browseChannel;
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
-    const cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
+    const persistentCacheKey = browseCacheKey(
+      role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
+      requestChannel,
+      requestView
+    );
+    const request: BrowseRequest = {
+      id: browseRequestRef.current.id + 1,
+      key: browseRouteLoadKey(requestChannel, requestView)
+    };
+    browseRequestRef.current = request;
+    let cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
-      return;
+    }
+    if (!append && !options.force && !cachedBrowseView) {
+      const persistedEntry = await readBrowseCache<BrowseViewCacheEntry>(persistentCacheKey);
+      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+        return;
+      }
+      if (persistedEntry) {
+        cachedBrowseView = persistedEntry.value;
+        if (cacheKey) {
+          browseViewCacheRef.current.set(cacheKey, cachedBrowseView);
+        }
+        applyBrowseCache(cachedBrowseView);
+      }
     }
     if (append) {
       if (browseLoadingMore || !browseHasMore) {
@@ -1081,23 +1120,31 @@ function CinemaApp() {
       }
       setBrowseLoadingMore(true);
     } else {
-      if (requestView === "lucky") {
+      if (!cachedBrowseView && requestView === "lucky") {
         setBrowseResults([]);
         setBrowseHasMore(false);
         setBrowseNextOffset(0);
         setBrowseLoadMode("random");
       }
-      setBrowseLoading(true);
+      setBrowseLoading(!cachedBrowseView);
     }
 
     try {
       const offset = append ? browseNextOffset : 0;
       const response = await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView });
 
-      applyBrowseResponse(response, append, mode, cacheKey);
+      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+        return;
+      }
+      applyBrowseResponse(response, append, mode, cacheKey, persistentCacheKey);
     } catch (browseError) {
-      handleRequestError(browseError, copy.fallbackErrors.browseTitles);
+      if (browseResponseIsCurrent(browseRequestRef.current, request)) {
+        handleRequestError(browseError, copy.fallbackErrors.browseTitles);
+      }
     } finally {
+      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+        return;
+      }
       if (append) {
         setBrowseLoadingMore(false);
       } else {
@@ -1871,6 +1918,21 @@ function CinemaApp() {
     }
   }
 
+  async function refreshSessions() {
+    setSessionsLoading(true);
+    try { setSessions((await listSessions()).sessions); }
+    catch (sessionError) { setProfileError(errorMessage(sessionError, "无法加载已登录设备。")); }
+    finally { setSessionsLoading(false); }
+  }
+
+  async function removeSession(id: string) {
+    try {
+      await revokeSession(id);
+      setSessions((current) => current.filter((session) => session.id !== id));
+      if (sessions.some((session) => session.id === id && session.current)) lockCinema();
+    } catch (sessionError) { setProfileError(errorMessage(sessionError, "无法退出该设备。")); }
+  }
+
   function lockCinema() {
     clearAccessKey();
     setAuthRestoring(false);
@@ -2068,7 +2130,7 @@ function CinemaApp() {
   }, [trackedPollKey, job?.id, query, activeTab]);
 
   useEffect(() => {
-    if (!unlocked || !authRestoring) {
+    if (!authRestoring) {
       return;
     }
 
@@ -2079,6 +2141,7 @@ function CinemaApp() {
           return;
         }
         applyAuth(auth);
+        setUnlocked(true);
       })
       .catch((authError) => {
         if (cancelled) {
@@ -2250,7 +2313,7 @@ function CinemaApp() {
 
     if (activeTab === "library" && query.trim().length === 0) {
       const loadKey = browseRouteLoadKey(browseChannel, browseView);
-      if (browseResults.length === 0 || browseRouteLoadRef.current !== loadKey) {
+      if (shouldLoadBrowseRoute(browseRouteLoadRef.current, loadKey)) {
         browseRouteLoadRef.current = loadKey;
         void refreshBrowseAssets({
           mode: browseLoadModeForView(browseView),
@@ -2364,11 +2427,15 @@ function CinemaApp() {
         open={profileOpen}
         onOpenChange={(open) => {
           setProfileOpen(open);
+          if (open) void refreshSessions();
           if (!open) {
             setProfileError("");
           }
         }}
         onSubmit={(name, newPasscode) => void saveOwnProfile(name, newPasscode)}
+        sessions={sessions}
+        sessionsLoading={sessionsLoading}
+        onRevokeSession={(id) => void removeSession(id)}
       />
       <CreditUsageDialog
         error={creditUsageError}
