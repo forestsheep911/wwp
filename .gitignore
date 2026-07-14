@@ -25,6 +25,7 @@ __pycache__/
 
 .azure/
 .azure2/
+.worktrees/
 
 *.log
 *.err
