@@ -59,7 +59,7 @@ import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFre
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { stableBrowseTie } from "./browse-order.js";
-import { BrowseSnapshotCache } from "./browse-snapshot.js";
+import { BrowseSnapshotCache, defaultBrowseSnapshotTtlMs } from "./browse-snapshot.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { getNowPlaying } from "./now-playing-source.js";
 import { createSearchSource } from "./search-source.js";
@@ -96,7 +96,13 @@ const searchResultCache = new Map<string, {
   lastUsedAt: number;
   results: SearchResult[];
 }>();
-const browseSnapshotCache = new BrowseSnapshotCache<SearchResult>(30_000);
+const browseSnapshotCache = new BrowseSnapshotCache<SearchResult>(defaultBrowseSnapshotTtlMs);
+const browseSourceCache = new BrowseSnapshotCache<SearchResult>(defaultBrowseSnapshotTtlMs);
+if (searchIndexEnabled) {
+  void browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000)).catch((error) => {
+    logWarn("api.browse.warmup_failed", errorLogFields(error));
+  });
+}
 type BrowseChannel = "recommended" | "movie" | "tv" | "animation";
 type BrowseViewId =
   | "lucky"
@@ -1566,7 +1572,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
         ? channel === "recommended"
           ? await searchIndex.sample(limit)
           : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit)
-        : await searchIndex.search("", fetchLimit);
+        : (await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))).slice(0, fetchLimit);
       browseSource = mode === "random" ? "index_random" : "index";
     } catch (error) {
       logWarn("api.browse.index_read_failed", {

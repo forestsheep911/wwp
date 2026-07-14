@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  serviceWakeProbeEnabled,
   serviceWakeIsWarm,
   serviceWakeShouldShowQuiz,
   serviceWakeWarmUntil
 } from "../src/cinema/service-wake";
+
+test("anonymous auth restoration never opens the wake quiz", () => {
+  assert.equal(serviceWakeProbeEnabled({ unlocked: false }), false);
+  assert.equal(serviceWakeProbeEnabled({ unlocked: true }), true);
+});
 
 test("serviceWakeShouldShowQuiz only opens for a slow cold-start probe", () => {
   const now = 10_000;

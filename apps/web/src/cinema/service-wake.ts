@@ -4,6 +4,10 @@ export const serviceWakeWarmStorageKey = "wwpdw-service-wake-warm-until";
 let sharedWakeProbe: Promise<boolean> | undefined;
 let memoryWarmUntilMs = 0;
 
+export function serviceWakeProbeEnabled({ unlocked }: { unlocked: boolean }) {
+  return unlocked;
+}
+
 function readWarmUntilFromStorage() {
   if (typeof sessionStorage === "undefined") {
     return 0;

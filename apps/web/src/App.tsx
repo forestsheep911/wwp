@@ -123,6 +123,7 @@ import {
   type BrowseRequest
 } from "./cinema/browse-state";
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
+import { serviceWakeProbeEnabled } from "./cinema/service-wake";
 import type {
   AppTab,
   AppTheme,
@@ -357,7 +358,7 @@ function CinemaApp() {
     return marks;
   }, [favorites]);
 
-  const coldStartWakeDialog = useColdStartWakeDialog({ enabled: authRestoring || unlocked });
+  const coldStartWakeDialog = useColdStartWakeDialog({ enabled: serviceWakeProbeEnabled({ unlocked }) });
   const serviceWakePreviewEnabled = canPreviewServiceWakeDialog();
   const serviceWakeDialogOpen = serviceWakePreviewOpen || coldStartWakeDialog.open;
 
