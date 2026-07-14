@@ -35,7 +35,7 @@ The local default cache backend is `CACHE_BACKEND=local`, backed by `.local-data
 
 The frontend does not contain a built-in administrator key. The deployed API reads one static admin key from `WWPDW_ADMIN_KEY`, and the Admin tab sends the user-entered key through `x-wwpdw-access-key`. Regular family members use generated member passes stored in the member-code table.
 
-Set `VITE_API_BASE_URL` when building the web app against a remote API. Leave it empty for local `/api`.
+For explicit local direct-API development, set `VITE_API_BASE_URL` to the remote API origin. Leave it empty to use `/api`, including every production build.
 
 ## Search Source
 
@@ -109,6 +109,13 @@ Deploy/update:
 .\infra\deploy-metadata-sync-job.ps1 -Mode incremental
 .\infra\deploy-web-staticapp.ps1
 ```
+
+Production web routing follows these rules:
+
+- Production web requests use the Static Web Apps `/api/*` BFF; do not set `VITE_API_BASE_URL` during production builds.
+- `WWPDW_ORIGIN_API_BASE_URL` is the fixed Container Apps upstream.
+- `WWPDW_PUBLIC_WEB_ORIGIN` is the Static Web Apps `https://<defaultHostname>` origin forwarded for API CSRF/origin checks.
+- The BFF holds no session state and no passcode or admin key. OAuth and MFA remain future authentication extensions.
 
 The API runs as a scale-to-zero Container App. When `CACHE_BACKEND=azure`, `/api/cache` writes queue/table state and starts the cache worker Container Apps Job through Azure Resource Manager using managed identity.
 

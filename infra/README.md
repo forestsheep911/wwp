@@ -41,6 +41,13 @@ API image/app and Static Web App:
 .\infra\deploy-web-staticapp.ps1
 ```
 
+Production web routing follows these rules:
+
+- Production web requests use the Static Web Apps `/api/*` BFF; do not set `VITE_API_BASE_URL` during production builds.
+- `WWPDW_ORIGIN_API_BASE_URL` is the fixed Container Apps upstream.
+- `WWPDW_PUBLIC_WEB_ORIGIN` is the Static Web Apps `https://<defaultHostname>` origin forwarded for API CSRF/origin checks.
+- The BFF holds no session state and no passcode or admin key. OAuth and MFA remain future authentication extensions.
+
 Static administrator key bootstrap/rotation:
 
 ```powershell

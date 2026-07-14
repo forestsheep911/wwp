@@ -4,12 +4,6 @@ param(
     [string]$Location = "eastasia",
     [string]$ApiAppName = "ca-ww-player-api",
     [string]$ApiBaseUrl = "",
-    [string]$StorageAccount = "stwwcachee9219db7",
-    [string]$HomeCacheContainer = "web-cache",
-    [string]$MemberTable = "membercodes",
-    [string]$KeyVaultName = "kv-wwcache-e9219db7",
-    [string]$AdminKeyVaultSecretName = "WWPDW-ADMIN-KEY",
-    [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
@@ -19,32 +13,6 @@ if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-
-function Get-DotEnvValue {
-    param(
-        [string[]]$Names
-    )
-
-    $envPath = Join-Path $repoRoot ".env"
-    if (-not (Test-Path $envPath)) {
-        return $null
-    }
-
-    foreach ($line in Get-Content $envPath) {
-        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
-            continue
-        }
-
-        $name = $matches[1]
-        if ($Names -notcontains $name) {
-            continue
-        }
-
-        return $matches[2].Trim().Trim('"').Trim("'")
-    }
-
-    return $null
-}
 
 if (-not $ApiBaseUrl) {
     $apiFqdn = & $AzCli containerapp show `
@@ -58,10 +26,6 @@ if (-not $ApiBaseUrl) {
     }
 
     $ApiBaseUrl = "https://$apiFqdn"
-}
-
-if (-not $AdminKey) {
-    $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
 }
 
 $existingAppName = & $AzCli staticwebapp list `
@@ -84,46 +48,22 @@ if (-not $exists) {
     Write-Host "Static Web App already exists: $StaticAppName"
 }
 
-$storageConnectionString = & $AzCli storage account show-connection-string `
-    --name $StorageAccount `
+$hostName = & $AzCli staticwebapp show `
+    --name $StaticAppName `
     --resource-group $ResourceGroup `
-    --query connectionString `
+    --query "defaultHostname" `
     --output tsv
 
-if (-not $storageConnectionString) {
-    throw "Could not read storage connection string for $StorageAccount."
+if (-not $hostName) {
+    throw "Could not find Static Web App hostname."
 }
 
-& $AzCli storage container create `
-    --name $HomeCacheContainer `
-    --connection-string $storageConnectionString `
-    --public-access off `
-    --output none
-
+$publicWebOrigin = "https://$hostName"
 $appSettings = @(
     "WWPDW_ORIGIN_API_BASE_URL=$ApiBaseUrl",
-    "WWPDW_HOME_CACHE_STORAGE_CONNECTION_STRING=$storageConnectionString",
-    "WWPDW_HOME_CACHE_CONTAINER=$HomeCacheContainer",
-    "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
-    "WWPDW_HOME_BROWSE_FRESH_SECONDS=600",
-    "WWPDW_HOME_BROWSE_STALE_SECONDS=604800",
-    "WWPDW_HOME_BROWSE_ORIGIN_TIMEOUT_MS=25000",
-    "WWPDW_HOME_BROWSE_STALE_REFRESH_TIMEOUT_MS=1800"
+    "WWPDW_PUBLIC_WEB_ORIGIN=$publicWebOrigin",
+    "WWPDW_BFF_TIMEOUT_MS=90000"
 )
-
-if (-not $AdminKey) {
-    $AdminKey = & $AzCli keyvault secret show `
-        --vault-name $KeyVaultName `
-        --name $AdminKeyVaultSecretName `
-        --query value `
-        --output tsv 2>$null
-}
-
-if ($AdminKey) {
-    $appSettings += "WWPDW_ADMIN_KEY=$AdminKey"
-} else {
-    Write-Host "WWPDW admin key was not found; Static Web App home-browse Function will validate member passes only."
-}
 
 & $AzCli staticwebapp appsettings set `
     --name $StaticAppName `
@@ -131,14 +71,54 @@ if ($AdminKey) {
     --setting-names $appSettings `
     --output none
 
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not configure Static Web App BFF settings."
+}
+
+$legacySettingNames = @(
+    "WWPDW_ADMIN_KEY",
+    "AZURE_STORAGE_MEMBER_TABLE",
+    "WWPDW_HOME_BROWSE_FRESH_SECONDS",
+    "WWPDW_HOME_BROWSE_ORIGIN_TIMEOUT_MS",
+    "WWPDW_HOME_BROWSE_STALE_REFRESH_TIMEOUT_MS",
+    "WWPDW_HOME_BROWSE_STALE_SECONDS",
+    "WWPDW_HOME_CACHE_CONTAINER",
+    "WWPDW_HOME_CACHE_STORAGE_CONNECTION_STRING"
+)
+$existingSettingsJson = & $AzCli staticwebapp appsettings list `
+    --name $StaticAppName `
+    --resource-group $ResourceGroup `
+    --output json
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read Static Web App settings."
+}
+
+$existingSettings = ($existingSettingsJson | ConvertFrom-Json).properties
+$settingsToDelete = @($legacySettingNames | Where-Object { $existingSettings.PSObject.Properties.Name -contains $_ })
+if ($settingsToDelete.Count -gt 0) {
+    & $AzCli staticwebapp appsettings delete `
+        --name $StaticAppName `
+        --resource-group $ResourceGroup `
+        --setting-names $settingsToDelete `
+        --output none
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not delete legacy Static Web App settings."
+    }
+}
+
 $previousApiBaseUrl = $env:VITE_API_BASE_URL
 
 try {
-    $env:VITE_API_BASE_URL = $ApiBaseUrl
+    $env:VITE_API_BASE_URL = ""
 
     Push-Location $repoRoot
     try {
         npm run build --workspace @wwpdw/web
+        if ($LASTEXITCODE -ne 0) {
+            throw "Web build failed."
+        }
+
         $builtIndexPath = Join-Path $repoRoot "apps\web\dist\index.html"
         $builtIndex = Get-Content $builtIndexPath -Raw
         $builtScriptMatch = [regex]::Match($builtIndex, "/assets/[^`"']+\.js")
@@ -148,8 +128,11 @@ try {
 
         $builtScriptPath = Join-Path (Join-Path $repoRoot "apps\web\dist") ($builtScriptMatch.Value.TrimStart("/") -replace "/", "\")
         $builtScript = Get-Content $builtScriptPath -Raw
-        if (-not $builtScript.Contains($ApiBaseUrl)) {
-            throw "Built web asset does not contain API base URL $ApiBaseUrl."
+        if ($builtScript.Contains($ApiBaseUrl)) {
+            throw "Built web asset still contains cross-site API base URL $ApiBaseUrl."
+        }
+        if (-not $builtScript.Contains("/api/auth/login")) {
+            throw "Built web asset does not contain the same-origin login route."
         }
     } finally {
         Pop-Location
@@ -180,16 +163,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Static Web App deployment failed."
 }
 
-$hostName = & $AzCli staticwebapp show `
-    --name $StaticAppName `
-    --resource-group $ResourceGroup `
-    --query "defaultHostname" `
-    --output tsv
-
 [pscustomobject]@{
     name = $StaticAppName
-    url = "https://$hostName"
+    url = $publicWebOrigin
     apiBaseUrl = $ApiBaseUrl
     apiLocation = Join-Path $repoRoot "api"
-    homeCacheContainer = $HomeCacheContainer
 } | ConvertTo-Json
