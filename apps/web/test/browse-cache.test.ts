@@ -67,6 +67,12 @@ async function readBeforeGuard<T>(key: string, deadlineMs = testDeadlineMs) {
   }
 }
 
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function installReadableDatabase(
   t: { after: (cleanup: () => void) => void },
   entry: unknown
@@ -121,6 +127,26 @@ test("browse cache keys remain isolated by member and view", () => {
 
 test("browse cache read deadline defaults to 250 milliseconds", () => {
   assert.equal(browseCache.browseCacheReadDeadlineMs, 250);
+});
+
+test("readBrowseCache uses the exported deadline when no deadline argument is provided", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  installIndexedDb(t, () => createRequest());
+  let settled = false;
+  let result: unknown = Symbol("unsettled");
+  void readBrowseCache("default-deadline").then((value) => {
+    settled = true;
+    result = value;
+  });
+
+  t.mock.timers.tick(browseCache.browseCacheReadDeadlineMs - 1);
+  await flushMicrotasks();
+  assert.equal(settled, false);
+
+  t.mock.timers.tick(1);
+  await flushMicrotasks();
+  assert.equal(settled, true);
+  assert.equal(result, undefined);
 });
 
 test("readBrowseCache returns a fresh cached entry", async (t) => {
@@ -206,6 +232,56 @@ test("readBrowseCache aborts and closes a never-settling get transaction", async
   getRequest.result = { savedAt: Date.now(), value: { results: ["late"] } };
   getRequest.onsuccess?.();
   transaction.oncomplete?.();
+  assert.equal(abortCalls, 1);
+  assert.equal(closeCalls, 1);
+});
+
+test("readBrowseCache shares one deadline budget across a delayed open and hung get", async (t) => {
+  const deadlineMs = 100;
+  const openDelayMs = 60;
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const openRequest = createRequest<unknown>();
+  const getRequest = createRequest<unknown>();
+  let abortCalls = 0;
+  let closeCalls = 0;
+  let settled = false;
+  let result: unknown = Symbol("unsettled");
+  const transaction: FakeTransaction = {
+    abort: () => {
+      abortCalls += 1;
+    },
+    objectStore: () => ({ get: () => getRequest }),
+    onabort: null,
+    oncomplete: null,
+    onerror: null
+  };
+  const database = {
+    close: () => {
+      closeCalls += 1;
+    },
+    objectStoreNames: { contains: () => true },
+    transaction: () => transaction
+  };
+  openRequest.result = database;
+  installIndexedDb(t, () => {
+    setTimeout(() => openRequest.onsuccess?.(), openDelayMs);
+    return openRequest;
+  });
+  void readBrowseCache("shared-deadline", deadlineMs).then((value) => {
+    settled = true;
+    result = value;
+  });
+
+  t.mock.timers.tick(openDelayMs);
+  await flushMicrotasks();
+  t.mock.timers.tick(deadlineMs - openDelayMs - 1);
+  await flushMicrotasks();
+  assert.equal(settled, false);
+
+  t.mock.timers.tick(1);
+  await flushMicrotasks();
+  assert.equal(settled, true);
+  assert.equal(result, undefined);
   assert.equal(abortCalls, 1);
   assert.equal(closeCalls, 1);
 });
