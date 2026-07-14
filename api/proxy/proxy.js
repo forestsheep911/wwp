@@ -2,7 +2,7 @@ const allowedMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE",
 const requestHeaders = ["content-type", "cookie", "if-modified-since", "if-none-match", "range", "x-request-id", "x-wwpdw-csrf-token"];
 const responseHeaders = ["accept-ranges", "cache-control", "content-range", "content-type", "etag", "last-modified", "location", "retry-after", "x-request-id"];
 const healthProxyTimeoutMs = 25_000;
-const maxAbortSignalTimeoutMs = 4_294_967_295;
+const maxAbortSignalTimeoutMs = 2_147_483_647;
 
 function urlUsesAllowedProtocol(parsed) {
   const isLocalHttp = parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");

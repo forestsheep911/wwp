@@ -316,7 +316,7 @@ test("invalid BFF timeout values fail configuration with 503", async () => {
 });
 
 test("BFF timeouts outside AbortSignal.timeout range fail before ordinary and health fetches", async () => {
-  assert.equal(maxAbortSignalTimeoutMs, 4_294_967_295);
+  assert.equal(maxAbortSignalTimeoutMs, 2_147_483_647);
   for (const path of ["auth/check", "health"]) {
     for (const timeoutValue of ["4294967296", "9007199254740992"]) {
       let fetched = false;
@@ -337,3 +337,23 @@ test("BFF timeouts outside AbortSignal.timeout range fail before ordinary and he
     }
   }
 });
+
+for (const path of ["auth/check", "health"]) {
+  test(`${path} rejects a timeout above the Node timer limit before fetch`, async () => {
+    let fetched = false;
+    const ctx = context(path);
+    await createProxyHandler({
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example",
+        WWPDW_BFF_TIMEOUT_MS: "2147483648"
+      },
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response();
+      }
+    })(ctx, request(path));
+    assert.equal(ctx.res.status, 503);
+    assert.equal(fetched, false);
+  });
+}
