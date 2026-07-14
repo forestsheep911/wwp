@@ -72,17 +72,6 @@ $appSettings = @(
     "WWPDW_PUBLIC_WEB_ORIGIN=$publicWebOrigin",
     "WWPDW_BFF_TIMEOUT_MS=90000"
 )
-
-& $AzCli staticwebapp appsettings set `
-    --name $StaticAppName `
-    --resource-group $ResourceGroup `
-    --setting-names $appSettings `
-    --output none
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not configure Static Web App BFF settings."
-}
-
 $legacySettingNames = @(
     "WWPDW_ADMIN_KEY",
     "AZURE_STORAGE_MEMBER_TABLE",
@@ -93,27 +82,6 @@ $legacySettingNames = @(
     "WWPDW_HOME_CACHE_CONTAINER",
     "WWPDW_HOME_CACHE_STORAGE_CONNECTION_STRING"
 )
-$existingSettingsJson = & $AzCli staticwebapp appsettings list `
-    --name $StaticAppName `
-    --resource-group $ResourceGroup `
-    --output json
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not read Static Web App settings."
-}
-
-$existingSettings = ($existingSettingsJson | ConvertFrom-Json).properties
-$settingsToDelete = @($legacySettingNames | Where-Object { $existingSettings.PSObject.Properties.Name -contains $_ })
-if ($settingsToDelete.Count -gt 0) {
-    & $AzCli staticwebapp appsettings delete `
-        --name $StaticAppName `
-        --resource-group $ResourceGroup `
-        --setting-names $settingsToDelete `
-        --output none
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not delete legacy Static Web App settings."
-    }
-}
 
 $previousApiBaseUrl = $env:VITE_API_BASE_URL
 
@@ -154,11 +122,25 @@ try {
     $env:VITE_API_BASE_URL = $previousApiBaseUrl
 }
 
+& $AzCli staticwebapp appsettings set `
+    --name $StaticAppName `
+    --resource-group $ResourceGroup `
+    --setting-names $appSettings `
+    --output none
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not configure Static Web App BFF settings."
+}
+
 $deploymentToken = & $AzCli staticwebapp secrets list `
     --name $StaticAppName `
     --resource-group $ResourceGroup `
     --query "properties.apiKey" `
     --output tsv
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read Static Web App deployment token."
+}
 
 if (-not $deploymentToken) {
     throw "Could not read Static Web App deployment token."
@@ -174,6 +156,28 @@ npx -y @azure/static-web-apps-cli deploy `
 
 if ($LASTEXITCODE -ne 0) {
     throw "Static Web App deployment failed."
+}
+
+$existingSettingsJson = & $AzCli staticwebapp appsettings list `
+    --name $StaticAppName `
+    --resource-group $ResourceGroup `
+    --output json
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read Static Web App settings."
+}
+
+$existingSettings = ($existingSettingsJson | ConvertFrom-Json).properties
+$settingsToDelete = @($legacySettingNames | Where-Object { $existingSettings.PSObject.Properties.Name -contains $_ })
+if ($settingsToDelete.Count -gt 0) {
+    & $AzCli staticwebapp appsettings delete `
+        --name $StaticAppName `
+        --resource-group $ResourceGroup `
+        --setting-names $settingsToDelete `
+        --output none
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not delete legacy Static Web App settings."
+    }
 }
 
 [pscustomobject]@{

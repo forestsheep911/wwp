@@ -14,7 +14,7 @@ function assertNativeCommandChecked(commandStart, failureMessage) {
     script,
     new RegExp(
       `${escapeRegex(commandStart)} \\x60\\r?\\n` +
-        `(?:[ \\t]+--[^\\r\\n]+\\r?\\n)+` +
+        `(?:[ \\t]+(?:--|\\()[^\\r\\n]+\\r?\\n)+` +
         `(?:[ \\t]*\\r?\\n)?[ \\t]*if \\(\\$LASTEXITCODE -ne 0\\) \\{\\r?\\n` +
         `[ \\t]+throw "${escapeRegex(failureMessage)}"`,
     ),
@@ -22,6 +22,13 @@ function assertNativeCommandChecked(commandStart, failureMessage) {
 }
 
 test("web deployment configures the BFF and removes the access-key Function settings", () => {
+  const appSettingsBlock = script.match(/\$appSettings = @\(([\s\S]*?)\r?\n\)/)?.[1];
+  const settingNames = [...appSettingsBlock.matchAll(/"([A-Z0-9_]+)=/g)].map((match) => match[1]);
+  assert.deepEqual(settingNames, [
+    "WWPDW_ORIGIN_API_BASE_URL",
+    "WWPDW_PUBLIC_WEB_ORIGIN",
+    "WWPDW_BFF_TIMEOUT_MS",
+  ]);
   assert.match(script, /WWPDW_PUBLIC_WEB_ORIGIN=\$publicWebOrigin/);
   assert.match(script, /WWPDW_BFF_TIMEOUT_MS=90000/);
   assert.match(script, /staticwebapp appsettings delete/);
@@ -64,9 +71,40 @@ test("deployment fails closed when native settings or build commands fail", () =
     "& $AzCli staticwebapp appsettings delete",
     "Could not delete legacy Static Web App settings.",
   );
+  assertNativeCommandChecked(
+    "$deploymentToken = & $AzCli staticwebapp secrets list",
+    "Could not read Static Web App deployment token.",
+  );
+  assertNativeCommandChecked(
+    "npx -y @azure/static-web-apps-cli deploy",
+    "Static Web App deployment failed.",
+  );
   assert.match(
     script,
     /npm run build --workspace @wwpdw\/web\r?\n\s*if \(\$LASTEXITCODE -ne 0\)/,
+  );
+});
+
+test("legacy settings are removed only after a successful web and BFF deployment", () => {
+  const buildIndex = script.indexOf("npm run build --workspace @wwpdw/web");
+  const tokenIndex = script.indexOf("staticwebapp secrets list");
+  const deployIndex = script.indexOf("@azure/static-web-apps-cli deploy");
+  const deploySuccessBoundaryIndex = script.indexOf("if ($LASTEXITCODE -ne 0)", deployIndex);
+  const cleanupListIndex = script.indexOf("staticwebapp appsettings list", deploySuccessBoundaryIndex);
+  const cleanupDeleteIndex = script.indexOf("staticwebapp appsettings delete", cleanupListIndex);
+
+  assert.notEqual(buildIndex, -1, "expected a production build");
+  assert.notEqual(tokenIndex, -1, "expected deployment token lookup");
+  assert.notEqual(deployIndex, -1, "expected web and BFF deployment");
+  assert.notEqual(deploySuccessBoundaryIndex, -1, "expected deployment failure check");
+  assert.notEqual(cleanupListIndex, -1, "expected post-deployment legacy settings lookup");
+  assert.notEqual(cleanupDeleteIndex, -1, "expected post-deployment legacy settings cleanup");
+  assert.ok(buildIndex < cleanupListIndex, "a build failure must occur before cleanup is reachable");
+  assert.ok(tokenIndex < cleanupListIndex, "a token lookup failure must occur before cleanup is reachable");
+  assert.ok(deployIndex < cleanupListIndex, "a deployment failure must occur before cleanup is reachable");
+  assert.ok(
+    deploySuccessBoundaryIndex < cleanupListIndex,
+    "cleanup must start after the successful deployment boundary",
   );
 });
 

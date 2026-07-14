@@ -1,7 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { buildUpstreamUrl, createProxyHandler, rewriteSessionCookie } = require("./proxy");
+const {
+  buildUpstreamUrl,
+  createProxyHandler,
+  healthProxyTimeoutMs,
+  proxyTimeoutMsForPath,
+  rewriteSessionCookie
+} = require("./proxy");
 
 function request(path, overrides = {}) {
   return {
@@ -106,6 +112,13 @@ test("health maps to the unprefixed upstream endpoint", async () => {
   assert.equal(ctx.res.status, 200);
 });
 
+test("health uses a shorter route-specific proxy deadline", () => {
+  assert.equal(healthProxyTimeoutMs, 25_000);
+  assert.equal(proxyTimeoutMsForPath("health", 90_000), 25_000);
+  assert.equal(proxyTimeoutMsForPath("health", 10_000), 10_000);
+  assert.equal(proxyTimeoutMsForPath("auth/check", 90_000), 90_000);
+});
+
 test("authenticated range requests preserve CSRF, status, metadata, and binary bodies", async () => {
   let upstreamInit;
   const handler = createProxyHandler({
@@ -171,4 +184,71 @@ test("invalid methods, missing configuration, upstream failures, and timeouts fa
     fetchImpl: async () => { throw Object.assign(new Error("timed out"), { name: "TimeoutError" }); }
   })(timeout, request("auth/check"));
   assert.equal(timeout.res.status, 504);
+});
+
+test("malformed or insecure remote BFF URLs fail configuration with 503", async () => {
+  const cases = [
+    {
+      name: "malformed upstream URL",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "not a URL",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example"
+      }
+    },
+    {
+      name: "insecure remote upstream URL",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "http://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example"
+      }
+    },
+    {
+      name: "malformed public web origin",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "not a URL"
+      }
+    },
+    {
+      name: "insecure remote public web origin",
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "http://web.example"
+      }
+    }
+  ];
+
+  for (const { name, env } of cases) {
+    let fetched = false;
+    const ctx = context("auth/check");
+    await createProxyHandler({
+      env,
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response();
+      }
+    })(ctx, request("auth/check"));
+    assert.equal(ctx.res.status, 503, name);
+    assert.equal(fetched, false, `${name} must fail before fetch`);
+  }
+});
+
+test("invalid BFF timeout values fail configuration with 503", async () => {
+  for (const timeoutValue of ["0", "-1", "1.5", "NaN", "Infinity"]) {
+    let fetched = false;
+    const ctx = context("auth/check");
+    await createProxyHandler({
+      env: {
+        WWPDW_ORIGIN_API_BASE_URL: "https://api.example",
+        WWPDW_PUBLIC_WEB_ORIGIN: "https://web.example",
+        WWPDW_BFF_TIMEOUT_MS: timeoutValue
+      },
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response();
+      }
+    })(ctx, request("auth/check"));
+    assert.equal(ctx.res.status, 503, `invalid timeout ${timeoutValue}`);
+    assert.equal(fetched, false, `invalid timeout ${timeoutValue} must fail before fetch`);
+  }
 });

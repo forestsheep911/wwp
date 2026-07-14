@@ -1,6 +1,7 @@
 const allowedMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const requestHeaders = ["content-type", "cookie", "if-modified-since", "if-none-match", "range", "x-request-id", "x-wwpdw-csrf-token"];
 const responseHeaders = ["accept-ranges", "cache-control", "content-range", "content-type", "etag", "last-modified", "location", "retry-after", "x-request-id"];
+const healthProxyTimeoutMs = 25_000;
 
 function normalizedBaseUrl(value) {
   const parsed = new URL(value);
@@ -11,6 +12,33 @@ function normalizedBaseUrl(value) {
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString().replace(/\/$/, "");
+}
+
+function normalizedPublicOrigin(value) {
+  const parsed = new URL(value);
+  if (parsed.protocol !== "https:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+    throw new Error("Public web origin must use HTTPS");
+  }
+  return parsed.origin;
+}
+
+function normalizedTimeoutMs(value) {
+  const timeoutMs = value == null ? 90_000 : Number(value);
+  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("BFF timeout must be a finite positive integer");
+  }
+  return timeoutMs;
+}
+
+function normalizedConfiguration(env) {
+  if (!env.WWPDW_ORIGIN_API_BASE_URL || !env.WWPDW_PUBLIC_WEB_ORIGIN) {
+    throw new Error("BFF configuration is incomplete");
+  }
+  return {
+    upstreamBaseUrl: normalizedBaseUrl(env.WWPDW_ORIGIN_API_BASE_URL),
+    publicOrigin: normalizedPublicOrigin(env.WWPDW_PUBLIC_WEB_ORIGIN),
+    timeoutMs: normalizedTimeoutMs(env.WWPDW_BFF_TIMEOUT_MS)
+  };
 }
 
 function normalizedProxyPath(value) {
@@ -26,6 +54,10 @@ function buildUpstreamUrl(baseUrl, pathValue, search = "") {
   const path = normalizedProxyPath(pathValue);
   const upstreamPath = path === "health" ? "/health" : `/api/${path}`;
   return `${normalizedBaseUrl(baseUrl)}${upstreamPath}${search}`;
+}
+
+function proxyTimeoutMsForPath(path, configuredTimeoutMs) {
+  return path === "health" ? Math.min(configuredTimeoutMs, healthProxyTimeoutMs) : configuredTimeoutMs;
 }
 
 function rewriteSessionCookie(value) {
@@ -63,22 +95,24 @@ function createProxyHandler({ fetchImpl = fetch, env = process.env } = {}) {
         context.res = jsonError(405, "Method not allowed", requestId);
         return;
       }
-      if (!env.WWPDW_ORIGIN_API_BASE_URL || !env.WWPDW_PUBLIC_WEB_ORIGIN) {
+      let config;
+      try {
+        config = normalizedConfiguration(env);
+      } catch {
+        context.log.error(`${method} ${path} 503 ${Date.now() - startedAt}ms ${requestId}`);
         context.res = jsonError(503, "API proxy is not configured", requestId);
         return;
       }
-      const publicOrigin = new URL(env.WWPDW_PUBLIC_WEB_ORIGIN).origin;
       const search = new URL(req.url).search;
       const headers = selectedHeaders(req.headers, requestHeaders);
-      headers.origin = publicOrigin;
+      headers.origin = config.publicOrigin;
       headers["x-request-id"] = requestId;
-      const timeoutMs = Number(env.WWPDW_BFF_TIMEOUT_MS || 90000);
-      const upstream = await fetchImpl(buildUpstreamUrl(env.WWPDW_ORIGIN_API_BASE_URL, path, search), {
+      const upstream = await fetchImpl(buildUpstreamUrl(config.upstreamBaseUrl, path, search), {
         method,
         headers,
         body: requestBody(req, method),
         redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs)
+        signal: AbortSignal.timeout(proxyTimeoutMsForPath(path, config.timeoutMs))
       });
       const resultHeaders = selectedHeaders(Object.fromEntries(upstream.headers.entries()), responseHeaders);
       const setCookie = upstream.headers.get("set-cookie");
@@ -97,4 +131,10 @@ function createProxyHandler({ fetchImpl = fetch, env = process.env } = {}) {
   };
 }
 
-module.exports = { buildUpstreamUrl, createProxyHandler, rewriteSessionCookie };
+module.exports = {
+  buildUpstreamUrl,
+  createProxyHandler,
+  healthProxyTimeoutMs,
+  proxyTimeoutMsForPath,
+  rewriteSessionCookie
+};
