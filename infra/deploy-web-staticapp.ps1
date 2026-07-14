@@ -33,6 +33,10 @@ $existingAppName = & $AzCli staticwebapp list `
     --query "[?name=='$StaticAppName'].name | [0]" `
     --output tsv
 
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not list Static Web Apps."
+}
+
 $exists = [bool]$existingAppName
 
 if (-not $exists) {
@@ -44,6 +48,10 @@ if (-not $exists) {
         --sku Free `
         --tags project=ww-player-cache env=dev managedBy=infra-script component=web `
         --output none
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not create Static Web App."
+    }
 } else {
     Write-Host "Static Web App already exists: $StaticAppName"
 }
@@ -119,19 +127,24 @@ try {
             throw "Web build failed."
         }
 
-        $builtIndexPath = Join-Path $repoRoot "apps\web\dist\index.html"
-        $builtIndex = Get-Content $builtIndexPath -Raw
-        $builtScriptMatch = [regex]::Match($builtIndex, "/assets/[^`"']+\.js")
-        if (-not $builtScriptMatch.Success) {
-            throw "Could not find built web JavaScript asset in $builtIndexPath."
+        $builtDistPath = Join-Path $repoRoot "apps\web\dist"
+        $builtScriptFiles = @(Get-ChildItem -LiteralPath $builtDistPath -Filter "*.js" -File -Recurse)
+        if ($builtScriptFiles.Count -eq 0) {
+            throw "Could not find built web JavaScript assets in $builtDistPath."
         }
 
-        $builtScriptPath = Join-Path (Join-Path $repoRoot "apps\web\dist") ($builtScriptMatch.Value.TrimStart("/") -replace "/", "\")
-        $builtScript = Get-Content $builtScriptPath -Raw
-        if ($builtScript.Contains($ApiBaseUrl)) {
-            throw "Built web asset still contains cross-site API base URL $ApiBaseUrl."
+        $foundSameOriginLoginRoute = $false
+        foreach ($builtScriptFile in $builtScriptFiles) {
+            $builtScript = Get-Content -LiteralPath $builtScriptFile.FullName -Raw
+            if ($builtScript.Contains($ApiBaseUrl)) {
+                throw "Built web asset still contains cross-site API base URL $ApiBaseUrl`: $($builtScriptFile.FullName)."
+            }
+            if ($builtScript.Contains("/api/auth/login")) {
+                $foundSameOriginLoginRoute = $true
+            }
         }
-        if (-not $builtScript.Contains("/api/auth/login")) {
+
+        if (-not $foundSameOriginLoginRoute) {
             throw "Built web asset does not contain the same-origin login route."
         }
     } finally {

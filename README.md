@@ -33,7 +33,7 @@ npm run dev:web
 
 The local default cache backend is `CACHE_BACKEND=local`, backed by `.local-data/cache-state.json`.
 
-The frontend does not contain a built-in administrator key. The deployed API reads one static admin key from `WWPDW_ADMIN_KEY`, and the Admin tab sends the user-entered key through `x-wwpdw-access-key`. Regular family members use generated member passes stored in the member-code table.
+The browser frontend holds no administrator key. Authentication uses an HttpOnly session cookie, while the client keeps the CSRF token only in memory and sends it on authenticated state-changing requests. The deployed API still reads `WWPDW_ADMIN_KEY` to validate administrator login passcodes; regular family members use generated member passes stored in the member-code table.
 
 For explicit local direct-API development, set `VITE_API_BASE_URL` to the remote API origin. Leave it empty to use `/api`, including every production build.
 
