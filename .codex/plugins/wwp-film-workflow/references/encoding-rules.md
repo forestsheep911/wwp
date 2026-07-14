@@ -12,6 +12,7 @@
 - Compact playable versions are also valuable when a work lacks a smaller easy-streaming spec. A practical compact target is roughly 1.0-1.8GB for a feature film; exact size is less important than watchable quality, correct subtitles/audio, and a clean final probe.
 - Do not let high-bitrate production crowd out compact backfill forever. When the queue is quiet, uploads are slow, or a source already has a verified high-bitrate spec, consider producing a compact version for useful works that lack one.
 - If an encode is trending over the limit, stop early and recalculate the bitrate instead of finishing an unusable upload candidate.
+- For Dolby Vision or other HDR sources, a direct 10-bit-to-SDR encode is not acceptable. Require a DV/HDR-aware conversion and a visual sample check. Any green/magenta cast or visibly wrong color is a hard failure: skip the playable variant rather than publishing a bad resource.
 
 ## Subtitle Priority
 
@@ -27,6 +28,9 @@ Report the full available subtitle set and the subset produced. More subtitle va
 ## Audio and Version Rules
 
 - Hong Kong films: Cantonese plus Chinese subtitles first; Mandarin can be supplemental when available.
+- Use `国配` only for Mainland Mandarin dubbing. Taiwan Mandarin is `台配`; Hong Kong Cantonese is `粤配`. These labels are separate spec dimensions and must remain visible in spec titles.
+- The size suffix in a spec title must come from the final file's measured decimal byte count, not the source filename or an old placeholder. For example, 1,394,073,253 bytes is a `1.4GB` output; keep subtitle labels such as `简` when Chinese subtitles are burned in.
+- A `Chinese`/`zho` stream label, a regional disc folder name, or an unverified filename is not enough to choose among `国配`/`台配`/`粤配`. Require trusted stream mapping or user listening evidence before naming the spec.
 - Mandarin-language films: no hard subtitles first unless the source forces them.
 - Director cuts: consider as separate valuable specs.
 - Commentary tracks: produce only when Chinese subtitles or Chinese assistance make the commentary usable.
@@ -46,6 +50,7 @@ Report the full available subtitle set and the subset produced. More subtitle va
 - Probe source and final files with `ffprobe`.
 - Dolby Vision Profile 5 sources are not final-safe by default. Treat Profile 5 as blocked for normal playable production unless the user explicitly chooses a compatible tone-mapping/HDR strategy or a different source is unavailable and accepted.
 - For HDR/DV/color uncertainty, subtitle timing uncertainty, or PGS subtitles, create a short sample and visually inspect real subtitle timestamps.
+- When testing an external subtitle burn with `subtitles=...`, do not prove sync using input-side `-ss` before `-i` unless the subtitle file is trimmed by the same offset. Input-side seeking can make a 00:00 subtitle appear over a later video segment and create a false-positive smoke test. Prefer full-file timestamp checks or output-side seeking after `-i`, then capture frames at known subtitle event times from the extracted subtitle file.
 - HDR/DV sources that are encoded to SDR-looking `yuv420p` without explicit tone mapping must be treated as color-risk samples. If the sample looks dark, flat, clipped, or washed out, do not use the same command for final delivery; decide between tone mapping, HDR-preserving output, or skipping.
 - When a probe shows no subtitle stream but the source may contain hard subtitles, confirm with contact sheets or playback before applying the Chinese-subtitle hard gate.
 - Contact sheets are useful for color, framing, burn-in, and gross artifact checks, but do not replace sample playback.

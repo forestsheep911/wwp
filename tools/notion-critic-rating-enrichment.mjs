@@ -14,6 +14,7 @@ const DEFAULT_REPORT_PATH = ".local-data/notion-critic-rating-enrichment-report.
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     apply: false,
+    discoverSearch: false,
     discoverOnly: false,
     searchOnly: false,
     timeoutMs: 30000,
@@ -34,6 +35,10 @@ function parseArgs(argv = process.argv.slice(2)) {
       options.discoverOnly = true;
       continue;
     }
+    if (arg === "--discover-search") {
+      options.discoverSearch = true;
+      continue;
+    }
     if (arg === "--search-only") {
       options.searchOnly = true;
       continue;
@@ -48,6 +53,18 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (name === "rotten-url") options.rottenUrl = value;
     else if (name === "metacritic-url") options.metacriticUrl = value;
     else if (name === "imdb-url") options.imdbUrl = value;
+    else if (name === "url-hints") options.urlHints = value;
+    else if (name === "rotten-search-url") {
+      options.rottenSearchUrl = value;
+      options.discoverSearch = true;
+    }
+    else if (name === "metacritic-search-url") {
+      options.metacriticSearchUrl = value;
+      options.discoverSearch = true;
+    }
+    else if (name === "rotten-source-url") options.rottenSourceUrl = requireOfficialSourceUrl(value, normalizeRottenTomatoesUrl, "Rotten Tomatoes");
+    else if (name === "metacritic-source-url") options.metacriticSourceUrl = requireOfficialSourceUrl(value, normalizeMetacriticUrl, "Metacritic");
+    else if (name === "imdb-source-url") options.imdbSourceUrl = requireOfficialSourceUrl(value, normalizeImdbSourceUrl, "IMDb");
     else if (name === "ratings-json") options.ratingsJson = value;
     else if (name === "imdb-id") options.imdbId = normalizeImdbId(value);
     else if (name === "wikidata-json") options.wikidataJson = value;
@@ -67,12 +84,20 @@ function usage() {
   node tools/notion-critic-rating-enrichment.mjs --page-id <page-id> --rotten-url <official-url-or-html> --metacritic-url <official-url-or-html>
   node tools/notion-critic-rating-enrichment.mjs --page-id <page-id> --imdb-id <ttid>
   node tools/notion-critic-rating-enrichment.mjs --page-id <page-id> --ratings-json <trusted-evidence.json>
+  node tools/notion-critic-rating-enrichment.mjs --page-id <page-id> --url-hints <search-result-html-or-text> --search-only
   node tools/notion-critic-rating-enrichment.mjs --page-id <page-id> --search-only
 
 Default mode is dry-run. The tool only fills empty Notion critic-score fields
 from verified fallback results parsed by the plugin critic-rating inspector.
 Trusted evidence JSON must include source labels such as licensed-source:<name>
 or manual-evidence:<name>.
+When --rotten-url, --metacritic-url, or --imdb-url points to a saved HTML file,
+pass --*-source-url or keep the official page URL in Developer Memo so evidence
+memos preserve the original official source.
+Use --url-hints for generic search-result or browser-saved pages; it extracts
+official RT/Metacritic detail-page candidates only and never writes scores.
+Use --discover-search with --search-only to parse official RT/Metacritic search
+pages into candidate URLs only; search snippets are never written as scores.
 Use --apply to write updates.
 `;
 }
@@ -141,6 +166,62 @@ function propertyText(property) {
   return "";
 }
 
+const rottenTomatoesUrlPattern = /https?:\/\/(?:www\.)?rottentomatoes\.com\/(?:m|tv)\/[^\s<>"'）)\],;]+/gi;
+const metacriticUrlPattern = /https?:\/\/(?:www\.)?metacritic\.com\/(?:movie|tv|tv-shows?)\/[^\s<>"'）)\],;]+/gi;
+
+function normalizeExternalSiteUrl(value, hostPattern, validPathPattern) {
+  if (!value) return undefined;
+  try {
+    const cleaned = String(value).trim().replace(/[),.;\]\uFF09]+$/g, "");
+    const url = new URL(cleaned);
+    if (!hostPattern.test(url.hostname)) return undefined;
+
+    let pathname = url.pathname.replace(/\/+$/g, "");
+    pathname = pathname.replace(/\/(?:reviews|critic-reviews|user-reviews|audience-reviews|cast-and-crew|pictures|trailers)$/i, "");
+    if (!validPathPattern.test(pathname)) return undefined;
+    return `${url.protocol}//${url.hostname}${pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRottenTomatoesUrl(value) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?rottentomatoes\.com$/i, /^\/(?:m|tv)\/[^/]+(?:\/[^/]+)?$/i);
+}
+
+function normalizeMetacriticUrl(value) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?metacritic\.com$/i, /^\/(?:movie|tv|tv-shows?)\/[^/]+(?:\/season-\d+)?$/i);
+}
+
+function normalizeImdbSourceUrl(value) {
+  const imdbId = normalizeImdbId(value);
+  return imdbId ? `https://www.imdb.com/title/${imdbId}/` : undefined;
+}
+
+function requireOfficialSourceUrl(value, normalize, label) {
+  const normalized = normalize(value);
+  if (!normalized) throw new Error(`${label} source URL must be an official title page URL: ${value}`);
+  return normalized;
+}
+
+function sourceIsUrl(source) {
+  return /^https?:\/\//i.test(String(source));
+}
+
+export function criticPageHintsFromProperties(properties = {}) {
+  const hints = {};
+  for (const [name, property] of Object.entries(properties)) {
+    const text = [name, propertyText(property)].filter(Boolean).join(" ");
+    for (const match of text.matchAll(rottenTomatoesUrlPattern)) {
+      hints.rottenUrl ??= normalizeRottenTomatoesUrl(match[0]);
+    }
+    for (const match of text.matchAll(metacriticUrlPattern)) {
+      hints.metacriticUrl ??= normalizeMetacriticUrl(match[0]);
+    }
+  }
+  return hints;
+}
+
 function propertyExists(properties, name) {
   return Object.prototype.hasOwnProperty.call(properties, name);
 }
@@ -152,6 +233,12 @@ function hasValue(properties, name) {
 function richText(content) {
   const chunks = `${content ?? ""}`.match(/[\s\S]{1,1900}/g) ?? [""];
   return { rich_text: chunks.map((chunk) => ({ type: "text", text: { content: chunk } })) };
+}
+
+function appendedMemoValue(currentMemo, evidenceMemo) {
+  if (!currentMemo) return evidenceMemo;
+  if (currentMemo.includes(evidenceMemo)) return currentMemo;
+  return `${currentMemo.trimEnd()}\n${evidenceMemo}`;
 }
 
 function multiSelect(names) {
@@ -183,7 +270,7 @@ function pageTitle(page) {
 function derivePageIdentity(page) {
   const properties = page.properties ?? {};
   const title = propertyText(properties["English Title"]) || propertyText(properties["Original Title"]) || pageTitle(page);
-  const year = propertyText(properties["Release Year"]) || pageTitle(page).match(/\b(18\d{2}|19\d{2}|20\d{2})\b/)?.[1];
+  const year = propertyText(properties["Release Year"]) || pageTitle(page).match(/\((18\d{2}|19\d{2}|20\d{2})\)\s*$/)?.[1];
   const imdbId = normalizeImdbId(
     propertyText(properties["IMDb ID"]) ||
     propertyText(properties["IMDb"]) ||
@@ -250,8 +337,12 @@ export function planCriticRatingUpdates(page, criticResult = {}, options = {}) {
   }
 
   const evidenceMemo = buildEvidenceMemo(evidence, now);
-  if (evidenceMemo && propertyExists(properties, "Developer Memo") && !hasValue(properties, "Developer Memo")) {
-    updates["Developer Memo"] = richText(evidenceMemo);
+  if (evidenceMemo && propertyExists(properties, "Developer Memo")) {
+    const currentMemo = propertyText(properties["Developer Memo"]);
+    const nextMemo = appendedMemoValue(currentMemo, evidenceMemo);
+    if (nextMemo !== currentMemo) {
+      updates["Developer Memo"] = richText(nextMemo);
+    }
   }
 
   if (evidence.length > 0 && propertyExists(properties, "Metadata Updated At")) {
@@ -265,13 +356,18 @@ export function planCriticRatingUpdates(page, criticResult = {}, options = {}) {
     updateFields: Object.keys(updates),
     evidence,
     evidenceMemo,
-    discoveryOnly: Boolean(criticResult.officialSearch && evidence.length === 0)
+    discoveryOnly: Boolean((criticResult.discovery || criticResult.officialSearch || criticResult.searchDiscovery || criticResult.urlHints) && evidence.length === 0)
   };
 }
 
-function inspectOptionsFromPage(options, page) {
+export function inspectOptionsFromPage(options, page) {
   const identity = derivePageIdentity(page);
-  const directInputs = options.rottenUrl || options.metacriticUrl || options.imdbUrl || options.wikidataJson || options.ratingsJson;
+  const criticUrlHints = criticPageHintsFromProperties(page.properties ?? {});
+  const rottenUrl = options.rottenUrl ?? criticUrlHints.rottenUrl;
+  const metacriticUrl = options.metacriticUrl ?? criticUrlHints.metacriticUrl;
+  const rottenSourceUrl = options.rottenSourceUrl ?? (rottenUrl && !sourceIsUrl(rottenUrl) ? criticUrlHints.rottenUrl : undefined);
+  const metacriticSourceUrl = options.metacriticSourceUrl ?? (metacriticUrl && !sourceIsUrl(metacriticUrl) ? criticUrlHints.metacriticUrl : undefined);
+  const directInputs = rottenUrl || metacriticUrl || options.imdbUrl || options.wikidataJson || options.ratingsJson;
   const imdbId = options.imdbId ?? identity.imdbId;
   const title = options.title ?? identity.title;
   const year = options.year ?? identity.year;
@@ -279,16 +375,23 @@ function inspectOptionsFromPage(options, page) {
 
   const inspectOptions = {
     timeoutMs: options.timeoutMs,
-    rottenUrl: options.rottenUrl,
-    metacriticUrl: options.metacriticUrl,
+    rottenUrl,
+    metacriticUrl,
     imdbUrl: options.imdbUrl,
+    urlHints: options.urlHints,
+    rottenSearchUrl: options.rottenSearchUrl,
+    metacriticSearchUrl: options.metacriticSearchUrl,
+    rottenSourceUrl,
+    metacriticSourceUrl,
+    imdbSourceUrl: options.imdbSourceUrl,
     ratingsJson: options.ratingsJson,
     wikidataJson: options.wikidataJson,
+    discoverSearch: options.discoverSearch,
     discoverOnly: options.discoverOnly,
     searchOnly
   };
   if (imdbId) inspectOptions.imdbId = imdbId;
-  if (searchOnly || options.title || options.year) {
+  if (searchOnly || options.discoverSearch || options.title || options.year) {
     inspectOptions.title = title;
     inspectOptions.year = year;
   }
@@ -335,6 +438,8 @@ async function main() {
     evidence: plan.evidence,
     discoveryOnly: plan.discoveryOnly,
     officialSearch: criticResult.officialSearch,
+    searchDiscovery: criticResult.searchDiscovery,
+    urlHints: criticResult.urlHints,
     discovery: criticResult.discovery
   };
 

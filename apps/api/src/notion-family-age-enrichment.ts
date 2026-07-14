@@ -1,14 +1,16 @@
 import "./env.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
+import { buildAiCheckUpdates } from "./notion-ai-check-state.js";
 
 type JsonRecord = Record<string, unknown>;
 
 interface FamilyAgeOptions {
   apply: boolean;
+  includeLegacyPages: boolean;
   limit: number;
   maxUpdates: number;
   pageSize: number;
@@ -19,6 +21,10 @@ interface FamilyAgeOptions {
   dataSourceId?: string;
   databaseId?: string;
   rootPageId?: string;
+  candidateCache?: string;
+  writeCandidateCache?: string;
+  progressPath: string;
+  failureProgressPath: string;
 }
 
 interface LibraryMetadata {
@@ -137,6 +143,7 @@ function parseArgs(): FamilyAgeOptions {
 
   return {
     apply: has("--apply"),
+    includeLegacyPages: has("--include-legacy-pages"),
     limit: Math.max(1, Math.floor(Number(value("--limit", "20")))),
     maxUpdates: Math.max(1, Math.floor(Number(value("--max-updates", "5")))),
     pageSize: Math.min(100, Math.max(1, Math.floor(Number(value("--page-size", "50"))))),
@@ -146,7 +153,11 @@ function parseArgs(): FamilyAgeOptions {
     reportPath: value("--report", "").trim() || undefined,
     dataSourceId: extractNotionId(value("--data-source-id", "")) ?? undefined,
     databaseId: extractNotionId(value("--database-id", "")) ?? undefined,
-    rootPageId: extractNotionId(value("--root-page-id", "")) ?? undefined
+    rootPageId: extractNotionId(value("--root-page-id", "")) ?? undefined,
+    candidateCache: value("--candidate-cache", "").trim() || undefined,
+    writeCandidateCache: value("--write-candidate-cache", "").trim() || undefined,
+    progressPath: value("--progress", ".local-data/notion-family-age-progress.jsonl").trim(),
+    failureProgressPath: value("--failure-progress", ".local-data/notion-family-age-failures.jsonl").trim()
   };
 }
 
@@ -297,7 +308,15 @@ function promptForPage(title: string, properties: JsonRecord) {
     `- riskTags: 从这些中文标签选择 0 到 6 个：暴力, 血腥, 恐怖, 性/裸露, 脏话, 毒品, 自杀自伤, 战争, 歧视/仇恨, 成人主题, 儿童友好, 需人工复核。\n` +
     `- reason: 中文一句话，不超过 80 字，说明关键依据。\n` +
     `- needsReview: 布尔值；资料不足或官方分级与内容明显冲突时为 true。\n\n` +
-    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。资料不足时降低 confidence 并加入 需人工复核。\n\n` +
+    `标签必须对应资料中明确存在的内容风险，不要按气氛、隐喻或泛化联想贴标签：\n` +
+    `- 战争：仅用于作品实际呈现真实战争或军队间有组织武装冲突；战争只作为人物履历或历史背景、私人武装争斗、灾难救援、阶级冲突、犯罪、恐袭、反恐行动、毒品战争、枪战、黑帮冲突不等于战争。\n` +
+    `- 血腥：仅用于画面明确呈现大量或有冲击力的流血、伤口、肢解或尸体细节；普通打斗、轻伤、危险运动、动物蜇伤或理由中的“可能有血”不等于血腥。\n` +
+    `- 恐怖：仅用于恐怖类型、持续惊吓或明确恐怖意象；悬疑、压抑、心理复杂不等于恐怖。\n` +
+    `- 歧视/仇恨：仅用于明确的种族、性别、身份等偏见或仇恨行为；贫困、企业不公、一般社会不平等不等于歧视。\n` +
+    `- 自杀自伤：仅用于资料明确写出的自杀意念、行为或自残；悲伤、绝望、精神疾病、牺牲、人物败亡或角色死亡不等于自杀自伤。若理由只能写“暗示、倾向、象征”，不得使用此标签。\n` +
+    `- 成人主题可单独表达复杂伦理、政治、犯罪或沉重现实，不要为了凑标签附加其他类别。\n` +
+    `- 儿童友好可以与轻度幻想暴力并存，但不要仅因反派或紧张桥段标记恐怖。\n\n` +
+    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。资料不足时降低 confidence 并加入 需人工复核。reason 必须全部使用中文。\n\n` +
     `作品资料：\n${JSON.stringify(fields, null, 2)}`;
 }
 
@@ -307,12 +326,29 @@ function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined {
   const minimumAge = Math.round(Number(record.minimumAge));
   const confidence = asString(record.confidence).toLowerCase();
   const needsReview = record.needsReview === true;
-  const riskTags = asArray(record.riskTags)
+  let riskTags = asArray(record.riskTags)
     .map((item) => asString(item).trim())
     .filter((item) => allowedRiskTags.has(item))
     .filter((item) => needsReview || item !== "需人工复核");
+  const reason = asString(record.reason).replace(/\bexplicit\b/giu, "明确的").trim().slice(0, 160);
+  const explicitSelfHarm = /(?:自杀(?!倾向|暗示|象征)|自残(?!倾向|暗示|象征)|割腕|割脉|跳楼|跳河|服毒|上吊)/u.test(reason);
+  const depictedWar = /(?:战争场面|战争伤亡|军事冲突|军事入侵|战役|战场|军队.{0,8}(?:战斗|交战)|部族冲突|(?:大规模|有组织|军事|军队).{0,8}武装冲突)/u.test(reason);
+  const depictedBlood = /(?:血腥|流血|喷血|伤口|肢解|断肢|残肢|尸体细节|斩首|内脏)/u.test(reason);
+  const depictedHorror = /(?:恐怖片|恐怖类型|心理恐怖|身体恐怖|超自然|幽灵|怨灵|诅咒|丧尸|异形|怪物|惊吓|惊悚场面|恐怖意象|阴森|骷髅|女巫)/u.test(reason);
+  if (!explicitSelfHarm) riskTags = riskTags.filter((item) => item !== "自杀自伤");
+  if (!depictedWar) riskTags = riskTags.filter((item) => item !== "战争");
+  if (/(?:反恐行动|毒品战争|恐怖组织)/u.test(reason) && !/(?:战争场面|战争伤亡|军事入侵|战役|战场|军队.{0,8}(?:战斗|交战))/u.test(reason)) {
+    riskTags = riskTags.filter((item) => item !== "战争");
+  }
+  if (!depictedBlood) riskTags = riskTags.filter((item) => item !== "血腥");
+  if (!depictedHorror) riskTags = riskTags.filter((item) => item !== "恐怖");
+  if (/(?:无|没有|不含|并无).{0,6}(?:血腥|流血|伤口)/u.test(reason)) {
+    riskTags = riskTags.filter((item) => item !== "血腥");
+  }
+  if (/(?:无|没有|不含|并无).{0,8}(?:恐怖|惊吓)/u.test(reason)) {
+    riskTags = riskTags.filter((item) => item !== "恐怖");
+  }
   if (needsReview && !riskTags.includes("需人工复核")) riskTags.push("需人工复核");
-  const reason = asString(record.reason).trim().slice(0, 160);
   if (!Number.isFinite(minimumAge) || minimumAge < 0 || minimumAge > 18) return undefined;
   if (confidence !== "high" && confidence !== "medium" && confidence !== "low") return undefined;
   if (!reason) return undefined;
@@ -401,6 +437,18 @@ async function loadLibrary(notion: Client, options: FamilyAgeOptions): Promise<L
   throw new Error("Set NOTION_LIBRARY_DATA_SOURCE_ID or NOTION_LIBRARY_DATABASE_ID.");
 }
 
+async function loadCachedLibrary(cachePath: string): Promise<LibraryMetadata> {
+  const cached = asRecord(JSON.parse(await readFile(cachePath, "utf8")));
+  const library = asRecord(cached?.library);
+  const dataSourceId = asString(library?.dataSourceId);
+  if (!dataSourceId) throw new Error(`Candidate cache has no library metadata: ${cachePath}`);
+  return {
+    dataSourceId,
+    titleProperty: asString(library?.titleProperty) || undefined,
+    properties: asRecord(library?.properties) ?? {}
+  };
+}
+
 function findTitleProperty(properties: JsonRecord) {
   for (const [name, property] of Object.entries(properties)) {
     if (asRecord(property)?.type === "title") return name;
@@ -409,6 +457,12 @@ function findTitleProperty(properties: JsonRecord) {
 }
 
 async function collectPages(notion: Client, library: LibraryMetadata, options: FamilyAgeOptions) {
+  if (options.candidateCache) {
+    const cached = JSON.parse(await readFile(options.candidateCache, "utf8")) as unknown;
+    const cachedPages = asArray(asRecord(cached)?.pages).map((page) => asRecord(page)).filter(Boolean) as JsonRecord[];
+    if (cachedPages.length === 0) throw new Error(`Candidate cache has no pages: ${options.candidateCache}`);
+    return cachedPages;
+  }
   if (options.pageId) {
     const page = await notion.pages.retrieve({ page_id: options.pageId });
     return [page as unknown as JsonRecord];
@@ -428,8 +482,22 @@ async function collectPages(notion: Client, library: LibraryMetadata, options: F
   return pages.slice(0, options.limit);
 }
 
+async function readProgress(pathname: string) {
+  try {
+    const content = await readFile(pathname, "utf8");
+    return new Set(content.split(/\r?\n/).filter(Boolean).map((line) => asString(asRecord(JSON.parse(line))?.pageId)).filter(Boolean));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set<string>();
+    throw error;
+  }
+}
+
 function pageNeedsFamilyAge(properties: JsonRecord) {
   return !hasPropertyValue(properties, "AI建议最低年龄") && !hasPropertyValue(properties, "人工年龄覆盖");
+}
+
+function isLegacyPageTitle(title: string) {
+  return /\[(?:旧媒体承载页|旧重复条目|旧错误结构)[^\]]*\]/u.test(title);
 }
 
 async function planPage(page: JsonRecord): Promise<PagePlan> {
@@ -444,7 +512,11 @@ async function planPage(page: JsonRecord): Promise<PagePlan> {
     "AI建议最低年龄": pagePropertyValue("AI建议最低年龄", ai.minimumAge),
     "AI年龄建议置信度": pagePropertyValue("AI年龄建议置信度", ai.confidence),
     "内容风险标签": pagePropertyValue("内容风险标签", ai.riskTags),
-    "AI年龄建议理由": pagePropertyValue("AI年龄建议理由", ai.reason)
+    "AI年龄建议理由": pagePropertyValue("AI年龄建议理由", ai.reason),
+    ...buildAiCheckUpdates({
+      checkedAt: new Date().toISOString(),
+      unresolvedIssue: ai.needsReview ? `AI 年龄建议待复核：${ai.reason}` : undefined
+    })
   };
   const cleanUpdates = Object.fromEntries(Object.entries(updates).filter(([, value]) => Boolean(value)));
   return {
@@ -466,11 +538,24 @@ async function main() {
 
   installNotionDnsOverride();
   const notion = new Client({ auth: notionToken, timeoutMs: notionRequestTimeoutMs });
-  const library = await loadLibrary(notion, options);
-  const pages = (await collectPages(notion, library, options)).filter((page) => {
+  const library = options.candidateCache
+    ? await loadCachedLibrary(options.candidateCache)
+    : await loadLibrary(notion, options);
+  const completedPageIds = await readProgress(options.progressPath);
+  const failedPageIds = await readProgress(options.failureProgressPath);
+  const candidatePages = (await collectPages(notion, library, options)).filter((page) => {
     const properties = asRecord(page.properties) ?? {};
-    return pageNeedsFamilyAge(properties);
-  }).slice(0, options.maxUpdates);
+    const title = titleFromProperties(properties);
+    return pageNeedsFamilyAge(properties) &&
+      !completedPageIds.has(asString(page.id)) &&
+      !failedPageIds.has(asString(page.id)) &&
+      (options.includeLegacyPages || !isLegacyPageTitle(title));
+  });
+  if (options.writeCandidateCache) {
+    await mkdir(path.dirname(options.writeCandidateCache), { recursive: true });
+    await writeFile(options.writeCandidateCache, `${JSON.stringify({ generatedAt: new Date().toISOString(), library, pages: candidatePages }, null, 2)}\n`, "utf8");
+  }
+  const pages = candidatePages.slice(0, options.maxUpdates);
 
   const plans: PagePlan[] = [];
   const skipped: Record<string, number> = {};
@@ -483,16 +568,30 @@ async function main() {
       if (options.apply && Object.keys(plan.updates).length > 0) {
         await notion.pages.update({ page_id: plan.pageId, properties: plan.updates as never });
         applied += 1;
+        await mkdir(path.dirname(options.progressPath), { recursive: true });
+        await appendFile(options.progressPath, `${JSON.stringify({
+          pageId: plan.pageId,
+          title: plan.title,
+          appliedAt: new Date().toISOString(),
+          updateFields: plan.updateFields,
+          ai: plan.ai
+        })}\n`, "utf8");
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error";
       plans.push({
         pageId: asString(page.id),
         title: titleFromProperties(asRecord(page.properties) ?? {}),
         url: asString(page.url),
         updates: {},
         updateFields: [],
-        skipped: error instanceof Error ? error.message : "unknown_error"
+        skipped: message
       });
+      skipped[message] = (skipped[message] ?? 0) + 1;
+      if (options.apply) {
+        await mkdir(path.dirname(options.failureProgressPath), { recursive: true });
+        await appendFile(options.failureProgressPath, `${JSON.stringify({ pageId: asString(page.id), failedAt: new Date().toISOString(), error: message })}\n`, "utf8");
+      }
     }
     if (options.delayMs > 0) await sleep(options.delayMs);
   }
@@ -502,6 +601,8 @@ async function main() {
     dataSourceId: library.dataSourceId,
     limit: options.limit,
     maxUpdates: options.maxUpdates,
+    candidateSource: options.candidateCache ?? "notion",
+    candidateCount: candidatePages.length,
     planned: plans.filter((plan) => plan.updateFields.length > 0).length,
     applied,
     skipped,

@@ -16,6 +16,21 @@ function stableSpecKey(workPageId, specPageId, episodePageId) {
   return `migration-${createHash("sha256").update(JSON.stringify({ workPageId, specPageId, episodePageId })).digest("hex").slice(0, 16)}`;
 }
 
+function completedProductionSpecKey(workPageId, specPageId, episodePageId = null) {
+  return `production-${createHash("sha256").update(JSON.stringify({ workPageId, specPageId, episodePageId })).digest("hex").slice(0, 16)}`;
+}
+
+function validateProductionManifest(manifest) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) throw new TypeError("production manifest must be an object");
+  for (const field of ["work", "output", "outputSpec", "workPageId", "targetSpecPageId"]) {
+    if (typeof manifest[field] !== "string" || manifest[field].trim().length === 0) throw new TypeError(`production manifest ${field} must be a non-empty string`);
+  }
+  if (!Number.isSafeInteger(manifest.outputBytes) || manifest.outputBytes <= 0) throw new TypeError("production manifest outputBytes must be a positive safe integer");
+  if (manifest.evidence != null && (typeof manifest.evidence !== "object" || Array.isArray(manifest.evidence))) {
+    throw new TypeError("production manifest evidence must be an object when provided");
+  }
+}
+
 function validateOrganizerReport(reportPayload) {
   if (!reportPayload || typeof reportPayload !== "object" || Array.isArray(reportPayload) || !Array.isArray(reportPayload.pages)) {
     throw new TypeError("organizer report must be an object with a pages array");
@@ -75,6 +90,50 @@ export function migrateOrganizerReport(repo, reportPayload) {
     registered += 1;
   }
   return { registered, skipped };
+}
+
+export function importProductionManifest(repo, manifest) {
+  validateProductionManifest(manifest);
+  const identity = titleIdentity(manifest.work);
+  const work = repo.ensureWork({ ...identity, workType: manifest.workType ?? "movie", notionWorkPageId: manifest.workPageId });
+  const variant = repo.ensureVariant({
+    workId: work.id,
+    specKey: completedProductionSpecKey(manifest.workPageId, manifest.targetSpecPageId, manifest.episodePageId ?? null),
+    displayTitle: manifest.outputSpec,
+    audioVariant: manifest.audioVariant,
+    subtitleVariant: manifest.subtitleVariant,
+    cutVariant: manifest.cutVariant,
+    outputPath: manifest.output,
+    targetSizeBytes: manifest.outputBytes,
+    probePath: manifest.evidence?.probe
+  });
+  const imported = variant.production_state !== "qc_passed";
+  if (imported) {
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) {
+      repo.transitionProduction(variant.id, state, state === "qc_passed" ? {
+        outputPath: manifest.output,
+        outputSizeBytes: manifest.outputBytes,
+        probePath: manifest.evidence?.probe,
+        qcArtifactPath: manifest.evidence?.contactSheet ?? manifest.evidence?.sampleFrame
+      } : {});
+    }
+  } else {
+    repo.refreshProductionEvidence(variant.id, {
+      outputPath: manifest.output,
+      outputSizeBytes: manifest.outputBytes,
+      probePath: manifest.evidence?.probe,
+      qcArtifactPath: manifest.evidence?.contactSheet ?? manifest.evidence?.sampleFrame
+    });
+  }
+  const target = repo.registerNotionTarget(variant.id, {
+    workPageId: manifest.workPageId,
+    specPageId: manifest.targetSpecPageId,
+    episodePageId: manifest.episodePageId ?? null,
+    expectedFilename: manifest.expectedFilename ?? path.basename(manifest.output)
+  });
+  const current = repo.findVariantByOutputPath(manifest.output);
+  if (current?.publication_state === "not_ready") repo.transitionPublication(variant.id, "structure_pending", { targetRegistered: true, importedManifest: true });
+  return { status: imported ? "imported" : "already_imported", variant: repo.findVariantByOutputPath(manifest.output), target };
 }
 
 export function applyCorrectionsManifest(repo, manifest) {

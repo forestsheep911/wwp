@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildMissingProperties, parseAssetMetadata } from "./notion-media-assets-write-series.mjs";
+import { buildAssetProperties, buildMissingProperties, parseAssetMetadata } from "./notion-media-assets-write-series.mjs";
 
 const mediaAssetsDataSource = {
   properties: {
@@ -38,6 +38,21 @@ test("parseAssetMetadata recognizes Korean audio tags in series filenames", () =
   assert.deepEqual(metadata.subtitleLanguages, ["zh-Hant"]);
   assert.equal(metadata.videoCodec, "hevc");
   assert.equal(metadata.container, "mp4");
+});
+
+test("new upload-backed series assets are marked playback verified without changing visibility", () => {
+  const properties = buildAssetProperties(mediaAssetsDataSource, {
+    workPageId: "work-page",
+    name: "检察官的提案 / Episode 02",
+    displayLabel: "检察官的提案 第一季 繁 1080p / Episode 02",
+    originalFileName: "The.Prosecutors.Proposal.S01E02.1080p.h265.kor.cht.mp4",
+    sourcePageId: "episode-page",
+    mediaBlockId: "media-block",
+    metadata: { episodeNumber: 2, resolution: "1080p", videoCodec: "hevc", container: "mp4" }
+  });
+
+  assert.equal(properties["Playback Verified"].checkbox, true);
+  assert.equal(properties["Hide from Website"].checkbox, true);
 });
 
 test("buildMissingProperties fills empty existing fields without overwriting human values", () => {

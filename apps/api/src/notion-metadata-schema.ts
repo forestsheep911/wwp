@@ -5,6 +5,8 @@ export interface MovieIdentityHints {
   imdb?: string;
   douban?: string;
   tmdb?: string;
+  rottenTomatoes?: string;
+  metacritic?: string;
 }
 
 export interface NotionMetadataHints {
@@ -34,6 +36,8 @@ const doubanUrlPattern = /douban\.com\/subject\/(\d{4,12})/gi;
 const doubanTextPattern = /(?:douban|\u8c46\u74e3)[^\d]{0,24}(\d{4,12})/gi;
 const tmdbUrlPattern = /themoviedb\.org\/movie\/(\d{1,12})/gi;
 const tmdbTextPattern = /\btmdb[^\d]{0,16}(\d{1,12})/gi;
+const rottenTomatoesUrlPattern = /https?:\/\/(?:www\.)?rottentomatoes\.com\/(?:m|tv)\/[^\s<>"'）)\],;]+/gi;
+const metacriticUrlPattern = /https?:\/\/(?:www\.)?metacritic\.com\/(?:movie|tv|tv-shows?)\/[^\s<>"'）)\],;]+/gi;
 
 export const notionManagedProperties = [
   { name: "WW Work ID", type: "rich_text", group: "identity" },
@@ -175,8 +179,11 @@ export const notionManagedProperties = [
   },
   { name: "Hide from Website", type: "checkbox", group: "quality" },
   { name: "Needs Review", type: "checkbox", group: "quality" },
+  { name: "Human Issue", type: "rich_text", group: "quality" },
+  { name: "AI Issue", type: "rich_text", group: "quality" },
   { name: "Developer Memo", type: "rich_text", group: "quality" },
-  { name: "Metadata Updated At", type: "date", group: "quality" }
+  { name: "Metadata Updated At", type: "date", group: "quality" },
+  { name: "Last AI Check Time", type: "date", group: "quality" }
 ] satisfies NotionManagedProperty[];
 
 export function createMetadataHints(): NotionMetadataHints {
@@ -211,6 +218,12 @@ export function collectMetadataHintsFromText(hints: NotionMetadataHints, text: s
   for (const match of normalized.matchAll(tmdbTextPattern)) {
     changed = setHint(hints.externalIds, "tmdb", normalizeNumericId(match[1])) || changed;
   }
+  for (const match of normalized.matchAll(rottenTomatoesUrlPattern)) {
+    changed = setHint(hints.externalIds, "rottenTomatoes", normalizeRottenTomatoesUrl(match[0])) || changed;
+  }
+  for (const match of normalized.matchAll(metacriticUrlPattern)) {
+    changed = setHint(hints.externalIds, "metacritic", normalizeMetacriticUrl(match[0])) || changed;
+  }
 
   if (changed) {
     hints.sourceTexts.push(normalized.slice(0, 500));
@@ -226,6 +239,8 @@ export function mergeMetadataHints(...sources: Array<NotionMetadataHints | undef
     setHint(hints.externalIds, "imdb", source.externalIds.imdb);
     setHint(hints.externalIds, "douban", source.externalIds.douban);
     setHint(hints.externalIds, "tmdb", source.externalIds.tmdb);
+    setHint(hints.externalIds, "rottenTomatoes", source.externalIds.rottenTomatoes);
+    setHint(hints.externalIds, "metacritic", source.externalIds.metacritic);
     hints.sourceTexts.push(...source.sourceTexts);
   }
   return hints;
@@ -242,6 +257,37 @@ export function normalizeDoubanSubjectId(value: string | undefined) {
 
 export function normalizeTmdbId(value: string | undefined) {
   return normalizeNumericId(value);
+}
+
+function normalizeExternalSiteUrl(value: string | undefined, hostPattern: RegExp, validPathPattern: RegExp) {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const cleaned = value.trim().replace(/[),.;\]\uFF09]+$/g, "");
+    const url = new URL(cleaned);
+    if (!hostPattern.test(url.hostname)) {
+      return undefined;
+    }
+
+    let pathname = url.pathname.replace(/\/+$/g, "");
+    pathname = pathname.replace(/\/(?:reviews|critic-reviews|user-reviews|audience-reviews|cast-and-crew|pictures|trailers)$/i, "");
+    if (!validPathPattern.test(pathname)) {
+      return undefined;
+    }
+    return `${url.protocol}//${url.hostname}${pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function normalizeRottenTomatoesUrl(value: string | undefined) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?rottentomatoes\.com$/i, /^\/(?:m|tv)\/[^/]+(?:\/[^/]+)?$/i);
+}
+
+export function normalizeMetacriticUrl(value: string | undefined) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?metacritic\.com$/i, /^\/(?:movie|tv|tv-shows?)\/[^/]+(?:\/season-\d+)?$/i);
 }
 
 export function imdbTitleUrl(imdbId: string | undefined) {

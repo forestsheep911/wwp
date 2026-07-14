@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { episodeNumber, validateSeriesSpecTitle } from "./notion-upload-series-videos.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-series-videos.mjs");
 
@@ -38,4 +39,28 @@ test("series uploader allows create-structure mode for an existing series page w
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("episode parser accepts bracket typo but leaves recap decimals unmapped", () => {
+  assert.equal(episodeNumber("【AGE】[JOJO][180253][13)][720P][CHS] AVC.mp4"), 13);
+  assert.equal(episodeNumber("[JOJO][Golden Wind][13.5][720P][CHS] AVC.mp4"), undefined);
+});
+
+test("episode parser accepts a trailing episode number in ordinary filenames", () => {
+  assert.equal(episodeNumber("Hokuto no Ken - 001.mp4"), 1);
+  assert.equal(episodeNumber("Series_Episode_12.mkv"), 12);
+  assert.equal(episodeNumber("Film 2026.mp4"), undefined);
+});
+
+test("series spec sizes must explicitly describe per-episode size", () => {
+  assert.doesNotThrow(() => validateSeriesSpecTitle("北斗神拳 繁 H.264 0.169-0.174GB/集"));
+  assert.doesNotThrow(() => validateSeriesSpecTitle("检察官的提案 第一季 繁"));
+  assert.throws(
+    () => validateSeriesSpecTitle("北斗神拳 繁 24.3GB"),
+    /per-episode|每集/i
+  );
+  assert.throws(
+    () => validateSeriesSpecTitle("摩登情爱 第一季 繁 0.44GB"),
+    /per-episode|每集/i
+  );
 });

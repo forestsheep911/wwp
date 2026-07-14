@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { openLedger } from "./film-ledger-schema.mjs";
 import { createLedgerRepository } from "./film-ledger-repository.mjs";
-import { migrateQueueState, migrateOrganizerReport, applyCorrectionsManifest } from "./film-ledger-migration.mjs";
+import { migrateQueueState, migrateOrganizerReport, importProductionManifest, applyCorrectionsManifest } from "./film-ledger-migration.mjs";
 
 function fixture() {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-ledger-migration-"));
@@ -160,5 +160,48 @@ test("repeating an identical correction is a no-op without a duplicate review ev
 
     assert.deepEqual(afterSecond, afterFirst);
     assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id }).filter(event => event.event_type === "human_review_correction").length, 1);
+  } finally { f.close(); }
+});
+
+test("production manifests preserve audio and subtitle variants in the ledger", () => {
+  const f = fixture();
+  try {
+    const result = importProductionManifest(f.repo, {
+      work: "Bad Guys 2 (2025)",
+      output: "E:\\bad-guys-2.mp4",
+      outputBytes: 123,
+      outputSpec: "国配 4.79GB",
+      workPageId: "work-page",
+      targetSpecPageId: "spec-page",
+      audioVariant: "mandarin",
+      subtitleVariant: "traditional_english_burned"
+    });
+    const variant = f.repo.findVariantByOutputPath("E:\\bad-guys-2.mp4");
+    assert.equal(result.status, "imported");
+    assert.equal(variant.audio_variant, "mandarin");
+    assert.equal(variant.subtitle_variant, "traditional_english_burned");
+  } finally { f.close(); }
+});
+
+test("reimporting a completed manifest refreshes the authoritative output evidence", () => {
+  const f = fixture();
+  try {
+    const manifest = {
+      work: "Refreshable (2025)",
+      output: "E:\\refreshable.mp4",
+      outputBytes: 123,
+      outputSpec: "简英 1GB",
+      workPageId: "work-page",
+      targetSpecPageId: "spec-page",
+      evidence: { probe: ".local-data/refreshable.json", sampleFrame: ".local-data/refreshable.jpg" }
+    };
+    const first = importProductionManifest(f.repo, manifest);
+    assert.equal(first.status, "imported");
+    const second = importProductionManifest(f.repo, { ...manifest, outputBytes: 456 });
+    assert.equal(second.status, "already_imported");
+    const variant = f.repo.findVariantByOutputPath("E:\\refreshable.mp4");
+    assert.equal(variant.output_size_bytes, 456);
+    assert.equal(variant.probe_path, ".local-data/refreshable.json");
+    assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id }).filter(event => event.event_type === "production_evidence_refreshed").length, 1);
   } finally { f.close(); }
 });

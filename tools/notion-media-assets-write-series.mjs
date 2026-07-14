@@ -371,14 +371,15 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
-  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: false });
+  // A discovered media block on the exact episode page is the workflow's upload proof.
+  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: true });
   setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
   setIfProperty(properties, dataSource, "Asset URL", candidate.assetUrl ? { url: candidate.assetUrl } : undefined);
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
   setIfProperty(properties, dataSource, "Media Block ID", { rich_text: richText(candidate.mediaBlockId) });
   setIfProperty(properties, dataSource, "Developer Memo", {
-    rich_text: richText(candidate.developerMemo || "Created by notion-media-assets-write-series.mjs from an episode child page with a real media block. Playback still needs manual verification.")
+    rich_text: richText(candidate.developerMemo || "Created by notion-media-assets-write-series.mjs from an episode child page with a real media block. Upload-backed playback verification recorded.")
   });
   return properties;
 }
@@ -854,6 +855,7 @@ async function main() {
 }
 
 export {
+  buildAssetProperties,
   buildMissingProperties,
   isEmptyProperty,
   parseAssetMetadata

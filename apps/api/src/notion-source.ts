@@ -1153,7 +1153,9 @@ function movieMetadataFromPage(
     Object.entries({
       imdb: imdbId,
       douban: doubanSubjectId,
-      tmdb: tmdbId
+      tmdb: tmdbId,
+      rottenTomatoes: metadataHints.externalIds.rottenTomatoes,
+      metacritic: metadataHints.externalIds.metacritic
     }).filter(([, value]) => Boolean(value))
   );
   const hasExternalIds = Object.keys(externalIds).length > 0;

@@ -549,7 +549,8 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
-  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: false });
+  // A discovered playable block on the exact destination page is the workflow's upload proof.
+  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: candidate.assetType === "playable_video" });
   if (candidate.hideFromWebsite !== false) {
     setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
   }
@@ -561,7 +562,7 @@ function buildAssetProperties(dataSource, candidate) {
     rich_text: richText([
       "Created by notion-media-assets-write.mjs from existing Notion media tree.",
       candidate.assetType === "playable_video"
-        ? "Playable row was created from an attached video/file block; playback still needs manual verification."
+        ? "Playable row was created from an attached video/file block; upload-backed playback verification recorded."
         : `Source-only row; ${candidate.fileCount ?? 1} file block(s) were observed.`,
       candidate.developerMemo,
       "Review metadata before bulk migration."

@@ -30,6 +30,8 @@ Use this when the external Notion files already exist and the task is to reconci
 11. Produce a dry-run list of rows to create/update and a separate structure-fix list for root landing media.
 12. Apply only after the dry-run is coherent, then read back the result and reconcile the recorded target again. `qc_passed` prevents duplicate encoding; only `sync_ready` exits ordinary observation queues.
 
+The parent page `last_edited_time` is not authoritative for manual uploads. Media-block-only changes may leave it unchanged, so inspect registered target pages directly and let the ledger retain observation state until readback reaches `sync_ready`.
+
 ## Guardrails
 
 - Do not leave manually uploaded playable media naked on a work/season root page. Root media blocks are temporary landing blocks and must be organized into spec/episode child pages before final playable Media Assets rows are written.

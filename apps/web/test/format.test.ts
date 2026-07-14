@@ -6,6 +6,7 @@ import {
   basicInfoLine,
   bestDetailSummary,
   bestSummary,
+  groupEpisodeVariantsBySpec,
   variantHasSizeMetadata,
   variantSpecLabels,
   variantSpecText
@@ -121,4 +122,56 @@ test("variantSpecText falls back to cleaned labels without structured metadata",
   assert.deepEqual(variantSpecLabels(variant), []);
   assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简英 1.72GB");
   assert.equal(variantHasSizeMetadata(variant), false);
+});
+
+test("groupEpisodeVariantsBySpec keeps each spec together and orders its episodes", () => {
+  const variants: MediaVariant[] = [
+    {
+      assetKey: "small-episode-2",
+      label: "检察官的提案 第一季 繁 0.35GB / Episode 02",
+      sourceUrl: "https://example.local/small-2.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["检察官的提案 第一季", "检察官的提案 第一季 繁 0.35GB"],
+      metadata: { structuredSource: "media_assets", episodeNumber: 2, resolution: "1080p", subtitleLanguages: ["zh-Hant"], approximateSizeGb: 0.35 }
+    },
+    {
+      assetKey: "full-episode-1",
+      label: "检察官的提案 第一季 繁 1080p / Episode 01",
+      sourceUrl: "https://example.local/full-1.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["检察官的提案 第一季", "检察官的提案 第一季 繁 1080p"],
+      metadata: { structuredSource: "media_assets", episodeNumber: 1, resolution: "1080p", subtitleLanguages: ["zh-Hant"], approximateSizeGb: 1.04 }
+    },
+    {
+      assetKey: "small-episode-1",
+      label: "检察官的提案 第一季 繁 0.35GB / Episode 01",
+      sourceUrl: "https://example.local/small-1.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["检察官的提案 第一季", "检察官的提案 第一季 繁 0.35GB"],
+      metadata: { structuredSource: "media_assets", episodeNumber: 1, resolution: "1080p", subtitleLanguages: ["zh-Hant"], approximateSizeGb: 0.35 }
+    },
+    {
+      assetKey: "full-episode-2",
+      label: "检察官的提案 第一季 繁 1080p / Episode 02",
+      sourceUrl: "https://example.local/full-2.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["检察官的提案 第一季", "检察官的提案 第一季 繁 1080p"],
+      metadata: { structuredSource: "media_assets", episodeNumber: 2, resolution: "1080p", subtitleLanguages: ["zh-Hant"], approximateSizeGb: 1.08 }
+    }
+  ];
+
+  assert.deepEqual(
+    groupEpisodeVariantsBySpec("检察官的提案 第一季", variants).map((group) => ({
+      labels: group.labels,
+      episodes: group.variants.map((variant) => variant.metadata?.episodeNumber)
+    })),
+    [
+      { labels: ["繁", "1080p"], episodes: [1, 2] },
+      { labels: ["繁", "0.35G"], episodes: [1, 2] }
+    ]
+  );
 });

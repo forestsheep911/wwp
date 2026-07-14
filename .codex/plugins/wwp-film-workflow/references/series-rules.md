@@ -7,6 +7,12 @@ Series have one more layer than movies:
 - Movie: work page -> spec page -> video/file
 - Series: series/season page -> spec page -> episode page -> video/file
 
+Use a season label only when the verified external identity explicitly names a season or the work has multiple separately released seasons. Do not invent `第一季`, `Season 1`, `本传`, or similar labels for a single canonical series page merely to distinguish a spec. Specs should be named from the canonical series title plus actual audio, subtitle, codec, edition, and measured size dimensions.
+
+## Spec Titles
+
+For episode-bearing specs, the size dimension is the measured decimal-GB size **per episode**, not the aggregate size of a season, a source folder, or a batch. When episodes differ materially, use the measured range: `银河英雄传说 日语中字 H.265 0.08-0.40GB/集`. Use one measured per-episode value only when the spread is negligible. Put aggregate totals in the production ledger or source/archive record, never in the playable spec title. Use concrete attributes such as `原盘`, codec, audio, and subtitle labels instead of subjective labels.
+
 Media Assets must preserve episode relationships. Filename-only matching is not enough.
 
 Notion API cannot move uploaded media blocks between pages in this workflow. For manual upload handoff, create the series/season page, target spec page, and all expected episode child pages before the user uploads episode files.

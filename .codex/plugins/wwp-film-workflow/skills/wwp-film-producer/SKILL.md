@@ -18,6 +18,13 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 5. Record uncertain or deferred decisions and continue with other candidates instead of interrupting the batch. Ask only when a decision blocks every useful next action or requires user-only evidence/action.
 6. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final completion.
 
+## Targeted Recent-Item Checks
+
+- Do not run a global Notion scan just to audit historical spec titles or page structure. Notion API rate limits make that an invalid default workflow.
+- After a production, rename, structure preparation, or manual-upload handoff, inspect only the recent items touched by that run, with a default maximum of 3 exact work/spec targets.
+- Check those targets for per-episode size naming, language/audio labels, duplicate specs, and root-level media placement. Leave older untouched items for later user-directed repair; an incomplete historical audit is acceptable.
+- Prefer exact page IDs recorded in the local ledger. Do not substitute a broad title search or watcher scan when the target IDs are already known.
+
 ## Route
 
 - New input directory or "which one should we do": use `wwp-film-candidate-selector`.

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     discoverOnly: false,
+    discoverSearch: false,
     searchOnly: false,
     timeoutMs: 30000,
     pretty: false
@@ -26,6 +27,10 @@ function parseArgs(argv = process.argv.slice(2)) {
       options.discoverOnly = true;
       continue;
     }
+    if (arg === "--discover-search") {
+      options.discoverSearch = true;
+      continue;
+    }
     if (arg === "--search-only") {
       options.searchOnly = true;
       continue;
@@ -39,6 +44,18 @@ function parseArgs(argv = process.argv.slice(2)) {
     if (name === "rotten-url") options.rottenUrl = value;
     else if (name === "metacritic-url") options.metacriticUrl = value;
     else if (name === "imdb-url") options.imdbUrl = value;
+    else if (name === "url-hints") options.urlHints = value;
+    else if (name === "rotten-search-url") {
+      options.rottenSearchUrl = value;
+      options.discoverSearch = true;
+    }
+    else if (name === "metacritic-search-url") {
+      options.metacriticSearchUrl = value;
+      options.discoverSearch = true;
+    }
+    else if (name === "rotten-source-url") options.rottenSourceUrl = requireOfficialSourceUrl(value, normalizeRottenTomatoesSourceUrl, "Rotten Tomatoes");
+    else if (name === "metacritic-source-url") options.metacriticSourceUrl = requireOfficialSourceUrl(value, normalizeMetacriticSourceUrl, "Metacritic");
+    else if (name === "imdb-source-url") options.imdbSourceUrl = requireOfficialSourceUrl(value, normalizeImdbSourceUrl, "IMDb");
     else if (name === "ratings-json") options.ratingsJson = value;
     else if (name === "imdb-id") options.imdbId = normalizeImdbId(value);
     else if (name === "wikidata-json") options.wikidataJson = value;
@@ -59,18 +76,27 @@ function usage() {
   node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --imdb-id <ttid>
   node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --imdb-url <url-or-html-path>
   node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --ratings-json <trusted-evidence.json>
+  node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --url-hints <search-result-html-or-text> --search-only
   node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --title <title> --year <year> --search-only
+  node .codex/plugins/wwp-film-workflow/scripts/critic-rating-inspect.mjs --title <title> --year <year> --search-only --discover-search
 
 Options:
   --rotten-url <url-or-path>      Rotten Tomatoes official page or saved HTML.
   --metacritic-url <url-or-path>  Metacritic official page or saved HTML.
   --imdb-url <url-or-path>        IMDb official title page or saved HTML for Metascore fallback.
+  --rotten-search-url <url-path>   Rotten Tomatoes official search page or saved HTML for candidate discovery.
+  --metacritic-search-url <url-path> Metacritic official search page or saved HTML for candidate discovery.
+  --rotten-source-url <url>        Official RT URL for saved HTML evidence.
+  --metacritic-source-url <url>    Official Metacritic URL for saved HTML evidence.
+  --imdb-source-url <url>          Official IMDb URL for saved HTML evidence.
   --ratings-json <url-or-path>    Trusted structured manual/licensed evidence JSON.
+  --url-hints <url-or-path>       Generic search-result/browser text for official RT/Metacritic URL discovery only.
   --imdb-id <ttid>                Discover Rotten Tomatoes/Metacritic URLs from Wikidata by IMDb ID, then inspect them.
   --wikidata-json <url-or-path>   Read Wikidata SPARQL JSON instead of calling the live endpoint.
   --discover-only                 Only return discovered official-page URLs; do not fetch page HTML.
   --title <title> --year <year>   Emit official critic-site search URLs for manual page confirmation.
   --search-only                   Only emit official search URLs; do not fetch page HTML.
+  --discover-search               Fetch/parse official search pages for candidate URLs only.
   --timeout-ms <ms>               Network timeout for fetches. Default: 30000.
   --pretty                        Pretty-print JSON output.
 `;
@@ -83,6 +109,41 @@ function normalizeImdbId(value) {
 
 function sourceIsUrl(source) {
   return /^https?:\/\//i.test(String(source));
+}
+
+function requireOfficialSourceUrl(value, normalize, label) {
+  const normalized = normalize(value);
+  if (!normalized) throw new Error(`${label} source URL must be an official title page URL: ${value}`);
+  return normalized;
+}
+
+function normalizeExternalSiteUrl(value, hostPattern, validPathPattern) {
+  if (!value) return undefined;
+  try {
+    const cleaned = String(value).trim().replace(/[),.;\]\uFF09]+$/g, "");
+    const url = new URL(cleaned);
+    if (!hostPattern.test(url.hostname)) return undefined;
+
+    let pathname = url.pathname.replace(/\/+$/g, "");
+    pathname = pathname.replace(/\/(?:reviews|critic-reviews|user-reviews|audience-reviews|cast-and-crew|pictures|trailers)$/i, "");
+    if (!validPathPattern.test(pathname)) return undefined;
+    return `${url.protocol}//${url.hostname}${pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRottenTomatoesSourceUrl(value) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?rottentomatoes\.com$/i, /^\/(?:m|tv)\/[^/]+(?:\/[^/]+)?$/i);
+}
+
+function normalizeMetacriticSourceUrl(value) {
+  return normalizeExternalSiteUrl(value, /^(?:www\.)?metacritic\.com$/i, /^\/(?:movie|tv|tv-shows?)\/[^/]+(?:\/season-\d+)?$/i);
+}
+
+function normalizeImdbSourceUrl(value) {
+  const imdbId = normalizeImdbId(value);
+  return imdbId ? `https://www.imdb.com/title/${imdbId}/` : undefined;
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -203,6 +264,162 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function parseYear(value) {
+  const number = parseNumber(value);
+  if (number !== undefined && number >= 1800 && number <= 2200) return number;
+  const match = String(value ?? "").match(/\b(18\d{2}|19\d{2}|20\d{2}|21\d{2})\b/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function firstParsedYear(...values) {
+  for (const value of values) {
+    const year = parseYear(value);
+    if (year !== undefined) return year;
+  }
+  return undefined;
+}
+
+function cleanHtmlText(value) {
+  return decodeHtmlEntities(String(value ?? "").replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function candidateMediaType(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    if (/^\/m(?:ovie)?\//i.test(pathname) || /^\/movie\//i.test(pathname)) return "movie";
+    if (/^\/tv(?:-shows?)?\//i.test(pathname)) return "tv";
+  } catch {
+    // Ignore malformed candidate URLs.
+  }
+  return undefined;
+}
+
+function uniqueCandidates(candidates) {
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates) {
+    if (!candidate.url || seen.has(candidate.url)) continue;
+    seen.add(candidate.url);
+    result.push(candidate);
+  }
+  return result;
+}
+
+export function parseRottenTomatoesSearchPage(html) {
+  const candidates = [];
+  for (const match of String(html ?? "").matchAll(/<search-page-media-row\b([^>]*)>([\s\S]*?)<\/search-page-media-row>/gi)) {
+    const attributes = parseHtmlAttributes(match[1]);
+    const body = match[2];
+    const hrefs = [...body.matchAll(/\bhref=["']([^"']+)["']/gi)].map((hrefMatch) => hrefMatch[1]);
+    const url = hrefs.map(normalizeRottenTomatoesSourceUrl).find(Boolean);
+    if (!url) continue;
+
+    const titleMatch =
+      body.match(/<a\b[^>]*data-qa=["']info-name["'][^>]*>([\s\S]*?)<\/a>/i) ??
+      body.match(/<img\b[^>]*\balt=(["'])(.*?)\1/i);
+    const title = cleanHtmlText(titleMatch?.[2] ?? titleMatch?.[1]);
+    if (!title) continue;
+
+    const year = firstParsedYear(
+      attributes["release-year"],
+      attributes.releaseyear,
+      attributes["start-year"],
+      attributes.startyear
+    );
+    const candidate = {
+      title,
+      ...(year !== undefined ? { year } : {}),
+      url,
+      mediaType: candidateMediaType(url)
+    };
+    candidates.push(candidate);
+  }
+  return uniqueCandidates(candidates);
+}
+
+export function parseMetacriticSearchPage(html) {
+  const candidates = [];
+  for (const match of String(html ?? "").matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const attributes = parseHtmlAttributes(match[1]);
+    if (!/\bc-search-item\b/i.test(attributes.class ?? "")) continue;
+    let url;
+    try {
+      url = normalizeMetacriticSourceUrl(new URL(attributes.href, "https://www.metacritic.com").href);
+    } catch {
+      url = undefined;
+    }
+    if (!url) continue;
+
+    const body = match[2];
+    const titleMatch = body.match(/<p\b[^>]*class=["'][^"']*\bc-search-item__title\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
+    const title = cleanHtmlText(titleMatch?.[1]);
+    if (!title) continue;
+
+    const year = parseYear(body.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},\s+(\d{4})\b/i)?.[1]);
+    const candidate = {
+      title,
+      ...(year !== undefined ? { year } : {}),
+      url,
+      mediaType: candidateMediaType(url)
+    };
+    candidates.push(candidate);
+  }
+  return uniqueCandidates(candidates);
+}
+
+export function parseOfficialUrlHints(source) {
+  const candidates = {
+    rottenTomatoes: [],
+    metacritic: []
+  };
+  const text = String(source ?? "");
+  const haystacks = [...new Set([text, decodeHtmlEntities(text), safeDecodeUriComponent(text)])];
+
+  for (const haystack of haystacks) {
+    for (const match of haystack.matchAll(/https?:\/\/[^\s<>"'）)\],;}]+/gi)) {
+      const raw = match[0];
+      const rottenUrl = normalizeRottenTomatoesSourceUrl(raw);
+      if (rottenUrl) {
+        candidates.rottenTomatoes.push({
+          url: rottenUrl,
+          mediaType: candidateMediaType(rottenUrl)
+        });
+        continue;
+      }
+
+      const metacriticUrl = normalizeMetacriticSourceUrl(raw);
+      if (metacriticUrl) {
+        candidates.metacritic.push({
+          url: metacriticUrl,
+          mediaType: candidateMediaType(metacriticUrl)
+        });
+      }
+    }
+  }
+
+  const result = {};
+  const rottenTomatoes = uniqueCandidates(candidates.rottenTomatoes);
+  const metacritic = uniqueCandidates(candidates.metacritic);
+  if (rottenTomatoes.length) result.rottenTomatoes = { candidates: rottenTomatoes };
+  if (metacritic.length) result.metacritic = { candidates: metacritic };
+  return result;
+}
+
+function safeDecodeUriComponent(value) {
+  try {
+    return decodeURIComponent(String(value ?? ""));
+  } catch {
+    return String(value ?? "")
+      .replace(/%3A/gi, ":")
+      .replace(/%2F/gi, "/")
+      .replace(/%3F/gi, "?")
+      .replace(/%26/gi, "&")
+      .replace(/%3D/gi, "=");
+  }
+}
+
 function parsePercentScore(value, fieldName) {
   const score = parseNumber(value);
   if (score === undefined) return undefined;
@@ -306,9 +523,14 @@ function decodeHtmlEntities(value) {
     .replace(/&quot;/g, '"')
     .replace(/&#34;/g, '"')
     .replace(/&#x22;/gi, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_match, codepoint) => String.fromCodePoint(Number(codepoint)))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, codepoint) => String.fromCodePoint(Number.parseInt(codepoint, 16)));
 }
 
 function flattenJsonLd(value) {
@@ -459,28 +681,89 @@ export async function inspectCriticRatings(options) {
     result.officialSearch = searchUrls;
   }
 
+  if (options.urlHints) {
+    const hints = parseOfficialUrlHints(await readHtml(options.urlHints, options));
+    result.urlHints = {
+      source: "generic-official-url-hints",
+      ...hints
+    };
+  }
+
+  if (options.discoverSearch) {
+    const searchDiscovery = { source: "official-search-pages" };
+    const rottenSearchSource = options.rottenSearchUrl ?? searchUrls.rottenTomatoes;
+    const metacriticSearchSource = options.metacriticSearchUrl ?? searchUrls.metacritic;
+
+    if (rottenSearchSource) {
+      searchDiscovery.rottenTomatoes = {
+        candidates: parseRottenTomatoesSearchPage(await readHtml(rottenSearchSource, options))
+      };
+    }
+
+    if (metacriticSearchSource) {
+      searchDiscovery.metacritic = {
+        candidates: parseMetacriticSearchPage(await readHtml(metacriticSearchSource, options))
+      };
+    }
+
+    result.searchDiscovery = searchDiscovery;
+  }
+
   if (options.searchOnly) return result;
   if (options.discoverOnly) return result;
 
   if (rottenUrl) {
-    const parsed = parseRottenTomatoesPage(await readHtml(rottenUrl, options));
-    result.rottenTomatoes = parsed
-      ? { ...parsed, source: "rotten-tomatoes-page", url: sourceIsUrl(rottenUrl) ? rottenUrl : undefined }
-      : { score: null, source: null };
+    try {
+      const parsed = parseRottenTomatoesPage(await readHtml(rottenUrl, options));
+      const sourceUrl = sourceIsUrl(rottenUrl) ? normalizeRottenTomatoesSourceUrl(rottenUrl) : options.rottenSourceUrl;
+      result.rottenTomatoes = parsed
+        ? { ...parsed, source: "rotten-tomatoes-page", url: sourceUrl }
+        : { score: null, source: null };
+    } catch (error) {
+      result.rottenTomatoes = { score: null, source: null };
+      result.errors ??= [];
+      result.errors.push({
+        source: "rottenTomatoes",
+        input: rottenUrl,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   if (metacriticUrl) {
-    const parsed = parseMetacriticPage(await readHtml(metacriticUrl, options));
-    result.metacritic = parsed
-      ? { ...parsed, source: "metacritic-page", url: sourceIsUrl(metacriticUrl) ? metacriticUrl : undefined }
-      : { score: null, source: null };
+    try {
+      const parsed = parseMetacriticPage(await readHtml(metacriticUrl, options));
+      const sourceUrl = sourceIsUrl(metacriticUrl) ? normalizeMetacriticSourceUrl(metacriticUrl) : options.metacriticSourceUrl;
+      result.metacritic = parsed
+        ? { ...parsed, source: "metacritic-page", url: sourceUrl }
+        : { score: null, source: null };
+    } catch (error) {
+      result.metacritic = { score: null, source: null };
+      result.errors ??= [];
+      result.errors.push({
+        source: "metacritic",
+        input: metacriticUrl,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   if (options.imdbUrl && !result.metacritic?.score) {
-    const parsed = parseImdbMetascorePage(await readHtml(options.imdbUrl, options));
-    result.metacritic = parsed
-      ? { ...parsed, source: "imdb-page-metascore", url: sourceIsUrl(options.imdbUrl) ? options.imdbUrl : undefined }
-      : (result.metacritic ?? { score: null, source: null });
+    try {
+      const parsed = parseImdbMetascorePage(await readHtml(options.imdbUrl, options));
+      const sourceUrl = sourceIsUrl(options.imdbUrl) ? normalizeImdbSourceUrl(options.imdbUrl) : options.imdbSourceUrl;
+      result.metacritic = parsed
+        ? { ...parsed, source: "imdb-page-metascore", url: sourceUrl }
+        : (result.metacritic ?? { score: null, source: null });
+    } catch (error) {
+      result.metacritic ??= { score: null, source: null };
+      result.errors ??= [];
+      result.errors.push({
+        source: "imdbMetascore",
+        input: options.imdbUrl,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   if (structuredEvidence.rottenTomatoes && !scoreExists(result.rottenTomatoes?.score)) {
@@ -496,7 +779,7 @@ export async function inspectCriticRatings(options) {
 
 async function main() {
   const options = parseArgs();
-  if (options.help || (!options.rottenUrl && !options.metacriticUrl && !options.imdbUrl && !options.imdbId && !options.wikidataJson && !options.title && !options.ratingsJson)) {
+  if (options.help || (!options.rottenUrl && !options.metacriticUrl && !options.imdbUrl && !options.imdbId && !options.wikidataJson && !options.title && !options.ratingsJson && !options.urlHints && !options.rottenSearchUrl && !options.metacriticSearchUrl)) {
     console.log(usage());
     process.exit(options.help ? 0 : 1);
   }

@@ -13,11 +13,11 @@ import {
   normalizeImdbId,
   normalizeTmdbId,
   notionManagedProperties,
-  propertySchemaPayload,
   stableMovieWorkIdFromNotion,
   tmdbMovieUrl,
   type NotionManagedProperty
 } from "./notion-metadata-schema.js";
+import { schemaPatch } from "./notion-schema-migration.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -503,16 +503,6 @@ async function loadDataSource(notion: Client, dataSourceId: string): Promise<Lib
   };
 }
 
-function schemaPatch(existingProperties: JsonRecord) {
-  const patch: Record<string, unknown> = {};
-  for (const property of notionManagedProperties) {
-    if (!existingProperties[property.name]) {
-      patch[property.name] = propertySchemaPayload(property);
-    }
-  }
-  return patch;
-}
-
 async function queryPages(notion: Client, library: LibraryMetadata, options: MaintenanceOptions) {
   if (options.pageId) {
     return [await notion.pages.retrieve({ page_id: options.pageId }) as JsonRecord];
@@ -683,7 +673,9 @@ async function main() {
     schema: {
       managedPropertyCount: notionManagedProperties.length,
       missingCount: Object.keys(missingSchema).length,
-      missing: Object.keys(missingSchema)
+      missing: Object.keys(missingSchema),
+      existingIssueProperties: Object.keys(library.properties).filter((name) => /issue|问题/iu.test(name)),
+      patch: missingSchema
     },
     pages: {
       scanned: plannedPages.length,

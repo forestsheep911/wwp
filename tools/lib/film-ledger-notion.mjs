@@ -30,13 +30,13 @@ function advancePublication(repo, target, evidence) {
   return state;
 }
 
-export async function reconcileDueTargets(repo, notionAdapter, { limit = 3, now = new Date().toISOString(), forceAfter429 = false } = {}) {
+export async function reconcileDueTargets(repo, notionAdapter, { limit = 3, now = new Date().toISOString(), forceAfter429 = false, variantIds = [] } = {}) {
   const boundedLimit = normalizeLimit(limit, 3, 3);
   const breakerUntil = repo.getSchedulerState(BREAKER_KEY);
   if (!forceAfter429 && breakerUntil && now < breakerUntil) throw new Error(`Notion circuit breaker open until ${breakerUntil}`);
 
   const result = { checked: 0, completed: 0, pending: 0, failed: 0, rateLimited: false, authFailed: false };
-  for (const target of repo.listDueNotionTargets({ limit: boundedLimit, now })) {
+  for (const target of repo.listDueNotionTargets({ limit: boundedLimit, now, variantIds })) {
     try {
       const evidence = await notionAdapter.inspectTarget(target);
       result.checked += 1;
@@ -117,6 +117,23 @@ function recordedStructureMatches(pages, target) {
   return true;
 }
 
+async function recordedLegacyStructureMatches(client, pages, target) {
+  const spec = pages.find(page => page.id === target.spec_page_id);
+  if (spec?.parent?.type !== "block_id") return false;
+  const workChildren = await listRecordedPageChildren(client, target.work_page_id);
+  const containers = workChildren.filter(block => ["callout", "toggle"].includes(block.type));
+  for (const container of containers) {
+    const children = await listRecordedPageChildren(client, container.id);
+    if (!children.some(child => child.type === "child_page" && child.id === target.spec_page_id)) continue;
+    if (!target.episode_page_id) return true;
+    const episode = pages.find(page => page.id === target.episode_page_id);
+    if (parentPageId(episode) === target.spec_page_id) return true;
+    const specChildren = await listRecordedPageChildren(client, target.spec_page_id);
+    return specChildren.some(child => child.type === "child_page" && child.id === target.episode_page_id);
+  }
+  return false;
+}
+
 function playbackAssetComplete(page) {
   const properties = page?.properties ?? {};
   return selectName(properties["Asset Type"]) === "playable_video"
@@ -179,8 +196,10 @@ export function createNotionTargetAdapter(client, {
         sourcePageId: contentPageId,
         mediaBlockId: media?.id
       })) ?? null : null;
+      const structureVerified = recordedStructureMatches(pages, target)
+        || await recordedLegacyStructureMatches(client, pages, target);
       return {
-        structureVerified: recordedIds.length >= 2 && recordedStructureMatches(pages, target),
+        structureVerified: recordedIds.length >= 2 && structureVerified,
         mediaBlockId: media?.id ?? null,
         mediaVerified: Boolean(media),
         mediaAssetPageId: asset?.id ?? null,

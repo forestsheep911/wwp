@@ -517,7 +517,26 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
 }
 
 export function variantSpecGroupLabels(variant: MediaVariant) {
-  return variantSpecLabels(variant, { includeEpisode: false, includeSize: false });
+  const metadata = variant.metadata;
+  if (!metadata) {
+    return [];
+  }
+
+  const subtitles = metadata.noSubtitles
+    ? "无"
+    : labelList(metadata.subtitleLanguages);
+  const sourceLabel = [
+    variant.sourceBreadcrumb?.[1],
+    metadata.sourceLabel,
+    variant.label
+  ].find(Boolean) ?? "";
+  const sourceSize = sourceLabel.match(/\b(\d+(?:\.\d+)?)\s*(?:GB|G)\b/iu)?.[1];
+  const sourceResolution = sourceLabel.match(/\b(\d{3,4}p)\b/iu)?.[1];
+  const spec = sourceSize
+    ? `${sourceSize}G`
+    : sourceResolution ?? metadata.resolution;
+
+  return uniqueDisplayLabels([subtitles, spec]);
 }
 
 export function variantSpecGroupText(title: string, variant: MediaVariant) {
@@ -533,6 +552,53 @@ export function variantSpecGroupText(title: string, variant: MediaVariant) {
 export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
   const labels = variantSpecLabels(variant, options);
   return labels.length > 0 ? labels.join(" / ") : displayVariantLabel(title, variant.label);
+}
+
+function compareVariantsByEpisode(left: MediaVariant, right: MediaVariant) {
+  const leftEpisode = variantEpisodeNumber(left);
+  const rightEpisode = variantEpisodeNumber(right);
+  const leftHasEpisode = typeof leftEpisode === "number" && Number.isFinite(leftEpisode);
+  const rightHasEpisode = typeof rightEpisode === "number" && Number.isFinite(rightEpisode);
+
+  if (leftHasEpisode && rightHasEpisode && leftEpisode !== rightEpisode) {
+    return leftEpisode - rightEpisode;
+  }
+  if (leftHasEpisode !== rightHasEpisode) {
+    return leftHasEpisode ? -1 : 1;
+  }
+
+  return 0;
+}
+
+function variantSpecGroupKey(variant: MediaVariant, fallbackIndex: number) {
+  return variant.sourceBreadcrumb?.[1] ??
+    variant.metadata?.mediaAssetPageId ??
+    variant.metadata?.sourceLabel ??
+    `variant-spec-${fallbackIndex}`;
+}
+
+export function groupEpisodeVariantsBySpec(title: string, variants: MediaVariant[]) {
+  const episodeVariants = variants
+    .filter((variant) => typeof variantEpisodeNumber(variant) === "number")
+    .sort(compareVariantsByEpisode);
+  if (episodeVariants.length < 2) {
+    return [];
+  }
+
+  const groups = new Map<string, { key: string; label: string; labels: string[]; variants: MediaVariant[] }>();
+  episodeVariants.forEach((variant, index) => {
+    const key = variantSpecGroupKey(variant, index);
+    const labels = variantSpecGroupLabels(variant);
+    const label = variantSpecGroupText(title, variant);
+    const group = groups.get(key) ?? { key, label, labels, variants: [] };
+    group.variants.push(variant);
+    groups.set(key, group);
+  });
+
+  return [...groups.values()].map((group) => ({
+    ...group,
+    episodeCount: group.variants.length
+  }));
 }
 
 export function mediaQuality(media?: MediaDiagnostics) {

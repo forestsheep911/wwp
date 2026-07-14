@@ -215,6 +215,7 @@ async function main() {
     byAvailability,
     hideFromWebsite,
     playbackVerified,
+    rows,
     traceability: {
       sourcePages: sourcePageIds.size,
       withSourcePageId: rows.filter((row) => row.sourcePageId).length,

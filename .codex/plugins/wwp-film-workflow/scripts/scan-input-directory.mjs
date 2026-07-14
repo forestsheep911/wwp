@@ -85,8 +85,7 @@ function detectFlags(name, files) {
   };
 }
 
-function summarizeEntry(entryPath, root, maxSamples) {
-  const { files, warnings } = walkFiles(entryPath);
+function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = []) {
   const subtitleHints = [];
   const media = [];
   let subtitleCount = 0;
@@ -112,10 +111,9 @@ function summarizeEntry(entryPath, root, maxSamples) {
   }
 
   media.sort((a, b) => b.bytes - a.bytes);
-  const name = path.basename(entryPath);
   return {
     name,
-    relativePath: path.relative(root, entryPath),
+    relativePath,
     fileCount: files.length,
     mediaCount: media.length,
     subtitleCount,
@@ -132,6 +130,18 @@ function summarizeEntry(entryPath, root, maxSamples) {
     flags: detectFlags(name, files),
     warnings
   };
+}
+
+function summarizeEntry(entryPath, root, maxSamples) {
+  const { files, warnings } = walkFiles(entryPath);
+  return summarizeFiles(path.basename(entryPath), path.relative(root, entryPath), files, root, maxSamples, warnings);
+}
+
+function rootFileKey(filePath) {
+  return path.basename(filePath, path.extname(filePath))
+    .replace(/(?:[._ -](?:2160p|1080p|720p|480p|4k|uhd|web[- ]?dl|bluray|blu[- ]?ray|remux|webrip|hdtv)).*$/iu, "")
+    .replace(/[._ -](?:chseng|chteng|chs|cht|gb|big5|eng|中文|简英|繁英|简体|繁体)$/iu, "")
+    .toLocaleLowerCase();
 }
 
 function ensureParent(filePath) {
@@ -155,10 +165,30 @@ function main() {
   const rootStats = statSync(root);
   if (!rootStats.isDirectory()) throw new Error(`Root is not a directory: ${root}`);
 
-  const entries = readdirSync(root, { withFileTypes: true })
+  const rootEntries = readdirSync(root, { withFileTypes: true });
+  const entries = rootEntries
     .filter((entry) => entry.isDirectory())
-    .map((entry) => summarizeEntry(path.join(root, entry.name), root, options.maxSamples))
-    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+    .map((entry) => summarizeEntry(path.join(root, entry.name), root, options.maxSamples));
+
+  const rootFiles = rootEntries
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(root, entry.name));
+  const rootMediaGroups = new Map();
+  for (const mediaFile of rootFiles.filter((file) => mediaExt.has(path.extname(file).toLowerCase()))) {
+    const key = rootFileKey(mediaFile);
+    const group = rootMediaGroups.get(key) ?? [];
+    group.push(mediaFile);
+    rootMediaGroups.set(key, group);
+  }
+  for (const mediaFiles of rootMediaGroups.values()) {
+    const mediaFile = mediaFiles[0];
+    const key = rootFileKey(mediaFile);
+    const relatedFiles = rootFiles.filter((file) => rootFileKey(file) === key);
+    const name = path.basename(mediaFile, path.extname(mediaFile));
+    entries.push(summarizeFiles(name, mediaFiles.map((file) => path.basename(file)).join(";"), relatedFiles, root, options.maxSamples));
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 
   const payload = {
     root,

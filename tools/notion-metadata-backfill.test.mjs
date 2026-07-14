@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPatch, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
+import { buildPatch, fetchImdbRating, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
+
+test("fetchImdbRating falls back to IMDb when OMDb has no rating", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    if (String(url).includes("omdbapi.com")) {
+      return { ok: true, text: async () => JSON.stringify({ imdbRating: "N/A" }) };
+    }
+    return { ok: true, text: async () => "IMDb RATING 8.2/10" };
+  };
+  try {
+    assert.equal(await fetchImdbRating("tt43592244", 1000, { omdbApiKey: "test-key" }), 8.2);
+    assert.equal(urls.length, 2);
+    assert.match(urls[1], /r\.jina\.ai\/http:\/\/www\.imdb\.com\/title\/tt43592244\/ratings/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function emptyProperty(type) {
   if (type === "number") return { type, number: null };
@@ -21,6 +40,9 @@ function pageWithProperties(overrides = {}) {
   return {
     properties: {
       Title: emptyProperty("title"),
+      "Simplified Chinese Title": emptyProperty("rich_text"),
+      "English Title": emptyProperty("rich_text"),
+      "Original Title": emptyProperty("rich_text"),
       "豆瓣评分": emptyProperty("number"),
       "IMDB评分": emptyProperty("number"),
       "Release Year": emptyProperty("number"),
@@ -101,6 +123,27 @@ test("buildPatch fills structured Douban metadata fields", () => {
   assert.equal(patch["Metadata Confidence"].number, 0.9);
   assert.equal(patch["Needs Review"].checkbox, true);
   assert.equal(patch["Metadata Updated At"].date.start, "2026-07-07");
+});
+
+test("buildPatch uses the verified Douban display title instead of subtitle-bearing fields", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "银河英雄传说 我的征途是星辰大海 銀河英雄伝説 わが征くは星の大海 (1988)", text: { content: "银河英雄传说 我的征途是星辰大海 銀河英雄伝説 わが征くは星の大海 (1988)" } }] },
+      "Simplified Chinese Title": filledRichText("银河英雄传说 我的征途是星辰大海"),
+      "Original Title": filledRichText("銀河英雄伝説 わが征くは星の大海"),
+      "Release Year": { type: "number", number: 1988 }
+    }),
+    {
+      subjectId: "1684322",
+      doubanDisplayTitle: "银河英雄传说 銀河英雄伝説",
+      releaseYear: 1988
+    },
+    undefined,
+    undefined,
+    { now: "2026-07-13" }
+  );
+
+  assert.equal(patch.Title.title[0].text.content, "银河英雄传说 銀河英雄伝説 (1988)");
 });
 
 test("buildPatch does not overwrite existing human-filled structured fields", () => {
@@ -265,4 +308,56 @@ test("buildPatch appends newly canonical genres and clears resolved unmapped gen
 
   assert.deepEqual(patch["旨趣"].multi_select.map((item) => item.name), ["动作", "浪漫", "武侠", "古装"]);
   assert.deepEqual(patch["未映射类型"], { rich_text: [] });
+});
+
+test("buildPatch repairs a Chinese-only work title from verified structured identity", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "走走停停 (2024)", text: { content: "走走停停 (2024)" } }] },
+      "Simplified Chinese Title": filledRichText("走走停停"),
+      "English Title": filledRichText("G for Gap"),
+      "Release Year": { type: "number", number: 2024 }
+    }),
+    { subjectId: "36712987", releaseYear: 2024 },
+    undefined,
+    undefined,
+    { now: "2026-07-12" }
+  );
+
+  assert.equal(patch.Title.title[0].text.content, "走走停停 G for Gap (2024)");
+});
+
+test("buildPatch repairs an English-only title and preserves a season identity", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "Better Call Saul Season 1 (2015)", text: { content: "Better Call Saul Season 1 (2015)" } }] },
+      "Simplified Chinese Title": filledRichText("风骚律师 第一季"),
+      "English Title": filledRichText("Better Call Saul Season 1"),
+      "Release Year": { type: "number", number: 2015 }
+    }),
+    { subjectId: "26387813", releaseYear: 2015 },
+    undefined,
+    undefined,
+    { now: "2026-07-12" }
+  );
+
+  assert.equal(patch.Title.title[0].text.content, "风骚律师 第一季 Better Call Saul Season 1 (2015)");
+});
+
+test("buildPatch does not overwrite a complete conflicting title", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "狗镇 Dogville (2003)", text: { content: "狗镇 Dogville (2003)" } }] },
+      "Simplified Chinese Title": filledRichText("狗阵"),
+      "English Title": filledRichText("Black Dog"),
+      "Release Year": { type: "number", number: 2024 }
+    }),
+    { subjectId: "35242872", releaseYear: 2024 },
+    undefined,
+    undefined,
+    { now: "2026-07-12" }
+  );
+
+  assert.equal(patch.Title, undefined);
+  assert.equal(patch["Needs Review"].checkbox, true);
 });

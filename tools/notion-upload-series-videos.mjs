@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -72,13 +73,13 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-series-videos.mjs [--apply] [--max-files 1]
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --create-episodes
-  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*.mp4" --spec-title "辐射 第二季 繁英" --create --create-episodes --prepare-only --apply
+  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*.mp4" --spec-title "辐射 第二季 繁英 0.8-1.0GB/集" --create --create-episodes --prepare-only --apply
 
 Examples:
   node tools/notion-upload-series-videos.mjs
   node tools/notion-upload-series-videos.mjs --apply --max-files 1
   node tools/notion-upload-series-videos.mjs --apply
-  node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB" --create-episodes --apply
+  node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB/集" --create-episodes --apply
 
 Options:
   --prepare-only  Create/reuse the spec and episode page structure before long encode or manual upload handoff, then skip file uploads.
@@ -152,6 +153,10 @@ function richText(content) {
   return [{ type: "text", text: { content } }];
 }
 
+function setIfProperty(properties, dataSource, name, value) {
+  if (dataSource.properties?.[name]) properties[name] = value;
+}
+
 function blockTitle(block) {
   const payload = block[block.type] ?? {};
   if (block.type === "child_page") return payload.title ?? "";
@@ -175,9 +180,24 @@ function globToRegExp(pattern) {
   return new RegExp(`^${escaped}$`, "i");
 }
 
-function episodeNumber(fileName) {
-  const match = fileName.match(/S\d+E(\d+)/i) ?? fileName.match(/E(?:pisode)?\s*(\d+)/i);
+export function episodeNumber(fileName) {
+  const baseName = path.basename(fileName, path.extname(fileName));
+  const match =
+    fileName.match(/S\d+E(\d+)/i) ??
+    fileName.match(/E(?:pisode)?\s*(\d+)/i) ??
+    fileName.match(/\[(\d{1,3})[)\]]/) ??
+    baseName.match(/(?:^|[-_\s])(?:ep(?:isode)?[-_\s]*)?(\d{1,3})$/i) ??
+    baseName.match(/^(\d{1,3})$/);
   return match ? Number(match[1]) : undefined;
+}
+
+export function validateSeriesSpecTitle(title) {
+  const value = String(title ?? "").trim();
+  const hasSize = /\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?\s*GB\b/i.test(value);
+  if (hasSize && !/(?:\/\s*集|每\s*集|per\s*episode)/iu.test(value)) {
+    throw new Error(`Series spec size must be marked as per-episode (每集 or /集): ${value}`);
+  }
+  return value;
 }
 
 function specLabelFromFiles(files) {
@@ -272,6 +292,10 @@ async function createSeriesPage(notion, library, options) {
   setRichTextProperty("English Title", options.englishTitle);
   if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
   if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "TV Series" } };
+  setIfProperty(properties, library.dataSource, "Hide from Website", { checkbox: true });
+  setIfProperty(properties, library.dataSource, "Needs Review", { checkbox: true });
+  setIfProperty(properties, library.dataSource, "Media Availability", { select: { name: "needs_processing" } });
+  setRichTextProperty("Developer Memo", "New series page created before playable upload, Media Assets readback, subtitles/QC, and playback verification are complete. Keep hidden and Needs Review until production evidence is verified.");
 
   console.log(`${options.apply ? "create" : "would create"} series page: ${options.title}`);
   if (!options.apply) return { id: "(dry-run)", properties };
@@ -533,6 +557,7 @@ async function main() {
   const specPage = await findSpecPage(notion, page.id, options);
   let episodePages = specPage.id === "(dry-run)" ? new Map() : await collectEpisodePages(notion, specPage.id);
   const specTitle = options.specTitle || specLabelFromFiles(files) || specPage.title;
+  validateSeriesSpecTitle(specTitle);
   episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes);
 
   console.log(`page: ${pageTitle(page)} ${page.id}`);
@@ -568,7 +593,9 @@ async function main() {
   console.log(`manifest written: ${manifestPath}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

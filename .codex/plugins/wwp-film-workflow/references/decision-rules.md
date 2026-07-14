@@ -30,6 +30,7 @@ Work-level metadata is a separate high-priority track. If a scanned work is wort
 
 - Chinese subtitles are a hard requirement for subtitle-dependent versions unless the user explicitly overrides.
 - Subtitle evidence may come from internal subtitle tracks, sidecar subtitle files, or visually confirmed source hard subtitles. If a probe has no subtitle stream, inspect a real sample before declaring the source subtitle-free.
+- An unlabelled bitmap/PGS subtitle stream is not Chinese-subtitle evidence by itself. Inspect that specific stream with a real timestamped sample; if the language still cannot be identified reliably, keep playable production deferred and continue the metadata-only track.
 - Mandarin/Chinese-language works are not subtitle-dependent by default; prefer no added hard subtitles unless the source already has unavoidable hard subtitles.
 - Dolby Vision Profile 5 is a normal-production blocker unless there is an explicit compatible color strategy; prefer a non-DV or HDR10-compatible source for full pipeline work.
 - v1 does not automatically search subtitle websites. Record missing subtitles and move on.

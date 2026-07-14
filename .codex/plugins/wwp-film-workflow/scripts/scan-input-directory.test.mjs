@@ -39,3 +39,29 @@ test("scan-input-directory summarizes top-level media candidates", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("scan-input-directory includes media files placed directly under the input root", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-root-file-"));
+  try {
+    writeFileSync(path.join(root, "The.Match.2025.1080p.WEB-DL.mkv"), Buffer.alloc(2048));
+    writeFileSync(path.join(root, "The.Match.2025.cht.srt"), "test");
+
+    const output = path.join(root, "scan.json");
+    const result = spawnSync(process.execPath, [
+      scriptPath,
+      "--root",
+      root,
+      "--output",
+      output
+    ], { encoding: "utf8" });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(payload.entries.length, 1);
+    assert.equal(payload.entries[0].name, "The.Match.2025.1080p.WEB-DL");
+    assert.equal(payload.entries[0].mediaCount, 1);
+    assert.equal(payload.entries[0].subtitleCount, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

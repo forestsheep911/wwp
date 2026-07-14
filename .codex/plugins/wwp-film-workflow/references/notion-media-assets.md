@@ -13,16 +13,21 @@
 
 ## Spec Titles
 
-Use positive labels in spec page titles: work title, subtitle/language label, and file size. Example shape: `Work Title 简英 1.16GB`.
+Use positive labels in spec page titles: work title, subtitle/language label, and measured file size. Example movie shape: `Work Title 简英 1.16GB`. For series, use the measured per-episode value or range, for example `Work Title 简英 H.265 0.08-0.40GB/集`; do not use a batch or season total in a series spec title.
 
 Do not encode hidden technical truth in title text. Media Assets is the authoritative structured record for codec, duration, resolution, frame rate, audio, subtitle, source lineage, and availability.
 
+Title QA is bounded: after a current production, rename, structure-preparation, or manual-upload handoff, check only the exact recent targets recorded for that run, normally at most three. Do not scan the whole Notion library to find historical title mistakes; older untouched specs can wait for a user-directed repair.
+
 ## Media Assets Write Rules
+
+- Notion parent-page `last_edited_time` is only a candidate filter, not a reliable upload index. A manually added video/file block may have a newer block `created_time` or `last_edited_time` while the work/spec page timestamp remains old. For recent manual-upload detection, inspect only the relevant page trees and record media-block timestamps. Keep the check bounded to the small set of recent targets, normally at most three; if nothing is found, report that result and do not expand into a broader or all-page scan automatically.
 
 - Before uploading a playable through Notion, check the exact local file size. The normal Notion playable path uses the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but keep the lower decimal-byte cap as upload safety margin.
 - Files above the limit are not playable-upload-ready. Re-encode under the limit, split only if the workflow explicitly supports split playback, or route the asset to a source/archive workflow rather than a playable spec.
 - Run `ffprobe` on the exact local final file that corresponds to the uploaded playable.
 - Prefer ffprobe output plus production manifest over filename guessing.
+- For a normal Notion upload, an observed video/file block on the recorded destination page, with an exact filename match and ffprobe-backed Media Assets row, is sufficient upload-backed evidence to set `Playback Verified=true`. Do not require a human to play every asset. A later user-reported playback fault reopens `Needs Review` and is repaired as a new media operation.
 - When the writer supports batch manifests, use page IDs and expected-title guards for apply runs. Put ffprobe-confirmed values in the manifest `metadata` object when filename/page parsing would be lossy or ambiguous.
 - For series rows, use the episode-aware writer and pass a metadata manifest when local final-file `ffprobe` data is available. Match overrides by `Media Block ID` when known, otherwise by `Source Page ID` plus original filename.
 - Run writers in dry-run mode first when available.
@@ -51,6 +56,7 @@ Do not encode hidden technical truth in title text. Media Assets is the authorit
 
 - Keep `Hide from Website` true when there is no verified playable path: no suitable upload, no playable Media Assets row, source-only state, blocked encode/QC, missing required Chinese subtitles, broken media relationship, or unresolved playback risk.
 - Treat a user-set `Hide from Website` as intentional. Do not clear it automatically. If the playable specs and Media Assets look good but the work is still hidden, report the evidence and ask the user before un-hiding.
+- `Hide from Website` is not part of local-retention proof. A correctly traced, upload-backed playable asset may allow deletion of its local output even when it remains hidden; visibility is controlled separately and automation must not infer why the flag is true.
 - Use `Needs Review` for fixable uncertainty rather than visibility alone: ambiguous work/spec matching, Media Assets mismatch, duplicate or missing episode/spec links, missing ffprobe evidence, subtitle/audio uncertainty, metadata conflict, low-confidence AI advisory, or any condition where a human should inspect before relying on the row.
 - Clearing `Needs Review` requires the named issue to be resolved and read back. Clearing it should not automatically clear `Hide from Website`.
 

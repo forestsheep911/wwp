@@ -39,14 +39,13 @@ import {
   directorLine,
   formatDateTime,
   formatLongDate,
+  groupEpisodeVariantsBySpec,
   jobStatusLabel,
   jobVariant,
   metadataLine,
   peopleTags,
   titleInitial,
   variantEpisodeNumber,
-  variantSpecGroupLabels,
-  variantSpecGroupText,
   variantSpecText,
   visibleTags
 } from "../format";
@@ -1846,8 +1845,9 @@ function VariantButtons({
   reserveMoreRow?: boolean;
 }) {
   const variants = sortedVariants(result.variants ?? []);
-  const specGroups = variantLimit && onShowAllVariants ? variantSpecGroups(result.title, variants) : [];
-  if (specGroups.length > 0) {
+  const specGroups = groupEpisodeVariantsBySpec(result.title, variants);
+  const showPreviewSpecGroups = Boolean(variantLimit && onShowAllVariants && specGroups.length > 0);
+  if (showPreviewSpecGroups) {
     const shouldReserveMoreGroupRow = Boolean(reserveMoreRow && variantLimit && specGroups.length > variantLimit);
     const visibleGroupLimit = variantLimit ? Math.max(1, variantLimit - (shouldReserveMoreGroupRow ? 1 : 0)) : specGroups.length;
     const visibleGroups = specGroups.slice(0, visibleGroupLimit);
@@ -1905,91 +1905,113 @@ function VariantButtons({
     return <div aria-label={copy.library.noVariants} />;
   }
 
+  const renderVariantRows = (items: MediaVariant[]) => items.map((variant) => {
+    const variantLabel = variantSpecText(result.title, variant, { compact });
+    const pending = pendingAssetKeys.includes(variant.assetKey);
+    const tracked = trackedByAssetKey.get(variant.assetKey);
+    const displayAsset = latestVariantAsset(variant, tracked);
+    const displayStatus = pending
+      ? pendingCacheStatusLabel()
+      : tracked && tracked.job.status !== "ready"
+        ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
+        : displayAsset && displayAsset.status !== "ready"
+          ? cacheLabel(displayAsset)
+          : undefined;
+    const downloading = pendingDownloadAssetKeys.includes(variant.assetKey);
+    const progress = tracked?.job.progress ?? 0;
+    const progressColor = tracked?.job.status === "failed"
+      ? "bg-rose-500/22"
+      : displayAsset?.status === "ready"
+        ? "bg-emerald-500/24"
+        : "bg-amber-400/20";
+    const badgeVariant = pending
+      ? "warning"
+      : tracked && tracked.job.status !== "ready"
+        ? jobVariant(tracked.job.status)
+        : cacheVariant(displayAsset);
+    const isActiveCacheHit = pending || trackedCacheNeedsStatusRefresh(tracked);
+    const costLabel = displayAsset?.status === "ready"
+        ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+        : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);
+    const costDisplayLabel = displayAsset?.status === "ready" && !isActiveCacheHit
+      ? `▶ ${costLabel}`
+      : costLabel;
+    const costBadgeClass = displayAsset?.status === "ready" && !isActiveCacheHit
+      ? "border-slate-950/25 bg-slate-950/90 px-2.5 text-slate-50 shadow-sm shadow-emerald-950/20"
+      : undefined;
+
+    return (
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] gap-2 sm:grid-cols-[minmax(0,1fr)_2.5rem]" key={variant.assetKey}>
+        <Button
+          className={`relative h-auto min-h-12 min-w-0 flex-col items-start overflow-hidden rounded-lg px-3.5 py-2.5 text-left sm:min-h-10 sm:rounded-md sm:px-3 sm:py-2 sm:flex-row sm:items-center sm:justify-between ${compact ? "" : ""}`}
+          type="button"
+          variant={displayAsset?.status === "ready" ? "default" : "secondary"}
+          onClick={() => onSelect(result, variant)}
+          disabled={isActiveCacheHit}
+          title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+          aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+        >
+          {tracked ? (
+            <span
+              aria-hidden="true"
+              className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500`}
+              style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
+            />
+          ) : null}
+          <span className="relative z-10 min-w-0 max-w-full">
+            <VariantSpecTags compact={compact} title={result.title} variant={variant} />
+          </span>
+          <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
+            {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            {!isActiveCacheHit ? (
+              <Badge className={costBadgeClass} variant="warning">
+                {costDisplayLabel}
+              </Badge>
+            ) : null}
+            {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
+          </span>
+        </Button>
+        <Button
+          className="h-full min-h-12 rounded-lg border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md"
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => onDownload(result, variant)}
+          disabled={downloading}
+          title={`${variantLabel} / ${copy.library.directDownload}`}
+          aria-label={`${variantLabel} / ${copy.library.directDownload}`}
+        >
+          {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          <span className="sr-only">{copy.library.directDownload}</span>
+        </Button>
+      </div>
+    );
+  });
+
+  const showDetailedSpecGroups = !variantLimit && specGroups.length > 0;
+
   return (
     <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
-      {visibleVariants.map((variant) => {
-        const variantLabel = variantSpecText(result.title, variant, { compact });
-        const pending = pendingAssetKeys.includes(variant.assetKey);
-        const tracked = trackedByAssetKey.get(variant.assetKey);
-        const displayAsset = latestVariantAsset(variant, tracked);
-        const displayStatus = pending
-          ? pendingCacheStatusLabel()
-          : tracked && tracked.job.status !== "ready"
-            ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
-            : displayAsset && displayAsset.status !== "ready"
-              ? cacheLabel(displayAsset)
-              : undefined;
-        const downloading = pendingDownloadAssetKeys.includes(variant.assetKey);
-        const progress = tracked?.job.progress ?? 0;
-        const progressColor = tracked?.job.status === "failed"
-          ? "bg-rose-500/22"
-          : displayAsset?.status === "ready"
-            ? "bg-emerald-500/24"
-            : "bg-amber-400/20";
-        const badgeVariant = pending
-          ? "warning"
-          : tracked && tracked.job.status !== "ready"
-            ? jobVariant(tracked.job.status)
-            : cacheVariant(displayAsset);
-        const isActiveCacheHit = pending || trackedCacheNeedsStatusRefresh(tracked);
-        const costLabel = displayAsset?.status === "ready"
-            ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-            : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);
-        const costDisplayLabel = displayAsset?.status === "ready" && !isActiveCacheHit
-          ? `▶ ${costLabel}`
-          : costLabel;
-        const costBadgeClass = displayAsset?.status === "ready" && !isActiveCacheHit
-          ? "border-slate-950/25 bg-slate-950/90 px-2.5 text-slate-50 shadow-sm shadow-emerald-950/20"
-          : undefined;
-
-        return (
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] gap-2 sm:grid-cols-[minmax(0,1fr)_2.5rem]" key={variant.assetKey}>
-            <Button
-              className={`relative h-auto min-h-12 min-w-0 flex-col items-start overflow-hidden rounded-lg px-3.5 py-2.5 text-left sm:min-h-10 sm:rounded-md sm:px-3 sm:py-2 sm:flex-row sm:items-center sm:justify-between ${compact ? "" : ""}`}
-              type="button"
-              variant={displayAsset?.status === "ready" ? "default" : "secondary"}
-              onClick={() => onSelect(result, variant)}
-              disabled={isActiveCacheHit}
-              title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-              aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-            >
-              {tracked ? (
+      {showDetailedSpecGroups ? specGroups.map((group) => (
+        <section className="grid gap-2 border-l-2 border-slate-800 pl-3" key={group.key}>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <span className="flex min-w-0 flex-wrap gap-1.5">
+              {(group.labels.length > 0 ? group.labels : [group.label]).map((label) => (
                 <span
-                  aria-hidden="true"
-                  className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500`}
-                  style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
-                />
-              ) : null}
-              <span className="relative z-10 min-w-0 max-w-full">
-                <VariantSpecTags compact={compact} title={result.title} variant={variant} />
-              </span>
-              <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
-                {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                {!isActiveCacheHit ? (
-                  <Badge className={costBadgeClass} variant="warning">
-                    {costDisplayLabel}
-                  </Badge>
-                ) : null}
-                {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
-              </span>
-            </Button>
-            <Button
-              className="h-full min-h-12 rounded-lg border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md"
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={() => onDownload(result, variant)}
-              disabled={downloading}
-              title={`${variantLabel} / ${copy.library.directDownload}`}
-              aria-label={`${variantLabel} / ${copy.library.directDownload}`}
-            >
-              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              <span className="sr-only">{copy.library.directDownload}</span>
-            </Button>
+                  className="inline-flex max-w-full items-center rounded-full border border-slate-600/70 bg-slate-950/55 px-2 py-0.5 text-[11px] font-semibold leading-4 text-slate-100 shadow-sm shadow-black/10"
+                  key={`${group.key}-${label}`}
+                  title={label}
+                >
+                  <span className="max-w-full truncate">{label}</span>
+                </span>
+              ))}
+            </span>
+            <Badge className="shrink-0" variant="muted">{group.episodeCount} 集</Badge>
           </div>
-        );
-      })}
-      {hiddenVariantCount > 0 ? (
+          <div className="grid gap-2">{renderVariantRows(group.variants)}</div>
+        </section>
+      )) : renderVariantRows(visibleVariants)}
+      {!showDetailedSpecGroups && hiddenVariantCount > 0 ? (
         onShowAllVariants ? (
           <Button
             className="min-h-12 justify-between rounded-lg border-slate-700 bg-slate-900/80 px-3.5 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md sm:px-3"
@@ -2025,44 +2047,6 @@ function sortedVariants(variants: MediaVariant[]) {
 
     return 0;
   });
-}
-
-type VariantSpecGroup = {
-  key: string;
-  label: string;
-  labels: string[];
-  episodeCount: number;
-};
-
-function variantSpecGroupKey(variant: MediaVariant, fallbackIndex: number) {
-  return variant.sourceBreadcrumb?.[1] ??
-    variant.metadata?.mediaAssetPageId ??
-    variant.metadata?.sourceLabel ??
-    `variant-spec-${fallbackIndex}`;
-}
-
-function variantSpecGroups(title: string, variants: MediaVariant[]): VariantSpecGroup[] {
-  const episodeVariants = variants.filter((variant) => typeof variantEpisodeNumber(variant) === "number");
-  if (episodeVariants.length < 2) {
-    return [];
-  }
-
-  const groups = new Map<string, { key: string; label: string; labels: string[]; variants: MediaVariant[] }>();
-  episodeVariants.forEach((variant, index) => {
-    const key = variantSpecGroupKey(variant, index);
-    const labels = variantSpecGroupLabels(variant);
-    const label = variantSpecGroupText(title, variant);
-    const group = groups.get(key) ?? { key, label, labels, variants: [] };
-    group.variants.push(variant);
-    groups.set(key, group);
-  });
-
-  return [...groups.values()].map((group) => ({
-    key: group.key,
-    label: group.label,
-    labels: group.labels,
-    episodeCount: group.variants.length
-  }));
 }
 
 function MovieCard({

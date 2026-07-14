@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -64,6 +64,147 @@ test("CLI migrate-local-data accepts repeated baselines and an explicit correcti
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI imports a completed production manifest into a qc-passed Notion-targeted variant idempotently", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-production-manifest-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const manifest = path.join(dir, "production.json");
+    writeFileSync(manifest, JSON.stringify({
+      work: "Example Film (2025)",
+      output: "E:\\video_made\\Example.Film.2025.1080p.h265.eng.chs.4.50GB.mp4",
+      outputBytes: 4500000000,
+      outputSpec: "简 H.265 4.50GB",
+      targetSpecPageId: "spec-page",
+      workPageId: "work-page",
+      evidence: { probe: ".local-data/example-final-ffprobe.json", sampleFrame: ".local-data/example-sample.jpg" },
+      publicationState: "manual_upload_pending"
+    }));
+
+    const first = run(["--db", db, "import-production-manifest", "--production-manifest", manifest, "--json"], dir);
+    assert.equal(first.status, 0, first.stderr);
+    const imported = JSON.parse(first.stdout);
+    assert.equal(imported.status, "imported");
+    assert.equal(imported.variant.production_state, "qc_passed");
+    assert.equal(imported.variant.output_path, "e:\\video_made\\example.film.2025.1080p.h265.eng.chs.4.50gb.mp4");
+    assert.equal(imported.target.work_page_id, "work-page");
+    assert.equal(imported.target.spec_page_id, "spec-page");
+
+    const second = run(["--db", db, "import-production-manifest", "--production-manifest", manifest, "--json"], dir);
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(JSON.parse(second.stdout).status, "already_imported");
+
+    const next = run(["--db", db, "next", "--stage", "production", "--json"], dir);
+    assert.equal(next.status, 0, next.stderr);
+    assert.deepEqual(JSON.parse(next.stdout), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI imports only the bounded newest production manifests per target", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-production-manifests-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const writeManifest = (name, output, spec) => writeFileSync(path.join(dir, name), JSON.stringify({
+      work: "Bounded Film (2025)", output, outputBytes: 100, outputSpec: spec,
+      targetSpecPageId: "spec-page", workPageId: "work-page"
+    }));
+    writeManifest("old-production.json", "E:\\old.mp4", "旧 1GB");
+    writeManifest("new-production.json", "E:\\new.mp4", "新 1GB");
+    const now = Date.now() / 1000;
+    utimesSync(path.join(dir, "old-production.json"), now - 10, now - 10);
+    utimesSync(path.join(dir, "new-production.json"), now, now);
+    const result = run(["--db", db, "import-production-manifests", "--manifest-dir", dir, "--limit", "1", "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.scanned, 1);
+    assert.equal(payload.results[0].fileName, "new-production.json");
+    assert.equal(payload.results[0].variant.output_path, "e:\\new.mp4");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI dry-run does not import production manifests", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-production-dry-run-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const manifest = path.join(dir, "production.json");
+    writeFileSync(manifest, JSON.stringify({
+      work: "Dry Run (2025)", output: "E:\\dry-run.mp4", outputBytes: 100,
+      outputSpec: "简英 1GB", targetSpecPageId: "spec", workPageId: "work"
+    }));
+    const result = run(["--db", db, "import-production-manifests", "--manifest-dir", dir, "--dry-run", "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).results[0].status, "would_import");
+    const status = JSON.parse(run(["--db", db, "status", "--json"], dir).stdout);
+    assert.equal(status.totals.variants, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI adopts a QC-verified local output into an existing migrated target but clears unverified media-block evidence", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-adopt-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Legacy", year: null, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "legacy-main", displayTitle: "Legacy main" });
+    repo.registerNotionTarget(variant.id, { workPageId: "work", specPageId: "spec", mediaBlockId: "media-block" });
+    db.close();
+
+    const result = run(["--db", dbPath, "adopt-existing-variant", "--variant", String(variant.id), "--year", "2025", "--output-path", "E:\\video_made\\Legacy.mp4", "--output-size", "1000", "--probe-path", "probe.json", "--qc-artifact", "qc.jpg", "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    const adopted = JSON.parse(result.stdout);
+    assert.equal(adopted.variant.production_state, "qc_passed");
+    assert.equal(adopted.variant.publication_state, "structure_pending");
+    assert.equal(adopted.target.media_block_id, null);
+    assert.equal(adopted.variant.output_path, "e:\\video_made\\legacy.mp4");
+    assert.equal(adopted.variant.year, 2025);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI handoff lists only QC-passed target pages still awaiting their expected upload", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-handoff-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Handoff", year: 2025, workType: "movie" });
+    const waiting = repo.ensureVariant({ workId: work.id, specKey: "waiting", displayTitle: "Handoff 简", outputPath: "E:\\video_made\\Handoff.mp4" });
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) repo.transitionProduction(waiting.id, state);
+    repo.transitionPublication(waiting.id, "structure_pending");
+    repo.registerNotionTarget(waiting.id, { workPageId: "work", specPageId: "spec", expectedFilename: "Handoff.mp4" });
+    const complete = repo.ensureVariant({ workId: work.id, specKey: "complete", displayTitle: "Complete", outputPath: "E:\\video_made\\Complete.mp4" });
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) repo.transitionProduction(complete.id, state);
+    repo.transitionPublication(complete.id, "structure_pending");
+    repo.registerNotionTarget(complete.id, { workPageId: "complete-work", specPageId: "complete-spec" });
+    repo.recordNotionInspection(complete.id, { structureVerified: true, mediaVerified: true, mediaBlockId: "media", assetsVerified: true, mediaAssetPageId: "asset" });
+    repo.transitionPublication(complete.id, "upload_pending");
+    repo.transitionPublication(complete.id, "upload_seen");
+    repo.transitionPublication(complete.id, "assets_pending");
+    repo.transitionPublication(complete.id, "verification_pending");
+    repo.transitionPublication(complete.id, "sync_ready");
+    db.close();
+
+    const result = run(["--db", dbPath, "handoff", "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [{
+      variantId: waiting.id,
+      workTitle: "Handoff",
+      year: 2025,
+      specTitle: "Handoff 简",
+      outputPath: "e:\\video_made\\handoff.mp4",
+      outputSizeBytes: null,
+      workPageId: "work",
+      specPageId: "spec",
+      episodePageId: null,
+      expectedFilename: "Handoff.mp4",
+      publicationState: "structure_pending"
+    }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI next, show, record-qc, and register-target cover the ledger workflow", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-workflow-"));
   try {
@@ -106,6 +247,39 @@ test("CLI reconcile-notion enforces a maximum of three before loading an adapter
     const result = run(["--db", db, "reconcile-notion", "--limit", "4", "--json"], dir);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /--limit must be between 1 and 3/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI reconcile-notion loads a Notion token from the repository .env", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-dotenv-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const markerPath = path.join(dir, "token.txt");
+    const adapterPath = path.join(dir, "dotenv-adapter.mjs");
+    writeFileSync(path.join(dir, ".env"), "NOTION_TOKEN=dotenv-test-token\n");
+    writeFileSync(adapterPath, `import { writeFileSync } from "node:fs";
+export function createAdapter() {
+  writeFileSync(process.env.WWP_LEDGER_DOTENV_MARKER, process.env.NOTION_TOKEN ?? "missing");
+  return { async inspectTarget() { return { structureVerified: false, mediaVerified: false, assetsVerified: false, evidence: {} }; } };
+}`);
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Dotenv", year: 2025, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "main", displayTitle: "Dotenv" });
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) repo.transitionProduction(variant.id, state);
+    repo.transitionPublication(variant.id, "structure_pending");
+    repo.registerNotionTarget(variant.id, { workPageId: "work", specPageId: "spec" });
+    db.close();
+
+    const result = run(["--db", dbPath, "reconcile-notion", "--json"], dir, {
+      NOTION_TOKEN: undefined,
+      WWP_FILM_LEDGER_NOTION_ADAPTER_MODULE: adapterPath,
+      WWP_LEDGER_DOTENV_MARKER: markerPath
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(markerPath, "utf8"), "dotenv-test-token");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

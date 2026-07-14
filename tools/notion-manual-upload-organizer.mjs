@@ -10,10 +10,14 @@ function parseArgs() {
     pageIds: [],
     query: "",
     recent: 12,
+    all: false,
+    rootOnly: false,
     reportPath: ".local-data/notion-manual-upload-organizer-report.json",
+    statePath: ".local-data/notion-manual-upload-organizer-state.json",
     specTitle: "",
     apply: false,
-    resolveIp: ""
+    resolveIp: "",
+    delayMs: 0
   };
 
   const args = process.argv.slice(2);
@@ -24,9 +28,13 @@ function parseArgs() {
     if (name === "--page-id") options.pageIds.push(value());
     else if (name === "--query") options.query = value();
     else if (name === "--recent") options.recent = Number(value());
+    else if (arg === "--all") options.all = true;
+    else if (arg === "--root-only") options.rootOnly = true;
     else if (name === "--report") options.reportPath = value();
+    else if (name === "--state") options.statePath = value();
     else if (name === "--spec-title") options.specTitle = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--delay-ms") options.delayMs = Number(value());
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -39,6 +47,9 @@ function parseArgs() {
   if (!Number.isFinite(options.recent) || options.recent < 1) {
     throw new Error("--recent must be a positive number.");
   }
+  if (!Number.isFinite(options.delayMs) || options.delayMs < 0) {
+    throw new Error("--delay-ms must be zero or positive.");
+  }
   if (options.specTitle && options.pageIds.length !== 1) {
     throw new Error("--spec-title requires exactly one --page-id.");
   }
@@ -48,6 +59,9 @@ function parseArgs() {
 function printHelp() {
   console.log(`Usage:
   node tools/notion-manual-upload-organizer.mjs --recent 12
+  node tools/notion-manual-upload-organizer.mjs --all
+  node tools/notion-manual-upload-organizer.mjs --all --root-only
+  node tools/notion-manual-upload-organizer.mjs --all --state .local-data/notion-upload-state.json
   node tools/notion-manual-upload-organizer.mjs --query "罪人"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --apply
@@ -323,6 +337,28 @@ async function queryPages(notion, dataSource, query, limit) {
   return response.results;
 }
 
+async function allPages(notion, dataSource, query = "") {
+  const pages = [];
+  let startCursor;
+  do {
+    const request = {
+      data_source_id: dataSource.id,
+      page_size: 100,
+      ...(startCursor ? { start_cursor: startCursor } : {}),
+      ...(query ? {
+        filter: {
+          property: titlePropertyName(dataSource),
+          title: { contains: query }
+        }
+      } : {})
+    };
+    const response = await notion.dataSources.query(request);
+    pages.push(...response.results);
+    startCursor = response.has_more ? response.next_cursor : undefined;
+  } while (startCursor);
+  return pages;
+}
+
 async function recentPages(notion, dataSource, limit) {
   const response = await notion.dataSources.query({
     data_source_id: dataSource.id,
@@ -337,6 +373,8 @@ function summarizeMedia(block, path, structuralStatus, workTitle = "") {
   const summary = {
     blockId: block.id,
     blockType: block.type,
+    blockCreatedTime: block.created_time ?? null,
+    blockLastEditedTime: block.last_edited_time ?? null,
     name: info.name,
     notionFileType: info.notionFileType,
     expiryTime: info.expiryTime,
@@ -353,18 +391,30 @@ function summarizeMedia(block, path, structuralStatus, workTitle = "") {
   return summary;
 }
 
+export function summarizeEpisodeMedia(episodePage, children, parentPath) {
+  const path = [...parentPath, `child_page:${blockTitle(episodePage)}`];
+  return children
+    .filter(isMediaBlock)
+    .map((child) => summarizeMedia(child, [...path, child.type], "valid_episode_media"));
+}
+
 async function scanSpecLikeChild(notion, block, parentPath) {
   const title = blockTitle(block);
   const path = [...parentPath, `child_page:${title}`];
   const children = await listChildren(notion, block.id).catch(() => []);
-  const episodePages = children
-    .filter((child) => child.type === "child_page")
-    .map((child) => ({
+  const episodePages = [];
+  const episodeMedia = [];
+  for (const child of children.filter((item) => item.type === "child_page")) {
+    const episodeNumber = episodeNumberFromName(blockTitle(child));
+    if (episodeNumber === undefined) continue;
+    episodePages.push({
       pageId: child.id,
       title: blockTitle(child),
-      episodeNumber: episodeNumberFromName(blockTitle(child))
-    }))
-    .filter((child) => child.episodeNumber !== undefined);
+      episodeNumber
+    });
+    const episodeChildren = await listChildren(notion, child.id).catch(() => []);
+    episodeMedia.push(...summarizeEpisodeMedia(child, episodeChildren, path));
+  }
   const media = children
     .filter(isMediaBlock)
     .map((child) => summarizeMedia(child, [...path, child.type], "valid_spec_media"));
@@ -373,7 +423,8 @@ async function scanSpecLikeChild(notion, block, parentPath) {
     title,
     path,
     episodePages,
-    media
+    media,
+    episodeMedia
   };
 }
 
@@ -406,7 +457,7 @@ async function scanWorkPage(notion, page) {
 
   const allSpecPages = [...specPages, ...nestedSpecPages];
   const rootLandingMediaWithTargets = assignSuggestedTargets(rootLandingMedia, allSpecPages);
-  const specMedia = allSpecPages.flatMap((item) => item.media);
+  const specMedia = allSpecPages.flatMap((item) => [...item.media, ...item.episodeMedia]);
   return {
     pageId: page.id,
     title,
@@ -417,7 +468,8 @@ async function scanWorkPage(notion, page) {
       title: item.title,
       path: item.path,
       episodePages: item.episodePages,
-      mediaCount: item.media.length
+      mediaCount: item.media.length + item.episodeMedia.length,
+      episodeMediaCount: item.episodeMedia.length
     })),
     specMedia,
     status: rootLandingMedia.some((item) => item.playable)
@@ -425,6 +477,25 @@ async function scanWorkPage(notion, page) {
       : specMedia.some((item) => item.playable)
         ? "has_structured_playable_media"
         : "no_playable_media_seen"
+  };
+}
+
+async function scanWorkPageRootOnly(notion, page) {
+  const title = pageTitle(page);
+  const children = await listChildren(notion, page.id);
+  const rootLandingMedia = children
+    .filter(isMediaBlock)
+    .map((block) => summarizeMedia(block, [title, block.type], "structure_incomplete_root_landing", title));
+  return {
+    pageId: page.id,
+    title,
+    lastEditedTime: page.last_edited_time,
+    rootLandingMedia,
+    specPages: [],
+    specMedia: [],
+    status: rootLandingMedia.some((item) => item.playable)
+      ? "needs_manual_upload_organization"
+      : "no_playable_media_seen"
   };
 }
 
@@ -453,6 +524,82 @@ function writeReport(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function readJson(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function mediaItemsFromScans(scans) {
+  return scans.flatMap((scan) => [
+    ...(scan.rootLandingMedia ?? []).map((media) => ({ ...media, sourcePageId: scan.pageId, workTitle: scan.title })),
+    ...(scan.specMedia ?? []).map((media) => ({ ...media, sourcePageId: scan.pageId, workTitle: scan.title }))
+  ]);
+}
+
+function mediaVersion(media) {
+  return media.blockLastEditedTime || media.blockCreatedTime || "";
+}
+
+export function markNewMedia(scans, previousState = {}) {
+  const previousBlocks = previousState.blocks ?? {};
+  const items = mediaItemsFromScans(scans);
+  // Keep the global index when a targeted scan only contains one work page.
+  // Otherwise a manual one-page check would erase the watcher baseline.
+  const nextBlocks = { ...previousBlocks };
+  const newBlockIds = [];
+
+  for (const media of items) {
+    const previous = previousBlocks[media.blockId];
+    const currentVersion = mediaVersion(media);
+    const isNew = !previous || currentVersion > (previous.version || "");
+    if (isNew) newBlockIds.push(media.blockId);
+    nextBlocks[media.blockId] = {
+      version: currentVersion,
+      blockCreatedTime: media.blockCreatedTime ?? null,
+      blockLastEditedTime: media.blockLastEditedTime ?? null,
+      name: media.name,
+      sourcePageId: media.sourcePageId,
+      workTitle: media.workTitle,
+      path: media.path
+    };
+  }
+
+  const annotatedScans = scans.map((scan) => ({
+    ...scan,
+    rootLandingMedia: (scan.rootLandingMedia ?? []).map((media) => ({
+      ...media,
+      isNewSinceLastScan: newBlockIds.includes(media.blockId)
+    })),
+    specMedia: (scan.specMedia ?? []).map((media) => ({
+      ...media,
+      isNewSinceLastScan: newBlockIds.includes(media.blockId)
+    }))
+  }));
+
+  return {
+    scans: annotatedScans,
+    state: { version: 1, savedAt: new Date().toISOString(), blocks: nextBlocks },
+    newBlockIds
+  };
+}
+
+export function scanConcurrency(rootOnly) {
+  // Notion's rate limit is shared across the workspace. A single in-flight
+  // page-tree read keeps the long-running watcher reliable on large libraries.
+  return 1;
+}
+
+export function effectiveScanDelayMs(rootOnly, delayMs) {
+  return rootOnly ? delayMs : 0;
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function main() {
   const options = parseArgs();
   installNotionDnsOverride(options.resolveIp);
@@ -465,6 +612,8 @@ async function main() {
   let pages;
   if (options.pageIds.length > 0) {
     pages = await Promise.all(options.pageIds.map((pageId) => notion.pages.retrieve({ page_id: pageId })));
+  } else if (options.all) {
+    pages = await allPages(notion, dataSource, options.query);
   } else if (options.query) {
     pages = await queryPages(notion, dataSource, options.query, options.recent);
   } else {
@@ -472,7 +621,22 @@ async function main() {
   }
 
   const scans = [];
-  for (const page of pages) scans.push(await scanWorkPage(notion, page));
+  if (options.rootOnly) {
+    // Notion rate-limits page-tree reads; keep the bounded scan gentle enough for repeated use.
+    const concurrency = scanConcurrency(true);
+    const delayMs = effectiveScanDelayMs(true, options.delayMs);
+    for (let index = 0; index < pages.length; index += concurrency) {
+      if (index > 0 && delayMs > 0) await sleep(delayMs);
+      const batch = pages.slice(index, index + concurrency);
+      scans.push(...await Promise.all(batch.map((page) => scanWorkPageRootOnly(notion, page))));
+    }
+  } else {
+    const concurrency = scanConcurrency(false);
+    for (let index = 0; index < pages.length; index += concurrency) {
+      const batch = pages.slice(index, index + concurrency);
+      scans.push(...await Promise.all(batch.map((page) => scanWorkPage(notion, page))));
+    }
+  }
 
   let preparedTarget = null;
   if (options.specTitle) {
@@ -481,18 +645,23 @@ async function main() {
     scans.splice(0, scans.length, await scanWorkPage(notion, refreshed));
   }
 
+  const previousState = readJson(options.statePath, { version: 1, blocks: {} });
+  const marked = markNewMedia(scans, previousState);
+  const finalScans = marked.scans;
   const summary = {
-    pagesScanned: scans.length,
-    pagesNeedingOrganization: scans.filter((item) => item.status === "needs_manual_upload_organization").length,
-    rootPlayableBlocks: scans.flatMap((item) => item.rootLandingMedia).filter((item) => item.playable).length,
-    structuredPlayableBlocks: scans.flatMap((item) => item.specMedia).filter((item) => item.playable).length
+    pagesScanned: finalScans.length,
+    pagesNeedingOrganization: finalScans.filter((item) => item.status === "needs_manual_upload_organization").length,
+    rootPlayableBlocks: finalScans.flatMap((item) => item.rootLandingMedia).filter((item) => item.playable).length,
+    structuredPlayableBlocks: finalScans.flatMap((item) => item.specMedia).filter((item) => item.playable).length,
+    newMediaBlocksSinceLastScan: marked.newBlockIds.length
   };
+  writeReport(options.statePath, marked.state);
   const payload = {
     scannedAt: new Date().toISOString(),
     mode: options.apply ? "apply" : "dry-run",
     preparedTarget,
     summary,
-    pages: scans
+    pages: finalScans
   };
   writeReport(options.reportPath, payload);
 
@@ -501,7 +670,7 @@ async function main() {
     mode: payload.mode,
     preparedTarget,
     summary,
-    pages: scans.map((item) => ({
+      pages: finalScans.map((item) => ({
       title: item.title,
       pageId: item.pageId,
       lastEditedTime: item.lastEditedTime,

@@ -318,6 +318,18 @@ function titlePropertyName(dataSource) {
   return Object.entries(dataSource.properties ?? {}).find(([, property]) => property.type === "title")?.[0] ?? "Title";
 }
 
+function isSeriesTitle(title) {
+  return /(?:第\s*[一二三四五六七八九十百千万0-9]+\s*季|\bS\d{1,2}\b|\bSeason\s*\d+\b|电视剧|剧集)/iu.test(title);
+}
+
+function hasPerEpisodeSizeMarker(title) {
+  return /(?:\/\s*集|每\s*集|per\s*episode)/iu.test(title);
+}
+
+function hasGbSize(title) {
+  return /\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?\s*GB\b/i.test(title);
+}
+
 async function queryPages(notion, dataSource, query, limit) {
   const response = await notion.dataSources.query({
     data_source_id: dataSource.id,
@@ -341,6 +353,15 @@ async function auditPage(notion, page, maxSpecsPerPage) {
     if (specCount >= maxSpecsPerPage) return;
     specCount += 1;
     const specTitle = blockTitle(specPage);
+    if (isSeriesTitle(title) && hasGbSize(specTitle) && !hasPerEpisodeSizeMarker(specTitle)) {
+      issues.push({
+        kind: "series_spec_size_not_per_episode",
+        pageId: specPage.id,
+        label: specTitle,
+        titleConfidence: "untrusted_title_only",
+        recommendedAction: "Measure the episode files, rename the spec with a per-episode decimal-GB value or range such as 0.32-0.36GB/集, and never use the season aggregate in the spec title."
+      });
+    }
     const specChildren = await listChildren(notion, specPage.id).catch(() => []);
     const media = specChildren.filter(isPlayableMedia);
     if (media.length === 0) {

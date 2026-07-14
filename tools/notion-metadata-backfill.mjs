@@ -342,6 +342,51 @@ function cleanTitle(title) {
     .trim();
 }
 
+function canonicalTitleFromStructuredIdentity(properties, metadata = {}) {
+  const hasIdentityEvidence = Boolean(
+    metadata.subjectId ||
+    metadata.imdbId ||
+    propText(properties["Douban Subject ID"]) ||
+    propText(properties["IMDb ID"]) ||
+    propText(properties.imdb) ||
+    propText(properties["TMDB ID"])
+  );
+  if (!hasIdentityEvidence) return undefined;
+
+  // A verified Douban display title is authoritative. Structured title fields
+  // may contain a subtitle or AKA copied from the source page and must not be
+  // concatenated into the library's primary title.
+  const doubanDisplayTitle = cleanTitle(metadata.doubanDisplayTitle ?? "");
+  const year = propText(properties["Release Year"]) || `${metadata.releaseYear ?? ""}`;
+  if (metadata.subjectId && doubanDisplayTitle && /^\d{4}$/.test(year)) {
+    return `${titleWithoutYear(doubanDisplayTitle)} (${year})`;
+  }
+
+  const chineseTitle = cleanTitle(
+    propText(properties["Simplified Chinese Title"]) || propText(properties["Chinese Title"])
+  );
+  const foreignTitle = cleanTitle(
+    propText(properties["English Title"]) || propText(properties["Original Title"])
+  );
+  if (!chineseTitle || !foreignTitle || !/^\d{4}$/.test(year)) return undefined;
+
+  const parts = [chineseTitle];
+  if (titleKey(chineseTitle) !== titleKey(foreignTitle)) parts.push(foreignTitle);
+  return `${parts.join(" ")} (${year})`;
+}
+
+function canSafelyCompleteStructuredTitle(currentTitle, properties, metadata = {}) {
+  const currentKey = titleKey(currentTitle);
+  const chineseTitle = propText(properties["Simplified Chinese Title"]) || propText(properties["Chinese Title"]);
+  const foreignTitle = propText(properties["English Title"]) || propText(properties["Original Title"]);
+  const year = propText(properties["Release Year"]) || `${metadata.releaseYear ?? ""}`;
+  if (!chineseTitle || !foreignTitle || !/^\d{4}$/.test(year)) return false;
+  const containsChinese = currentKey.includes(titleKey(chineseTitle));
+  const containsForeign = currentKey.includes(titleKey(foreignTitle));
+  const currentYear = titleYear(currentTitle);
+  return (containsChinese || containsForeign) && (!currentYear || currentYear === year);
+}
+
 function titleWithoutYear(title) {
   return cleanTitle(title)
     .replace(/\s*[\(（]\d{4}[\)）]\s*$/, "")
@@ -704,7 +749,7 @@ function isoDurationToMinutes(value) {
   return Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
 }
 
-async function fetchDoubanMetadata(subjectId, cookie) {
+async function fetchDoubanMetadata(subjectId, cookie, posterQuery = "") {
   const url = `https://movie.douban.com/subject/${subjectId}/`;
   const html = await fetchDoubanSubjectHtml(url, {
     Cookie: cookie,
@@ -715,6 +760,26 @@ async function fetchDoubanMetadata(subjectId, cookie) {
   }
 
   const ld = parseJsonLd(html);
+  const doubanDisplayTitle = cleanTitle(
+    stripHtml(html.match(/<span[^>]*property=["']v:itemreviewed["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "") ||
+      `${ld.name ?? ""}`
+  );
+  // Douban may return its browser security challenge instead of the subject
+  // HTML. The suggest endpoint still exposes a poster for an exact subject ID.
+  let suggestedPoster;
+  if (!ld.image) {
+    const posterQueries = [...new Set([
+      posterQuery,
+      titleWithoutYear(posterQuery),
+      doubanDisplayTitle,
+      subjectId
+    ].filter(Boolean))];
+    for (const query of posterQueries) {
+      const suggestions = await fetchDoubanSuggestions(query, cookie).catch(() => []);
+      suggestedPoster = suggestions.find((item) => `${item.id ?? ""}` === `${subjectId}`)?.img;
+      if (suggestedPoster) break;
+    }
+  }
   const infoText = stripHtml(html.match(/<div id="info">([\s\S]*?)<\/div>/)?.[1] ?? "");
   const infoPairs = parseInfoPairs(infoText);
   const summary = stripHtml(html.match(/<span property="v:summary"[^>]*>([\s\S]*?)<\/span>/)?.[1] ?? "");
@@ -752,7 +817,8 @@ async function fetchDoubanMetadata(subjectId, cookie) {
   return {
     subjectId,
     subjectUrl: url,
-    posterUrl: ld.image,
+    doubanDisplayTitle: doubanDisplayTitle || undefined,
+    posterUrl: ld.image || suggestedPoster,
     doubanRating: Number.isFinite(rating) ? rating : undefined,
     releaseDate,
     releaseYear,
@@ -772,20 +838,21 @@ async function fetchDoubanMetadata(subjectId, cookie) {
   };
 }
 
-async function fetchImdbRating(imdbId, timeoutMs) {
+async function fetchImdbRating(imdbId, timeoutMs, { omdbApiKey = dotenv("OMDB_API_KEY") } = {}) {
   if (!imdbId) {
     return undefined;
   }
-  const omdbApiKey = dotenv("OMDB_API_KEY");
   if (omdbApiKey) {
     const url = new URL("https://www.omdbapi.com/");
     url.searchParams.set("apikey", omdbApiKey);
     url.searchParams.set("i", imdbId);
     const payload = await fetchJson(url.toString());
     const rating = Number(payload.imdbRating);
-    return Number.isFinite(rating) ? rating : undefined;
+    if (Number.isFinite(rating)) return rating;
+    // OMDb can lag behind newly released series; continue to the IMDb page fallback.
   }
-  const markdown = await fetchText(`https://r.jina.ai/http://r.jina.ai/http://https://www.imdb.com/title/${imdbId}/ratings/`, {
+  // IMDb blocks direct automation; use one Jina reader hop as the HTML fallback.
+  const markdown = await fetchText(`https://r.jina.ai/http://www.imdb.com/title/${imdbId}/ratings/`, {
     "Accept-Language": "en-US,en;q=0.9"
   }, timeoutMs);
   const rating = markdown.match(/IMDb RATING\s+([0-9.]+)\/10/i)?.[1] ?? markdown.match(/⭐\s*([0-9.]+)/)?.[1];
@@ -814,7 +881,7 @@ async function uploadPoster(notion, metadata, title) {
     return undefined;
   }
   const { bytes, contentType } = await fetchImage(metadata.posterUrl);
-  const filename = `${cleanTitle(title)} poster - Douban.jpg`.replace(/[\\/:*?"<>|]/g, "_");
+  const filename = notionFileName(`${cleanTitle(title)} poster - Douban.jpg`);
   const upload = await notion.fileUploads.create({
     mode: "single_part",
     filename,
@@ -834,6 +901,14 @@ async function uploadPoster(notion, metadata, title) {
       id: sent.id
     }
   };
+}
+
+function notionFileName(name) {
+  const safe = name.replace(/[\\/:*?"<>|]/g, "_");
+  if (safe.length <= 100) return safe;
+  const extension = path.extname(safe);
+  const stem = safe.slice(0, safe.length - extension.length);
+  return `${stem.slice(0, Math.max(1, 100 - extension.length))}${extension}`;
 }
 
 function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
@@ -958,7 +1033,14 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
 
   const currentTitle = propText(properties.Title);
   const cleanedTitle = cleanTitle(currentTitle);
-  if (currentTitle !== cleanedTitle && Object.keys(patch).length > 0) {
+  const canonicalTitle = canonicalTitleFromStructuredIdentity(properties, metadata);
+  if (canonicalTitle && titleKey(cleanedTitle) !== titleKey(canonicalTitle)) {
+    if (canSafelyCompleteStructuredTitle(cleanedTitle, properties, metadata)) {
+      patch.Title = { title: richText(canonicalTitle) };
+    } else if (propertyExists(properties, "Needs Review")) {
+      patch["Needs Review"] = { checkbox: true };
+    }
+  } else if (currentTitle !== cleanedTitle && Object.keys(patch).length > 0) {
     patch.Title = { title: richText(cleanedTitle) };
   }
   if (propertyExists(properties, "Metadata Updated At") && Object.keys(patch).length > 0) {
@@ -1028,7 +1110,7 @@ async function processPage(notion, pageRef, options, cookie) {
   }
 
   await sleep(options.delayMs);
-  const metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie);
+  const metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie, searchTitle);
   await sleep(options.delayMs);
   const imdbRating = options.noExternal
     ? undefined
@@ -1038,7 +1120,7 @@ async function processPage(notion, pageRef, options, cookie) {
   const posterFile =
     needsPosterUpload && options.dryRun
       ? {
-          name: `${cleanTitle(title)} poster - Douban.jpg`,
+          name: notionFileName(`${cleanTitle(title)} poster - Douban.jpg`),
           type: "file_upload",
           file_upload: {
             id: "dry-run"
@@ -1146,5 +1228,6 @@ export {
   parseInfoPairs,
   parseRuntimeMinutes,
   preferredDoubanSubjectId,
+  fetchImdbRating,
   splitListValue
 };

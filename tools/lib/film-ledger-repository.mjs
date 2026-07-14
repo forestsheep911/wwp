@@ -58,6 +58,15 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM works WHERE canonical_title = ? AND year IS ? AND work_type = ?").get(...key);
   }
 
+  function fillMissingWorkYear(workId, year) {
+    if (!Number.isInteger(year) || year < 1800 || year > 3000) throw new Error("work year must be an integer from 1800 through 3000");
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+    if (!work) throw new Error(`work not found: ${workId}`);
+    if (work.year != null && work.year !== year) throw new Error(`work year conflict: existing ${work.year}, requested ${year}`);
+    if (work.year == null) db.prepare("UPDATE works SET year=?, updated_at=? WHERE id=?").run(year, timestamp(), workId);
+    return db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+  }
+
   function upsertDiscoveredSource(input) {
     const at = timestamp();
     const fingerprintMatch = db.prepare("SELECT id FROM sources WHERE input_root_id = ? AND fingerprint = ?")
@@ -126,6 +135,22 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
+  function refreshProductionEvidence(variantId, details = {}) {
+    return withTransaction(db, () => {
+      const current = getVariant.get(variantId);
+      if (!current) throw new Error(`variant not found: ${variantId}`);
+      const at = timestamp();
+      db.prepare(`UPDATE variants SET output_path=COALESCE(?, output_path),
+        output_size_bytes=COALESCE(?, output_size_bytes), probe_path=COALESCE(?, probe_path),
+        qc_artifact_path=COALESCE(?, qc_artifact_path), updated_at=? WHERE id=?`)
+        .run(details.outputPath == null ? null : normalizeLedgerPath(details.outputPath),
+          details.outputSizeBytes ?? null, details.probePath ?? null,
+          details.qcArtifactPath ?? null, at, variantId);
+      insertEvent.run("variant", variantId, "production_evidence_refreshed", stableJson(details), at);
+      return getVariant.get(variantId);
+    });
+  }
+
   function transitionPublication(variantId, to, details = {}) {
     return withTransaction(db, () => {
       const current = getVariant.get(variantId);
@@ -150,7 +175,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         ON CONFLICT(variant_id) DO UPDATE SET work_page_id=excluded.work_page_id, spec_page_id=excluded.spec_page_id,
           episode_page_id=COALESCE(excluded.episode_page_id, notion_targets.episode_page_id),
           expected_filename=COALESCE(excluded.expected_filename, notion_targets.expected_filename),
-          media_block_id=COALESCE(excluded.media_block_id, notion_targets.media_block_id),
+          media_block_id=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.media_block_id, notion_targets.media_block_id) END,
           media_asset_page_id=COALESCE(excluded.media_asset_page_id, notion_targets.media_asset_page_id),
           structure_verified_at=COALESCE(excluded.structure_verified_at, notion_targets.structure_verified_at),
           media_verified_at=COALESCE(excluded.media_verified_at, notion_targets.media_verified_at),
@@ -161,7 +186,8 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         .run(variantId, input.workPageId, input.specPageId, input.episodePageId ?? null, input.expectedFilename ?? null,
           input.mediaBlockId ?? null, input.mediaAssetPageId ?? null, input.structureVerifiedAt ?? null,
           input.mediaVerifiedAt ?? null, input.assetsVerifiedAt ?? null, input.nextCheckAt ?? null,
-          input.attemptCount ?? 0, input.lastErrorCode ?? null, input.lastErrorDetail ?? null, at);
+          input.attemptCount ?? 0, input.lastErrorCode ?? null, input.lastErrorDetail ?? null, at,
+        input.clearMediaBlock === true ? 1 : 0);
       insertEvent.run("variant", variantId, "notion_target_registered", stableJson(input), at);
       return db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variantId);
     });
@@ -187,6 +213,22 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .all(timestamp(), normalizeLimit(limit, 3, 20));
   }
 
+  function listManualUploadHandoffs({ limit } = {}) {
+    return db.prepare(`SELECT variants.id AS variant_id, works.canonical_title AS work_title, works.year,
+        variants.display_title AS spec_title, variants.output_path, variants.output_size_bytes,
+        variants.publication_state, notion_targets.work_page_id, notion_targets.spec_page_id,
+        notion_targets.episode_page_id, notion_targets.expected_filename
+      FROM variants
+      JOIN works ON works.id=variants.work_id
+      JOIN notion_targets ON notion_targets.variant_id=variants.id
+      WHERE variants.production_state='qc_passed'
+        AND variants.publication_state<>'sync_ready'
+        AND variants.output_path IS NOT NULL
+        AND notion_targets.media_verified_at IS NULL
+      ORDER BY works.priority_score DESC, variants.created_at ASC LIMIT ?`)
+      .all(normalizeLimit(limit, 20, 50));
+  }
+
   function getEvents({ entityType, entityId }) {
     return db.prepare("SELECT * FROM events WHERE entity_type=? AND entity_id=? ORDER BY id ASC").all(entityType, entityId);
   }
@@ -208,13 +250,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
   }
 
-  function listDueNotionTargets({ limit = 3, now: dueAt = timestamp() } = {}) {
+  function listDueNotionTargets({ limit = 3, now: dueAt = timestamp(), variantIds = [] } = {}) {
+    const ids = (variantIds ?? []).map(Number).filter(Number.isInteger);
+    const variantClause = ids.length > 0 ? ` AND variants.id IN (${ids.map(() => "?").join(",")})` : "";
+    const dueClause = ids.length > 0 ? "" : " AND (notion_targets.next_check_at IS NULL OR notion_targets.next_check_at <= ?)";
     return db.prepare(`SELECT notion_targets.*, variants.publication_state, variants.production_state
       FROM notion_targets JOIN variants ON variants.id=notion_targets.variant_id
       WHERE variants.production_state='qc_passed' AND variants.publication_state<>'sync_ready'
-        AND (notion_targets.next_check_at IS NULL OR notion_targets.next_check_at <= ?)
+        ` + dueClause + variantClause + `
       ORDER BY notion_targets.updated_at ASC, notion_targets.variant_id ASC LIMIT ?`)
-      .all(dueAt, normalizeLimit(limit, 3, 3));
+      .all(...(ids.length > 0 ? [] : [dueAt]), ...ids, normalizeLimit(limit, 3, 3));
   }
 
   function getSchedulerState(key) {
@@ -283,8 +328,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, upsertDiscoveredSource, ensureWork, ensureVariant, transitionProduction,
-    transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates,
+  return { upsertInputRoot, upsertDiscoveredSource, ensureWork, fillMissingWorkYear, ensureVariant, transitionProduction,
+    refreshProductionEvidence,
+    transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
     findVariantByOutputPath, applyMigrationCorrection };
