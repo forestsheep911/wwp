@@ -50,10 +50,11 @@ import type {
   UpdateMovieRequestStatusRequest,
   UpdateMovieRequestStatusResponse
 } from "@wwpdw/shared";
+import { apiRequestUrl, healthRequestUrl, normalizeApiBaseUrl } from "./api-routing";
 import type { BrowseChannel } from "./cinema/types";
 import type { BrowseViewId } from "./cinema/types";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const backendWakeTimeoutMs = 90_000;
 
 export class ApiError extends Error {
@@ -85,11 +86,11 @@ export function errorMessage(error: unknown, fallback: string) {
 }
 
 function apiUrl(path: string) {
-  return `${apiBaseUrl}${path}`;
+  return apiRequestUrl(apiBaseUrl, path);
 }
 
 export async function wakeBackend() {
-  const response = await fetch(apiUrl("/health"), {
+  const response = await fetch(healthRequestUrl(apiBaseUrl), {
     cache: "no-store",
     signal: AbortSignal.timeout(backendWakeTimeoutMs)
   });
