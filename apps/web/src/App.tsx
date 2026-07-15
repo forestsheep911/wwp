@@ -118,6 +118,10 @@ import {
 } from "./cinema/storage";
 import { browseCacheKey, readBrowseCache, writeBrowseCache } from "./cinema/browse-cache";
 import {
+  browseRequestDefaults,
+  type BrowseLoadMode
+} from "./cinema/browse-load-policy";
+import {
   browseResponseIsCurrent,
   shouldLoadBrowseRoute,
   type BrowseRequest
@@ -154,12 +158,7 @@ type PendingCreditAction =
     options?: { syncHistory?: boolean };
   };
 
-const browsePageLimit = 48;
-const browseCatalogPageLimit = 100;
-const browseFullViewLimit = 300;
-const tspdtBrowseCatalogLimit = 2000;
 const defaultMemberCredits = 200;
-type BrowseLoadMode = "paged" | "random";
 
 function canPreviewServiceWakeDialog() {
   if (!import.meta.env.DEV) {
@@ -445,20 +444,6 @@ function CinemaApp() {
     void refreshBrowseAssets({ channel: nextChannel, view: nextBrowseView });
   }
 
-  function browseLoadModeForView(view: BrowseViewId): BrowseLoadMode {
-    return view === "lucky" ? "random" : "paged";
-  }
-
-  function browseLimitForView(view: BrowseViewId) {
-    return view === "lucky"
-      ? browsePageLimit
-      : view === "tspdtRank"
-        ? tspdtBrowseCatalogLimit
-        : view === "popular" || view === "mostWatched"
-          ? browseFullViewLimit
-          : browseCatalogPageLimit;
-  }
-
   function browseRouteLoadKey(channel: BrowseChannel, view: BrowseViewId) {
     return `${channel}:${view}`;
   }
@@ -478,8 +463,6 @@ function CinemaApp() {
       playerAssetKey: undefined
     }, routeMode);
     void refreshBrowseAssets({
-      mode: browseLoadModeForView(nextView),
-      limit: browseLimitForView(nextView),
       view: nextView,
       force: options.refresh === true
     });
@@ -1084,8 +1067,9 @@ function CinemaApp() {
   ) {
     const append = options.append === true;
     const requestView = options.view ?? browseView;
-    const mode = options.mode ?? (append || requestView !== "lucky" ? "paged" : "random");
-    const limit = options.limit ?? (mode === "paged" ? browseCatalogPageLimit : browsePageLimit);
+    const defaults = browseRequestDefaults(requestView, append);
+    const mode = options.mode ?? defaults.mode;
+    const limit = options.limit ?? defaults.limit;
     const requestChannel = options.channel ?? browseChannel;
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
     const persistentCacheKey = browseCacheKey(
@@ -2316,11 +2300,7 @@ function CinemaApp() {
       const loadKey = browseRouteLoadKey(browseChannel, browseView);
       if (shouldLoadBrowseRoute(browseRouteLoadRef.current, loadKey)) {
         browseRouteLoadRef.current = loadKey;
-        void refreshBrowseAssets({
-          mode: browseLoadModeForView(browseView),
-          limit: browseLimitForView(browseView),
-          view: browseView
-        });
+        void refreshBrowseAssets({ view: browseView });
       }
     }
   }, [activeTab, browseChannel, browseResults.length, browseView, query, role, unlocked]);

@@ -19,6 +19,11 @@ import {
 } from "lucide-react";
 import type { CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
 import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
+import {
+  browseAppendPageLimit,
+  browseInitialVisibleCount,
+  browseTspdtCatalogLimit
+} from "../browse-load-policy";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -355,10 +360,8 @@ export function LibraryTab({
   );
 }
 
-const browseInitialCount = 12;
 const browseLoadStep = 12;
 const browseViewItemLimit = 300;
-const tspdtBrowseCatalogLimit = 2000;
 const browseRandomLimit = 48;
 
 function randomBrowseSeed() {
@@ -442,7 +445,7 @@ function LibraryHome({
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
-  const [visibleItemCount, setVisibleItemCount] = useState(browseInitialCount);
+  const [visibleItemCount, setVisibleItemCount] = useState(browseInitialVisibleCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const autoLoadRequestRef = useRef("");
   const onRefreshBrowseRef = useRef(onRefreshBrowse);
@@ -472,8 +475,8 @@ function LibraryHome({
   const showingTspdtRank = activeSortView === "tspdtRank";
   const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
-  const browseServerItemLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : browseViewItemLimit;
-  const browseRequestLimit = showingTspdtRank ? tspdtBrowseCatalogLimit : 100;
+  const browseServerItemLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseViewItemLimit;
+  const browseRequestLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseAppendPageLimit;
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
@@ -522,7 +525,7 @@ function LibraryHome({
   }, [onRefreshBrowse]);
 
   useEffect(() => {
-    setVisibleItemCount(browseInitialCount);
+    setVisibleItemCount(browseInitialVisibleCount);
     autoLoadRequestRef.current = "";
   }, [activeSortView, browseChannel]);
 
@@ -733,7 +736,7 @@ function LazyLoadFooter({
   shownCount: number;
   totalCount: number;
 }) {
-  if (!hasMore && totalCount <= browseInitialCount) {
+  if (!hasMore && totalCount <= browseInitialVisibleCount) {
     return null;
   }
 
