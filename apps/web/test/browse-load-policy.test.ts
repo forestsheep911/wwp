@@ -68,8 +68,11 @@ test("CinemaApp and LibraryTab consume the shared request policies", () => {
   const librarySource = readFileSync(new URL("../src/cinema/components/LibraryTab.tsx", import.meta.url), "utf8");
 
   assert.match(appSource, /const resolvedRequest = resolveBrowseRequest\(browseView, options\);/);
-  assert.match(appSource, /refreshBrowseAssets\(\{ channel: nextChannel, view: nextBrowseView \}\)/);
-  assert.match(appSource, /refreshBrowseAssets\(\{ view: browseView \}\)/);
+  assert.match(
+    appSource,
+    /scheduleCurrentBrowseRoute\(\{\s*tab: "library",\s*browseChannel: nextChannel,\s*browseView: nextBrowseView,/,
+  );
+  assert.match(appSource, /scheduleCurrentBrowseRoute\(routeForCurrentView\(\)\)/);
   assert.match(librarySource, /const fullCatalogRequest = browseFullCatalogRequest\(activeSortView\);/);
   assert.match(librarySource, /append: true, mode: fullCatalogRequest\.mode, limit: browseRequestLimit/);
 });

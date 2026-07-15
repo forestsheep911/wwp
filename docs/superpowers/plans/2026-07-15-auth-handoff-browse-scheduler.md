@@ -26,7 +26,7 @@
 **Interfaces:**
 - Produces: `scheduleBrowseRoute(lastKey, route, start): { scheduled: boolean; routeKey: string }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test("admission marks a blank library route only after its start callback accepts", () => {
@@ -36,13 +36,13 @@ test("admission marks a blank library route only after its start callback accept
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npx tsx --test apps/web/test/browse-route-scheduler.test.ts`
 
 Expected: fail because the scheduler module is absent.
 
-- [ ] **Step 3: Implement the pure scheduler**
+- [x] **Step 3: Implement the pure scheduler**
 
 ```ts
 import type { AppTab, BrowseChannel, BrowseViewId } from "./types";
@@ -61,7 +61,7 @@ export function scheduleBrowseRoute(lastKey: string, route: BrowseRoute, start: 
 }
 ```
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `npx tsx --test apps/web/test/browse-route-scheduler.test.ts`
 
@@ -79,7 +79,7 @@ Commit message: `feat: schedule admitted browse routes`
 - Consumes: `scheduleBrowseRoute` and current `startBrowseRequest` / `finishBrowseRequest` helpers.
 - Produces: `refreshBrowseAssets(options): boolean`; `true` means an internal async runner owns the admitted cache/network request.
 
-- [ ] **Step 1: Write the failing App wiring regression**
+- [x] **Step 1: Write the failing App wiring regression**
 
 ```ts
 test("CinemaApp schedules browse loading from manual login and restored auth", () => {
@@ -92,13 +92,13 @@ test("CinemaApp schedules browse loading from manual login and restored auth", (
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npx tsx --test apps/web/test/browse-state.test.ts apps/web/test/browse-route-scheduler.test.ts`
 
 Expected: fail because `CinemaApp` has no shared scheduler/admission handoff.
 
-- [ ] **Step 3: Implement the minimal refactor**
+- [x] **Step 3: Implement the minimal refactor**
 
 1. Keep option resolution and `startBrowseRequest` in `refreshBrowseAssets`; return `false` when admission fails.
 2. Invoke a private `async runBrowseRequest(...)` with `void` after admission and return `true` immediately.
@@ -106,7 +106,7 @@ Expected: fail because `CinemaApp` has no shared scheduler/admission handoff.
 4. Add `scheduleCurrentBrowseRoute(route)` that passes `() => refreshBrowseAssets({ channel: route.browseChannel, view: route.browseView })` to `scheduleBrowseRoute` and writes `browseRouteLoadRef` only when scheduled.
 5. Replace initial direct browse calls in manual `onUnlock`, restored `checkAccess`, route initialization, `openBrowseChannel`, and `openBrowseView` with this scheduler; preserve forced refresh.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `npx tsx --test apps/web/test/browse-route-scheduler.test.ts apps/web/test/browse-state.test.ts apps/web/test/browse-load-policy.test.ts apps/web/test/browse-cache.test.ts`
 

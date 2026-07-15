@@ -182,14 +182,36 @@ test("a deferred initial cache read cannot be replaced by same-route auto-load r
 
 test("CinemaApp starts browse requests through the shared state transition", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const refreshStart = appSource.indexOf("async function refreshBrowseAssets");
+  const refreshStart = appSource.indexOf("function refreshBrowseAssets");
   const refreshEnd = appSource.indexOf("async function recacheHistoryEntry", refreshStart);
   const refreshSource = appSource.slice(refreshStart, refreshEnd);
 
   assert.match(appSource, /startBrowseRequest[\s\S]{0,200}from "\.\/cinema\/browse-state";/);
+  assert.match(refreshSource, /function refreshBrowseAssets[\s\S]{0,200}\): boolean/);
   assert.match(refreshSource, /startBrowseRequest\(\s*browseRequestStateRef\.current,/);
   assert.ok(refreshSource.indexOf("startBrowseRequest") < refreshSource.indexOf("await readBrowseCache"));
   assert.notEqual(refreshSource.indexOf("setBrowseLoading(true)"), -1);
   assert.ok(refreshSource.indexOf("setBrowseLoading(true)") < refreshSource.indexOf("await readBrowseCache"));
   assert.equal(refreshSource.match(/setBrowseLoading\(false\)/g)?.length, 1);
+});
+
+test("CinemaApp resets route admission on lock and schedules browse after auth handoff", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const lockStart = appSource.indexOf("function lockCinema()");
+  const lockEnd = appSource.indexOf("\n  useEffect(() =>", lockStart);
+  const lockSource = appSource.slice(lockStart, lockEnd);
+  const errorStart = appSource.indexOf("function handleRequestError");
+  const errorEnd = appSource.indexOf("\n  async function refreshResults", errorStart);
+  const errorSource = appSource.slice(errorStart, errorEnd);
+  const handoffStart = appSource.indexOf("if (!unlocked || !role || authHandoffVersion === 0)");
+  const handoffEnd = appSource.indexOf("\n  useEffect(() =>", handoffStart);
+  const handoffSource = appSource.slice(handoffStart, handoffEnd);
+
+  assert.match(lockSource, /browseRouteLoadRef\.current = "";/);
+  assert.match(errorSource, /browseRouteLoadRef\.current = "";/);
+  assert.match(appSource, /function completeAuth\(/);
+  assert.match(appSource, /onUnlock=\{[^]*completeAuth\(auth\)/);
+  assert.match(appSource, /checkAccess\(\)[^]*completeAuth\(auth\)/);
+  assert.match(handoffSource, /scheduleCurrentBrowseRoute\(routeForCurrentView\(\)\)/);
+  assert.match(appSource, /const scheduled = scheduleBrowseRoute\(/);
 });

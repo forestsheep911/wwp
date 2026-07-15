@@ -4,7 +4,7 @@
 
 After a manual login, the initial library screen can remain empty until the user changes a browse tab. Production logs show that the login succeeds but no initial `browse-assets` request reaches the API; a later tab change sends a normal successful `limit=12` request.
 
-The current flow splits responsibility between the auth transition, a library `useEffect`, `browseRouteLoadRef`, request state, cache reads, and pagination effects. The route ref can mark a route as handled independently of an accepted request, leaving no retry path when the auth-to-library effect is skipped.
+The current flow splits responsibility between the auth transition, a library `useEffect`, `browseRouteLoadRef`, request state, cache reads, and pagination effects. In particular, `lockCinema()` cleared browse results but left `browseRouteLoadRef` intact. A subsequent login in the same SPA therefore treated `recommended:newGood` as already scheduled, while changing a tab supplied a new key and made the list appear. The route ref can also be marked independently of an accepted request, leaving no retry path when the auth-to-library effect is skipped.
 
 ## Decision
 
@@ -15,6 +15,7 @@ Create one browse-route scheduler with this contract:
 - It delegates request admission to the existing synchronous browse request state.
 - It records a route as scheduled only after a non-append request is accepted.
 - Manual login, session restoration, route initialization, and browse channel/view changes use this scheduler instead of independently mutating the route-load ref and calling the fetcher.
+- Logout and an unauthorized response clear route admission so the next authenticated handoff can load the initial route.
 - The existing cache, stale-response, and pagination rules remain downstream of an accepted initial request.
 
 ## Rejected alternatives
@@ -26,7 +27,7 @@ Create one browse-route scheduler with this contract:
 
 - A rejected duplicate request does not mark the route as scheduled.
 - A failed accepted request clears loading as today and leaves the route eligible for an explicit future retry.
-- An unauthorized request retains the current logout behavior.
+- An unauthorized request retains the current logout behavior and clears route admission.
 
 ## Tests and acceptance
 
