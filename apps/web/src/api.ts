@@ -53,6 +53,7 @@ import type {
 import { apiRequestUrl, healthRequestUrl, normalizeApiBaseUrl } from "./api-routing";
 import type { BrowseChannel } from "./cinema/types";
 import type { BrowseViewId } from "./cinema/types";
+import { retryAfterCsrfRecovery } from "./csrf-recovery";
 
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const backendWakeTimeoutMs = 90_000;
@@ -102,29 +103,42 @@ function createRequestId() {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const requestId = createRequestId();
-  const response = await fetch(url, {
-    ...init,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      "x-request-id": requestId,
-      ...(!["GET", "HEAD"].includes(init?.method ?? "GET") && csrfToken ? { "x-wwpdw-csrf-token": csrfToken } : {}),
-      ...init?.headers
+  const method = init?.method ?? "GET";
+  const unsafeRequest = !["GET", "HEAD"].includes(method);
+  const performRequest = async (): Promise<T> => {
+    const requestId = createRequestId();
+    const response = await fetch(url, {
+      ...init,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "x-request-id": requestId,
+        ...(unsafeRequest && csrfToken ? { "x-wwpdw-csrf-token": csrfToken } : {}),
+        ...init?.headers
+      }
+    });
+    const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new ApiError(
+        payload.error ?? `Request failed with ${response.status}`,
+        response.status,
+        responseRequestId
+      );
     }
-  });
-  const responseRequestId = response.headers.get("x-request-id") ?? requestId;
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new ApiError(
-      payload.error ?? `Request failed with ${response.status}`,
-      response.status,
-      responseRequestId
-    );
-  }
+    return response.json() as Promise<T>;
+  };
 
-  return response.json() as Promise<T>;
+  return retryAfterCsrfRecovery(
+    performRequest,
+    () => checkAccess(),
+    (error) => unsafeRequest
+      && error instanceof ApiError
+      && error.statusCode === 403
+      && error.message === "Cross-site request verification failed."
+  );
 }
 
 export function checkAccess() {
