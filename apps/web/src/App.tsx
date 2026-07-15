@@ -123,8 +123,10 @@ import {
 } from "./cinema/browse-load-policy";
 import {
   browseResponseIsCurrent,
+  finishBrowseRequest,
   shouldLoadBrowseRoute,
-  type BrowseRequest
+  startBrowseRequest,
+  type BrowseRequestState
 } from "./cinema/browse-state";
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
@@ -320,7 +322,10 @@ function CinemaApp() {
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
   const forumThreadsAutoLoadRef = useRef(false);
   const browseRouteLoadRef = useRef("");
-  const browseRequestRef = useRef<BrowseRequest>({ id: 0, key: "" });
+  const browseRequestStateRef = useRef<BrowseRequestState>({
+    active: { id: 0, key: "" },
+    loadingMore: false
+  });
 
   const trackedPollKey = useMemo(
     () =>
@@ -1071,24 +1076,30 @@ function CinemaApp() {
     const mode = options.mode ?? defaults.mode;
     const limit = options.limit ?? defaults.limit;
     const requestChannel = options.channel ?? browseChannel;
+    const requestStart = startBrowseRequest(browseRequestStateRef.current, {
+      append,
+      hasMore: browseHasMore,
+      key: browseRouteLoadKey(requestChannel, requestView)
+    });
+    if (!requestStart.started) {
+      return;
+    }
+    const request = requestStart.request;
+    browseRequestStateRef.current = requestStart.state;
+    setBrowseLoadingMore(requestStart.state.loadingMore);
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
     const persistentCacheKey = browseCacheKey(
       role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
       requestChannel,
       requestView
     );
-    const request: BrowseRequest = {
-      id: browseRequestRef.current.id + 1,
-      key: browseRouteLoadKey(requestChannel, requestView)
-    };
-    browseRequestRef.current = request;
     let cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
     }
     if (!append && !options.force && !cachedBrowseView) {
       const persistedEntry = await readBrowseCache<BrowseViewCacheEntry>(persistentCacheKey);
-      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+      if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
         return;
       }
       if (persistedEntry) {
@@ -1099,12 +1110,7 @@ function CinemaApp() {
         applyBrowseCache(cachedBrowseView);
       }
     }
-    if (append) {
-      if (browseLoadingMore || !browseHasMore) {
-        return;
-      }
-      setBrowseLoadingMore(true);
-    } else {
+    if (!append) {
       if (!cachedBrowseView && requestView === "lucky") {
         setBrowseResults([]);
         setBrowseHasMore(false);
@@ -1118,20 +1124,23 @@ function CinemaApp() {
       const offset = append ? browseNextOffset : 0;
       const response = await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView });
 
-      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+      if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
         return;
       }
       applyBrowseResponse(response, append, mode, cacheKey, persistentCacheKey);
     } catch (browseError) {
-      if (browseResponseIsCurrent(browseRequestRef.current, request)) {
+      if (browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
         handleRequestError(browseError, copy.fallbackErrors.browseTitles);
       }
     } finally {
-      if (!browseResponseIsCurrent(browseRequestRef.current, request)) {
+      const currentRequestState = browseRequestStateRef.current;
+      const finishedRequestState = finishBrowseRequest(currentRequestState, request);
+      if (finishedRequestState === currentRequestState) {
         return;
       }
+      browseRequestStateRef.current = finishedRequestState;
       if (append) {
-        setBrowseLoadingMore(false);
+        setBrowseLoadingMore(finishedRequestState.loadingMore);
       } else {
         setBrowseLoading(false);
       }
@@ -1965,6 +1974,10 @@ function CinemaApp() {
     setFavorites([]);
     setBrowseResults([]);
     setBrowseLoading(false);
+    browseRequestStateRef.current = {
+      ...browseRequestStateRef.current,
+      loadingMore: false
+    };
     setBrowseLoadingMore(false);
     setBrowseHasMore(false);
     setBrowseNextOffset(0);
