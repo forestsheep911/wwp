@@ -163,8 +163,21 @@ test("a deferred initial cache read cannot be replaced by same-route auto-load r
 
   releaseCacheRead();
   await initialLoad;
-  assert.deepEqual(networkRequests, [{ limit: 12, offset: 0 }]);
   assert.equal(Reflect.get(state, "loadingInitial"), false);
+
+  const retry = startBrowseRequest(state, {
+    append: true,
+    hasMore: true,
+    key: "movie:popular"
+  });
+  assert.equal(retry.started, true);
+  if (retry.started) {
+    networkRequests.push({ limit: appendDefaults.limit, offset: 12 });
+  }
+  assert.deepEqual(networkRequests, [
+    { limit: 12, offset: 0 },
+    { limit: 100, offset: 12 }
+  ]);
 });
 
 test("CinemaApp starts browse requests through the shared state transition", () => {
@@ -176,5 +189,7 @@ test("CinemaApp starts browse requests through the shared state transition", () 
   assert.match(appSource, /startBrowseRequest[\s\S]{0,200}from "\.\/cinema\/browse-state";/);
   assert.match(refreshSource, /startBrowseRequest\(\s*browseRequestStateRef\.current,/);
   assert.ok(refreshSource.indexOf("startBrowseRequest") < refreshSource.indexOf("await readBrowseCache"));
-  assert.ok(refreshSource.indexOf("setBrowseLoading(!cachedBrowseView)") < refreshSource.indexOf("await readBrowseCache"));
+  assert.notEqual(refreshSource.indexOf("setBrowseLoading(true)"), -1);
+  assert.ok(refreshSource.indexOf("setBrowseLoading(true)") < refreshSource.indexOf("await readBrowseCache"));
+  assert.equal(refreshSource.match(/setBrowseLoading\(false\)/g)?.length, 1);
 });

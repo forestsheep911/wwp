@@ -1093,7 +1093,7 @@ function CinemaApp() {
     browseRequestStateRef.current = requestStart.state;
     setBrowseLoadingMore(requestStart.state.loadingMore);
     if (!append) {
-      setBrowseLoading(!cachedBrowseView);
+      setBrowseLoading(true);
     }
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
@@ -1109,7 +1109,6 @@ function CinemaApp() {
           browseViewCacheRef.current.set(cacheKey, cachedBrowseView);
         }
         applyBrowseCache(cachedBrowseView);
-        setBrowseLoading(false);
       }
     }
     if (!append) {
