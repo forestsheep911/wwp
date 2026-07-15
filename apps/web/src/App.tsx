@@ -118,7 +118,7 @@ import {
 } from "./cinema/storage";
 import { browseCacheKey, readBrowseCache, writeBrowseCache } from "./cinema/browse-cache";
 import {
-  browseRequestDefaults,
+  resolveBrowseRequest,
   type BrowseLoadMode
 } from "./cinema/browse-load-policy";
 import {
@@ -324,6 +324,7 @@ function CinemaApp() {
   const browseRouteLoadRef = useRef("");
   const browseRequestStateRef = useRef<BrowseRequestState>({
     active: { id: 0, key: "" },
+    loadingInitial: false,
     loadingMore: false
   });
 
@@ -1070,12 +1071,16 @@ function CinemaApp() {
   async function refreshBrowseAssets(
     options: { append?: boolean; mode?: BrowseLoadMode; limit?: number; channel?: BrowseChannel; view?: BrowseViewId; force?: boolean } = {}
   ) {
-    const append = options.append === true;
-    const requestView = options.view ?? browseView;
-    const defaults = browseRequestDefaults(requestView, append);
-    const mode = options.mode ?? defaults.mode;
-    const limit = options.limit ?? defaults.limit;
+    const resolvedRequest = resolveBrowseRequest(browseView, options);
+    const { append, limit, mode, view: requestView } = resolvedRequest;
     const requestChannel = options.channel ?? browseChannel;
+    const cacheKey = browseViewCacheKey(requestChannel, requestView);
+    const persistentCacheKey = browseCacheKey(
+      role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
+      requestChannel,
+      requestView
+    );
+    let cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
     const requestStart = startBrowseRequest(browseRequestStateRef.current, {
       append,
       hasMore: browseHasMore,
@@ -1087,13 +1092,9 @@ function CinemaApp() {
     const request = requestStart.request;
     browseRequestStateRef.current = requestStart.state;
     setBrowseLoadingMore(requestStart.state.loadingMore);
-    const cacheKey = browseViewCacheKey(requestChannel, requestView);
-    const persistentCacheKey = browseCacheKey(
-      role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
-      requestChannel,
-      requestView
-    );
-    let cachedBrowseView = !append && !options.force && cacheKey ? browseViewCacheRef.current.get(cacheKey) : undefined;
+    if (!append) {
+      setBrowseLoading(!cachedBrowseView);
+    }
     if (cachedBrowseView) {
       applyBrowseCache(cachedBrowseView);
     }
@@ -1108,6 +1109,7 @@ function CinemaApp() {
           browseViewCacheRef.current.set(cacheKey, cachedBrowseView);
         }
         applyBrowseCache(cachedBrowseView);
+        setBrowseLoading(false);
       }
     }
     if (!append) {
@@ -1117,7 +1119,6 @@ function CinemaApp() {
         setBrowseNextOffset(0);
         setBrowseLoadMode("random");
       }
-      setBrowseLoading(!cachedBrowseView);
     }
 
     try {
@@ -1976,6 +1977,7 @@ function CinemaApp() {
     setBrowseLoading(false);
     browseRequestStateRef.current = {
       ...browseRequestStateRef.current,
+      loadingInitial: false,
       loadingMore: false
     };
     setBrowseLoadingMore(false);

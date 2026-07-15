@@ -20,7 +20,7 @@ import {
 import type { CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
 import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
 import {
-  browseAppendPageLimit,
+  browseFullCatalogRequest,
   browseInitialVisibleCount,
   browseTspdtCatalogLimit
 } from "../browse-load-policy";
@@ -476,7 +476,8 @@ function LibraryHome({
   const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
   const browseServerItemLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseViewItemLimit;
-  const browseRequestLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseAppendPageLimit;
+  const fullCatalogRequest = browseFullCatalogRequest(activeSortView);
+  const browseRequestLimit = fullCatalogRequest.limit;
   const browsingResults = rankedResults.length > 0;
   const totalRankedItems = showingTspdtRank
     ? tspdtItems.length
@@ -503,7 +504,7 @@ function LibraryHome({
   function showMoreItems() {
     if (!hasMoreItems) {
       if (canLoadMoreFromServer && !browseLoadingMore) {
-        onRefreshBrowse({ append: true, mode: "paged", limit: browseRequestLimit, view: activeSortView });
+        onRefreshBrowse({ append: true, ...fullCatalogRequest, view: activeSortView });
       }
       return;
     }
@@ -540,7 +541,7 @@ function LibraryHome({
         return;
       }
       autoLoadRequestRef.current = requestKey;
-      onRefreshBrowseRef.current({ mode: "paged", limit: browseRequestLimit, view: activeSortView });
+      onRefreshBrowseRef.current({ mode: fullCatalogRequest.mode, limit: browseRequestLimit, view: activeSortView });
       return;
     }
 
@@ -550,7 +551,7 @@ function LibraryHome({
         return;
       }
       autoLoadRequestRef.current = requestKey;
-      onRefreshBrowseRef.current({ append: true, mode: "paged", limit: browseRequestLimit, view: activeSortView });
+      onRefreshBrowseRef.current({ append: true, mode: fullCatalogRequest.mode, limit: browseRequestLimit, view: activeSortView });
     }
   }, [activeSortView, browseChannel, browseLoadMode, browseLoading, browseLoadingMore, browseRequestLimit, browseResults.length, browseServerItemLimit, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults]);
 

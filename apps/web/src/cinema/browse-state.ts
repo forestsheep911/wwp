@@ -5,6 +5,7 @@ export type BrowseRequest = {
 
 export type BrowseRequestState = {
   active: BrowseRequest;
+  loadingInitial: boolean;
   loadingMore: boolean;
 };
 
@@ -31,7 +32,10 @@ export function startBrowseRequest(
   state: BrowseRequestState,
   options: { append: boolean; hasMore: boolean; key: string }
 ): BrowseRequestStart {
-  if (options.append && (state.loadingMore || !options.hasMore)) {
+  if (options.append && (state.loadingInitial || state.loadingMore || !options.hasMore)) {
+    return { started: false, state };
+  }
+  if (!options.append && state.loadingInitial && state.active.key === options.key) {
     return { started: false, state };
   }
 
@@ -44,6 +48,7 @@ export function startBrowseRequest(
     request,
     state: {
       active: request,
+      loadingInitial: !options.append,
       loadingMore: options.append
     }
   };
@@ -56,6 +61,7 @@ export function finishBrowseRequest(state: BrowseRequestState, request: BrowseRe
 
   return {
     ...state,
+    loadingInitial: false,
     loadingMore: false
   };
 }
