@@ -73,3 +73,14 @@ test("CinemaApp and LibraryTab consume the shared request policies", () => {
   assert.match(librarySource, /const fullCatalogRequest = browseFullCatalogRequest\(activeSortView\);/);
   assert.match(librarySource, /append: true, mode: fullCatalogRequest\.mode, limit: browseRequestLimit/);
 });
+
+test("LibraryTab defers its scroll observer until the initial request finishes", () => {
+  const librarySource = readFileSync(new URL("../src/cinema/components/LibraryTab.tsx", import.meta.url), "utf8");
+  const observerIndex = librarySource.indexOf("const observer = new IntersectionObserver");
+  const effectStart = librarySource.lastIndexOf("useEffect(() =>", observerIndex);
+  const effectEnd = librarySource.indexOf("\n\n  return (", observerIndex);
+  const observerEffect = librarySource.slice(effectStart, effectEnd);
+
+  assert.match(observerEffect, /if \(browseLoading \|\|/);
+  assert.match(observerEffect, /\}, \[browseLoading, browseLoadingMore,/);
+});

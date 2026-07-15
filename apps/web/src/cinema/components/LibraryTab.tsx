@@ -556,7 +556,7 @@ function LibraryHome({
   }, [activeSortView, browseChannel, browseLoadMode, browseLoading, browseLoadingMore, browseRequestLimit, browseResults.length, browseServerItemLimit, canLoadMoreFromServer, loadedBrowseItemCount, needsFullBrowseResults]);
 
   useEffect(() => {
-    if ((!hasMoreItems && !canLoadMoreFromServer) || !loadMoreRef.current) {
+    if (browseLoading || ((!hasMoreItems && !canLoadMoreFromServer) || !loadMoreRef.current)) {
       return;
     }
 
@@ -570,7 +570,7 @@ function LibraryHome({
 
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
-  }, [browseLoadingMore, canLoadMoreFromServer, hasMoreItems, totalVisibleItems, visibleItemCount]);
+  }, [browseLoading, browseLoadingMore, canLoadMoreFromServer, hasMoreItems, totalVisibleItems, visibleItemCount]);
 
   return (
     <section className="grid min-w-0 gap-4">
