@@ -47,6 +47,7 @@ export const zhCN = {
     forgot: "忘记了？",
     resetHelp: "请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。",
     passcodeRule: "通行码为 6 位字符。",
+    restoringSession: "正在恢复登录状态",
     wake: {
       title: "服务唤醒中",
       correct: "答对了",

@@ -14,11 +14,13 @@ const optionLetters = ["A", "B", "C", "D"] as const;
 export function ServiceWakeDialog({
   open,
   onOpenChange,
-  dismissible = false
+  dismissible = false,
+  title
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   dismissible?: boolean;
+  title?: string;
 }) {
   const [quizOrder, setQuizOrder] = useState(() => createWakeQuizOrder());
   const [questionCursor, setQuestionCursor] = useState(0);
@@ -124,7 +126,7 @@ export function ServiceWakeDialog({
           <DialogHeader className="px-5 pb-2 pt-5">
             <DialogTitle className="flex items-center gap-2 text-base text-slate-50 sm:text-lg">
               <Loader2 className="h-5 w-5 animate-spin text-emerald-300" />
-              {copy.access.wake.title}
+              {title ?? copy.access.wake.title}
             </DialogTitle>
           </DialogHeader>
 

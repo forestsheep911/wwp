@@ -2390,6 +2390,16 @@ function CinemaApp() {
     />
   );
 
+  if (authRestoring) {
+    return (
+      <ServiceWakeDialog
+        open
+        title={copy.access.restoringSession}
+        onOpenChange={() => undefined}
+      />
+    );
+  }
+
   if (!unlocked) {
     return (
       <>
