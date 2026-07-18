@@ -384,7 +384,7 @@ function labelList(values?: string[]) {
   return values
     ?.map((value) => mediaLanguageLabels[value] ?? sourceLineageLabels[value] ?? value)
     .filter(Boolean)
-    .join(" / ");
+    .join("");
 }
 
 function uniqueDisplayLabels(values: Array<string | undefined>) {

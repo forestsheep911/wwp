@@ -103,10 +103,10 @@ test("variantSpecLabels formats Media Assets metadata as structured tags", () =>
   };
 
   assert.deepEqual(variantSpecLabels(variant), [
-    "简 / 英",
+    "简英",
     "1.72G"
   ]);
-  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简 / 英 / 1.72G");
+  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简英 / 1.72G");
   assert.equal(variantHasSizeMetadata(variant), true);
 });
 
