@@ -53,6 +53,7 @@ import type {
 import { apiRequestUrl, healthRequestUrl, normalizeApiBaseUrl } from "./api-routing";
 import type { BrowseChannel } from "./cinema/types";
 import type { BrowseViewId } from "./cinema/types";
+import { unwrapAuthenticatedSession, type AuthenticatedSessionEnvelope } from "./cinema/auth-session";
 import { retryAfterCsrfRecovery } from "./csrf-recovery";
 
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
@@ -149,9 +150,9 @@ export function checkAccess() {
 }
 
 export function login(passcode: string) {
-  return request<AuthCheckResponse & { csrfToken?: string }>(apiUrl("/api/auth/login"), { method: "POST", body: JSON.stringify({ passcode }) }).then((auth) => {
-    csrfToken = auth.csrfToken ?? "";
-    return auth;
+  return request<AuthenticatedSessionEnvelope>(apiUrl("/api/auth/login"), { method: "POST", body: JSON.stringify({ passcode }) }).then((response) => {
+    csrfToken = response.csrfToken ?? "";
+    return unwrapAuthenticatedSession(response);
   });
 }
 
