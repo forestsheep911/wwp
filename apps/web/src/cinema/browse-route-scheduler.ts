@@ -17,3 +17,7 @@ export function scheduleBrowseRoute(lastKey: string, route: BrowseRoute, start: 
     ? { scheduled: true, routeKey }
     : { scheduled: false, routeKey: lastKey };
 }
+
+export function releaseFailedBrowseRoute(lastKey: string, failedKey: string, append: boolean) {
+  return !append && lastKey === failedKey ? "" : lastKey;
+}

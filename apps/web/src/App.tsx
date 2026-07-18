@@ -121,7 +121,7 @@ import {
   resolveBrowseRequest,
   type BrowseLoadMode
 } from "./cinema/browse-load-policy";
-import { scheduleBrowseRoute } from "./cinema/browse-route-scheduler";
+import { releaseFailedBrowseRoute, scheduleBrowseRoute } from "./cinema/browse-route-scheduler";
 import {
   browseResponseIsCurrent,
   finishBrowseRequest,
@@ -185,6 +185,8 @@ interface BrowseViewCacheEntry {
   mode: BrowseLoadMode;
 }
 
+const browseRetryDelaysMs = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
+
 function isAppTheme(value: unknown): value is AppTheme {
   return value === "dark" || value === "light";
 }
@@ -237,6 +239,7 @@ function CinemaApp() {
     () => initialRoute.tab === "library" && initialRoute.query.trim().length === 0
   );
   const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
+  const [browseRetryVersion, setBrowseRetryVersion] = useState(0);
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
   const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
@@ -323,6 +326,10 @@ function CinemaApp() {
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
   const forumThreadsAutoLoadRef = useRef(false);
   const browseRouteLoadRef = useRef("");
+  const browseRetryRef = useRef<{ routeKey: string; attempt: number; timer?: number }>({
+    routeKey: "",
+    attempt: 0
+  });
   const browseRequestStateRef = useRef<BrowseRequestState>({
     active: { id: 0, key: "" },
     loadingInitial: false,
@@ -460,6 +467,10 @@ function CinemaApp() {
   }
 
   function scheduleCurrentBrowseRoute(route: CinemaRoute, options: { force?: boolean } = {}) {
+    const routeKey = browseRouteLoadKey(route.browseChannel, route.browseView);
+    if (browseRetryRef.current.routeKey && browseRetryRef.current.routeKey !== routeKey) {
+      cancelBrowseRetry();
+    }
     const scheduled = scheduleBrowseRoute(
       options.force ? "" : browseRouteLoadRef.current,
       {
@@ -478,6 +489,35 @@ function CinemaApp() {
       browseRouteLoadRef.current = scheduled.routeKey;
     }
     return scheduled.scheduled;
+  }
+
+  function cancelBrowseRetry() {
+    if (browseRetryRef.current.timer !== undefined) {
+      window.clearTimeout(browseRetryRef.current.timer);
+    }
+    browseRetryRef.current = { routeKey: "", attempt: 0 };
+  }
+
+  function scheduleBrowseRetry(routeKey: string) {
+    const current = browseRetryRef.current;
+    const attempt = current.routeKey === routeKey ? current.attempt : 0;
+    const delayMs = browseRetryDelaysMs[attempt];
+    if (delayMs === undefined || current.timer !== undefined) {
+      return;
+    }
+
+    const retry = {
+      routeKey,
+      attempt: attempt + 1,
+      timer: window.setTimeout(() => {
+        if (browseRetryRef.current.routeKey !== routeKey) {
+          return;
+        }
+        browseRetryRef.current.timer = undefined;
+        setBrowseRetryVersion((version) => version + 1);
+      }, delayMs)
+    };
+    browseRetryRef.current = retry;
   }
 
   function openBrowseView(nextView: BrowseViewId, options: { refresh?: boolean } = {}) {
@@ -577,6 +617,7 @@ function CinemaApp() {
       setUnlocked(false);
       setRole(undefined);
       browseRouteLoadRef.current = "";
+      cancelBrowseRetry();
       setAdminUnlocked(false);
       setPlayback(undefined);
       setJob(undefined);
@@ -1158,10 +1199,19 @@ function CinemaApp() {
         if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
           return;
         }
+        cancelBrowseRetry();
         applyBrowseResponse(response, append, mode, cacheKey, persistentCacheKey);
       } catch (browseError) {
         if (browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
           handleRequestError(browseError, copy.fallbackErrors.browseTitles);
+          if (!isUnauthorizedError(browseError) && !append) {
+            browseRouteLoadRef.current = releaseFailedBrowseRoute(
+              browseRouteLoadRef.current,
+              request.key,
+              append
+            );
+            scheduleBrowseRetry(request.key);
+          }
         }
       } finally {
         const currentRequestState = browseRequestStateRef.current;
@@ -2014,6 +2064,7 @@ function CinemaApp() {
     setBrowseResults([]);
     setBrowseLoading(false);
     browseRouteLoadRef.current = "";
+    cancelBrowseRetry();
     browseRequestStateRef.current = {
       ...browseRequestStateRef.current,
       loadingInitial: false,
@@ -2360,7 +2411,7 @@ function CinemaApp() {
     if (activeTab === "library" && query.trim().length === 0) {
       scheduleCurrentBrowseRoute(routeForCurrentView());
     }
-  }, [activeTab, browseChannel, browseResults.length, browseView, query, role, unlocked]);
+  }, [activeTab, browseChannel, browseResults.length, browseRetryVersion, browseView, query, role, unlocked]);
 
   useEffect(() => {
     if (!unlocked || !role) {

@@ -208,10 +208,27 @@ test("CinemaApp resets route admission on lock and schedules browse after auth h
   const handoffSource = appSource.slice(handoffStart, handoffEnd);
 
   assert.match(lockSource, /browseRouteLoadRef\.current = "";/);
+  assert.match(lockSource, /cancelBrowseRetry\(\);/);
   assert.match(errorSource, /browseRouteLoadRef\.current = "";/);
+  assert.match(errorSource, /cancelBrowseRetry\(\);/);
   assert.match(appSource, /function completeAuth\(/);
   assert.match(appSource, /onUnlock=\{[^]*completeAuth\(auth\)/);
   assert.match(appSource, /checkAccess\(\)[^]*completeAuth\(auth\)/);
   assert.match(handoffSource, /scheduleCurrentBrowseRoute\(routeForCurrentView\(\)\)/);
   assert.match(appSource, /const scheduled = scheduleBrowseRoute\(/);
+});
+
+test("CinemaApp automatically retries a failed initial browse route", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const refreshStart = appSource.indexOf("function refreshBrowseAssets");
+  const refreshEnd = appSource.indexOf("async function recacheHistoryEntry", refreshStart);
+  const refreshSource = appSource.slice(refreshStart, refreshEnd);
+
+  assert.match(refreshSource, /releaseFailedBrowseRoute\(/);
+  assert.match(refreshSource, /scheduleBrowseRetry\(request\.key\)/);
+  assert.match(appSource, /browseRetryVersion/);
+  assert.match(
+    appSource,
+    /\[activeTab, browseChannel, browseResults\.length, browseRetryVersion, browseView, query, role, unlocked\]/
+  );
 });
