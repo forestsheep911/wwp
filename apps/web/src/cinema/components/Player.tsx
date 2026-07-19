@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Artplayer from "artplayer";
 import { Play, TriangleAlert } from "lucide-react";
 import type { PlaybackResponse } from "@wwpdw/shared";
@@ -6,7 +6,11 @@ import { Button } from "../../components/ui/button";
 import { formatLongDate } from "../format";
 import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
-import { browserVideoCompatibility } from "../media-compatibility";
+import {
+  browserVideoCompatibility,
+  fatalPlaybackFailure,
+  type FatalPlaybackFailure
+} from "../media-compatibility";
 
 const renewAheadMs = 10 * 60 * 1000;
 
@@ -16,10 +20,12 @@ function expiresInMs(expiresAt: string) {
 
 function ArtPlayerView({
   playback,
-  onRenewPlayback
+  onRenewPlayback,
+  onFatalPlaybackError
 }: {
   playback: PlaybackResponse;
   onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
+  onFatalPlaybackError: (failure: FatalPlaybackFailure) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const artRef = useRef<Artplayer | null>(null);
@@ -106,7 +112,13 @@ function ArtPlayerView({
     const renewIfNeeded = () => {
       void renewPlayback(false);
     };
-    const renewAfterFailure = () => {
+    const handlePlaybackFailure = () => {
+      const failure = fatalPlaybackFailure(art.video.error?.code);
+      if (failure) {
+        art.pause();
+        onFatalPlaybackError(failure);
+        return;
+      }
       void renewPlayback(true);
     };
     const renewWhenVisible = () => {
@@ -119,8 +131,8 @@ function ArtPlayerView({
     art.on("seek", renewIfNeeded);
     art.on("video:waiting", renewIfNeeded);
     art.on("video:stalled", renewIfNeeded);
-    art.on("video:error", renewAfterFailure);
-    art.on("error", renewAfterFailure);
+    art.on("video:error", handlePlaybackFailure);
+    art.on("error", handlePlaybackFailure);
     art.on("document:visibilitychange", renewWhenVisible);
 
     const renewTimer = window.setInterval(() => {
@@ -134,7 +146,7 @@ function ArtPlayerView({
       artRef.current = null;
       art.destroy(false);
     };
-  }, [playback.assetKey, renewPlayback]);
+  }, [onFatalPlaybackError, playback.assetKey, renewPlayback]);
 
   useEffect(() => {
     const art = artRef.current;
@@ -167,8 +179,24 @@ export function Player({
   onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
 }) {
   const isMock = playback.playbackUrl.startsWith("mock://");
+  const [runtimeFailure, setRuntimeFailure] = useState<FatalPlaybackFailure>();
   const compatibility = browserVideoCompatibility(playback.videoCodec);
   const codecUnsupported = compatibility.codec === "hevc" && compatibility.status === "unsupported";
+  const playbackBlocked = codecUnsupported || Boolean(runtimeFailure);
+  const blockedTitle = codecUnsupported
+    ? copy.player.codecUnsupportedTitle
+    : runtimeFailure === "decode"
+      ? copy.player.decodeFailedTitle
+      : copy.player.sourceUnsupportedTitle;
+  const blockedDescription = codecUnsupported
+    ? copy.player.codecUnsupportedDescription
+    : runtimeFailure === "decode"
+      ? copy.player.decodeFailedDescription
+      : copy.player.sourceUnsupportedDescription;
+
+  useEffect(() => {
+    setRuntimeFailure(undefined);
+  }, [playback.assetKey, playback.playbackUrl]);
 
   return (
     <main className="min-h-[100dvh] px-0 py-0 sm:px-5 sm:py-6 md:px-8">
@@ -183,14 +211,14 @@ export function Player({
           </Button>
         </div>
         <div className="overflow-hidden border-y border-slate-800 bg-black shadow-2xl sm:rounded-lg sm:border">
-          {codecUnsupported ? (
+          {playbackBlocked ? (
             <div className="grid min-h-[16rem] place-items-center px-5 py-10 text-center sm:aspect-video">
               <div className="grid max-w-lg place-items-center gap-3">
                 <div className="grid h-14 w-14 place-items-center rounded-full border border-amber-300/35 bg-amber-300/10 text-amber-200">
                   <TriangleAlert className="h-6 w-6" />
                 </div>
-                <h2 className="text-lg font-semibold text-slate-50">{copy.player.codecUnsupportedTitle}</h2>
-                <p className="text-sm leading-6 text-slate-400">{copy.player.codecUnsupportedDescription}</p>
+                <h2 className="text-lg font-semibold text-slate-50">{blockedTitle}</h2>
+                <p className="text-sm leading-6 text-slate-400">{blockedDescription}</p>
                 <Button type="button" variant="outline" onClick={onClose}>{copy.player.back}</Button>
               </div>
             </div>
@@ -204,7 +232,11 @@ export function Player({
               </div>
             </div>
           ) : (
-            <ArtPlayerView playback={playback} onRenewPlayback={onRenewPlayback} />
+            <ArtPlayerView
+              playback={playback}
+              onRenewPlayback={onRenewPlayback}
+              onFatalPlaybackError={setRuntimeFailure}
+            />
           )}
         </div>
         <div className="px-3 sm:px-0">

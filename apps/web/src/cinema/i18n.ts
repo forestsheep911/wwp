@@ -353,6 +353,10 @@ export const zhCN = {
     codecUnsupportedTitle: "当前设备可能无法播放这个版本",
     codecUnsupportedDescription: "浏览器没有报告 HEVC / H.265 解码能力。为避免黑屏或反复加载，请返回并选择 H.264 版本，或换用支持 HEVC 的设备。",
     codecBlockedToast: "已阻止可能无法播放的 HEVC 版本",
+    decodeFailedTitle: "视频数据已到达，但设备无法解码",
+    decodeFailedDescription: "这不是网速问题。浏览器收到视频后无法生成画面，请返回选择 H.264 / AVC 版本，或换用支持该编码的设备。",
+    sourceUnsupportedTitle: "当前浏览器无法播放这个文件",
+    sourceUnsupportedDescription: "浏览器不支持这个视频的编码或封装格式。请返回选择其他版本，或换用兼容性更好的浏览器。",
     expiresAt: (date: string) => `播放链接有效期至 ${date}`
   },
   download: {

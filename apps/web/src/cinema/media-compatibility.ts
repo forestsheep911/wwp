@@ -7,6 +7,14 @@ export interface VideoCompatibility {
   status: VideoCompatibilityStatus;
 }
 
+export type FatalPlaybackFailure = "decode" | "unsupported-source";
+
+export function fatalPlaybackFailure(mediaErrorCode?: number | null): FatalPlaybackFailure | undefined {
+  if (mediaErrorCode === 3) return "decode";
+  if (mediaErrorCode === 4) return "unsupported-source";
+  return undefined;
+}
+
 type CanPlayType = (mimeType: string) => string;
 
 export function normalizeVideoCodec(codec?: string) {

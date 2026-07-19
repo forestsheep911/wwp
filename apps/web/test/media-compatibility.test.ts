@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SearchResult } from "@wwpdw/shared";
 import {
+  fatalPlaybackFailure,
   normalizeVideoCodec,
   variantVideoCodec,
   videoCompatibility
 } from "../src/cinema/media-compatibility.ts";
+
+test("classifies only terminal browser media errors as fatal", () => {
+  assert.equal(fatalPlaybackFailure(3), "decode");
+  assert.equal(fatalPlaybackFailure(4), "unsupported-source");
+  assert.equal(fatalPlaybackFailure(2), undefined);
+  assert.equal(fatalPlaybackFailure(undefined), undefined);
+});
 
 test("normalizes the codec families used by Media Assets", () => {
   assert.equal(normalizeVideoCodec("H.265"), "hevc");

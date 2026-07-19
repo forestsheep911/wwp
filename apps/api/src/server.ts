@@ -67,6 +67,7 @@ import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-s
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { notionPublicPageUrl } from "./direct-download.js";
+import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
@@ -570,6 +571,22 @@ function findSearchResultByAssetKey(results: SearchResult[], assetKey: string) {
   }
 
   return undefined;
+}
+
+async function playbackVideoCodec(assetKey: string, jobId?: string) {
+  const recentCodec = videoCodecForAsset(recentResults.values(), assetKey);
+  if (recentCodec) {
+    return recentCodec;
+  }
+
+  const job = jobId ? await store.getJob(jobId) : undefined;
+  const inferredCodec = inferVideoCodec(job?.sourceUrl, job?.resolve?.url, job?.title);
+  if (inferredCodec) {
+    return inferredCodec;
+  }
+
+  const indexedResults = await searchIndex.search(assetKey, 8);
+  return videoCodecForAsset(indexedResults, assetKey);
 }
 
 function searchCacheKey(query: string) {
@@ -2230,6 +2247,17 @@ async function handlePlayback(
     return;
   }
 
+  let videoCodec: string | undefined;
+  try {
+    videoCodec = await playbackVideoCodec(assetKey, asset.jobId);
+  } catch (error) {
+    logWarn("api.playback.codec_lookup_failed", {
+      requestId: context.requestId,
+      assetKey,
+      ...errorLogFields(error)
+    });
+  }
+
   logInfo("api.playback.ready", {
     requestId: context.requestId,
     assetKey,
@@ -2238,6 +2266,7 @@ async function handlePlayback(
     rangeSupported: playback.media?.rangeSupported,
     mp4Status: playback.media?.mp4?.status,
     moovOffset: playback.media?.mp4?.moovOffset,
+    videoCodec,
     signedUrlExpiresAt: playback.expiresAt,
     memberId: identity.memberId,
     playbackCredits,
@@ -2249,6 +2278,7 @@ async function handlePlayback(
 
   sendJson(response, 200, {
     ...playback,
+    videoCodec,
     charge: chargeResult?.ok && chargeResult.charged ? chargeResult.charge : undefined,
     memberCredits: chargeResult?.ok ? chargeResult.code.credits : undefined,
     playbackCredit: chargeResult?.ok
