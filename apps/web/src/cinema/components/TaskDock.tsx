@@ -29,7 +29,7 @@ export function TaskDock({
   }
 
   return (
-    <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom)+100vh-100dvh)] right-3 z-[95] w-[min(22rem,calc(100dvw-1.5rem))] sm:bottom-[calc(1rem+env(safe-area-inset-bottom))] sm:right-4 sm:w-[min(22rem,calc(100vw-2rem))]">
+    <div className="fixed bottom-[calc(var(--mobile-nav-height)+0.75rem+env(safe-area-inset-bottom))] right-3 z-[95] w-[min(22rem,calc(100dvw-1.5rem))] sm:bottom-[calc(1rem+env(safe-area-inset-bottom))] sm:right-4 sm:w-[min(22rem,calc(100vw-2rem))]">
       {open ? (
         <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/95 shadow-2xl shadow-black/50 backdrop-blur sm:rounded-lg">
           <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2.5">

@@ -42,6 +42,9 @@ export function SearchDialog({
 }: SearchDialogProps) {
   const normalizedQuery = query.trim();
   const hasQuery = normalizedQuery.length > 0;
+  const [shouldAutoFocus] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(min-width: 640px) and (pointer: fine)").matches
+  ));
   const [activeAssetKey, setActiveAssetKey] = useState<string | undefined>();
   const activeResult = useMemo(
     () => results.find((result) => result.assetKey === activeAssetKey) ?? results[0],
@@ -67,8 +70,10 @@ export function SearchDialog({
           <div className="flex items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-4 pr-14">
             <Search className="h-5 w-5 shrink-0 text-slate-500" />
             <Input
-              autoFocus
+              autoFocus={shouldAutoFocus}
               className="h-16 border-0 bg-transparent px-0 text-lg shadow-none focus-visible:ring-0"
+              enterKeyHint="search"
+              inputMode="search"
               placeholder={copy.search.placeholder}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}

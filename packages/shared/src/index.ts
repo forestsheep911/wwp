@@ -593,6 +593,7 @@ export interface PlaybackResponse {
   playbackUrl: string;
   expiresAt: string;
   media?: MediaDiagnostics;
+  videoCodec?: string;
   charge?: MemberCreditCharge;
   memberCredits?: MemberCreditSummary;
   playbackCredit?: {

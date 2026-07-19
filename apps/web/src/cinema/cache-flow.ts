@@ -37,7 +37,8 @@ export function variantToCacheTarget(result: SearchResult, variant: MediaVariant
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
     summary: variant.summary,
-    metadata: metadataWithVariantTrace(result, variant)
+    metadata: metadataWithVariantTrace(result, variant),
+    variants: [variant]
   };
 }
 

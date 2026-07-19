@@ -3,6 +3,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   Database,
   Download,
   Eye,
@@ -2085,7 +2086,7 @@ function MovieCard({
   const info = basicInfoLine(result);
 
   return (
-    <article className="movie-card grid h-full grid-cols-[112px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4">
+    <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4">
       <div className="group relative">
         <button
           className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
@@ -2108,7 +2109,7 @@ function MovieCard({
           onClick={() => onOpenDetail(result)}
           title={copy.library.viewDetails}
         >
-          <h2 className="line-clamp-3 text-lg font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:text-lg">
+          <h2 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:line-clamp-3 sm:text-lg">
             {result.title}
           </h2>
         </button>
@@ -2118,7 +2119,7 @@ function MovieCard({
         <AgeRecommendationBadge result={result} />
 
         {tags.length ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="hidden flex-wrap gap-2 sm:flex">
             {tags.map((tag) => (
               <Badge className={tag.className} key={tag.key} variant={tag.variant}>{tag.tag}</Badge>
             ))}
@@ -2126,7 +2127,14 @@ function MovieCard({
         ) : null}
       </div>
 
-      <div className="col-span-2 grid min-w-0 gap-3">
+      <div className="col-span-2 sm:hidden">
+        <Button className="w-full justify-between" type="button" variant="secondary" onClick={() => onOpenDetail(result)}>
+          查看详情与版本
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="col-span-2 hidden min-w-0 gap-3 sm:grid">
         <SummaryText summary={summary} />
         <VariantButtons
           creditPolicy={creditPolicy}

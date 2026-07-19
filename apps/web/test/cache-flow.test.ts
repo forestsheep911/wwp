@@ -53,6 +53,7 @@ test("variantToCacheTarget carries Media Assets block identifiers", () => {
     metadata: {
       mediaBlockId: "block-1",
       mediaAssetPageId: "asset-page-1",
+      videoCodec: "hevc",
       structuredSource: "media_assets"
     }
   };
@@ -64,6 +65,8 @@ test("variantToCacheTarget carries Media Assets block identifiers", () => {
   assert.equal((target.metadata as { mediaBlockId?: string }).mediaBlockId, "block-1");
   assert.equal((target.metadata as { mediaAssetPageId?: string }).mediaAssetPageId, "asset-page-1");
   assert.equal(target.metadata?.description, "Movie metadata");
+  assert.equal(target.variants?.[0]?.assetKey, variant.assetKey);
+  assert.equal(target.variants?.[0]?.metadata?.videoCodec, "hevc");
 });
 
 test("mergeCacheAssetIntoResults updates a nested variant cache entry", () => {

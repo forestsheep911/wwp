@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Bell,
   ChevronDown,
@@ -118,33 +118,34 @@ export function CinemaLayout({
   onToggleTheme
 }: CinemaLayoutProps) {
   const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   return (
-    <main className="min-h-screen">
+    <main className="min-h-[100dvh]">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
         <header className="sticky top-0 z-[100] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
-          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 sm:px-5 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
+          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-5 sm:py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
             <button
               className="group flex min-h-11 min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               type="button"
               onClick={onOpenHome}
               title={copy.layout.homeTitle}
             >
-              <img alt="" className="h-10 w-10 shrink-0 rounded-md" src="/wwp-icon-64.png" />
+              <img alt="" className="h-9 w-9 shrink-0 rounded-md sm:h-10 sm:w-10" src="/wwp-icon-64.png" />
               <span className="hidden min-w-0 sm:block">
                 <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">{copy.app.name}</h1>
               </span>
             </button>
 
-            <nav
+            {activeTab === "library" ? <nav
               aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
+              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
             >
               {browseChannels.map((channel) => {
                 const active = activeTab === "library" && activeBrowseChannel === channel.id;
                 return (
                   <button
-                    className={`relative min-h-11 flex-none rounded-full border px-4 text-sm font-semibold transition-colors lg:h-9 lg:min-h-0 lg:border-0 lg:px-0.5 ${
+                    className={`relative min-h-10 flex-none snap-start rounded-full border px-4 text-sm font-semibold transition-colors lg:h-9 lg:min-h-0 lg:border-0 lg:px-0.5 ${
                       active
                         ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100 lg:bg-transparent lg:text-emerald-200"
                         : "border-slate-800 bg-slate-950/75 text-slate-300 hover:border-slate-700 hover:text-slate-100 lg:bg-transparent lg:text-slate-400"
@@ -164,7 +165,7 @@ export function CinemaLayout({
                   </button>
                 );
               })}
-            </nav>
+            </nav> : <div className="hidden lg:block" />}
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
               <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
@@ -213,6 +214,7 @@ export function CinemaLayout({
                 </Button>
               ) : null}
               <AccountMenu
+                open={accountMenuOpen}
                 accountDetail={accountDetail}
                 accountLabel={accountLabel}
                 canChangePasscode={canChangePasscode}
@@ -232,12 +234,13 @@ export function CinemaLayout({
                 onOpenSpending={onOpenSpending}
                 onOpenTasks={onOpenTasks}
                 onLock={onLock}
+                onOpenChange={setAccountMenuOpen}
               />
             </div>
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-4 px-3 pb-24 pt-4 sm:px-5 sm:pb-5 md:px-8">
+        <div className="mx-auto grid max-w-7xl gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8">
           <div className="min-w-0 overflow-hidden">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
@@ -251,13 +254,13 @@ export function CinemaLayout({
             {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
           </div>
         </div>
-        <nav className="fixed inset-x-0 bottom-[calc(100vh-100dvh)] z-[90] w-[100dvw] border-t border-slate-800 bg-slate-950/94 px-3 py-2 shadow-2xl shadow-black/45 backdrop-blur sm:hidden" aria-label="手机快捷导航">
+        <nav className="fixed inset-x-0 bottom-0 z-[90] w-full border-t border-slate-800 bg-slate-950/94 px-2 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-2xl shadow-black/45 backdrop-blur sm:hidden" aria-label="手机快捷导航">
           <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
-            <MobileNavButton active={activeTab === "library"} icon={<Clapperboard className="h-5 w-5" />} label={copy.layout.browseChannels.recommended} onClick={onOpenHome} />
+            <MobileNavButton active={activeTab === "library"} icon={<Clapperboard className="h-5 w-5" />} label="片库" onClick={onOpenHome} />
             <MobileNavButton active={activeTab === "nowPlaying"} icon={<Flame className="h-5 w-5" />} label={copy.layout.nowPlaying} onClick={onOpenNowPlaying} />
-            <MobileNavButton active={false} icon={<Search className="h-5 w-5" />} label={copy.common.search} onClick={onOpenSearch} />
             <MobileNavButton active={activeTab === "watchlist"} icon={<Star className="h-5 w-5" />} label="今晚" onClick={onOpenWatchlist} />
-            <MobileNavButton active={activeTab === "forum"} icon={<MessageCircle className="h-5 w-5" />} label={copy.layout.forum} onClick={onOpenForum} />
+            <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} label={copy.layout.tasks} onClick={onOpenTasks} />
+            <MobileNavButton active={accountMenuOpen} icon={<UserCircle className="h-5 w-5" />} label="我的" onClick={() => setAccountMenuOpen(true)} />
           </div>
         </nav>
       </Tabs>
@@ -278,7 +281,7 @@ function MobileNavButton({
 }) {
   return (
     <button
-      className={`grid min-h-14 place-items-center gap-0.5 rounded-xl px-0 text-[10px] font-bold leading-none transition-colors ${
+      className={`grid min-h-12 place-items-center gap-0.5 rounded-xl px-0 text-[10px] font-bold leading-none transition-colors ${
         active
           ? "bg-emerald-300/12 text-emerald-100"
           : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
@@ -294,6 +297,7 @@ function MobileNavButton({
 }
 
 function AccountMenu({
+  open,
   accountLabel,
   accountDetail,
   canChangePasscode,
@@ -312,8 +316,10 @@ function AccountMenu({
   onOpenProfile,
   onOpenSpending,
   onOpenTasks,
+  onOpenChange,
   onLock
 }: {
+  open: boolean;
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
@@ -332,10 +338,11 @@ function AccountMenu({
   onOpenProfile: () => void;
   onOpenSpending: () => void;
   onOpenTasks: () => void;
+  onOpenChange: (open: boolean) => void;
   onLock: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button className="px-3" type="button" variant="outline" title={copy.layout.account}>
           <UserCircle className="h-4 w-4" />

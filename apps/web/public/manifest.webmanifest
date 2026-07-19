@@ -1,0 +1,19 @@
+{
+  "name": "WWP 家庭影院",
+  "short_name": "WWP",
+  "description": "家庭影视资料库与播放入口",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/wwp-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

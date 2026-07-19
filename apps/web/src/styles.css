@@ -9,6 +9,14 @@
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
   overflow-x: clip;
+  color-scheme: dark;
+  --mobile-nav-height: 4.5rem;
+}
+
+html {
+  min-height: 100%;
+  background: #020617;
+  overscroll-behavior-x: none;
 }
 
 * {
@@ -19,6 +27,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
   overflow-x: clip;
   background:
@@ -198,6 +207,7 @@ video {
 :root[data-theme="light"] {
   color: #24313f;
   background: #f7f4ec;
+  color-scheme: light;
 }
 
 :root[data-theme="light"] body {
@@ -450,5 +460,16 @@ video {
 @container (min-width: 1180px) {
   .gallery-results-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

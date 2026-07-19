@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef } from "react";
 import Artplayer from "artplayer";
-import { Play } from "lucide-react";
+import { Play, TriangleAlert } from "lucide-react";
 import type { PlaybackResponse } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
 import { formatLongDate } from "../format";
 import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
+import { browserVideoCompatibility } from "../media-compatibility";
 
 const renewAheadMs = 10 * 60 * 1000;
 
@@ -166,6 +167,8 @@ export function Player({
   onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
 }) {
   const isMock = playback.playbackUrl.startsWith("mock://");
+  const compatibility = browserVideoCompatibility(playback.videoCodec);
+  const codecUnsupported = compatibility.codec === "hevc" && compatibility.status === "unsupported";
 
   return (
     <main className="min-h-[100dvh] px-0 py-0 sm:px-5 sm:py-6 md:px-8">
@@ -180,7 +183,18 @@ export function Player({
           </Button>
         </div>
         <div className="overflow-hidden border-y border-slate-800 bg-black shadow-2xl sm:rounded-lg sm:border">
-          {isMock ? (
+          {codecUnsupported ? (
+            <div className="grid min-h-[16rem] place-items-center px-5 py-10 text-center sm:aspect-video">
+              <div className="grid max-w-lg place-items-center gap-3">
+                <div className="grid h-14 w-14 place-items-center rounded-full border border-amber-300/35 bg-amber-300/10 text-amber-200">
+                  <TriangleAlert className="h-6 w-6" />
+                </div>
+                <h2 className="text-lg font-semibold text-slate-50">{copy.player.codecUnsupportedTitle}</h2>
+                <p className="text-sm leading-6 text-slate-400">{copy.player.codecUnsupportedDescription}</p>
+                <Button type="button" variant="outline" onClick={onClose}>{copy.player.back}</Button>
+              </div>
+            </div>
+          ) : isMock ? (
             <div className="grid aspect-video place-items-center text-slate-400">
               <div className="grid place-items-center gap-3">
                 <div className="grid h-20 w-20 place-items-center rounded-full bg-emerald-400 text-slate-950">

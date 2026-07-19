@@ -350,7 +350,23 @@ export const zhCN = {
   player: {
     nowPlaying: "正在播放",
     back: "返回影院",
+    codecUnsupportedTitle: "当前设备可能无法播放这个版本",
+    codecUnsupportedDescription: "浏览器没有报告 HEVC / H.265 解码能力。为避免黑屏或反复加载，请返回并选择 H.264 版本，或换用支持 HEVC 的设备。",
+    codecBlockedToast: "已阻止可能无法播放的 HEVC 版本",
     expiresAt: (date: string) => `播放链接有效期至 ${date}`
+  },
+  download: {
+    preparing: "正在准备下载",
+    ready: "下载链接已准备好",
+    preparingDescription: "系统正在刷新 Notion 的临时文件地址，请稍候。",
+    refreshingLink: "正在获取最新下载地址",
+    desktopDescription: "浏览器已经自动尝试下载；如果没有反应，请点击下面的按钮。",
+    mobileDescription: "Android 浏览器要求这一步由你亲自点击，点击后才会交给系统下载。",
+    failed: "下载地址获取失败",
+    start: "开始下载",
+    retry: "没有开始？再次下载",
+    androidFallback: "如果浏览器改为打开视频，请使用浏览器菜单中的“下载”或“保存视频”。",
+    expiresAt: (date: string) => `临时地址有效期至 ${date}`
   },
   help: {
     title: "使用说明",

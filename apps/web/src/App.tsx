@@ -75,6 +75,7 @@ import { CachedShelf } from "./cinema/components/CachedShelf";
 import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditConfirmDialog } from "./cinema/components/CreditConfirmDialog";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
+import { DirectDownloadDialog, type DirectDownloadDialogState } from "./cinema/components/DirectDownloadDialog";
 import { FavoritesPanel } from "./cinema/components/FavoritesPanel";
 import { ForumPanel } from "./cinema/components/ForumPanel";
 import { HelpPanel } from "./cinema/components/HelpPanel";
@@ -92,7 +93,7 @@ import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
-import { triggerDirectDownload } from "./cinema/download";
+import { browserRequiresConfirmedDownload, triggerDirectDownload } from "./cinema/download";
 import {
   mergeCacheAssetIntoResults,
   trackedCacheNeedsStatusRefresh,
@@ -130,6 +131,7 @@ import {
 } from "./cinema/browse-state";
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
+import { browserVideoCompatibility, variantVideoCodec } from "./cinema/media-compatibility";
 import type {
   AppTab,
   AppTheme,
@@ -249,6 +251,7 @@ function CinemaApp() {
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
   const [downloadRequestAssetKeys, setDownloadRequestAssetKeys] = useState<string[]>([]);
+  const [directDownloadDialog, setDirectDownloadDialog] = useState<DirectDownloadDialogState | undefined>();
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [sessions, setSessions] = useState<BrowserSession[]>([]);
@@ -625,6 +628,7 @@ function CinemaApp() {
       setTrackedItems([]);
       setCacheRequestAssetKeys([]);
       setDownloadRequestAssetKeys([]);
+      setDirectDownloadDialog(undefined);
       return;
     }
 
@@ -783,6 +787,20 @@ function CinemaApp() {
 
   async function requestCreditAction(action: PendingCreditAction) {
     setError("");
+    if (action.kind === "playback") {
+      const codec = variantVideoCodec(action.result, action.assetKey);
+      const compatibility = browserVideoCompatibility(codec);
+      if (compatibility.codec === "hevc" && compatibility.status === "unsupported") {
+        setError(copy.player.codecUnsupportedDescription);
+        showToast({
+          title: copy.player.codecBlockedToast,
+          description: copy.player.codecUnsupportedDescription,
+          variant: "error"
+        });
+        return;
+      }
+    }
+
     try {
       const preview = await previewCreditAction(action);
       setPendingCreditAction(action);
@@ -848,16 +866,39 @@ function CinemaApp() {
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToCacheTarget(result, variant);
     setError("");
+    setDirectDownloadDialog({
+      assetKey: target.assetKey,
+      title: target.title,
+      status: "loading"
+    });
     setDownloadRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
-    const pendingWindow = window.open("about:blank", "_blank");
     try {
       const response = await getDirectDownload(target);
-      triggerDirectDownload(response.downloadUrl, pendingWindow, response.title);
+      const needsConfirmation = browserRequiresConfirmedDownload();
+      setDirectDownloadDialog((current) => current?.assetKey === target.assetKey ? {
+        assetKey: response.assetKey,
+        title: response.title,
+        status: "ready",
+        downloadUrl: response.downloadUrl,
+        expiresAt: response.expiresAt,
+        autoAttempted: !needsConfirmation
+      } : current);
+      if (!needsConfirmation) {
+        triggerDirectDownload(response.downloadUrl, response.title);
+      }
     } catch (downloadError) {
-      pendingWindow?.close();
-      handleRequestError(downloadError, copy.fallbackErrors.directDownload);
+      if (isUnauthorizedError(downloadError)) {
+        setDirectDownloadDialog(undefined);
+        handleRequestError(downloadError, copy.fallbackErrors.directDownload);
+      } else {
+        setDirectDownloadDialog((current) => current?.assetKey === target.assetKey ? {
+          ...current,
+          status: "error",
+          error: errorMessage(downloadError, copy.fallbackErrors.directDownload)
+        } : current);
+      }
     } finally {
       setDownloadRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
     }
@@ -939,12 +980,16 @@ function CinemaApp() {
 
     try {
       const response = await getPlayback(assetKey);
-      updateCurrentMemberCredits(response.memberCredits);
-      setPlayback(response);
-      rememberPlayback(response, result);
+      const nextPlayback = {
+        ...response,
+        videoCodec: response.videoCodec ?? variantVideoCodec(result, assetKey)
+      };
+      updateCurrentMemberCredits(nextPlayback.memberCredits);
+      setPlayback(nextPlayback);
+      rememberPlayback(nextPlayback, result);
       if (options.syncHistory !== false) {
         writeRoute(routeForCurrentView({
-          playerAssetKey: response.assetKey
+          playerAssetKey: nextPlayback.assetKey
         }), "push");
       }
     } catch (playbackError) {
@@ -974,7 +1019,9 @@ function CinemaApp() {
       const response = await getPlayback(assetKey);
       updateCurrentMemberCredits(response.memberCredits);
       setPlayback((currentPlayback) => (
-        currentPlayback?.assetKey === assetKey ? response : currentPlayback
+        currentPlayback?.assetKey === assetKey
+          ? { ...response, videoCodec: response.videoCodec ?? currentPlayback.videoCodec }
+          : currentPlayback
       ));
       rememberPlayback(response);
       return response;
@@ -2085,6 +2132,7 @@ function CinemaApp() {
     setTrackedItems([]);
     setCacheRequestAssetKeys([]);
     setDownloadRequestAssetKeys([]);
+    setDirectDownloadDialog(undefined);
     setCachedAssets([]);
     historyInitializedRef.current = false;
     setBrowseView(defaultBrowseView("recommended"));
@@ -2517,6 +2565,12 @@ function CinemaApp() {
         onQueryChange={setQuery}
         onSearch={(event) => void runDialogSearch(event)}
         onSelectResult={openSearchResult}
+      />
+      <DirectDownloadDialog
+        state={directDownloadDialog}
+        onOpenChange={(open) => {
+          if (!open) setDirectDownloadDialog(undefined);
+        }}
       />
       <ProfileDialog
         error={profileError}

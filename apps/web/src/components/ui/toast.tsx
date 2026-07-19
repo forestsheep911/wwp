@@ -76,7 +76,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         aria-live="polite"
         aria-relevant="additions"
-        className="pointer-events-none fixed inset-x-3 bottom-[calc(5.25rem+env(safe-area-inset-bottom)+100vh-100dvh)] z-[220] grid gap-2 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:w-[22rem]"
+        className="pointer-events-none fixed inset-x-3 bottom-[calc(var(--mobile-nav-height)+0.75rem+env(safe-area-inset-bottom))] z-[220] grid gap-2 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:w-[22rem]"
       >
         {toasts.map((toast) => (
           <div
