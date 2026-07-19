@@ -1,4 +1,4 @@
-import { AlertCircle, Download, Loader2 } from "lucide-react";
+import { AlertCircle, Download, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -16,8 +16,8 @@ export interface DirectDownloadDialogState {
   title: string;
   status: "loading" | "ready" | "error";
   downloadUrl?: string;
+  notionPageUrl?: string;
   expiresAt?: string;
-  autoAttempted?: boolean;
   error?: string;
 }
 
@@ -36,9 +36,9 @@ export function DirectDownloadDialog({
           <DialogDescription>
             {state?.status === "loading"
               ? copy.download.preparingDescription
-              : state?.autoAttempted
-                ? copy.download.desktopDescription
-                : copy.download.mobileDescription}
+              : state?.notionPageUrl
+                ? copy.download.notionDescription
+                : copy.download.directDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -68,16 +68,25 @@ export function DirectDownloadDialog({
             </div>
             <Button asChild className="w-full" size="lg">
               <a
-                href={state.downloadUrl}
-                download={directDownloadName(state.title)}
+                href={state.notionPageUrl ?? state.downloadUrl}
                 rel="noreferrer"
                 referrerPolicy="no-referrer"
               >
-                <Download className="h-5 w-5" />
-                {state.autoAttempted ? copy.download.retry : copy.download.start}
+                {state.notionPageUrl ? <ExternalLink className="h-5 w-5" /> : <Download className="h-5 w-5" />}
+                {state.notionPageUrl ? copy.download.openNotion : copy.download.openFile}
               </a>
             </Button>
-            <p className="text-xs leading-5 text-slate-500">{copy.download.androidFallback}</p>
+            {state.notionPageUrl ? (
+              <Button asChild className="w-full" size="lg" variant="outline">
+                <a href={state.downloadUrl} rel="noreferrer" referrerPolicy="no-referrer">
+                  <Download className="h-5 w-5" />
+                  {copy.download.openFile}
+                </a>
+              </Button>
+            ) : null}
+            <p className="text-xs leading-5 text-slate-500">
+              {state.notionPageUrl ? copy.download.notionInstructions : copy.download.directFallback}
+            </p>
           </div>
         ) : null}
       </DialogContent>

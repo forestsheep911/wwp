@@ -357,15 +357,16 @@ export const zhCN = {
   },
   download: {
     preparing: "正在准备下载",
-    ready: "下载链接已准备好",
+    ready: "下载入口已准备好",
     preparingDescription: "系统正在刷新 Notion 的临时文件地址，请稍候。",
     refreshingLink: "正在获取最新下载地址",
-    desktopDescription: "浏览器已经自动尝试下载；如果没有反应，请点击下面的按钮。",
-    mobileDescription: "Android 浏览器要求这一步由你亲自点击，点击后才会交给系统下载。",
+    notionDescription: "前往影片所在的 Notion 原页，使用浏览器自己的媒体下载功能。不会经过本站缓存。",
+    directDescription: "已取得 Notion 文件地址。浏览器可能下载，也可能按视频打开。",
     failed: "下载地址获取失败",
-    start: "开始下载",
-    retry: "没有开始？再次下载",
-    androidFallback: "如果浏览器改为打开视频，请使用浏览器菜单中的“下载”或“保存视频”。",
+    openNotion: "去 Notion 原页下载",
+    openFile: "直接打开文件",
+    notionInstructions: "进入 Notion 后，打开播放器右下角的菜单，选择“下载”。Android 全屏播放器可使用播放器或浏览器菜单保存视频。",
+    directFallback: "直接文件地址由浏览器自行处理；如果变成播放页面，请使用播放器菜单中的“下载”或“保存视频”。",
     expiresAt: (date: string) => `临时地址有效期至 ${date}`
   },
   help: {

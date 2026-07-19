@@ -93,7 +93,6 @@ import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { cacheErrorLabel } from "./cinema/format";
 import { copy } from "./cinema/i18n";
-import { browserRequiresConfirmedDownload, triggerDirectDownload } from "./cinema/download";
 import {
   mergeCacheAssetIntoResults,
   trackedCacheNeedsStatusRefresh,
@@ -876,18 +875,14 @@ function CinemaApp() {
     ));
     try {
       const response = await getDirectDownload(target);
-      const needsConfirmation = browserRequiresConfirmedDownload();
       setDirectDownloadDialog((current) => current?.assetKey === target.assetKey ? {
         assetKey: response.assetKey,
         title: response.title,
         status: "ready",
         downloadUrl: response.downloadUrl,
-        expiresAt: response.expiresAt,
-        autoAttempted: !needsConfirmation
+        notionPageUrl: response.notionPageUrl,
+        expiresAt: response.expiresAt
       } : current);
-      if (!needsConfirmation) {
-        triggerDirectDownload(response.downloadUrl, response.title);
-      }
     } catch (downloadError) {
       if (isUnauthorizedError(downloadError)) {
         setDirectDownloadDialog(undefined);

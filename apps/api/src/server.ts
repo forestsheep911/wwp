@@ -66,6 +66,7 @@ import { createSearchSource } from "./search-source.js";
 import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
+import { notionPublicPageUrl } from "./direct-download.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
@@ -2073,6 +2074,7 @@ async function handleDirectDownload(
     assetKey: result.assetKey,
     title: result.title,
     downloadUrl: result.sourceUrl,
+    notionPageUrl: notionPublicPageUrl(result.sourcePageId),
     expiresAt: downloadUrlExpiresAt(result.sourceUrl),
     sourceRefreshed: refreshed.sourceRefreshed
   };
