@@ -46,7 +46,7 @@ export function videoCompatibility(
       'video/mp4; codecs="hvc1"',
       'video/mp4; codecs="hev1"'
     ].some((mimeType) => Boolean(canPlayType(mimeType)));
-    return { codec: normalized, status: supported ? "supported" : "unsupported" };
+    return { codec: normalized, status: supported ? "supported" : "unknown" };
   }
 
   if (normalized === "h264") {

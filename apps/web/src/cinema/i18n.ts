@@ -350,9 +350,6 @@ export const zhCN = {
   player: {
     nowPlaying: "正在播放",
     back: "返回影院",
-    codecUnsupportedTitle: "当前设备可能无法播放这个版本",
-    codecUnsupportedDescription: "浏览器没有报告 HEVC / H.265 解码能力。为避免黑屏或反复加载，请返回并选择 H.264 版本，或换用支持 HEVC 的设备。",
-    codecBlockedToast: "已阻止可能无法播放的 HEVC 版本",
     decodeFailedTitle: "视频数据已到达，但设备无法解码",
     decodeFailedDescription: "这不是网速问题。浏览器收到视频后无法生成画面，请返回选择 H.264 / AVC 版本，或换用支持该编码的设备。",
     sourceUnsupportedTitle: "当前浏览器无法播放这个文件",

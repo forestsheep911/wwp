@@ -7,7 +7,6 @@ import { formatLongDate } from "../format";
 import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 import {
-  browserVideoCompatibility,
   fatalPlaybackFailure,
   type FatalPlaybackFailure
 } from "../media-compatibility";
@@ -180,17 +179,11 @@ export function Player({
 }) {
   const isMock = playback.playbackUrl.startsWith("mock://");
   const [runtimeFailure, setRuntimeFailure] = useState<FatalPlaybackFailure>();
-  const compatibility = browserVideoCompatibility(playback.videoCodec);
-  const codecUnsupported = compatibility.codec === "hevc" && compatibility.status === "unsupported";
-  const playbackBlocked = codecUnsupported || Boolean(runtimeFailure);
-  const blockedTitle = codecUnsupported
-    ? copy.player.codecUnsupportedTitle
-    : runtimeFailure === "decode"
+  const playbackBlocked = Boolean(runtimeFailure);
+  const blockedTitle = runtimeFailure === "decode"
       ? copy.player.decodeFailedTitle
       : copy.player.sourceUnsupportedTitle;
-  const blockedDescription = codecUnsupported
-    ? copy.player.codecUnsupportedDescription
-    : runtimeFailure === "decode"
+  const blockedDescription = runtimeFailure === "decode"
       ? copy.player.decodeFailedDescription
       : copy.player.sourceUnsupportedDescription;
 

@@ -43,8 +43,8 @@ test("finds the selected variant codec", () => {
   assert.equal(variantVideoCodec(result, "work-hevc"), "hevc");
 });
 
-test("blocks HEVC only when the browser explicitly reports no matching decoder", () => {
-  assert.equal(videoCompatibility("hevc", () => "").status, "unsupported");
+test("does not treat missing HEVC capability reports as terminal", () => {
+  assert.equal(videoCompatibility("hevc", () => "").status, "unknown");
   assert.equal(videoCompatibility("hevc", (mimeType) => mimeType.includes("hvc1") ? "probably" : "").status, "supported");
   assert.equal(videoCompatibility(undefined, () => "").status, "unknown");
 });

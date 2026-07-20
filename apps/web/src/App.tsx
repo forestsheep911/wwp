@@ -130,7 +130,7 @@ import {
 } from "./cinema/browse-state";
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
-import { browserVideoCompatibility, variantVideoCodec } from "./cinema/media-compatibility";
+import { variantVideoCodec } from "./cinema/media-compatibility";
 import type {
   AppTab,
   AppTheme,
@@ -786,20 +786,6 @@ function CinemaApp() {
 
   async function requestCreditAction(action: PendingCreditAction) {
     setError("");
-    if (action.kind === "playback") {
-      const codec = variantVideoCodec(action.result, action.assetKey);
-      const compatibility = browserVideoCompatibility(codec);
-      if (compatibility.codec === "hevc" && compatibility.status === "unsupported") {
-        setError(copy.player.codecUnsupportedDescription);
-        showToast({
-          title: copy.player.codecBlockedToast,
-          description: copy.player.codecUnsupportedDescription,
-          variant: "error"
-        });
-        return;
-      }
-    }
-
     try {
       const preview = await previewCreditAction(action);
       setPendingCreditAction(action);
