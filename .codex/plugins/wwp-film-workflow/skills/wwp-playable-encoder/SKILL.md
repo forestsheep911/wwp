@@ -12,6 +12,7 @@ Use this skill for playable outputs that people will watch directly. Source arch
 - Output directory: user-specified path, otherwise `E:\video_made`.
 - Container: MP4.
 - Codec direction: HEVC preferred unless the user asks otherwise or compatibility requires another choice.
+- HEVC/MP4 browser compatibility: explicitly mux the video track as `hvc1` (for ffmpeg, `-tag:v hvc1`). Do not ship an `hev1` sample entry as Android-browser compatible merely because the codec is HEVC and the MP4 is faststart.
 - Subtitle delivery: burn selected Chinese subtitles into the video for subtitle-dependent versions.
 - Mandarin-language films: prefer no hard subtitles unless subtitles are already burned into the source and cannot be separated.
 - Size target: keep Notion-bound playable MP4 files below the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but this workflow keeps the lower decimal-byte cap as upload safety margin. For high-bitrate manual-upload candidates, usually aim for about 4.7-4.9GB, never a 6GB upload candidate.
@@ -27,7 +28,7 @@ Use this skill for playable outputs that people will watch directly. Source arch
 6. Before starting a long encode, prepare the Notion destination through `wwp-notion-publisher` when the result may be API-uploaded or manually uploaded. Record the movie spec page ID, or the series spec and episode page IDs, so finished files have a precise upload target.
 7. Use `../../scripts/plan-stream-variants.mjs` when combining hard subtitles, soft subtitles, Mandarin/Cantonese/original/commentary audio, or director cuts.
 8. Generate QC artifacts, including contact sheets when helpful.
-9. Probe final files and preserve the JSON/manifest for Media Assets.
+9. Probe final files and preserve the JSON/manifest for Media Assets. For HEVC/MP4, require `codec_tag_string=hvc1`; an `hev1` result must be losslessly remuxed and re-probed before Android-browser delivery.
 10. Verify the final byte size is below the Notion playable upload limit before calling it upload-ready.
 11. Import the final QC manifest into the local ledger with `node tools/film-ledger.mjs import-production-manifest --production-manifest <manifest.json> --json`. A local encode is not removed from the workflow at this point: its ledger entry remains until the pre-created Notion structure, uploaded media block, and Media Assets row are all verified.
 
@@ -45,4 +46,4 @@ When starting `ffmpeg.exe` in the background from PowerShell, pass a single expl
 
 ## Completion Gate
 
-Before handing off to Notion, report final path, exact byte size, whether it is below the Notion playable upload limit, target Notion page ID(s), ffprobe-derived metadata, selected subtitle/audio tracks, QC result, and any known limitations.
+Before handing off to Notion, report final path, exact byte size, whether it is below the Notion playable upload limit, target Notion page ID(s), ffprobe-derived metadata (including the HEVC `codec_tag_string`), selected subtitle/audio tracks, QC result, and any known limitations.

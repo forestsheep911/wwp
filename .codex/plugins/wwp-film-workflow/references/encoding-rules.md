@@ -5,6 +5,7 @@
 - Container: MP4.
 - When writing to a temporary path that does not end in `.mp4`, pass `-f mp4` explicitly or use a temp name that preserves the `.mp4` extension.
 - Codec direction: HEVC first unless the user or compatibility requirement says otherwise.
+- For HEVC in MP4, write the video sample entry as `hvc1`, not `hev1`. In ffmpeg commands, set `-tag:v hvc1` explicitly; do not assume the encoder or muxer default is Android-browser compatible.
 - Playable output directory: user-specified, otherwise `E:\video_made`.
 - Subtitle-dependent versions: burn the selected Chinese subtitle into the video by default.
 - Mandarin-language films: prefer no hard subtitles unless the source already has unavoidable hard subtitles.
@@ -48,6 +49,9 @@ Report the full available subtitle set and the subset produced. More subtitle va
 ## QC
 
 - Probe source and final files with `ffprobe`.
+- For every HEVC/MP4 final, inspect the video stream's `codec_tag_string`. Treat `hvc1` as the WWP browser-playback default. Treat `hev1` as a compatibility failure for Android-browser delivery even when the file is faststart, Range requests work, traffic is flowing, and desktop software can decode the first frame.
+- The observed Android failure signature for an `hev1` MP4 is a normally rendered player with controls and a play button, sustained network traffic, but no decoded picture. A known-good `hvc1` HEVC file playing on the same device is strong evidence that the problem is the MP4 sample-entry tag rather than Artplayer, bandwidth, Blob Range support, or HEVC support in general.
+- Existing `hev1` MP4 files normally do not need a full video re-encode. Make a lossless remux with `-map 0 -c copy -tag:v hvc1 -movflags +faststart`, then probe the result and verify Android-browser playback. This still rewrites the MP4 file, so preserve the source until the remux passes QC.
 - Dolby Vision Profile 5 sources are not final-safe by default. Treat Profile 5 as blocked for normal playable production unless the user explicitly chooses a compatible tone-mapping/HDR strategy or a different source is unavailable and accepted.
 - For HDR/DV/color uncertainty, subtitle timing uncertainty, or PGS subtitles, create a short sample and visually inspect real subtitle timestamps.
 - When testing an external subtitle burn with `subtitles=...`, do not prove sync using input-side `-ss` before `-i` unless the subtitle file is trimmed by the same offset. Input-side seeking can make a 00:00 subtitle appear over a later video segment and create a false-positive smoke test. Prefer full-file timestamp checks or output-side seeking after `-i`, then capture frames at known subtitle event times from the extracted subtitle file.
