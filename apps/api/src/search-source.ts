@@ -27,7 +27,10 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
     summary: variant.summary,
-    metadata: result.metadata
+    metadata: {
+      ...result.metadata,
+      ...variant.metadata
+    }
   };
 }
 

@@ -583,7 +583,6 @@ export interface DirectDownloadResponse {
   assetKey: string;
   title: string;
   downloadUrl: string;
-  notionPageUrl?: string;
   expiresAt?: string;
   sourceRefreshed: boolean;
 }

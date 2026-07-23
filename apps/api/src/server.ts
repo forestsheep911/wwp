@@ -66,7 +66,6 @@ import { createSearchSource } from "./search-source.js";
 import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
-import { notionPublicPageUrl } from "./direct-download.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
@@ -554,7 +553,10 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
     summary: variant.summary,
-    metadata: result.metadata
+    metadata: {
+      ...result.metadata,
+      ...variant.metadata
+    }
   };
 }
 
@@ -1148,6 +1150,21 @@ async function refreshResultSource(
       });
       return {
         result,
+        sourceRefreshed: false
+      };
+    }
+
+    if (downloadUrlIsExpired(refreshed.sourceUrl)) {
+      logWarn(`${options.logPrefix}.source_refresh_expired_url`, {
+        requestId: context.requestId,
+        assetKey: result.assetKey,
+        refreshedAssetKey: refreshed.assetKey,
+        sourcePageId: refreshed.sourcePageId,
+        expiresAt: downloadUrlExpiresAt(refreshed.sourceUrl),
+        durationMs: durationMs(startedAt)
+      });
+      return {
+        result: refreshed,
         sourceRefreshed: false
       };
     }
@@ -2028,9 +2045,18 @@ function amzDate(value: string | null) {
 function downloadUrlExpiresAt(downloadUrl: string) {
   try {
     const url = new URL(downloadUrl);
+    const signedPrefix = "/signed/";
+    if (url.pathname.startsWith(signedPrefix)) {
+      const nestedUrl = decodeURIComponent(url.pathname.slice(signedPrefix.length));
+      if (nestedUrl && nestedUrl !== downloadUrl) {
+        return downloadUrlExpiresAt(nestedUrl);
+      }
+    }
+
     const explicitExpiry =
       unixOrIsoDate(url.searchParams.get("expiryTime")) ??
       unixOrIsoDate(url.searchParams.get("expiration")) ??
+      unixOrIsoDate(url.searchParams.get("expirationTimestamp")) ??
       unixOrIsoDate(url.searchParams.get("Expires")) ??
       unixOrIsoDate(url.searchParams.get("expires"));
     if (explicitExpiry) {
@@ -2047,6 +2073,16 @@ function downloadUrlExpiresAt(downloadUrl: string) {
   }
 
   return undefined;
+}
+
+function downloadUrlIsExpired(downloadUrl: string, skewMs = 60_000) {
+  const expiresAt = downloadUrlExpiresAt(downloadUrl);
+  if (!expiresAt) {
+    return false;
+  }
+
+  const timestamp = new Date(expiresAt).getTime();
+  return Number.isFinite(timestamp) && timestamp <= Date.now() + skewMs;
 }
 
 async function handleDirectDownload(
@@ -2087,12 +2123,26 @@ async function handleDirectDownload(
     return;
   }
 
+  const expiresAt = downloadUrlExpiresAt(result.sourceUrl);
+  if (downloadUrlIsExpired(result.sourceUrl)) {
+    logWarn("api.direct_download.expired_url", {
+      requestId: context.requestId,
+      assetKey: result.assetKey,
+      memberId: identity.memberId,
+      role: identity.role,
+      sourceRefreshed: refreshed.sourceRefreshed,
+      expiresAt,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 409, { error: "下载地址已过期，系统暂时没有刷新到最新地址。请稍后再试。" });
+    return;
+  }
+
   const payload: DirectDownloadResponse = {
     assetKey: result.assetKey,
     title: result.title,
     downloadUrl: result.sourceUrl,
-    notionPageUrl: notionPublicPageUrl(result.sourcePageId),
-    expiresAt: downloadUrlExpiresAt(result.sourceUrl),
+    expiresAt,
     sourceRefreshed: refreshed.sourceRefreshed
   };
 

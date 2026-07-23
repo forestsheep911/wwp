@@ -96,6 +96,7 @@ const defaultOptions: ParseOptions = {
   scanPageParseRetryDelayMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_RETRY_DELAY_MS ?? 2000)
 };
 
+const defaultNotionPublicSiteUrl = "https://wwpdw.notion.site";
 const urlPattern = /https?:\/\/[^\s<>"']+/gi;
 const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
@@ -167,6 +168,7 @@ const imageFilePattern = /\.(webp|png|jpe?g|gif|avif)(?:[?#].*)?$/i;
 const nonPlayableFilePattern = /\.(?:7z|zip|rar|tar|gz|bz2|xz|srt|ass|ssa|nfo|txt|pdf)(?:\.\d+)?(?:[?#].*)?$/i;
 const notionAssetPageIdPattern =
   /^notion-page-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})(?:-|$)/;
+const notionMediaAssetPageIdPattern = /-media-asset-([0-9a-fA-F]{32})(?:-|$)/;
 
 function asRecord(value: unknown): JsonRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -186,6 +188,43 @@ function asString(value: unknown) {
 
 function normalizeUrl(url: string) {
   return url.trim().replace(/[),.;\]]+$/g, "");
+}
+
+function notionPublicSiteUrl() {
+  try {
+    const url = new URL(process.env.NOTION_PUBLIC_SITE_URL ?? defaultNotionPublicSiteUrl);
+    return url.protocol === "https:" ? url : new URL(defaultNotionPublicSiteUrl);
+  } catch {
+    return new URL(defaultNotionPublicSiteUrl);
+  }
+}
+
+function spaceIdFromSignedFileUrl(url: string) {
+  try {
+    return new URL(url).pathname.split("/").filter(Boolean)[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function notionSignedFileUrl(rawUrl: string, input: { blockId: string; fileName?: string; download?: boolean }) {
+  const spaceId = spaceIdFromSignedFileUrl(rawUrl);
+  const baseUrl = notionPublicSiteUrl();
+  baseUrl.pathname = `/signed/${encodeURIComponent(rawUrl)}`;
+  baseUrl.search = "";
+  baseUrl.hash = "";
+  baseUrl.searchParams.set("table", "block");
+  baseUrl.searchParams.set("id", input.blockId);
+  if (spaceId) {
+    baseUrl.searchParams.set("spaceId", spaceId);
+  }
+  if (input.fileName) {
+    baseUrl.searchParams.set("name", input.fileName);
+  }
+  if (input.download) {
+    baseUrl.searchParams.set("download", "true");
+  }
+  return baseUrl.toString();
 }
 
 function looksDirect(url: string) {
@@ -285,7 +324,23 @@ function mediaUrlFromObject(value: unknown) {
 }
 
 function fileNameFromObject(value: unknown) {
-  return asString(asRecord(value)?.name);
+  const directName = asString(asRecord(value)?.name);
+  if (directName) {
+    return directName;
+  }
+
+  const url = mediaUrlFromObject(value);
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(url);
+    const segment = parsed.pathname.split("/").filter(Boolean).pop();
+    return segment ? decodeURIComponent(segment) : "";
+  } catch {
+    return "";
+  }
 }
 
 function collectPropertyCandidates(
@@ -1333,12 +1388,22 @@ function collectBlockCandidates(
 
   if (type === "video") {
     const label = cleanText(plainTextFromRichText(payload.caption)) || fileNameFromObject(payload) || "video";
-    pushCandidate(candidates, mediaUrlFromObject(payload.video ?? payload), label, 90, "video");
+    const rawUrl = mediaUrlFromObject(payload.video ?? payload);
+    const blockId = asString(block.id);
+    const url = rawUrl && blockId && notionHostedFilePattern.test(rawUrl)
+      ? notionSignedFileUrl(rawUrl, { blockId, fileName: label, download: true })
+      : rawUrl;
+    pushCandidate(candidates, url, label, 90, "video");
   }
 
   if (type === "file" || type === "audio" || type === "pdf") {
     const label = cleanText(plainTextFromRichText(payload.caption)) || fileNameFromObject(payload) || type;
-    pushCandidate(candidates, mediaUrlFromObject(payload), label, 76, "file");
+    const rawUrl = mediaUrlFromObject(payload);
+    const blockId = asString(block.id);
+    const url = rawUrl && blockId && notionHostedFilePattern.test(rawUrl)
+      ? notionSignedFileUrl(rawUrl, { blockId, fileName: label, download: true })
+      : rawUrl;
+    pushCandidate(candidates, url, label, 76, "file");
   }
 
   if (type === "embed" || type === "bookmark" || type === "link_preview") {
@@ -1402,6 +1467,10 @@ function pageIdFromAssetKey(assetKey: string) {
   return assetKey.match(notionAssetPageIdPattern)?.[1];
 }
 
+function mediaAssetPageIdFromAssetKey(assetKey: string) {
+  return assetKey.match(notionMediaAssetPageIdPattern)?.[1];
+}
+
 function variantToSearchResult(result: SearchResult, variant: MediaVariant): SearchResult {
   return {
     assetKey: variant.assetKey,
@@ -1413,7 +1482,10 @@ function variantToSearchResult(result: SearchResult, variant: MediaVariant): Sea
     durationLabel: result.durationLabel,
     updatedAt: result.updatedAt,
     summary: variant.summary,
-    metadata: result.metadata
+    metadata: {
+      ...result.metadata,
+      ...variant.metadata
+    }
   };
 }
 
@@ -1753,12 +1825,20 @@ export class NotionSearchSource {
     mediaBlockId?: string;
     mediaAssetPageId?: string;
   }): Promise<SearchResult | undefined> {
+    const mediaAssetPageId = input.mediaAssetPageId ?? mediaAssetPageIdFromAssetKey(input.assetKey);
+    if (mediaAssetPageId) {
+      const refreshed = await this.resultFromMediaAssetPageId(mediaAssetPageId, input);
+      if (refreshed) {
+        return refreshed;
+      }
+    }
+
     if (input.mediaBlockId) {
-      const candidate = await this.mediaCandidateFromBlockId(input.mediaBlockId);
+      const candidate = await this.mediaCandidateFromBlockId(input.mediaBlockId, input.sourcePageId);
       if (candidate?.url && isLikelyPlayableCandidate(candidate)) {
         const metadata: MediaVariantMetadata = {
           mediaBlockId: input.mediaBlockId,
-          mediaAssetPageId: input.mediaAssetPageId,
+          mediaAssetPageId,
           structuredSource: "media_assets"
         };
         return {
@@ -1800,6 +1880,40 @@ export class NotionSearchSource {
 
     const fallback = fallbackResultForPage(result, pageId, input.title);
     return fallback ? { ...fallback, assetKey: input.assetKey } : undefined;
+  }
+
+  private async resultFromMediaAssetPageId(
+    mediaAssetPageId: string,
+    input: {
+      assetKey: string;
+      sourcePageId?: string;
+      title?: string;
+      sourceBreadcrumb?: string[];
+    }
+  ) {
+    try {
+      const page = await this.notion.pages.retrieve({ page_id: mediaAssetPageId });
+      const workTitle = input.sourceBreadcrumb?.[0] ?? input.title ?? input.assetKey;
+      const variant = await this.mediaAssetPageToVariant(page as JsonRecord, 0, workTitle, input.sourcePageId);
+      if (!variant) {
+        return undefined;
+      }
+
+      return {
+        assetKey: input.assetKey,
+        title: input.title ?? variant.sourceBreadcrumb?.join(" / ") ?? variant.label,
+        source: "Notion library",
+        sourceUrl: variant.sourceUrl,
+        sourcePageId: variant.sourcePageId ?? input.sourcePageId,
+        sourceBreadcrumb: variant.sourceBreadcrumb ?? input.sourceBreadcrumb,
+        durationLabel: "--",
+        updatedAt: asString((page as JsonRecord).last_edited_time) || new Date().toISOString(),
+        summary: variant.summary,
+        metadata: variant.metadata
+      } satisfies SearchResult;
+    } catch {
+      return undefined;
+    }
   }
 
   private hasLibraryConfig() {
@@ -2055,12 +2169,60 @@ export class NotionSearchSource {
     }
   }
 
-  private async mediaCandidateFromBlockId(blockId: string | undefined) {
+  private async mediaCandidateFromBlockFileDownloadUrl(blockId: string, pageBlockId: string | undefined) {
+    if (!pageBlockId) {
+      return undefined;
+    }
+
+    try {
+      const apiUrl = new URL("/api/v3/getBlockFileDownloadUrl", notionPublicSiteUrl());
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          blockId,
+          pageBlockId,
+          meta: {
+            name: "downloadSource"
+          }
+        }),
+        signal: AbortSignal.timeout(this.options.requestTimeoutMs)
+      });
+      if (!response.ok) {
+        return undefined;
+      }
+
+      const payload = await response.json() as JsonRecord;
+      const rawUrl = asString(payload.url);
+      if (!rawUrl) {
+        return undefined;
+      }
+      const fileName = asString(payload.fileName);
+      return {
+        url: notionSignedFileUrl(rawUrl, { blockId, fileName, download: true }),
+        label: fileName || "downloadSource",
+        score: mediaScore(rawUrl, 100),
+        kind: "file" as const
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async mediaCandidateFromBlockId(blockId: string | undefined, pageBlockId?: string) {
     if (!blockId) {
       return undefined;
     }
 
     try {
+      const downloadCandidate = await this.mediaCandidateFromBlockFileDownloadUrl(blockId, pageBlockId);
+      if (downloadCandidate) {
+        return downloadCandidate;
+      }
+
       const block = await this.notion.blocks.retrieve({ block_id: blockId });
       const candidates: MediaCandidate[] = [];
       collectBlockCandidates(block as JsonRecord, candidates);
@@ -2073,7 +2235,8 @@ export class NotionSearchSource {
   private async mediaAssetPageToVariant(
     page: JsonRecord,
     index: number,
-    workTitle: string
+    workTitle: string,
+    fallbackSourcePageId?: string
   ): Promise<MediaVariant | undefined> {
     if (page.archived === true || page.in_trash === true) {
       return undefined;
@@ -2086,10 +2249,10 @@ export class NotionSearchSource {
       return undefined;
     }
 
-    const sourcePageId = textFromNamedProperty(properties, sourcePageIdPropertyPattern, 120);
+    const sourcePageId = textFromNamedProperty(properties, sourcePageIdPropertyPattern, 120) ?? fallbackSourcePageId;
     const mediaBlockId = metadata.mediaBlockId;
     const label = metadata.sourceLabel || titleFromProperties(properties);
-    const blockCandidate = await this.mediaCandidateFromBlockId(mediaBlockId);
+    const blockCandidate = await this.mediaCandidateFromBlockId(mediaBlockId, sourcePageId);
     const assetUrl = urlFromNamedProperty(properties, assetUrlPropertyPattern);
     const candidate = blockCandidate ?? (
       assetUrl
@@ -2126,7 +2289,7 @@ export class NotionSearchSource {
     const variants: MediaVariant[] = [];
 
     for (const page of pages) {
-      const variant = await this.mediaAssetPageToVariant(page, variants.length, workTitle);
+      const variant = await this.mediaAssetPageToVariant(page, variants.length, workTitle, workPageId);
       if (!variant) {
         continue;
       }

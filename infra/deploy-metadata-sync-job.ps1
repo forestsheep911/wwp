@@ -33,6 +33,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$DefaultNotionLibraryDatabaseId = "f47ef878-8acb-4e12-b604-011e95fb1738"
+$DefaultNotionMediaAssetsDatabaseId = "9bacb469-eff7-4c92-80bd-8db16838f2e2"
+
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }
@@ -92,6 +95,14 @@ if (-not $NotionMediaAssetsDatabaseId) {
 
 if (-not $NotionMediaAssetsDataSourceId) {
     $NotionMediaAssetsDataSourceId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
+}
+
+if (-not $NotionLibraryDatabaseId -and -not $NotionLibraryDataSourceId) {
+    $NotionLibraryDatabaseId = $DefaultNotionLibraryDatabaseId
+}
+
+if (-not $NotionMediaAssetsDatabaseId -and -not $NotionMediaAssetsDataSourceId) {
+    $NotionMediaAssetsDatabaseId = $DefaultNotionMediaAssetsDatabaseId
 }
 
 $loginServer = & $AzCli acr show `

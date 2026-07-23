@@ -131,6 +131,7 @@ import {
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
 import { variantVideoCodec } from "./cinema/media-compatibility";
+import { directDownloadUrl, directPlaybackUrl, triggerDirectDownload } from "./cinema/download";
 import type {
   AppTab,
   AppTheme,
@@ -851,10 +852,23 @@ function CinemaApp() {
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToCacheTarget(result, variant);
     setError("");
+    const downloadWindow = window.open("about:blank", "_blank");
+    if (downloadWindow) {
+      downloadWindow.opener = null;
+    }
+    await requestDirectDownload(target, { autoDownload: true, downloadWindow });
+  }
+
+  async function requestDirectDownload(
+    target: SearchResult,
+    options: { autoDownload: boolean; downloadWindow?: Window | null }
+  ) {
     setDirectDownloadDialog({
       assetKey: target.assetKey,
       title: target.title,
-      status: "loading"
+      status: "loading",
+      target,
+      autoDownload: options.autoDownload
     });
     setDownloadRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
@@ -866,10 +880,21 @@ function CinemaApp() {
         title: response.title,
         status: "ready",
         downloadUrl: response.downloadUrl,
-        notionPageUrl: response.notionPageUrl,
-        expiresAt: response.expiresAt
+        expiresAt: response.expiresAt,
+        target,
+        autoDownload: false
       } : current);
+      if (options.autoDownload) {
+        const downloadUrl = directDownloadUrl(response.downloadUrl, response.title);
+        if (options.downloadWindow) {
+          options.downloadWindow.location.replace(downloadUrl);
+        } else {
+          triggerDirectDownload(response.downloadUrl, response.title);
+        }
+      }
+      return response;
     } catch (downloadError) {
+      options.downloadWindow?.close();
       if (isUnauthorizedError(downloadError)) {
         setDirectDownloadDialog(undefined);
         handleRequestError(downloadError, copy.fallbackErrors.directDownload);
@@ -877,11 +902,47 @@ function CinemaApp() {
         setDirectDownloadDialog((current) => current?.assetKey === target.assetKey ? {
           ...current,
           status: "error",
+          target,
+          autoDownload: options.autoDownload,
           error: errorMessage(downloadError, copy.fallbackErrors.directDownload)
         } : current);
       }
+      return undefined;
     } finally {
       setDownloadRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
+    }
+  }
+
+  async function redownloadCurrentDialog() {
+    const target = directDownloadDialog?.target;
+    if (!target) return;
+    setError("");
+    const downloadWindow = window.open("about:blank", "_blank");
+    if (downloadWindow) {
+      downloadWindow.opener = null;
+    }
+    await requestDirectDownload(target, { autoDownload: true, downloadWindow });
+  }
+
+  async function playbackCurrentDialog() {
+    const target = directDownloadDialog?.target;
+    if (!target) return;
+    setError("");
+    const playbackWindow = window.open("about:blank", "_blank");
+    if (playbackWindow) {
+      playbackWindow.opener = null;
+    }
+    const response = await requestDirectDownload(target, { autoDownload: false });
+    if (!response) {
+      playbackWindow?.close();
+      return;
+    }
+
+    const playbackUrl = directPlaybackUrl(response.downloadUrl);
+    if (playbackWindow) {
+      playbackWindow.location.replace(playbackUrl);
+    } else {
+      window.open(playbackUrl, "_blank", "noopener,noreferrer");
     }
   }
 
@@ -2552,6 +2613,8 @@ function CinemaApp() {
         onOpenChange={(open) => {
           if (!open) setDirectDownloadDialog(undefined);
         }}
+        onDownloadAgain={() => void redownloadCurrentDialog()}
+        onPlayback={() => void playbackCurrentDialog()}
       />
       <ProfileDialog
         error={profileError}
