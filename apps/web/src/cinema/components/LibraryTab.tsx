@@ -575,8 +575,49 @@ function LibraryHome({
 
   return (
     <section className="grid min-w-0 gap-4">
-      <div className="max-w-full overflow-x-clip">
-        <div className="scrollbar-none flex max-w-full flex-wrap gap-2 overflow-visible rounded-xl border border-slate-800 bg-slate-950 p-1 sm:max-w-none sm:flex-nowrap sm:overflow-x-auto sm:overscroll-x-contain sm:rounded-md">
+      <nav
+        aria-label="首页内容排序"
+        className="scrollbar-none flex max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3 sm:hidden"
+      >
+        {channelViews.map((view) => {
+          const Icon = view.icon;
+          const active = activeSortView === view.id;
+          return (
+            <Button
+              className={`min-h-11 flex-none snap-start rounded-full border px-4 ${
+                active
+                  ? "border-emerald-300/35 bg-emerald-300 text-slate-950"
+                  : "border-slate-800 bg-slate-950 text-slate-300"
+              }`}
+              key={view.id}
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (view.id === "lucky") {
+                  setActiveView(view.id);
+                  setViewSeed(randomBrowseSeed());
+                  onBrowseViewChange(view.id, { refresh: true });
+                  return;
+                }
+                if (!active) {
+                  setActiveView(view.id);
+                  setViewSeed(randomBrowseSeed());
+                  onBrowseViewChange(view.id);
+                }
+              }}
+              aria-current={active ? "page" : undefined}
+              title={view.detail}
+            >
+              <Icon className="h-4 w-4" />
+              {view.label}
+            </Button>
+          );
+        })}
+      </nav>
+
+      <div className="hidden max-w-full overflow-x-clip sm:block">
+        <div className="scrollbar-none flex max-w-none flex-nowrap gap-2 overflow-x-auto overscroll-x-contain rounded-md border border-slate-800 bg-slate-950 p-1">
           {channelViews.map((view) => {
             const Icon = view.icon;
             if (view.id === "lucky") {
@@ -1810,7 +1851,7 @@ function PosterActions({
   className?: string;
 }) {
   return (
-    <div className={`absolute right-2 top-2 z-10 flex flex-col gap-2 opacity-100 transition-opacity duration-150 sm:pointer-events-none sm:gap-1.5 sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100 ${className}`}>
+    <div className={`absolute right-2 top-2 z-10 hidden flex-col gap-1.5 opacity-0 transition-opacity duration-150 sm:pointer-events-none sm:flex sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100 ${className}`}>
       <FavoriteButton
         active={favorite}
         className="h-11 w-11 border-slate-600/70 bg-slate-950/78 shadow-lg shadow-black/30 backdrop-blur hover:bg-slate-900/95 sm:h-8 sm:w-8"
@@ -2127,10 +2168,29 @@ function MovieCard({
         ) : null}
       </div>
 
-      <div className="col-span-2 sm:hidden">
-        <Button className="w-full justify-between" type="button" variant="secondary" onClick={() => onOpenDetail(result)}>
-          查看详情与版本
-          <ChevronRight className="h-4 w-4" />
+      <div className="col-span-2 grid grid-cols-3 gap-2 sm:hidden">
+        <Button className="min-h-11 gap-1 px-2 text-xs" type="button" variant="secondary" onClick={() => onOpenDetail(result)}>
+          查看版本
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+        <Button className="min-h-11 gap-1 px-2 text-xs" type="button" variant="outline" onClick={() => onSummarize(result)}>
+          <Sparkles className="h-3.5 w-3.5" />
+          AI简介
+        </Button>
+        <Button
+          className={`min-h-11 gap-1 px-2 text-xs ${
+            favoriteAssetKeys.has(result.assetKey)
+              ? "border-amber-300/40 bg-amber-300/10 text-amber-200"
+              : ""
+          }`}
+          type="button"
+          variant="outline"
+          onClick={() => onToggleFavorite(result)}
+        >
+          <Star className={`h-3.5 w-3.5 ${
+            favoriteAssetKeys.has(result.assetKey) ? "fill-amber-300 text-amber-300" : ""
+          }`} />
+          {favoriteAssetKeys.has(result.assetKey) ? "已收藏" : "收藏"}
         </Button>
       </div>
 
