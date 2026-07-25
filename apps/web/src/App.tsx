@@ -76,6 +76,7 @@ import { CinemaLayout } from "./cinema/components/CinemaLayout";
 import { CreditConfirmDialog } from "./cinema/components/CreditConfirmDialog";
 import { CreditUsageDialog } from "./cinema/components/CreditUsageDialog";
 import { DirectDownloadDialog, type DirectDownloadDialogState } from "./cinema/components/DirectDownloadDialog";
+import { DiscoverSearchHero } from "./cinema/components/DiscoverSearchHero";
 import { FavoritesPanel } from "./cinema/components/FavoritesPanel";
 import { ForumPanel } from "./cinema/components/ForumPanel";
 import { HelpPanel } from "./cinema/components/HelpPanel";
@@ -86,6 +87,7 @@ import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
+import { ProfilePage } from "./cinema/components/ProfilePage";
 import { SearchDialog } from "./cinema/components/SearchDialog";
 import { ServiceWakeDialog } from "./cinema/components/ServiceWakeDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
@@ -2766,23 +2768,26 @@ function CinemaApp() {
           />
         )}
         watchlist={(
-          <WatchlistPanel
-            browseHasMore={browseHasMore}
-            browseLoading={browseLoading}
-            browseLoadingMore={browseLoadingMore}
-            browseResults={browseResults}
-            cachedAssets={cachedAssets}
-            creditPolicy={creditPolicy}
-            favoriteAssetKeys={favoriteAssetKeys}
-            historyItems={history}
-            onLoadMore={() => void refreshBrowseAssets({ append: true, mode: "paged", limit: 100, view: "newGood" })}
-            onRefresh={() => {
-              void refreshCachedAssets();
-              void refreshBrowseAssets({ mode: "paged", limit: 100, view: "newGood" });
-            }}
-            onToggleFavorite={toggleFavorite}
-            onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
-          />
+          <div className="grid gap-4">
+            <DiscoverSearchHero onOpenSearch={openSearchDialog} />
+            <WatchlistPanel
+              browseHasMore={browseHasMore}
+              browseLoading={browseLoading}
+              browseLoadingMore={browseLoadingMore}
+              browseResults={browseResults}
+              cachedAssets={cachedAssets}
+              creditPolicy={creditPolicy}
+              favoriteAssetKeys={favoriteAssetKeys}
+              historyItems={history}
+              onLoadMore={() => void refreshBrowseAssets({ append: true, mode: "paged", limit: 100, view: "newGood" })}
+              onRefresh={() => {
+                void refreshCachedAssets();
+                void refreshBrowseAssets({ mode: "paged", limit: 100, view: "newGood" });
+              }}
+              onToggleFavorite={toggleFavorite}
+              onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
+            />
+          </div>
         )}
         nowPlaying={<NowPlayingPanel />}
         forum={(
@@ -2809,6 +2814,31 @@ function CinemaApp() {
           />
         )}
         help={<HelpPanel />}
+        profile={(
+          <ProfilePage
+            accountDetail={accountDetail}
+            accountLabel={accountLabel}
+            canChangePasscode={role === "member"}
+            canRequestMovie={role === "member" || role === "admin"}
+            noticeUnreadCount={noticeUnreadCount}
+            showAdmin={showAdmin}
+            theme={theme}
+            onLock={lockCinema}
+            onOpenAdmin={() => navigateToTab("admin")}
+            onOpenCached={() => navigateToTab("cached")}
+            onOpenFavorites={() => navigateToTab("favorites")}
+            onOpenForum={() => navigateToTab("forum")}
+            onOpenHelp={() => navigateToTab("help")}
+            onOpenHistory={() => navigateToTab("history")}
+            onOpenMovieRequest={openMovieRequestDialog}
+            onOpenNotices={openNoticeInbox}
+            onOpenNowPlaying={() => navigateToTab("nowPlaying")}
+            onOpenProfile={() => setProfileOpen(true)}
+            onOpenSpending={() => void openOwnCreditUsage()}
+            onOpenTasks={() => navigateToTab("tasks")}
+            onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
+          />
+        )}
         tasks={(
           <CacheTasksPanel
             cachedAssets={cachedAssets}

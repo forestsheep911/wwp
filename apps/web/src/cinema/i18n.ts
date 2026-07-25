@@ -80,7 +80,7 @@ export const zhCN = {
     tasks: "缓存任务",
     history: "播放历史",
     favorites: "我的收藏",
-    watchlist: "今晚看什么",
+    watchlist: "发现影片",
     nowPlaying: "热映观察",
     admin: "管理台",
     themeLight: "亮色",
@@ -222,8 +222,8 @@ export const zhCN = {
     }
   },
   watchlist: {
-    title: "今晚看什么",
-    description: "像视频网站一样按类型、地区和年代缩小范围，先把选择变少一点。",
+    title: "发现影片",
+    description: "按类型、地区、年代和可播放状态逐步缩小范围，找到真正想看的内容。",
     available: (count: number) => `${count} 部影片`,
     matched: (count: number) => `筛出 ${count} 部`,
     cachedReady: (count: number) => `${count} 部已缓存`,

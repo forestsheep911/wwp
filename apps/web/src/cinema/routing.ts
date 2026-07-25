@@ -22,6 +22,7 @@ export const routeTabs: AppTab[] = [
   "watchlist",
   "nowPlaying",
   "help",
+  "profile",
   "admin",
   "tasks",
   "forum"

@@ -2,10 +2,14 @@ import { useState, type ReactNode } from "react";
 import {
   Bell,
   ChevronDown,
+  CircleUserRound,
   Clapperboard,
+  Compass,
   Flame,
   HelpCircle,
   History,
+  House,
+  Library,
   ListChecks,
   LogOut,
   MessageCircle,
@@ -57,6 +61,7 @@ interface CinemaLayoutProps {
   watchlist: ReactNode;
   nowPlaying: ReactNode;
   help: ReactNode;
+  profile: ReactNode;
   tasks?: ReactNode;
   admin?: ReactNode;
   showAdmin: boolean;
@@ -96,6 +101,7 @@ export function CinemaLayout({
   watchlist,
   nowPlaying,
   help,
+  profile,
   tasks,
   admin,
   showAdmin,
@@ -139,7 +145,7 @@ export function CinemaLayout({
 
             {activeTab === "library" ? <nav
               aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 -mx-1 flex min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
+              className="scrollbar-none order-3 col-span-2 -mx-1 hidden min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 sm:flex lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
             >
               {browseChannels.map((channel) => {
                 const active = activeTab === "library" && activeBrowseChannel === channel.id;
@@ -213,29 +219,31 @@ export function CinemaLayout({
                   <span className="sr-only">{copy.layout.spending}</span>
                 </Button>
               ) : null}
-              <AccountMenu
-                open={accountMenuOpen}
-                accountDetail={accountDetail}
-                accountLabel={accountLabel}
-                canChangePasscode={canChangePasscode}
-                canRequestMovie={canRequestMovie}
-                noticeUnreadCount={noticeUnreadCount}
-                showAdmin={showAdmin}
-                onOpenAdmin={() => onActiveTabChange("admin")}
-                onOpenFavorites={onOpenFavorites}
-                onOpenForum={onOpenForum}
-                onOpenHelp={onOpenHelp}
-                onOpenHistory={onOpenHistory}
-                onOpenWatchlist={onOpenWatchlist}
-                onOpenNowPlaying={onOpenNowPlaying}
-                onOpenMovieRequest={onOpenMovieRequest}
-                onOpenNotices={onOpenNotices}
-                onOpenProfile={onOpenProfile}
-                onOpenSpending={onOpenSpending}
-                onOpenTasks={onOpenTasks}
-                onLock={onLock}
-                onOpenChange={setAccountMenuOpen}
-              />
+              <div className="hidden sm:block">
+                <AccountMenu
+                  open={accountMenuOpen}
+                  accountDetail={accountDetail}
+                  accountLabel={accountLabel}
+                  canChangePasscode={canChangePasscode}
+                  canRequestMovie={canRequestMovie}
+                  noticeUnreadCount={noticeUnreadCount}
+                  showAdmin={showAdmin}
+                  onOpenAdmin={() => onActiveTabChange("admin")}
+                  onOpenFavorites={onOpenFavorites}
+                  onOpenForum={onOpenForum}
+                  onOpenHelp={onOpenHelp}
+                  onOpenHistory={onOpenHistory}
+                  onOpenWatchlist={onOpenWatchlist}
+                  onOpenNowPlaying={onOpenNowPlaying}
+                  onOpenMovieRequest={onOpenMovieRequest}
+                  onOpenNotices={onOpenNotices}
+                  onOpenProfile={onOpenProfile}
+                  onOpenSpending={onOpenSpending}
+                  onOpenTasks={onOpenTasks}
+                  onLock={onLock}
+                  onOpenChange={setAccountMenuOpen}
+                />
+              </div>
             </div>
           </div>
         </header>
@@ -250,17 +258,24 @@ export function CinemaLayout({
             <TabsContent className="mt-0" value="watchlist">{watchlist}</TabsContent>
             <TabsContent className="mt-0" value="nowPlaying">{nowPlaying}</TabsContent>
             <TabsContent className="mt-0" value="help">{help}</TabsContent>
+            <TabsContent className="mt-0" value="profile">{profile}</TabsContent>
             {tasks ? <TabsContent className="mt-0" value="tasks">{tasks}</TabsContent> : null}
             {showAdmin ? <TabsContent className="mt-0" value="admin">{admin}</TabsContent> : null}
           </div>
         </div>
         <nav className="fixed inset-x-0 bottom-0 z-[90] w-full border-t border-slate-800 bg-slate-950/94 px-2 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-2xl shadow-black/45 backdrop-blur sm:hidden" aria-label="手机快捷导航">
           <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
-            <MobileNavButton active={activeTab === "library"} icon={<Clapperboard className="h-5 w-5" />} label="片库" onClick={onOpenHome} />
-            <MobileNavButton active={activeTab === "nowPlaying"} icon={<Flame className="h-5 w-5" />} label={copy.layout.nowPlaying} onClick={onOpenNowPlaying} />
-            <MobileNavButton active={activeTab === "watchlist"} icon={<Star className="h-5 w-5" />} label="今晚" onClick={onOpenWatchlist} />
-            <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} label={copy.layout.tasks} onClick={onOpenTasks} />
-            <MobileNavButton active={accountMenuOpen} icon={<UserCircle className="h-5 w-5" />} label="我的" onClick={() => setAccountMenuOpen(true)} />
+            <MobileNavButton active={activeTab === "library"} icon={<House className="h-5 w-5" />} label="首页" onClick={onOpenHome} />
+            <MobileNavButton active={activeTab === "watchlist"} icon={<Compass className="h-5 w-5" />} label="发现" onClick={onOpenWatchlist} />
+            <MobileNavButton active={activeTab === "favorites"} icon={<Library className="h-5 w-5" />} label="片单" onClick={onOpenFavorites} />
+            <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} label="准备" onClick={onOpenTasks} />
+            <MobileNavButton
+              active={!["library", "watchlist", "favorites", "tasks"].includes(activeTab)}
+              badge={noticeUnreadCount}
+              icon={<CircleUserRound className="h-5 w-5" />}
+              label="我的"
+              onClick={() => onActiveTabChange("profile")}
+            />
           </div>
         </nav>
       </Tabs>
@@ -270,11 +285,13 @@ export function CinemaLayout({
 
 function MobileNavButton({
   active,
+  badge,
   icon,
   label,
   onClick
 }: {
   active: boolean;
+  badge?: number;
   icon: ReactNode;
   label: string;
   onClick: () => void;
@@ -290,7 +307,12 @@ function MobileNavButton({
       aria-current={active ? "page" : undefined}
       onClick={onClick}
     >
-      {icon}
+      <span className="relative">
+        {icon}
+        {badge && badge > 0 ? (
+          <span className="absolute -right-2 -top-1.5 h-2.5 w-2.5 rounded-full border-2 border-slate-950 bg-amber-300" />
+        ) : null}
+      </span>
       <span className="max-w-full whitespace-nowrap">{label}</span>
     </button>
   );

@@ -17,6 +17,7 @@ export type AppTab =
   | "watchlist"
   | "nowPlaying"
   | "help"
+  | "profile"
   | "admin"
   | "tasks"
   | "forum";
