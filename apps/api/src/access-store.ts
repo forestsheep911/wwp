@@ -939,6 +939,7 @@ export interface AccessStore {
   listLoginAudit(limit: number): Promise<AdminLoginAuditEntry[]>;
   revokeMemberCode(id: string): Promise<MemberAccessCode | undefined>;
   deleteMemberCode(id: string): Promise<boolean>;
+  getMemberIdentity(id: string): Promise<AccessIdentity | undefined>;
   findMemberByCode(code: string): Promise<AccessIdentity | undefined>;
   getHealth(): Promise<Record<string, unknown>>;
 }
@@ -1369,6 +1370,18 @@ class LocalAccessStore implements AccessStore {
       delete state.codes[id];
       return true;
     });
+  }
+
+  async getMemberIdentity(id: string) {
+    const state = await this.readState();
+    const match = state.codes[id];
+    if (!match || statusFor(match) !== "active") return undefined;
+    return {
+      role: "member" as const,
+      memberId: match.id,
+      memberName: match.name,
+      credits: creditSummary(match)
+    };
   }
 
   async findMemberByCode(code: string) {
@@ -1964,6 +1977,18 @@ class AzureAccessStore implements AccessStore {
       }
       throw error;
     }
+  }
+
+  async getMemberIdentity(id: string) {
+    await this.ensureReady();
+    const stored = await this.getStored(id);
+    if (!stored || statusFor(stored) !== "active") return undefined;
+    return {
+      role: "member" as const,
+      memberId: stored.id,
+      memberName: stored.name,
+      credits: creditSummary(stored)
+    };
   }
 
   async findMemberByCode(code: string) {

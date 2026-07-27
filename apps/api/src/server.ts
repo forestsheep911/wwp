@@ -345,7 +345,7 @@ async function resolveAccess(request: http.IncomingMessage): Promise<AccessIdent
   const subject = session.subject;
   return subject.role === "admin"
     ? { role: "admin" }
-    : { role: "member", memberId: subject.memberId, memberName: subject.memberName };
+    : accessStore.getMemberIdentity(subject.memberId);
 }
 
 async function requireAccess(
@@ -366,9 +366,10 @@ async function requireAccess(
   const identity = session?.subject.role === "admin"
     ? { role: "admin" as const }
     : session?.subject.role === "member"
-      ? { role: "member" as const, memberId: session.subject.memberId, memberName: session.subject.memberName }
+      ? await accessStore.getMemberIdentity(session.subject.memberId)
       : undefined;
   if (!identity) {
+    if (session) await sessionStore.revoke(session.id, "member_unavailable");
     logWarn("api.auth.denied", {
       requestId: context.requestId,
       path: context.path
