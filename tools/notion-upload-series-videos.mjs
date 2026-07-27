@@ -73,7 +73,7 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-series-videos.mjs [--apply] [--max-files 1]
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --create-episodes
-  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*.mp4" --spec-title "辐射 第二季 繁英 0.8-1.0GB/集" --create --create-episodes --prepare-only --apply
+  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*-E*.mp4" --spec-title "辐射 第二季 繁英 4.7-4.85GB/合集" --create --create-episodes --prepare-only --apply
 
 Examples:
   node tools/notion-upload-series-videos.mjs
@@ -82,7 +82,7 @@ Examples:
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB/集" --create-episodes --apply
 
 Options:
-  --prepare-only  Create/reuse the spec and episode page structure before long encode or manual upload handoff, then skip file uploads.
+  --prepare-only  Create/reuse the spec and episode-range page structure before long encode or manual upload handoff, then skip file uploads.
   --create-spec   With --spec-title, create/reuse that exact spec page instead of renaming the first existing spec.
 `);
 }
@@ -181,21 +181,37 @@ function globToRegExp(pattern) {
 }
 
 export function episodeNumber(fileName) {
+  return episodeRange(fileName)?.start;
+}
+
+export function episodeRange(fileName) {
   const baseName = path.basename(fileName, path.extname(fileName));
+  const rangeMatch =
+    fileName.match(/S\d+E(\d{1,3})\s*[-~–—至到]\s*(?:S\d+)?E?(\d{1,3})/i) ??
+    fileName.match(/E(?:pisode)?\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})/i) ??
+    fileName.match(/第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u);
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
+    if (Number.isInteger(start) && Number.isInteger(end) && start > 0 && end >= start) {
+      return { start, end };
+    }
+  }
   const match =
     fileName.match(/S\d+E(\d+)/i) ??
     fileName.match(/E(?:pisode)?\s*(\d+)/i) ??
     fileName.match(/\[(\d{1,3})[)\]]/) ??
     baseName.match(/(?:^|[-_\s])(?:ep(?:isode)?[-_\s]*)?(\d{1,3})$/i) ??
     baseName.match(/^(\d{1,3})$/);
-  return match ? Number(match[1]) : undefined;
+  const episode = match ? Number(match[1]) : undefined;
+  return episode ? { start: episode, end: episode } : undefined;
 }
 
 export function validateSeriesSpecTitle(title) {
   const value = String(title ?? "").trim();
   const hasSize = /\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?\s*GB\b/i.test(value);
-  if (hasSize && !/(?:\/\s*集|每\s*集|per\s*episode)/iu.test(value)) {
-    throw new Error(`Series spec size must be marked as per-episode (每集 or /集): ${value}`);
+  if (hasSize && !/(?:\/\s*(?:集|合集)|每\s*集|per\s*(?:episode|collection))/iu.test(value)) {
+    throw new Error(`Series spec size must be marked as per-episode or per-collection (/集 or /合集): ${value}`);
   }
   return value;
 }
@@ -227,7 +243,8 @@ function collectSourceFiles(options) {
         name: entry.name,
         path: fullPath,
         size: fs.statSync(fullPath).size,
-        episode: episodeNumber(entry.name)
+        episode: episodeNumber(entry.name),
+        episodeEnd: episodeRange(entry.name)?.end
       };
     })
     .sort((left, right) => (left.episode ?? 9999) - (right.episode ?? 9999) || left.name.localeCompare(right.name, "en"));
@@ -372,10 +389,25 @@ async function collectEpisodePages(notion, specPageId) {
   const children = await listChildren(notion, specPageId);
   const pages = new Map();
   for (const child of children.filter((block) => block.type === "child_page")) {
-    const number = episodeNumber(blockTitle(child));
-    if (number !== undefined) pages.set(number, { id: child.id, title: blockTitle(child) });
+    const range = episodeRange(blockTitle(child));
+    if (range !== undefined) pages.set(episodeRangeKey(range.start, range.end), {
+      id: child.id,
+      title: blockTitle(child),
+      episode: range.start,
+      episodeEnd: range.end
+    });
   }
   return pages;
+}
+
+function episodeRangeKey(start, end = start) {
+  return `${start}-${end}`;
+}
+
+function episodePageTitle(start, end = start) {
+  const first = String(start).padStart(2, "0");
+  const last = String(end).padStart(2, "0");
+  return end > start ? `Episode ${first}-${last}` : `Episode ${first}`;
 }
 
 async function updatePageTitle(notion, pageId, title, apply) {
@@ -395,22 +427,23 @@ async function updatePageTitle(notion, pageId, title, apply) {
 }
 
 async function ensureEpisodePages(notion, specPageId, episodePages, selectedFiles, apply, enabled) {
-  const missing = selectedFiles.filter((file) => !episodePages.has(file.episode));
+  const missing = selectedFiles.filter((file) => !episodePages.has(episodeRangeKey(file.episode, file.episodeEnd)));
   if (missing.length === 0) return episodePages;
   if (!enabled) {
-    throw new Error(`Missing episode pages for: ${missing.map((file) => file.name).join(", ")}`);
+    throw new Error(`Missing episode-range pages for: ${missing.map((file) => file.name).join(", ")}`);
   }
   if (specPageId === "(dry-run)") {
     for (const file of missing) {
-      console.log(`would create episode page Episode ${String(file.episode).padStart(2, "0")}`);
-      episodePages.set(file.episode, { id: "(dry-run)", title: `Episode ${String(file.episode).padStart(2, "0")}` });
+      const episodeTitle = episodePageTitle(file.episode, file.episodeEnd);
+      console.log(`would create episode page ${episodeTitle}`);
+      episodePages.set(episodeRangeKey(file.episode, file.episodeEnd), { id: "(dry-run)", title: episodeTitle });
     }
     return episodePages;
   }
   for (const file of missing) {
-    const episodeTitle = `Episode ${String(file.episode).padStart(2, "0")}`;
+    const episodeTitle = episodePageTitle(file.episode, file.episodeEnd);
     const page = await ensureChildPage(notion, specPageId, episodeTitle, apply);
-    episodePages.set(file.episode, page);
+    episodePages.set(episodeRangeKey(file.episode, file.episodeEnd), page);
   }
   return episodePages;
 }
@@ -570,8 +603,8 @@ async function main() {
 
   if (options.prepareOnly) {
     for (const file of selectedFiles) {
-      const episodePage = episodePages.get(file.episode);
-      console.log(`${options.apply ? "prepared" : "would prepare"} ${file.name} -> ${episodePage?.title ?? `Episode ${String(file.episode).padStart(2, "0")}`} ${episodePage?.id ?? "(missing)"}`);
+      const episodePage = episodePages.get(episodeRangeKey(file.episode, file.episodeEnd));
+      console.log(`${options.apply ? "prepared" : "would prepare"} ${file.name} -> ${episodePage?.title ?? episodePageTitle(file.episode, file.episodeEnd)} ${episodePage?.id ?? "(missing)"}`);
     }
     console.log("prepare-only: upload skipped");
     return;
@@ -579,7 +612,7 @@ async function main() {
 
   if (!options.apply) {
     for (const file of selectedFiles) {
-      console.log(`would upload ${file.name} -> Episode ${String(file.episode).padStart(2, "0")}`);
+      console.log(`would upload ${file.name} -> ${episodePageTitle(file.episode, file.episodeEnd)}`);
     }
     return;
   }
@@ -588,7 +621,13 @@ async function main() {
   const manifest = readManifest(manifestPath);
   for (const file of selectedFiles) {
     const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);
-    await appendEpisodeVideo(notion, episodePages.get(file.episode), file, fileUploadId, options.apply);
+    await appendEpisodeVideo(
+      notion,
+      episodePages.get(episodeRangeKey(file.episode, file.episodeEnd)),
+      file,
+      fileUploadId,
+      options.apply
+    );
   }
   console.log(`manifest written: ${manifestPath}`);
 }

@@ -23,9 +23,11 @@ function loadDotEnv() {
 function parse(argv) {
   const options = { db: DEFAULT_DB, json: false };
   const positionals = [];
-  const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--work-page", "--spec-page", "--episode-page",
-    "--output-path", "--output-size", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail",
-    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year"]);
+  const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--spec-page", "--episode-page",
+    "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
+    "--output-path", "--output-size", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id",
+    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
+    "--status", "--note", "--actor"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
   const booleans = new Set(["--json", "--pass", "--fail", "--dry-run", "--force-after-429"]);
   for (let i = 0; i < argv.length; i += 1) {
@@ -101,6 +103,113 @@ async function main() {
       if (!new Set(["production", "publication"]).has(stage)) throw new Error("--stage must be production|publication");
       const rows = stage === "production" ? repo.listProductionCandidates({ limit: options.limit }) : repo.listPublicationCandidates({ limit: options.limit });
       output(rows, options.json, `${rows.length} ${stage} candidate(s)`);
+    } else if (command === "cycle") {
+      const limit = options.limit === undefined ? 3 : Number(options.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("--limit must be between 1 and 20");
+      const refreshedIntake = repo.refreshDueIntakeTasks({ limit });
+      const refreshedMetadata = repo.refreshDueMetadataTasks({ limit });
+      const workflowTasks = repo.getWorkflowTaskSummary();
+      const result = {
+        refreshedIntakeTasks: refreshedIntake.map(task => task.id),
+        refreshedMetadataTasks: refreshedMetadata.map(task => task.id),
+        status: repo.getStatusSummary(),
+        lanes: {
+          collaboration: repo.listWorkHandoffs({ limit: Math.min(limit, 3) }),
+          intake: repo.listWorkflowTasks({ taskType: "intake", limit }),
+          catalogMaintenance: repo.listWorkflowTasks({ taskType: "metadata_backfill", limit }),
+          production: repo.listProductionCandidates({ limit }),
+          publication: repo.listPublicationCandidates({ limit })
+        },
+        workflowTasks
+      };
+      output(result, options.json, `intake=${result.lanes.intake.length} catalog=${result.lanes.catalogMaintenance.length} production=${result.lanes.production.length} publication=${result.lanes.publication.length}`);
+    } else if (command === "queue") {
+      const stage = requireOption(options, "stage", "--stage");
+      if (stage === "intake") output(repo.listWorkflowTasks({ taskType: "intake", limit: options.limit }), options.json);
+      else if (stage === "metadata" || stage === "catalog") output(repo.listWorkflowTasks({ taskType: "metadata_backfill", limit: options.limit }), options.json);
+      else if (stage === "production") output(repo.listProductionCandidates({ limit: options.limit }), options.json);
+      else if (stage === "publication") output(repo.listPublicationCandidates({ limit: options.limit }), options.json);
+      else if (stage === "handoff" || stage === "collaboration") output(repo.listWorkHandoffs({ limit: options.limit }), options.json);
+      else throw new Error("--stage must be handoff|collaboration|intake|metadata|catalog|production|publication");
+    } else if (command === "task-status") {
+      output(repo.getWorkflowTaskSummary(), options.json);
+    } else if (command === "complete-task") {
+      const id = asId(requireOption(options, "task", "--task"), "--task");
+      output(repo.transitionWorkflowTask(id, "done", { reason: options.failure_detail }), options.json, `completed workflow task ${id}`);
+    } else if (command === "schedule-metadata") {
+      const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
+      output(repo.requeueMetadataTask(workId, {
+        reason: options.failure_detail ?? "Work-level metadata maintenance requested",
+        nextRunAt: options.next_review_at,
+        priorityScore: options.priority_score == null ? undefined : Number(options.priority_score)
+      }), options.json, `scheduled metadata maintenance for work ${workId}`);
+    } else if (command === "set-handoff") {
+      const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
+      const actor = options.actor ?? "ai";
+      const result = repo.recordWorkHandoff(workId, {
+        status: requireOption(options, "status", "--status"),
+        note: options.note,
+        actor
+      }, { enforceTransition: actor === "ai" });
+      output(result, options.json, `work ${workId}: ${result.row.workflow_status}`);
+    } else if (command === "start-production") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      const variant = variantRecord(db, id);
+      if (variant.production_state !== "selected") throw new Error("production start requires selected state");
+      output(repo.transitionProduction(id, "encoding", { failureDetail: options.failure_detail ?? "Encoding started" }), options.json, `variant ${id}: encoding`);
+    } else if (command === "retry-production") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      const variant = variantRecord(db, id);
+      if (!["qc_failed", "deferred"].includes(variant.production_state)) {
+        throw new Error("production retry requires qc_failed or deferred state");
+      }
+      output(repo.transitionProduction(id, "selected", { failureDetail: options.failure_detail ?? "Production retry selected" }), options.json, `variant ${id}: selected`);
+    } else if (command === "route-intake") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");
+      const year = asId(requireOption(options, "year", "--year"), "--year");
+      const workType = options.work_type ?? "movie";
+      if (!new Set(["movie", "series"]).has(workType)) throw new Error("--work-type must be movie|series");
+      const work = repo.ensureWork({ canonicalTitle, year, workType, notionWorkPageId: options.notion_work_page,
+        priorityScore: options.priority_score == null ? undefined : Number(options.priority_score), scopeState: "catalogued" });
+      const source = repo.bindSourceToWork(sourceId, work.id, { reason: options.failure_detail });
+      output({ work, source }, options.json, `routed source ${sourceId} to work ${work.id}`);
+    } else if (command === "rename-work") {
+      const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
+      const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");
+      const work = repo.renameWork(workId, canonicalTitle, { expectedCurrent: options.expected_current });
+      output(work, options.json, `renamed work ${workId}: ${work.canonical_title}`);
+    } else if (command === "merge-variant") {
+      const duplicateId = asId(requireOption(options, "variant", "--variant"));
+      const canonicalId = asId(requireOption(options, "canonical_variant", "--canonical-variant"), "--canonical-variant");
+      const variant = repo.mergeDuplicateVariant(duplicateId, canonicalId);
+      output(variant, options.json, `merged variant ${duplicateId} into ${canonicalId}`);
+    } else if (command === "update-source") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const parseJsonOption = (key) => options[key] == null ? undefined : JSON.parse(options[key]);
+      const source = repo.updateSourceEvidence(sourceId, {
+        probePath: options.probe_path,
+        qualityState: options.quality_state,
+        subtitleEvidence: parseJsonOption("subtitle_evidence"),
+        audioEvidence: parseJsonOption("audio_evidence"),
+        colorRisk: options.color_risk,
+        reason: options.failure_detail
+      });
+      output(source, options.json, `updated source ${sourceId} evidence`);
+    } else if (command === "attach-variant-source") {
+      const variantId = asId(requireOption(options, "variant", "--variant"));
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const variant = repo.attachVariantSource(variantId, sourceId, { reason: options.failure_detail });
+      output(variant, options.json, `attached variant ${variantId} to source ${sourceId}`);
+    } else if (command === "split-source") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const membersPath = requireOption(options, "members", "--members");
+      const members = JSON.parse(readFileSync(membersPath, "utf8"));
+      const result = repo.splitSourceCollection(sourceId, members, { reason: options.failure_detail });
+      output(result, options.json, `split source ${sourceId} into ${result.members.length} member source(s)`);
+    } else if (command === "defer-task") {
+      const id = asId(requireOption(options, "task", "--task"), "--task");
+      output(repo.transitionWorkflowTask(id, "deferred", { reason: options.failure_detail, nextRunAt: options.next_review_at }), options.json, `deferred workflow task ${id}`);
     } else if (command === "handoff") {
       const rows = repo.listManualUploadHandoffs({ limit: options.limit }).map((row) => ({
         variantId: row.variant_id, workTitle: row.work_title, year: row.year, specTitle: row.spec_title,
@@ -111,7 +220,15 @@ async function main() {
       output(rows, options.json, `${rows.length} manual upload handoff(s)`);
     } else if (command === "status") {
       const result = repo.getStatusSummary();
-      result.queues = { production: repo.listProductionCandidates({ limit: 50 }).length, publication: repo.listPublicationCandidates({ limit: 20 }).length };
+      const workflowTasks = repo.getWorkflowTaskSummary();
+      result.workflowTasks = workflowTasks;
+      result.queues = {
+        collaboration: repo.listWorkHandoffs({ limit: 3 }).length,
+        intake: workflowTasks["intake:pending"] ?? 0,
+        metadata: workflowTasks["metadata_backfill:pending"] ?? 0,
+        production: repo.listProductionCandidates({ limit: 50 }).length,
+        publication: repo.listPublicationCandidates({ limit: 20 }).length
+      };
       output(result, options.json, `production=${result.queues.production} publication=${result.queues.publication} sync_ready=${result.totals.syncReady}`);
     } else if (command === "show") {
       const id = asId(requireOption(options, "variant", "--variant"));
@@ -153,9 +270,12 @@ async function main() {
     } else if (command === "register-target") {
       const id = asId(requireOption(options, "variant", "--variant"));
       const variant = variantRecord(db, id);
-      if (variant.production_state !== "qc_passed") throw new Error("Notion target requires qc_passed production state");
+      if (!["selected", "encoding", "qc_passed"].includes(variant.production_state)) {
+        throw new Error("Notion target requires selected, encoding, or qc_passed production state");
+      }
       const target = repo.registerNotionTarget(id, { workPageId: requireOption(options, "work_page", "--work-page"),
-        specPageId: requireOption(options, "spec_page", "--spec-page"), episodePageId: options.episode_page });
+        specPageId: requireOption(options, "spec_page", "--spec-page"), episodePageId: options.episode_page,
+        expectedFilename: options.expected_filename, mediaBlockId: options.media_block_id });
       if (variant.publication_state === "not_ready") repo.transitionPublication(id, "structure_pending", { targetRegistered: true });
       output(target, options.json, `registered Notion target for variant ${id}`);
     } else if (command === "reconcile-notion") {

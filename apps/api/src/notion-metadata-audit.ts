@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
 import { normalizeImdbId, notionManagedProperties } from "./notion-metadata-schema.js";
+import { coreMetadataFields, optionalMetadataFields } from "./notion-metadata-completeness.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -32,6 +33,8 @@ interface PageAudit {
   imdb?: string;
   presentFields: string[];
   missingFields: string[];
+  missingCoreFields: string[];
+  missingOptionalFields: string[];
 }
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -325,6 +328,8 @@ function auditPage(page: JsonRecord): PageAudit {
   const properties = asRecord(page.properties) ?? {};
   const presentFields = auditFields.filter((field) => propertyText(properties[field]));
   const missingFields = auditFields.filter((field) => !presentFields.includes(field));
+  const missingCoreFields = coreMetadataFields.filter((field) => missingFields.includes(field));
+  const missingOptionalFields = optionalMetadataFields.filter((field) => missingFields.includes(field));
   const imdb = normalizeImdbId(propertyText(properties["IMDb ID"]) || propertyText(properties["IMDb"]));
   return {
     pageId: asString(page.id),
@@ -332,7 +337,9 @@ function auditPage(page: JsonRecord): PageAudit {
     url: asString(page.url) || undefined,
     imdb,
     presentFields,
-    missingFields
+    missingFields,
+    missingCoreFields,
+    missingOptionalFields
   };
 }
 
@@ -433,7 +440,8 @@ function summarize(pages: PageAudit[]) {
       pageId: page.pageId,
       url: page.url,
       imdb: page.imdb,
-      missingFields: page.missingFields
+      missingCoreFields: page.missingCoreFields,
+      missingOptionalFields: page.missingOptionalFields
     }))
   };
 }

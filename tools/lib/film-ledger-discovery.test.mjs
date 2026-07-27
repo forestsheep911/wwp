@@ -26,15 +26,41 @@ test("fingerprint includes stable material fields but ignores scan hints", () =>
   assert.notEqual(fingerprintEntry(original), fingerprintEntry({ ...original, totalBytes: 1200 }));
 });
 
+test("fingerprint uses fixed media evidence instead of the display sample count", () => {
+  const original = entry({
+    fingerprintMedia: [{ relativePath: "Example.Movie.2025\\movie.mkv", bytes: 900, extension: ".mkv" }]
+  });
+  assert.equal(fingerprintEntry(original), fingerprintEntry({
+    ...original,
+    largestMedia: [
+      ...original.largestMedia,
+      { relativePath: "Example.Movie.2025\\sample.m2ts", bytes: 100, extension: ".m2ts" }
+    ]
+  }));
+});
+
 test("importScan is idempotent, reopens changed evidence, marks missing, and never creates works", () => {
   const f = fixture();
   try {
     const payload = { root: "X:\\queue", scannedAt: "2026-07-12T00:00:00.000Z", entries: [entry()] };
     assert.deepEqual(importScan(f.repo, payload).summary, { inserted: 1, unchanged: 0, changed: 0, missing: 0 });
     assert.deepEqual(importScan(f.repo, payload).summary, { inserted: 0, unchanged: 1, changed: 0, missing: 0 });
+    const source = f.db.prepare("SELECT * FROM sources").get();
+    assert.deepEqual(JSON.parse(source.subtitle_evidence), {
+      externalCount: 1,
+      externalHints: ["chs"],
+      internalProbeState: "not_run"
+    });
+    const work = f.repo.ensureWork({ canonicalTitle: "Example Movie", year: 2025, workType: "movie" });
+    f.repo.bindSourceToWork(source.id, work.id);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
     payload.entries[0].totalBytes = 1200;
     assert.deepEqual(importScan(f.repo, payload).summary, { inserted: 0, unchanged: 0, changed: 1, missing: 0 });
-    assert.equal(f.db.prepare("SELECT count(*) count FROM works").get().count, 0);
+    const changedTask = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`);
+    assert.equal(changedTask.status, "pending");
+    assert.equal(changedTask.work_id, work.id);
+    assert.match(changedTask.reason, /Source contents changed/u);
+    assert.equal(f.db.prepare("SELECT count(*) count FROM works").get().count, 1);
     assert.deepEqual(importScan(f.repo, { ...payload, entries: [] }).summary, { inserted: 0, unchanged: 0, changed: 0, missing: 1 });
     assert.equal(f.db.prepare("SELECT missing FROM sources").get().missing, 1);
     assert.deepEqual(importScan(f.repo, payload).summary, { inserted: 0, unchanged: 0, changed: 1, missing: 0 });

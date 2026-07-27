@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
 CREATE TABLE schema_meta (version INTEGER NOT NULL);
@@ -23,6 +23,12 @@ CREATE TABLE works (
   priority_score REAL NOT NULL DEFAULT 0,
   scope_state TEXT NOT NULL DEFAULT 'candidate',
   next_review_at TEXT,
+  workflow_status TEXT CHECK (workflow_status IS NULL OR workflow_status IN (
+    '待 AI 处理', 'AI 处理中', '待人工上传', '人工上传中', '已上传待 AI 收尾',
+    '待人工确认', '已确认待 AI 发布', '已完成', '暂缓'
+  )),
+  workflow_note TEXT,
+  workflow_status_observed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (canonical_title, year, work_type)
@@ -99,7 +105,72 @@ CREATE TABLE scheduler_state (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE workflow_tasks (
+  id INTEGER PRIMARY KEY,
+  task_key TEXT NOT NULL UNIQUE,
+  task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'waiting_user', 'deferred', 'done')),
+  source_id INTEGER REFERENCES sources(id),
+  work_id INTEGER REFERENCES works(id),
+  variant_id INTEGER REFERENCES variants(id),
+  priority_score REAL NOT NULL DEFAULT 0,
+  reason TEXT,
+  payload_json TEXT,
+  last_error TEXT,
+  next_run_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX workflow_tasks_due_idx ON workflow_tasks (task_type, status, next_run_at, priority_score DESC, created_at);
+CREATE INDEX workflow_handoff_status_idx ON works (workflow_status, workflow_status_observed_at, priority_score DESC);
 `;
+
+function migrateV1ToV2(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_tasks (
+      id INTEGER PRIMARY KEY,
+      task_key TEXT NOT NULL UNIQUE,
+      task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'waiting_user', 'deferred', 'done')),
+      source_id INTEGER REFERENCES sources(id),
+      work_id INTEGER REFERENCES works(id),
+      variant_id INTEGER REFERENCES variants(id),
+      priority_score REAL NOT NULL DEFAULT 0,
+      reason TEXT,
+      payload_json TEXT,
+      last_error TEXT,
+      next_run_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS workflow_tasks_due_idx ON workflow_tasks (task_type, status, next_run_at, priority_score DESC, created_at);
+  `);
+  const now = new Date().toISOString();
+  db.prepare(`INSERT OR IGNORE INTO workflow_tasks
+    (task_key, task_type, status, work_id, priority_score, reason, created_at, updated_at)
+    SELECT 'metadata:work:' || id, 'metadata_backfill', 'pending', id, priority_score,
+      'Existing ledger work requires work-level metadata review/backfill', ?, ? FROM works`).run(now, now);
+  db.prepare(`INSERT OR IGNORE INTO workflow_tasks
+    (task_key, task_type, status, source_id, priority_score, reason, created_at, updated_at)
+    SELECT 'intake:source:' || id, 'intake', 'pending', id, 0,
+      'Discovered source has not been bound to a verified work identity', ?, ?
+    FROM sources WHERE work_id IS NULL AND missing = 0`).run(now, now);
+  db.prepare("UPDATE schema_meta SET version=?").run(2);
+}
+
+function migrateV2ToV3(db) {
+  db.exec(`
+    ALTER TABLE works ADD COLUMN workflow_status TEXT CHECK (workflow_status IS NULL OR workflow_status IN (
+      '待 AI 处理', 'AI 处理中', '待人工上传', '人工上传中', '已上传待 AI 收尾',
+      '待人工确认', '已确认待 AI 发布', '已完成', '暂缓'
+    ));
+    ALTER TABLE works ADD COLUMN workflow_note TEXT;
+    ALTER TABLE works ADD COLUMN workflow_status_observed_at TEXT;
+    CREATE INDEX IF NOT EXISTS workflow_handoff_status_idx
+      ON works (workflow_status, workflow_status_observed_at, priority_score DESC);
+  `);
+  db.prepare("UPDATE schema_meta SET version=?").run(3);
+}
 
 export function withTransaction(db, fn) {
   db.exec("BEGIN IMMEDIATE");
@@ -133,9 +204,16 @@ export function openLedger(filePath) {
       });
     } else {
       const row = db.prepare("SELECT version FROM schema_meta").get();
-      if (row?.version !== SCHEMA_VERSION) {
-        throw new Error(`unsupported film ledger schema version: ${row?.version ?? "missing"}`);
+      let version = row?.version;
+      if (version === 1) {
+        migrateV1ToV2(db);
+        version = 2;
       }
+      if (version === 2) {
+        migrateV2ToV3(db);
+        version = 3;
+      }
+      if (version !== SCHEMA_VERSION) throw new Error(`unsupported film ledger schema version: ${version ?? "missing"}`);
     }
 
     return db;

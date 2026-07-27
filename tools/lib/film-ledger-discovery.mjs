@@ -10,7 +10,8 @@ function fingerprintMaterial(entry) {
     subtitleCount: entry.subtitleCount,
     nfoCount: entry.nfoCount,
     totalBytes: entry.totalBytes,
-    largestMedia: entry.largestMedia,
+    // Keep discovery identity independent from the human-facing sample count.
+    largestMedia: entry.fingerprintMedia ?? entry.largestMedia,
     flags: entry.flags
   };
 }
@@ -51,11 +52,20 @@ export function importScan(repo, payload) {
         : path.resolve(normalizedRoot, entry.relativePath),
       fingerprint,
       sourceKind: entry.flags?.looksSeries ? "series_folder" : "folder",
-      subtitleEvidence: { count: entry.subtitleCount ?? 0, hints: entry.subtitleHints ?? [] },
+      subtitleEvidence: {
+        externalCount: entry.subtitleCount ?? 0,
+        externalHints: entry.subtitleHints ?? [],
+        internalProbeState: entry.internalSubtitleProbe ?? "not_run"
+      },
       colorRisk: entry.flags?.looksDv ? "dolby_vision" : entry.flags?.looksHdr ? "hdr" : "unknown",
       missing: false,
       discoveredAt: payload.scannedAt
     });
+    if (state === "changed") {
+      repo.requeueIntakeTask(source.id, {
+        reason: "Source contents changed; inspect added, replaced, or removed media before continuing"
+      });
+    }
     existing.set(entry.relativePath, source);
   }
 

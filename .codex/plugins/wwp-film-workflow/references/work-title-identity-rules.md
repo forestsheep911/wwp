@@ -6,11 +6,13 @@ Use the complete Douban display title when a verified Douban subject exists. The
 
 Do not leave a work title as Chinese-only, foreign-only, yearless, a filename, or a temporary production label when sourced identity is available. Series season pages include the season label and that season's release year.
 
-For a series whose verified source identifies one canonical run rather than distinct seasons, keep one series title and do not create a parallel `第一季` or `本传` naming branch. Distinct related films, prequels, side stories, and specials remain separate work pages when their Douban/IMDb/TMDb IDs or runtime differ.
+For a series whose verified source identifies one canonical run rather than distinct seasons, keep one series title and do not create a parallel `第一季` or `本传` naming branch. When the existing Notion page is explicitly a season page with episode children, preserve that season label during metadata normalization even if the external source heading omits it. Distinct related films, prequels, side stories, and specials remain separate work pages when their Douban/IMDb/TMDb IDs or runtime differ.
 
 During metadata backfill, a page with a verified Douban, IMDb, or TMDb identity may have an incomplete title rebuilt from its structured Chinese title, English/original title, and release year. Auto-repair is allowed only when the current title already contains at least one of those verified title components and does not contain a conflicting year. If an existing complete title conflicts with the structured identity, do not overwrite it; set `Needs Review` and preserve both sides as review evidence.
 
 When a verified Douban subject is available, metadata backfill must first parse and use the Douban display heading. Structured `Simplified Chinese Title` and `Original Title` are supporting metadata, not permission to append every subtitle or alternate title to the page title. A title correction must also update those fields when they are demonstrably carrying the wrong subtitle-bearing identity, and the correction should be recorded for review.
+
+After an exact Notion title correction, update the matching SQLite work identity with `film-ledger.mjs rename-work` and an `--expected-current` guard. Notion and the local ledger must not retain different canonical titles for the same page ID.
 
 ## Creation Preflight
 

@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { assertPreparedMovieTargetIsEmpty, notionVideoName } from "./lib/notion-movie-target.mjs";
 
 const DEFAULT_PART_MIB = 20;
 
@@ -64,7 +65,7 @@ Examples:
   node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
 
 Options:
-  --prepare-only  Create/reuse the target spec child page before long encode or manual upload handoff, then skip upload. No --file is required when --target-title or --target-page-id is supplied.
+  --prepare-only  Create/reuse an empty target spec child page before long encode or manual upload handoff, then skip upload. Fails when the target already contains video so an existing playable spec cannot be mistaken for a new destination.
   --resolve-ip     Override api.notion.com DNS for route-specific Notion API failures.
 `);
 }
@@ -121,7 +122,7 @@ function blockTitle(block) {
   const payload = block[block.type] ?? {};
   if (block.type === "child_page") return payload.title ?? "";
   if (block.type === "callout" || block.type === "toggle") return plainText(payload.rich_text);
-  if (block.type === "video") return payload.name ?? payload.file?.url ?? payload.external?.url ?? "";
+  if (block.type === "video") return notionVideoName(payload);
   return "";
 }
 
@@ -406,6 +407,7 @@ async function main() {
   console.log(`mode: ${options.apply ? "apply" : "dry-run"}${options.prepareOnly ? " prepare-only" : ""}`);
 
   if (options.prepareOnly) {
+    assertPreparedMovieTargetIsEmpty(target);
     if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
     console.log("prepare-only: upload skipped");
     return;

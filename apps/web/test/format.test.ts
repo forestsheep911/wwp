@@ -124,6 +124,25 @@ test("variantSpecText falls back to cleaned labels without structured metadata",
   assert.equal(variantHasSizeMetadata(variant), false);
 });
 
+test("variantSpecText shows a collection episode range", () => {
+  const variant: MediaVariant = {
+    assetKey: "collection-01-05",
+    label: "剧集合集 / Episode 01-05",
+    sourceUrl: "https://example.local/collection-01-05.mp4",
+    kind: "file",
+    summary: "Structured Media Assets row.",
+    metadata: {
+      structuredSource: "media_assets",
+      episodeNumber: 1,
+      episodeEndNumber: 5,
+      subtitleLanguages: ["zh-Hans"],
+      approximateSizeGb: 4.82
+    }
+  };
+
+  assert.equal(variantSpecText("剧集", variant), "第1-5集 / 简 / 4.82G");
+});
+
 test("groupEpisodeVariantsBySpec keeps each spec together and orders its episodes", () => {
   const variants: MediaVariant[] = [
     {
@@ -174,4 +193,31 @@ test("groupEpisodeVariantsBySpec keeps each spec together and orders its episode
       { labels: ["繁", "0.35G"], episodes: [1, 2] }
     ]
   );
+});
+
+test("groupEpisodeVariantsBySpec counts and labels collection coverage", () => {
+  const variants: MediaVariant[] = [
+    {
+      assetKey: "collection-1",
+      label: "剧集 简 4.8GB/合集 / Episode 01-05",
+      sourceUrl: "https://example.local/1.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["剧集", "剧集 简 4.8GB/合集"],
+      metadata: { episodeNumber: 1, episodeEndNumber: 5, subtitleLanguages: ["zh-Hans"] }
+    },
+    {
+      assetKey: "collection-2",
+      label: "剧集 简 4.7GB/合集 / Episode 06-10",
+      sourceUrl: "https://example.local/2.mp4",
+      kind: "file",
+      summary: "Structured Media Assets row.",
+      sourceBreadcrumb: ["剧集", "剧集 简 4.8GB/合集"],
+      metadata: { episodeNumber: 6, episodeEndNumber: 10, subtitleLanguages: ["zh-Hans"] }
+    }
+  ];
+
+  const [group] = groupEpisodeVariantsBySpec("剧集", variants);
+  assert.equal(group.episodeCount, 10);
+  assert.equal(group.rangeLabel, "第1-10集");
 });

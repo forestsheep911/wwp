@@ -16,6 +16,7 @@ function parseArgs() {
     originalTitle: "",
     year: undefined,
     videos: [],
+    prepareSpecs: [],
     sourceArchiveDir: "",
     sourceArchiveName: "",
     sourceSizeTitle: "",
@@ -43,6 +44,7 @@ function parseArgs() {
     else if (arg === "--original-title") options.originalTitle = args[++index];
     else if (arg === "--year") options.year = Number(args[++index]);
     else if (arg === "--video") options.videos.push(path.resolve(args[++index]));
+    else if (arg === "--prepare-spec") options.prepareSpecs.push(args[++index]);
     else if (arg === "--source-archive-dir") options.sourceArchiveDir = path.resolve(args[++index]);
     else if (arg === "--source-archive-name") options.sourceArchiveName = args[++index];
     else if (arg === "--source-size-title") options.sourceSizeTitle = args[++index];
@@ -87,6 +89,7 @@ function printHelp() {
 
 Useful flags:
   --video <mp4>                 repeatable
+  --prepare-spec <title>       repeatable; create a spec child page without uploading a file
   --source-archive-dir <dir>    directory containing split .7z parts
   --source-archive-name <name>  base archive name, for example movie.7z
   --meta-file <7z>              small metadata archive
@@ -586,6 +589,9 @@ async function main() {
       const specTitle = `${localTitle} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`;
       console.log(`would create movie child page: ${specTitle}`);
     }
+    for (const specTitle of options.prepareSpecs) {
+      console.log(`would create movie child page: ${specTitle}`);
+    }
     if (options.metaFile) console.log(`would create 基地 -> 资料 -> ${options.metaTitle}`);
     if (options.sourceArchiveName) console.log("would create 基地 -> 片源 -> source size page");
     console.log("dry-run stopped before block inspection because the movie page does not exist yet.");
@@ -607,6 +613,11 @@ async function main() {
       const uploadId = await uploadFile(notion, file, options, videoManifest, videoManifestPath);
       await appendVideoBlock(notion, targetPageId, file, uploadId, options.apply, videoManifest, videoManifestPath);
     }
+  }
+
+  for (const specTitle of options.prepareSpecs) {
+    const targetPageId = await ensureVideoTarget(notion, pageId, specTitle, options.apply);
+    console.log(`prepared video target: ${specTitle} ${targetPageId ?? "(dry-run)"}`);
   }
 
   const archiveParts = collectArchiveParts(options);

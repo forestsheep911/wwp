@@ -492,8 +492,14 @@ export function variantEpisodeNumber(variant: MediaVariant) {
 
 function variantEpisodeLabel(variant: MediaVariant) {
   const number = variantEpisodeNumber(variant);
+  const endNumber = variant.metadata?.episodeEndNumber;
 
-  return typeof number === "number" && Number.isInteger(number) && number > 0 ? `第${number}集` : undefined;
+  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) {
+    return undefined;
+  }
+  return typeof endNumber === "number" && Number.isInteger(endNumber) && endNumber > number
+    ? `第${number}-${endNumber}集`
+    : `第${number}集`;
 }
 
 export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean; includeEpisode?: boolean; includeSize?: boolean } = {}) {
@@ -595,10 +601,25 @@ export function groupEpisodeVariantsBySpec(title: string, variants: MediaVariant
     groups.set(key, group);
   });
 
-  return [...groups.values()].map((group) => ({
-    ...group,
-    episodeCount: group.variants.length
-  }));
+  return [...groups.values()].map((group) => {
+    const coveredEpisodes = new Set<number>();
+    for (const variant of group.variants) {
+      const start = variantEpisodeNumber(variant);
+      if (typeof start !== "number" || !Number.isInteger(start) || start < 1) continue;
+      const end = variant.metadata?.episodeEndNumber ?? start;
+      for (let episode = start; episode <= end; episode += 1) coveredEpisodes.add(episode);
+    }
+    const ordered = [...coveredEpisodes].sort((left, right) => left - right);
+    const contiguous = ordered.every((episode, index) => index === 0 || episode === ordered[index - 1] + 1);
+    const rangeLabel = contiguous && ordered.length > 1
+      ? `第${ordered[0]}-${ordered.at(-1)}集`
+      : `${ordered.length} 集`;
+    return {
+      ...group,
+      episodeCount: ordered.length,
+      rangeLabel
+    };
+  });
 }
 
 export function mediaQuality(media?: MediaDiagnostics) {

@@ -1,5 +1,12 @@
 import { withTransaction } from "./film-ledger-schema.mjs";
-import { assertProductionTransition, assertPublicationTransition, normalizeLimit } from "./film-ledger-domain.mjs";
+import {
+  AI_ACTIONABLE_WORKFLOW_STATES,
+  assertProductionTransition,
+  assertPublicationTransition,
+  assertWorkflowHandoffState,
+  assertWorkflowHandoffTransition,
+  normalizeLimit
+} from "./film-ledger-domain.mjs";
 import path from "node:path";
 
 export function normalizeLedgerPath(value) {
@@ -30,6 +37,105 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   const getVariant = db.prepare("SELECT * FROM variants WHERE id = ?");
   const insertEvent = db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)");
 
+  function ensureWorkflowTask(input) {
+    if (!input?.taskKey || !input.taskType) throw new TypeError("workflow task requires taskKey and taskType");
+    if (!["intake", "metadata_backfill"].includes(input.taskType)) throw new Error(`unsupported workflow task type: ${input.taskType}`);
+    const at = timestamp();
+    db.prepare(`INSERT INTO workflow_tasks
+      (task_key, task_type, status, source_id, work_id, variant_id, priority_score, reason, payload_json, next_run_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(task_key) DO UPDATE SET
+        source_id=COALESCE(excluded.source_id, workflow_tasks.source_id),
+        work_id=COALESCE(excluded.work_id, workflow_tasks.work_id),
+        variant_id=COALESCE(excluded.variant_id, workflow_tasks.variant_id),
+        priority_score=excluded.priority_score,
+        reason=COALESCE(excluded.reason, workflow_tasks.reason),
+        payload_json=COALESCE(excluded.payload_json, workflow_tasks.payload_json),
+        updated_at=excluded.updated_at`)
+      .run(input.taskKey, input.taskType, input.status ?? "pending", input.sourceId ?? null, input.workId ?? null,
+        input.variantId ?? null, input.priorityScore ?? 0, input.reason ?? null, nullableJson(input.payload),
+        input.nextRunAt ?? null, at, at);
+    return db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(input.taskKey);
+  }
+
+  function completeWorkflowTaskByKey(taskKey, details = {}) {
+    const at = timestamp();
+    db.prepare(`UPDATE workflow_tasks SET status='done', source_id=COALESCE(?, source_id), work_id=COALESCE(?, work_id),
+      variant_id=COALESCE(?, variant_id), last_error=NULL, reason=COALESCE(?, reason), updated_at=? WHERE task_key=?`)
+      .run(details.sourceId ?? null, details.workId ?? null, details.variantId ?? null, details.reason ?? null, at, taskKey);
+    return db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey) ?? null;
+  }
+
+  function requeueMetadataTask(workId, details = {}) {
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+    if (!work) throw new Error(`work not found: ${workId}`);
+    const at = timestamp();
+    if (details.nextRunAt !== undefined) {
+      db.prepare("UPDATE works SET next_review_at=?, updated_at=? WHERE id=?")
+        .run(details.nextRunAt ?? null, at, workId);
+    }
+    ensureWorkflowTask({
+      taskKey: `metadata:work:${workId}`,
+      taskType: "metadata_backfill",
+      workId,
+      priorityScore: details.priorityScore ?? work.priority_score,
+      reason: details.reason ?? "Work-level metadata maintenance is due",
+      nextRunAt: details.nextRunAt ?? null
+    });
+    db.prepare(`UPDATE workflow_tasks SET status='pending', last_error=NULL,
+      reason=COALESCE(?, reason), next_run_at=?, updated_at=? WHERE task_key=?`)
+      .run(details.reason ?? null, details.nextRunAt ?? null, at, `metadata:work:${workId}`);
+    insertEvent.run("work", workId, "metadata_task_requeued", stableJson({
+      reason: details.reason,
+      nextRunAt: details.nextRunAt
+    }), at);
+    return db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${workId}`);
+  }
+
+  function requeueIntakeTask(sourceId, details = {}) {
+    const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    if (!source) throw new Error(`source not found: ${sourceId}`);
+    const at = timestamp();
+    const taskKey = `intake:source:${sourceId}`;
+    ensureWorkflowTask({
+      taskKey,
+      taskType: "intake",
+      sourceId,
+      workId: source.work_id,
+      priorityScore: details.priorityScore ?? 0,
+      reason: details.reason ?? "Source contents changed and need intake review"
+    });
+    db.prepare(`UPDATE workflow_tasks SET status='pending', last_error=NULL,
+      reason=COALESCE(?, reason), next_run_at=NULL, updated_at=? WHERE task_key=?`)
+      .run(details.reason ?? null, at, taskKey);
+    insertEvent.run("source", sourceId, "intake_task_requeued", stableJson({
+      workId: source.work_id,
+      reason: details.reason
+    }), at);
+    return db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey);
+  }
+
+  function refreshDueIntakeTasks({ now = timestamp(), limit = 20 } = {}) {
+    const dueTasks = db.prepare(`SELECT id, source_id, work_id, priority_score
+      FROM workflow_tasks
+      WHERE task_type='intake' AND status='deferred'
+        AND next_run_at IS NOT NULL AND next_run_at <= ?
+      ORDER BY priority_score DESC, next_run_at ASC, id ASC
+      LIMIT ?`).all(now, normalizeLimit(limit, 1, 20));
+    const at = timestamp();
+    const update = db.prepare(`UPDATE workflow_tasks SET status='pending', last_error=NULL,
+      reason='Deferred intake review is due', next_run_at=NULL, updated_at=? WHERE id=?`);
+    for (const task of dueTasks) {
+      update.run(at, task.id);
+      insertEvent.run("workflow_task", task.id, "intake_task_requeued", stableJson({
+        sourceId: task.source_id,
+        workId: task.work_id,
+        reason: "Deferred intake review is due"
+      }), at);
+    }
+    return dueTasks.map(task => db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(task.id));
+  }
+
   function upsertInputRoot(rootPath, options = {}) {
     rootPath = normalizeLedgerPath(rootPath);
     const at = timestamp();
@@ -44,7 +150,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function ensureWork(input) {
     const at = timestamp();
     const key = [input.canonicalTitle, input.year ?? null, input.workType ?? "movie"];
-    const existing = db.prepare("SELECT * FROM works WHERE canonical_title = ? AND year IS ? AND work_type = ?").get(...key);
+    const existingByPage = input.notionWorkPageId
+      ? db.prepare("SELECT * FROM works WHERE notion_work_page_id = ?").get(input.notionWorkPageId)
+      : null;
+    const existing = existingByPage ?? db.prepare("SELECT * FROM works WHERE canonical_title = ? AND year IS ? AND work_type = ?").get(...key);
     if (existing) {
       db.prepare(`UPDATE works SET notion_work_page_id=COALESCE(?, notion_work_page_id), priority_score=COALESCE(?, priority_score),
         scope_state=COALESCE(?, scope_state), next_review_at=COALESCE(?, next_review_at), updated_at=? WHERE id=?`)
@@ -55,7 +164,18 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(...key, input.notionWorkPageId ?? null, input.priorityScore ?? 0, input.scopeState ?? "candidate", input.nextReviewAt ?? null, at, at);
     }
-    return db.prepare("SELECT * FROM works WHERE canonical_title = ? AND year IS ? AND work_type = ?").get(...key);
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(existing?.id ?? db.prepare("SELECT last_insert_rowid() AS id").get().id);
+    ensureWorkflowTask({
+      taskKey: `metadata:work:${work.id}`,
+      taskType: "metadata_backfill",
+      workId: work.id,
+      priorityScore: work.priority_score,
+      reason: "Work-level metadata should be checked independently of playable media readiness"
+    });
+    if (work.next_review_at && work.next_review_at <= timestamp()) {
+      requeueMetadataTask(work.id, { reason: "Scheduled work-level metadata maintenance is due" });
+    }
+    return work;
   }
 
   function fillMissingWorkYear(workId, year) {
@@ -64,6 +184,29 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     if (!work) throw new Error(`work not found: ${workId}`);
     if (work.year != null && work.year !== year) throw new Error(`work year conflict: existing ${work.year}, requested ${year}`);
     if (work.year == null) db.prepare("UPDATE works SET year=?, updated_at=? WHERE id=?").run(year, timestamp(), workId);
+    return db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+  }
+
+  function renameWork(workId, canonicalTitle, { expectedCurrent } = {}) {
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+    if (!work) throw new Error(`work not found: ${workId}`);
+    const nextTitle = String(canonicalTitle ?? "").trim();
+    if (!nextTitle) throw new Error("canonical title is required");
+    if (expectedCurrent != null && work.canonical_title !== expectedCurrent) {
+      throw new Error(`work title mismatch: expected ${expectedCurrent}, got ${work.canonical_title}`);
+    }
+    if (work.canonical_title === nextTitle) return work;
+    const conflict = db.prepare(`SELECT id FROM works
+      WHERE canonical_title=? AND year IS ? AND work_type=? AND id<>?`)
+      .get(nextTitle, work.year, work.work_type, workId);
+    if (conflict) throw new Error(`work title conflicts with existing work ${conflict.id}`);
+    const at = timestamp();
+    db.prepare("UPDATE works SET canonical_title=?, updated_at=? WHERE id=?")
+      .run(nextTitle, at, workId);
+    insertEvent.run("work", workId, "work_title_changed", stableJson({
+      from: work.canonical_title,
+      to: nextTitle
+    }), at);
     return db.prepare("SELECT * FROM works WHERE id=?").get(workId);
   }
 
@@ -78,7 +221,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         .run(input.workId ?? null, input.relativePath, input.absolutePath, input.sourceKind, input.probePath ?? null,
           input.qualityState ?? "unknown", nullableJson(input.subtitleEvidence), nullableJson(input.audioEvidence),
           input.colorRisk ?? "unknown", input.missing ? 1 : 0, at, fingerprintMatch.id);
-      return db.prepare("SELECT * FROM sources WHERE id = ?").get(fingerprintMatch.id);
+      const source = db.prepare("SELECT * FROM sources WHERE id = ?").get(fingerprintMatch.id);
+      if (source.work_id) {
+        completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
+        ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
+          priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
+      } else {
+        ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
+          reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
+      }
+      return source;
     }
     db.prepare(`INSERT INTO sources (work_id, input_root_id, relative_path, absolute_path, fingerprint, source_kind, probe_path,
         quality_state, subtitle_evidence, audio_evidence, color_risk, missing, discovered_at, updated_at)
@@ -93,7 +245,82 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .run(input.workId ?? null, input.inputRootId, input.relativePath, input.absolutePath, input.fingerprint,
         input.sourceKind, input.probePath ?? null, input.qualityState ?? "unknown", nullableJson(input.subtitleEvidence),
         nullableJson(input.audioEvidence), input.colorRisk ?? "unknown", input.missing ? 1 : 0, input.discoveredAt ?? at, at);
-    return db.prepare("SELECT * FROM sources WHERE input_root_id = ? AND relative_path = ?").get(input.inputRootId, input.relativePath);
+    const source = db.prepare("SELECT * FROM sources WHERE input_root_id = ? AND relative_path = ?").get(input.inputRootId, input.relativePath);
+    if (source.work_id) {
+      completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
+      ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
+        priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
+    } else {
+      ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
+        reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
+    }
+    return source;
+  }
+
+  function bindSourceToWork(sourceId, workId, details = {}) {
+    const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    if (!source) throw new Error(`source not found: ${sourceId}`);
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+    if (!work) throw new Error(`work not found: ${workId}`);
+    if (source.work_id != null && source.work_id !== workId) {
+      throw new Error(`source ${sourceId} is already bound to work ${source.work_id}`);
+    }
+    const at = timestamp();
+    db.prepare(`UPDATE sources SET work_id=?, probe_path=COALESCE(?, probe_path), quality_state=COALESCE(?, quality_state),
+      subtitle_evidence=COALESCE(?, subtitle_evidence), audio_evidence=COALESCE(?, audio_evidence), color_risk=COALESCE(?, color_risk), updated_at=? WHERE id=?`)
+      .run(workId, details.probePath ?? null, details.qualityState ?? null,
+        nullableJson(details.subtitleEvidence), nullableJson(details.audioEvidence), details.colorRisk ?? null, at, sourceId);
+    completeWorkflowTaskByKey(`intake:source:${sourceId}`, {
+      sourceId, workId,
+      reason: details.reason ?? "Source is bound to a verified work identity"
+    });
+    ensureWorkflowTask({ taskKey: `metadata:work:${workId}`, taskType: "metadata_backfill", workId,
+      priorityScore: work.priority_score, reason: "Work-level metadata should be checked independently of playable media readiness" });
+    return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+  }
+
+  function updateSourceEvidence(sourceId, details = {}) {
+    const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    if (!source) throw new Error(`source not found: ${sourceId}`);
+    const at = timestamp();
+    db.prepare(`UPDATE sources SET probe_path=COALESCE(?, probe_path), quality_state=COALESCE(?, quality_state),
+      subtitle_evidence=COALESCE(?, subtitle_evidence), audio_evidence=COALESCE(?, audio_evidence),
+      color_risk=COALESCE(?, color_risk), updated_at=? WHERE id=?`)
+      .run(details.probePath ?? null, details.qualityState ?? null,
+        nullableJson(details.subtitleEvidence), nullableJson(details.audioEvidence), details.colorRisk ?? null, at, sourceId);
+    insertEvent.run("source", sourceId, "source_evidence_updated", stableJson({
+      probePath: details.probePath,
+      qualityState: details.qualityState,
+      subtitleEvidence: details.subtitleEvidence,
+      audioEvidence: details.audioEvidence,
+      colorRisk: details.colorRisk,
+      reason: details.reason
+    }), at);
+    return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+  }
+
+  function splitSourceCollection(sourceId, members = [], details = {}) {
+    const parent = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    if (!parent) throw new Error(`source not found: ${sourceId}`);
+    if (!Array.isArray(members) || members.length === 0) throw new Error("collection split requires at least one member");
+    const childSources = members.map((member) => upsertDiscoveredSource({
+      ...member,
+      inputRootId: parent.input_root_id,
+      sourceKind: member.sourceKind ?? "collection_member",
+      relativePath: member.relativePath ?? `${parent.relative_path}\\${path.win32.basename(member.absolutePath ?? "member")}`,
+      qualityState: member.qualityState ?? "unknown",
+      colorRisk: member.colorRisk ?? "unknown"
+    }));
+    const unbound = childSources.filter((source) => source.work_id == null);
+    const parentTask = !unbound.length
+      ? completeWorkflowTaskByKey(`intake:source:${sourceId}`, { sourceId, reason: details.reason ?? "Collection split into identified member sources" })
+      : db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`);
+    insertEvent.run("source", sourceId, "source_collection_split", stableJson({
+      memberSourceIds: childSources.map((source) => source.id),
+      unboundMemberSourceIds: unbound.map((source) => source.id),
+      reason: details.reason
+    }), timestamp());
+    return { parent: db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId), members: childSources, parentTask };
   }
 
   function ensureVariant(input) {
@@ -114,6 +341,31 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM variants WHERE work_id = ? AND spec_key = ?").get(input.workId, input.specKey);
   }
 
+  function attachVariantSource(variantId, sourceId, details = {}) {
+    return withTransaction(db, () => {
+      const variant = getVariant.get(variantId);
+      if (!variant) throw new Error(`variant not found: ${variantId}`);
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      if (source.work_id == null) throw new Error(`source ${sourceId} is not bound to a work`);
+      if (source.work_id !== variant.work_id) {
+        throw new Error(`source ${sourceId} belongs to work ${source.work_id}, not variant work ${variant.work_id}`);
+      }
+      if (variant.source_id != null && variant.source_id !== sourceId) {
+        throw new Error(`variant ${variantId} is already attached to source ${variant.source_id}`);
+      }
+      if (variant.source_id === sourceId) return variant;
+
+      const at = timestamp();
+      db.prepare("UPDATE variants SET source_id=?, updated_at=? WHERE id=?").run(sourceId, at, variantId);
+      insertEvent.run("variant", variantId, "variant_source_attached", stableJson({
+        sourceId,
+        reason: details.reason ?? "Linked legacy production evidence to its verified source"
+      }), at);
+      return getVariant.get(variantId);
+    });
+  }
+
   function transitionProduction(variantId, to, details = {}) {
     return withTransaction(db, () => {
       const current = getVariant.get(variantId);
@@ -123,12 +375,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       db.prepare(`UPDATE variants SET production_state=?, output_path=COALESCE(?, output_path),
         output_size_bytes=COALESCE(?, output_size_bytes), probe_path=COALESCE(?, probe_path),
         qc_artifact_path=COALESCE(?, qc_artifact_path), failure_code=?, failure_detail=?,
-        next_review_at=?, publication_state=CASE WHEN ?='qc_passed' THEN 'not_ready' ELSE publication_state END,
+        next_review_at=?, publication_state=CASE
+          WHEN ?='qc_passed' AND EXISTS (SELECT 1 FROM notion_targets WHERE variant_id=?) THEN 'structure_pending'
+          WHEN ?='qc_passed' THEN 'not_ready'
+          ELSE publication_state
+        END,
         updated_at=? WHERE id=?`)
         .run(to, details.outputPath == null ? null : normalizeLedgerPath(details.outputPath),
           details.outputSizeBytes ?? null, details.probePath ?? null,
           details.qcArtifactPath ?? null, details.failureCode ?? null, details.failureDetail ?? null,
-          details.nextReviewAt ?? null, to, at, variantId);
+          details.nextReviewAt ?? null, to, variantId, to, at, variantId);
       insertEvent.run("variant", variantId, "production_state_changed",
         stableJson({ from: current.production_state, to, ...details }), at);
       return getVariant.get(variantId);
@@ -196,11 +452,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function listProductionCandidates({ limit } = {}) {
     return db.prepare(`SELECT variants.*, works.priority_score, works.canonical_title
       FROM variants JOIN works ON works.id=variants.work_id
-      WHERE variants.production_state NOT IN ('qc_passed','rejected')
-        AND (variants.next_review_at IS NULL OR variants.next_review_at <= ?)
-        AND (works.next_review_at IS NULL OR works.next_review_at <= ?)
+      WHERE (
+        (variants.production_state NOT IN ('qc_passed','rejected','deferred')
+          AND (variants.next_review_at IS NULL OR variants.next_review_at <= ?)
+          AND (works.next_review_at IS NULL OR works.next_review_at <= ?))
+        OR (variants.production_state = 'deferred'
+          AND variants.next_review_at IS NOT NULL AND variants.next_review_at <= ?
+          AND (works.next_review_at IS NULL OR works.next_review_at <= ?))
+      )
       ORDER BY works.priority_score DESC, variants.created_at ASC LIMIT ?`)
-      .all(timestamp(), timestamp(), normalizeLimit(limit, 5, 50));
+      .all(timestamp(), timestamp(), timestamp(), timestamp(), normalizeLimit(limit, 5, 50));
   }
 
   function listPublicationCandidates({ limit } = {}) {
@@ -236,12 +497,97 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function getStatusSummary() {
     const production = Object.fromEntries(db.prepare("SELECT production_state state, count(*) count FROM variants GROUP BY production_state").all().map(r => [r.state, r.count]));
     const publication = Object.fromEntries(db.prepare("SELECT publication_state state, count(*) count FROM variants GROUP BY publication_state").all().map(r => [r.state, r.count]));
+    const handoff = Object.fromEntries(db.prepare("SELECT workflow_status state, count(*) count FROM works WHERE workflow_status IS NOT NULL GROUP BY workflow_status").all().map(r => [r.state, r.count]));
     const totals = db.prepare("SELECT count(*) variants, sum(CASE WHEN publication_state='sync_ready' THEN 1 ELSE 0 END) syncReady FROM variants").get();
-    return { production, publication, totals: { variants: totals.variants, syncReady: totals.syncReady ?? 0 } };
+    return { production, publication, handoff, totals: { variants: totals.variants, syncReady: totals.syncReady ?? 0 } };
   }
 
   function listSourcesForRoot(inputRootId) {
     return db.prepare("SELECT * FROM sources WHERE input_root_id = ? ORDER BY id").all(inputRootId);
+  }
+
+  function listWorkflowTasks({ taskType, status = "pending", limit = 5 } = {}) {
+    const types = taskType ? [taskType] : ["intake", "metadata_backfill"];
+    const placeholders = types.map(() => "?").join(",");
+    return db.prepare(`SELECT workflow_tasks.*, sources.relative_path, sources.absolute_path, sources.quality_state,
+        sources.subtitle_evidence, sources.color_risk, works.canonical_title, works.year, works.work_type,
+        works.notion_work_page_id, works.scope_state
+      FROM workflow_tasks
+      LEFT JOIN sources ON sources.id=workflow_tasks.source_id
+      LEFT JOIN works ON works.id=workflow_tasks.work_id
+      WHERE workflow_tasks.task_type IN (${placeholders}) AND workflow_tasks.status=?
+        AND (workflow_tasks.next_run_at IS NULL OR workflow_tasks.next_run_at <= ?)
+      ORDER BY workflow_tasks.priority_score DESC, workflow_tasks.created_at ASC LIMIT ?`)
+      .all(...types, status, timestamp(), normalizeLimit(limit, 5, 20));
+  }
+
+  function getWorkflowTaskSummary() {
+    return Object.fromEntries(db.prepare("SELECT task_type || ':' || status AS key, count(*) AS count FROM workflow_tasks GROUP BY task_type, status")
+      .all().map(row => [row.key, row.count]));
+  }
+
+  function recordWorkHandoff(workId, input, { enforceTransition = false } = {}) {
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+    if (!work) throw new Error(`work not found: ${workId}`);
+    assertWorkflowHandoffState(input.status);
+    if (enforceTransition) assertWorkflowHandoffTransition(work.workflow_status, input.status);
+    const observedAt = input.observedAt ?? timestamp();
+    const note = input.note == null ? work.workflow_note : String(input.note);
+    const changed = work.workflow_status !== input.status || work.workflow_note !== note;
+    db.prepare(`UPDATE works SET workflow_status=?, workflow_note=?, workflow_status_observed_at=?,
+      updated_at=CASE WHEN ? THEN ? ELSE updated_at END WHERE id=?`)
+      .run(input.status, note ?? null, observedAt, changed ? 1 : 0, observedAt, workId);
+    if (changed) {
+      insertEvent.run("work", workId, "workflow_handoff_changed", stableJson({
+        from: work.workflow_status,
+        to: input.status,
+        note: note ?? null,
+        actor: input.actor ?? "unknown",
+        notionPageId: work.notion_work_page_id ?? null
+      }), observedAt);
+    }
+    return { row: db.prepare("SELECT * FROM works WHERE id=?").get(workId), changed };
+  }
+
+  function recordWorkHandoffByNotionPage(notionPageId, input, options) {
+    const work = db.prepare("SELECT * FROM works WHERE notion_work_page_id=?").get(notionPageId);
+    if (!work) return { row: null, changed: false, unmatched: true };
+    return { ...recordWorkHandoff(work.id, input, options), unmatched: false };
+  }
+
+  function listWorkHandoffs({ statuses = AI_ACTIONABLE_WORKFLOW_STATES, limit = 3 } = {}) {
+    const values = [...new Set(statuses)];
+    for (const status of values) assertWorkflowHandoffState(status);
+    if (values.length === 0) return [];
+    const placeholders = values.map(() => "?").join(",");
+    return db.prepare(`SELECT * FROM works WHERE workflow_status IN (${placeholders})
+      ORDER BY priority_score DESC, COALESCE(workflow_status_observed_at, created_at) ASC, id ASC LIMIT ?`)
+      .all(...values, normalizeLimit(limit, 3, 3));
+  }
+
+    function refreshDueMetadataTasks({ now = timestamp(), limit = 20 } = {}) {
+    const dueWorks = db.prepare(`SELECT works.id, works.priority_score
+      FROM works
+      WHERE works.next_review_at IS NOT NULL AND works.next_review_at <= ?
+      ORDER BY works.priority_score DESC, works.next_review_at ASC
+      LIMIT ?`).all(now, normalizeLimit(limit, 1, 20));
+    return dueWorks.map((work) => requeueMetadataTask(work.id, {
+      reason: "Scheduled catalog maintenance is due",
+      priorityScore: work.priority_score
+    }));
+  }
+
+  function transitionWorkflowTask(taskId, status, details = {}) {
+    if (!["pending", "in_progress", "waiting_user", "deferred", "done"].includes(status)) {
+      throw new Error(`unsupported workflow task status: ${status}`);
+    }
+    const at = timestamp();
+    const result = db.prepare(`UPDATE workflow_tasks SET status=?, reason=COALESCE(?, reason), last_error=?,
+      next_run_at=?, updated_at=? WHERE id=?`).run(status, details.reason ?? null, details.lastError ?? null,
+      details.nextRunAt ?? null, at, taskId);
+    if (result.changes === 0) throw new Error(`workflow task not found: ${taskId}`);
+    insertEvent.run("workflow_task", taskId, "workflow_task_status_changed", stableJson({ status, ...details }), at);
+    return db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(taskId);
   }
 
   function markSourceMissing(sourceId, missing = true) {
@@ -279,13 +625,13 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       media_verified_at=CASE WHEN ? THEN ? ELSE media_verified_at END,
       assets_verified_at=CASE WHEN ? THEN ? ELSE assets_verified_at END,
       next_check_at=?, attempt_count=CASE WHEN ? IS NULL THEN 0 ELSE attempt_count + 1 END,
-      last_error_code=NULL, last_error_detail=NULL, updated_at=? WHERE variant_id=?`)
+      last_error_code=?, last_error_detail=?, updated_at=? WHERE variant_id=?`)
       .run(evidence.mediaVerified === true ? 1 : 0, evidence.mediaBlockId ?? null,
-        evidence.assetsVerified === true ? 1 : 0, evidence.mediaAssetPageId ?? null,
+        evidence.mediaAssetPageId != null ? 1 : 0, evidence.mediaAssetPageId ?? null,
         evidence.structureVerified === true ? 1 : 0, inspectedAt,
         evidence.mediaVerified === true ? 1 : 0, inspectedAt,
         evidence.assetsVerified === true ? 1 : 0, inspectedAt,
-        nextCheckAt, nextCheckAt, inspectedAt, variantId);
+        nextCheckAt, nextCheckAt, evidence.assetGateCode ?? null, evidence.assetGateDetail ?? null, inspectedAt, variantId);
   }
 
   function recordNotionFailure(variantId, { code, detail, nextCheckAt }, failedAt = timestamp()) {
@@ -298,6 +644,57 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM variants WHERE output_path = ?").get(normalizeLedgerPath(outputPath)) ?? null;
   }
 
+  function findVariantByNotionTarget({ workPageId, specPageId, episodePageId = null }) {
+    return db.prepare(`SELECT variants.*
+      FROM notion_targets
+      JOIN variants ON variants.id=notion_targets.variant_id
+      WHERE notion_targets.work_page_id=? AND notion_targets.spec_page_id=?
+        AND notion_targets.episode_page_id IS ?`)
+      .get(workPageId, specPageId, episodePageId) ?? null;
+  }
+
+  function mergeDuplicateVariant(duplicateId, canonicalId) {
+    return withTransaction(db, () => {
+      if (duplicateId === canonicalId) throw new Error("duplicate and canonical variant must differ");
+      const duplicate = getVariant.get(duplicateId);
+      const canonical = getVariant.get(canonicalId);
+      if (!duplicate || !canonical) throw new Error("duplicate and canonical variants must both exist");
+      if (duplicate.work_id !== canonical.work_id) throw new Error("duplicate variants must belong to the same work");
+      const duplicateTarget = db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(duplicateId);
+      const canonicalTarget = db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(canonicalId);
+      if (duplicateTarget && canonicalTarget) {
+        const sameTarget = duplicateTarget.work_page_id === canonicalTarget.work_page_id
+          && duplicateTarget.spec_page_id === canonicalTarget.spec_page_id
+          && duplicateTarget.episode_page_id === canonicalTarget.episode_page_id;
+        if (!sameTarget) throw new Error("duplicate variants have different Notion targets");
+      }
+      const at = timestamp();
+      db.prepare(`UPDATE variants SET source_id=COALESCE(?, source_id), display_title=?, audio_variant=?,
+        subtitle_variant=?, cut_variant=?, target_size_bytes=COALESCE(?, target_size_bytes),
+        output_path=COALESCE(?, output_path), output_size_bytes=COALESCE(?, output_size_bytes),
+        probe_path=COALESCE(?, probe_path), qc_artifact_path=COALESCE(?, qc_artifact_path),
+        updated_at=? WHERE id=?`)
+        .run(duplicate.source_id, duplicate.display_title, duplicate.audio_variant,
+          duplicate.subtitle_variant, duplicate.cut_variant, duplicate.target_size_bytes,
+          duplicate.output_path, duplicate.output_size_bytes, duplicate.probe_path,
+          duplicate.qc_artifact_path, at, canonicalId);
+      if (!canonicalTarget && duplicateTarget) {
+        db.prepare("UPDATE notion_targets SET variant_id=?, updated_at=? WHERE variant_id=?")
+          .run(canonicalId, at, duplicateId);
+      } else {
+        db.prepare("DELETE FROM notion_targets WHERE variant_id=?").run(duplicateId);
+      }
+      db.prepare("UPDATE workflow_tasks SET variant_id=?, updated_at=? WHERE variant_id=?")
+        .run(canonicalId, at, duplicateId);
+      db.prepare("UPDATE events SET entity_id=? WHERE entity_type='variant' AND entity_id=?")
+        .run(canonicalId, duplicateId);
+      db.prepare("DELETE FROM variants WHERE id=?").run(duplicateId);
+      insertEvent.run("variant", canonicalId, "variant_duplicate_merged",
+        stableJson({ duplicateVariantId: duplicateId, canonicalVariantId: canonicalId }), at);
+      return getVariant.get(canonicalId);
+    });
+  }
+
   function applyMigrationCorrection(variantId, correction) {
     return withTransaction(db, () => {
       const current = getVariant.get(variantId);
@@ -306,32 +703,46 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         throw new Error("migration productionState must be qc_failed or deferred");
       }
       const desired = {
+        displayTitle: correction.displayTitle ?? current.display_title,
         audioVariant: correction.audioVariant ?? current.audio_variant,
+        subtitleVariant: correction.subtitleVariant ?? current.subtitle_variant,
         productionState: correction.productionState ?? current.production_state,
         failureCode: correction.failureCode ?? current.failure_code,
         failureDetail: correction.failureDetail ?? current.failure_detail
       };
-      const unchanged = desired.audioVariant === current.audio_variant
+      const unchanged = desired.displayTitle === current.display_title
+        && desired.audioVariant === current.audio_variant
+        && desired.subtitleVariant === current.subtitle_variant
         && desired.productionState === current.production_state
         && desired.failureCode === current.failure_code
         && desired.failureDetail === current.failure_detail;
       if (unchanged) return { row: current, applied: false };
       const at = timestamp();
-      db.prepare(`UPDATE variants SET audio_variant=COALESCE(?, audio_variant),
+      db.prepare(`UPDATE variants SET display_title=COALESCE(?, display_title),
+        audio_variant=COALESCE(?, audio_variant), subtitle_variant=COALESCE(?, subtitle_variant),
         production_state=COALESCE(?, production_state), failure_code=COALESCE(?, failure_code),
         failure_detail=COALESCE(?, failure_detail), updated_at=? WHERE id=?`)
-        .run(correction.audioVariant ?? null, correction.productionState ?? null,
+        .run(correction.displayTitle ?? null, correction.audioVariant ?? null,
+          correction.subtitleVariant ?? null, correction.productionState ?? null,
           correction.failureCode ?? null, correction.failureDetail ?? null, at, variantId);
       insertEvent.run("variant", variantId, "human_review_correction",
-        stableJson({ from: { audioVariant: current.audio_variant, productionState: current.production_state }, correction }), at);
+        stableJson({ from: {
+          displayTitle: current.display_title,
+          audioVariant: current.audio_variant,
+          subtitleVariant: current.subtitle_variant,
+          productionState: current.production_state
+        }, correction }), at);
       return { row: getVariant.get(variantId), applied: true };
     });
   }
 
-  return { upsertInputRoot, upsertDiscoveredSource, ensureWork, fillMissingWorkYear, ensureVariant, transitionProduction,
+  return { upsertInputRoot, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, transitionProduction,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
-    findVariantByOutputPath, applyMigrationCorrection };
+    findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection,
+    ensureWorkflowTask, requeueMetadataTask, requeueIntakeTask, listWorkflowTasks,
+    getWorkflowTaskSummary, refreshDueMetadataTasks, refreshDueIntakeTasks, transitionWorkflowTask,
+    recordWorkHandoff, recordWorkHandoffByNotionPage, listWorkHandoffs };
 }

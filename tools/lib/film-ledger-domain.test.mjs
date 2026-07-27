@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import {
   PRODUCTION_STATES,
   PUBLICATION_STATES,
+  WORKFLOW_HANDOFF_STATES,
+  AI_ACTIONABLE_WORKFLOW_STATES,
   assertProductionTransition,
   assertPublicationTransition,
+  assertWorkflowHandoffState,
+  assertWorkflowHandoffTransition,
   isSyncReady,
   nextRetryAt,
   normalizeLimit
@@ -20,6 +24,7 @@ test("production transitions enforce legal adjacency", () => {
   assert.equal(assertProductionTransition("discovered", "evaluated"), true);
   assert.equal(assertProductionTransition("qc_failed", "selected"), true);
   assert.equal(assertProductionTransition("deferred", "evaluated"), true);
+  assert.equal(assertProductionTransition("qc_passed", "rejected"), true);
   assert.throws(() => assertProductionTransition("discovered", "qc_passed"), /illegal production transition/);
   assert.throws(() => assertProductionTransition("unknown", "evaluated"), /illegal production transition/);
 });
@@ -30,6 +35,21 @@ test("publication transitions enforce legal adjacency", () => {
   assert.equal(assertPublicationTransition("verification_pending", "assets_pending"), true);
   assert.equal(assertPublicationTransition("verification_pending", "structure_pending"), true);
   assert.throws(() => assertPublicationTransition("upload_pending", "sync_ready"), /illegal publication transition/);
+});
+
+test("workflow handoff states provide an explicit human and AI exchange", () => {
+  assert.deepEqual(WORKFLOW_HANDOFF_STATES, [
+    "待 AI 处理", "AI 处理中", "待人工上传", "人工上传中", "已上传待 AI 收尾",
+    "待人工确认", "已确认待 AI 发布", "已完成", "暂缓"
+  ]);
+  assert.deepEqual(AI_ACTIONABLE_WORKFLOW_STATES, ["待 AI 处理", "已上传待 AI 收尾", "已确认待 AI 发布"]);
+  assert.equal(assertWorkflowHandoffState("人工上传中"), true);
+  assert.equal(assertWorkflowHandoffTransition("已上传待 AI 收尾", "AI 处理中"), true);
+  assert.equal(assertWorkflowHandoffTransition("已完成", "待 AI 处理"), true);
+  assert.equal(assertWorkflowHandoffTransition(null, "待人工上传"), true);
+  assert.equal(assertWorkflowHandoffTransition("待人工上传", "待人工上传"), true);
+  assert.throws(() => assertWorkflowHandoffState("unknown"), /unsupported workflow handoff state/);
+  assert.throws(() => assertWorkflowHandoffTransition("人工上传中", "已完成"), /illegal workflow handoff transition/);
 });
 
 test("Notion 429 opens a sixty minute retry window", () => {

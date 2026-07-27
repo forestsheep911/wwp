@@ -392,6 +392,7 @@ export interface MediaVariantMetadata {
   availability?: MediaAvailability;
   edition?: string;
   episodeNumber?: number;
+  episodeEndNumber?: number;
   resolution?: string;
   videoCodec?: string;
   container?: string;

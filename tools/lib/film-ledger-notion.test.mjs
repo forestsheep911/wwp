@@ -222,6 +222,21 @@ test("adapter rejects an arbitrary sibling media block when expected filename do
   assert.equal(result.assetsVerified, false);
 });
 
+test("adapter accepts an explicitly recorded media block when its filename differs", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: page_id === "spec-1" ? "work-1" : "spec-1" } }; } },
+    blocks: { children: { async list() { return { results: [{ id: "recorded-media", type: "video", video: { caption: [{ plain_text: "Older.Name.mp4" }], file: { url: "https://example.test/older.mp4" } } }] }; } } },
+    dataSources: { async query() { return { results: [publishableAsset({ "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "recorded-media" }] } })] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1",
+    expected_filename: "New.Local.Output.mp4", media_block_id: "recorded-media"
+  });
+  assert.equal(result.mediaVerified, true);
+  assert.equal(result.mediaBlockId, "recorded-media");
+  assert.equal(result.assetsVerified, true);
+});
+
 test("adapter verifies recorded page parent relationships instead of retrieval alone", async () => {
   const client = {
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: { type: "page_id", page_id: "wrong-parent" } }; } },
@@ -272,7 +287,8 @@ test("adapter rejects minimally linked or review-gated Media Assets rows", async
     work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.mp4"
   });
   assert.equal(result.assetsVerified, false);
-  assert.equal(result.mediaAssetPageId, null);
+  assert.equal(result.mediaAssetPageId, "minimal-asset");
+  assert.equal(result.assetGateCode, "visibility_gate");
 });
 
 test("adapter rejects same-work Media Assets rows without target-specific evidence", async () => {

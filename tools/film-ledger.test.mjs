@@ -15,7 +15,10 @@ test("CLI initializes and reports a clean JSON status", () => {
     assert.equal(run(["--db", db, "init"], dir).status, 0);
     const result = run(["--db", db, "status", "--json"], dir);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), { production: {}, publication: {}, totals: { variants: 0, syncReady: 0 }, queues: { production: 0, publication: 0 } });
+    assert.deepEqual(JSON.parse(result.stdout), {
+      production: {}, publication: {}, handoff: {}, totals: { variants: 0, syncReady: 0 },
+      workflowTasks: {}, queues: { collaboration: 0, intake: 0, metadata: 0, production: 0, publication: 0 }
+    });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -29,6 +32,167 @@ test("CLI discovery imports scan JSON and rejects invalid contracts", () => {
     const bad = run(["--db", db, "next", "--stage", "other"], dir);
     assert.equal(bad.status, 2);
     assert.match(bad.stderr, /production\|publication/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI exposes intake and metadata queues separately from playable publication", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-work-queues-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "X:\\queue", scannedAt: "2026-07-20T00:00:00.000Z", entries: [{
+      name: "New Film", relativePath: "New Film", fileCount: 1, mediaCount: 1, subtitleCount: 1,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", dbPath, "discover", "--scan", scan, "--json"], dir).status, 0);
+    const intake = JSON.parse(run(["--db", dbPath, "queue", "--stage", "intake", "--json"], dir).stdout);
+    assert.equal(intake.length, 1);
+    assert.equal(intake[0].task_type, "intake");
+    assert.equal(intake[0].relative_path, "New Film");
+
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "New Film", year: 2025, workType: "movie", priorityScore: 80 });
+    db.close();
+
+    const metadata = JSON.parse(run(["--db", dbPath, "queue", "--stage", "metadata", "--json"], dir).stdout);
+    assert.equal(metadata.length, 1);
+    assert.equal(metadata[0].task_type, "metadata_backfill");
+    assert.equal(metadata[0].work_id, work.id);
+    const completed = run(["--db", dbPath, "complete-task", "--task", String(metadata[0].id), "--failure-detail", "backfill completed", "--json"], dir);
+    assert.equal(completed.status, 0, completed.stderr);
+    assert.deepEqual(JSON.parse(run(["--db", dbPath, "queue", "--stage", "metadata", "--json"], dir).stdout), []);
+    const scheduled = run(["--db", dbPath, "schedule-metadata", "--work-id", String(work.id), "--failure-detail", "refresh stale ratings", "--json"], dir);
+    assert.equal(scheduled.status, 0, scheduled.stderr);
+    assert.equal(JSON.parse(scheduled.stdout).status, "pending");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI exposes and advances the bounded collaboration handoff queue", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-handoff-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Handoff", year: 2025, workType: "movie" });
+    repo.recordWorkHandoff(work.id, { status: "已上传待 AI 收尾", actor: "human" });
+    db.close();
+
+    const queued = run(["--db", dbPath, "queue", "--stage", "handoff", "--limit", "3", "--json"], dir);
+    assert.equal(queued.status, 0, queued.stderr);
+    assert.equal(JSON.parse(queued.stdout)[0].workflow_status, "已上传待 AI 收尾");
+
+    const claimed = run([
+      "--db", dbPath, "set-handoff", "--work-id", String(work.id),
+      "--status", "AI 处理中", "--actor", "ai", "--json"
+    ], dir);
+    assert.equal(claimed.status, 0, claimed.stderr);
+    assert.equal(JSON.parse(claimed.stdout).row.workflow_status, "AI 处理中");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("cycle reports catalog maintenance as an independent lane and refreshes due work", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-cycle-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Old Catalog Work", year: 2020, workType: "movie", nextReviewAt: "2020-01-01T00:00:00.000Z" });
+    repo.transitionWorkflowTask(repo.listWorkflowTasks({ taskType: "metadata_backfill", limit: 1 })[0].id, "done");
+    db.close();
+
+    const result = run(["--db", dbPath, "cycle", "--limit", "3", "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.lanes.catalogMaintenance.length, 1);
+    assert.equal(payload.lanes.catalogMaintenance[0].work_id, work.id);
+    assert.deepEqual(payload.refreshedIntakeTasks, []);
+    assert.deepEqual(payload.refreshedMetadataTasks.length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI records source probe and media evidence after intake routing", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-source-evidence-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "X:\\queue", scannedAt: "2026-07-20T00:00:00.000Z", entries: [{
+      name: "Evidence", relativePath: "Evidence", fileCount: 1, mediaCount: 1, subtitleCount: 0,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", db, "discover", "--scan", scan, "--json"], dir).status, 0);
+    const routed = run(["--db", db, "route-intake", "--source-id", "1", "--canonical-title", "Evidence", "--year", "2025", "--json"], dir);
+    assert.equal(routed.status, 0, routed.stderr);
+    const updated = run(["--db", db, "update-source", "--source-id", "1", "--probe-path", ".local-data/probe.json",
+      "--quality-state", "4k_hevc", "--subtitle-evidence", '{"bakedChinese":true}', "--audio-evidence", '{"tracks":["mandarin"]}',
+      "--color-risk", "none", "--json"], dir);
+    assert.equal(updated.status, 0, updated.stderr);
+    const source = JSON.parse(updated.stdout);
+    assert.equal(source.probe_path, ".local-data/probe.json");
+    assert.equal(source.quality_state, "4k_hevc");
+    assert.equal(source.subtitle_evidence, '{"bakedChinese":true}');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI attaches a legacy variant to a verified source", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-attach-source-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const root = repo.upsertInputRoot("X:\\queue");
+    const work = repo.ensureWork({ canonicalTitle: "Legacy", year: 2025, workType: "movie" });
+    const source = repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: work.id,
+      relativePath: "Legacy",
+      absolutePath: "X:\\queue\\Legacy",
+      fingerprint: "legacy",
+      sourceKind: "folder"
+    });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "legacy", displayTitle: "Legacy output" });
+    db.close();
+
+    const result = run([
+      "--db", dbPath, "attach-variant-source", "--variant", String(variant.id),
+      "--source-id", String(source.id), "--failure-detail", "verified source", "--json"
+    ], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).source_id, source.id);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI splits a collection source into identified member sources", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-source-split-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    const members = path.join(dir, "members.json");
+    writeFileSync(scan, JSON.stringify({ root: "X:\\queue", scannedAt: "2026-07-20T00:00:00.000Z", entries: [{
+      name: "Collection", relativePath: "Collection", fileCount: 2, mediaCount: 2, subtitleCount: 0,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", db, "discover", "--scan", scan, "--json"], dir).status, 0);
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const liveDb = openLedger(db);
+    const repo = createLedgerRepository(liveDb);
+    const work = repo.ensureWork({ canonicalTitle: "Member", year: 2025, workType: "movie" });
+    liveDb.close();
+    writeFileSync(members, JSON.stringify([{ relativePath: "Collection\\Member.iso", absolutePath: "X:\\queue\\Collection\\Member.iso", fingerprint: "member", workId: work.id }]));
+    const result = run(["--db", db, "split-source", "--source-id", "1", "--members", members, "--json"], dir);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.members.length, 1);
+    assert.equal(payload.parentTask.status, "done");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -224,9 +388,14 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
     assert.equal(next.status, 0, next.stderr);
     assert.equal(JSON.parse(next.stdout)[0].id, variant.id);
 
+    const prepared = run(["--db", dbPath, "register-target", "--variant", String(variant.id), "--work-page", "work", "--spec-page", "spec", "--episode-page", "episode", "--json"], dir);
+    assert.equal(prepared.status, 0, prepared.stderr);
+    assert.equal(JSON.parse(prepared.stdout).spec_page_id, "spec");
+
     const qc = run(["--db", dbPath, "record-qc", "--variant", String(variant.id), "--pass", "--output-path", "out.mp4", "--output-size", "1000", "--json"], dir);
     assert.equal(qc.status, 0, qc.stderr);
     assert.equal(JSON.parse(qc.stdout).production_state, "qc_passed");
+    assert.equal(JSON.parse(qc.stdout).publication_state, "structure_pending");
 
     const target = run(["--db", dbPath, "register-target", "--variant", String(variant.id), "--work-page", "work", "--spec-page", "spec", "--episode-page", "episode", "--json"], dir);
     assert.equal(target.status, 0, target.stderr);
@@ -237,6 +406,27 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
     const shown = JSON.parse(show.stdout);
     assert.equal(shown.variant.publication_state, "structure_pending");
     assert.equal(shown.target.spec_page_id, "spec");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI can reselect a failed production for a corrected retry", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-retry-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Retry Film", year: 2025, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "retry", displayTitle: "Retry" });
+    repo.transitionProduction(variant.id, "evaluated");
+    repo.transitionProduction(variant.id, "selected");
+    db.close();
+    assert.equal(run(["--db", dbPath, "start-production", "--variant", String(variant.id)], dir).status, 0);
+    assert.equal(run(["--db", dbPath, "record-qc", "--variant", String(variant.id), "--fail", "--failure-code", "test_retry"], dir).status, 0);
+    const retried = run(["--db", dbPath, "retry-production", "--variant", String(variant.id), "--failure-detail", "corrected filter"], dir);
+    assert.equal(retried.status, 0, retried.stderr);
+    assert.match(retried.stdout, /variant \d+: selected/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

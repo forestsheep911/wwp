@@ -146,6 +146,68 @@ test("buildPatch uses the verified Douban display title instead of subtitle-bear
   assert.equal(patch.Title.title[0].text.content, "银河英雄传说 銀河英雄伝説 (1988)");
 });
 
+test("buildPatch decodes HTML entities in verified Douban display titles", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "马达加斯加3 Madagascar 3: Europe&#39;s Most Wanted (2012)", text: { content: "马达加斯加3 Madagascar 3: Europe&#39;s Most Wanted (2012)" } }] },
+      "Release Year": { type: "number", number: 2012 }
+    }),
+    { subjectId: "3178770", doubanDisplayTitle: "马达加斯加3 Madagascar 3: Europe&#39;s Most Wanted", releaseYear: 2012 },
+    undefined,
+    undefined,
+    { now: "2026-07-20" }
+  );
+  assert.equal(patch.Title.title[0].text.content, "马达加斯加3 Madagascar 3: Europe's Most Wanted (2012)");
+});
+
+test("buildPatch preserves a season page label when Douban returns the series title", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: { type: "title", title: [{ plain_text: "疯狂动物城+ 第一季 Zootopia+ (2022)", text: { content: "疯狂动物城+ 第一季 Zootopia+ (2022)" } }] },
+      "Simplified Chinese Title": filledRichText("疯狂动物城+"),
+      "English Title": filledRichText("Zootopia+"),
+      "Release Year": { type: "number", number: 2022 }
+    }),
+    { subjectId: "35284242", doubanDisplayTitle: "疯狂动物城+ Zootopia+", releaseYear: 2022 },
+    undefined,
+    undefined,
+    { now: "2026-07-20" }
+  );
+
+  assert.equal(patch.Title, undefined);
+});
+
+test("buildPatch places a preserved season label before a Japanese original title", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: {
+        type: "title",
+        title: [{
+          plain_text: "JOJO的奇妙冒险 不灭钻石 第一季 Diamond Is Unbreakable Season 1 (2016)",
+          text: { content: "JOJO的奇妙冒险 不灭钻石 第一季 Diamond Is Unbreakable Season 1 (2016)" }
+        }]
+      },
+      "Release Year": { type: "number", number: 2016 },
+      "Simplified Chinese Title": filledRichText("JOJO的奇妙冒险 不灭钻石"),
+      "Original Title": filledRichText("ジョジョの奇妙な冒険 ダイヤモンドは砕けない"),
+      "Douban Subject ID": filledRichText("26650051")
+    }),
+    {
+      subjectId: "26650051",
+      doubanDisplayTitle: "JOJO的奇妙冒险 不灭钻石 ジョジョの奇妙な冒険 ダイヤモンドは砕けない",
+      releaseYear: 2016
+    },
+    undefined,
+    undefined,
+    { now: "2026-07-26" }
+  );
+
+  assert.equal(
+    patch.Title.title[0].text.content,
+    "JOJO的奇妙冒险 不灭钻石 第一季 ジョジョの奇妙な冒険 ダイヤモンドは砕けない (2016)"
+  );
+});
+
 test("buildPatch does not overwrite existing human-filled structured fields", () => {
   const patch = buildPatch(
     pageWithProperties({

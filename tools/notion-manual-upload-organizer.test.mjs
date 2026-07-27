@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { assignSuggestedTargets, effectiveScanDelayMs, markNewMedia, scanConcurrency, suggestedSpecTitle, summarizeEpisodeMedia } from "./notion-manual-upload-organizer.mjs";
+import { assignSuggestedTargets, DEFAULT_RECENT_PAGE_LIMIT, effectiveScanDelayMs, markNewMedia, scanConcurrency, specMediaPlacementIssue, suggestedSpecTitle, summarizeEpisodeMedia } from "./notion-manual-upload-organizer.mjs";
 import { DEFAULT_ROOT_DELAY_MS, DEFAULT_SCAN_TIMEOUT_SEC, nextDelaySec, chooseScanMode, scanSucceeded } from "./watch-notion-manual-uploads.mjs";
 
 test("suggestedSpecTitle keeps distinct Chinese audio variants", () => {
@@ -19,6 +19,10 @@ test("suggestedSpecTitle keeps distinct Chinese audio variants", () => {
     suggestedSpecTitle(title, "The.Bad.Guys.2.2025.1080p.h265.zh-taiwan.4.9GB.mp4"),
     "坏蛋联盟2 台配 4.9GB"
   );
+});
+
+test("manual upload organizer keeps the routine recent scan bounded", () => {
+  assert.equal(DEFAULT_RECENT_PAGE_LIMIT, 3);
 });
 
 test("suggestedSpecTitle keeps ambiguous Chinese track markers", () => {
@@ -114,6 +118,35 @@ test("summarizeEpisodeMedia detects playable media uploaded inside an episode pa
   assert.equal(media[0].playable, true);
   assert.equal(media[0].structuralStatus, "valid_episode_media");
   assert.deepEqual(media[0].path, ["Example", "Spec", "child_page:Episode 01", "video"]);
+});
+
+test("source specs flag playable videos as misplaced instead of final structured media", () => {
+  const issue = specMediaPlacementIssue(
+    "银河英雄传说 日语中字 原盘 0.08-0.44GB/集",
+    "Galaxy.Heroes.1988.E001.832x624.h265.cht.low.mp4"
+  );
+  assert.equal(issue?.code, "playable_media_in_source_spec");
+
+  const media = summarizeEpisodeMedia(
+    { type: "child_page", id: "episode-01", child_page: { title: "Episode 01" } },
+    [{
+      id: "media-01",
+      type: "video",
+      created_time: "2026-07-12T03:00:00.000Z",
+      last_edited_time: "2026-07-12T03:01:00.000Z",
+      video: {
+        type: "file",
+        file: { url: "https://example.invalid/Galaxy.Heroes.1988.E001.h265.cht.low.mp4" }
+      }
+    }],
+    ["银河英雄传说", "银河英雄传说 日语中字 原盘"],
+    "银河英雄传说 日语中字 原盘",
+    "银河英雄传说 銀河英雄伝説 (1988)"
+  );
+
+  assert.equal(media[0].playable, true);
+  assert.equal(media[0].placementIssue, "playable_media_in_source_spec");
+  assert.equal(media[0].recommendedAction, "reupload_to_playable_spec");
 });
 
 test("markNewMedia uses media-block timestamps instead of parent page timestamps", () => {

@@ -12,7 +12,7 @@ Use this skill before opening heavy encodes or uploads. The goal is to choose de
 1. Read the user-provided input directory. If none is provided, ask or infer a candidate from the current task context and confirm it.
 2. Scan with `../../scripts/scan-input-directory.mjs` for works, versions, discs, remuxes, ISOs/BDMV folders, extras, NFOs, subtitle packs, audio tracks, director cuts, commentary tracks, and series episodes.
 3. Group variants of the same work together before scoring.
-4. Check Notion state: new work, existing work with weak specs, existing work with sufficient specs, or ambiguous duplicate.
+4. Check Notion state: new work, existing work with weak specs, existing work with sufficient specs, or ambiguous duplicate. Inspect the intended spec child page and its media blocks, not only the work-level properties. An exact or materially equivalent playable asset is a production blocker unless the proposed result adds a distinct cut, language, subtitle treatment, resolution, or useful size tier.
 5. Apply hard gates and priority rules from `../../references/decision-rules.md`.
 6. Produce a ranked action list: metadata-only now, make playable now, defer for user decision, skip playable with reason, or route to series/source/archive workflow.
 
@@ -23,6 +23,7 @@ Use this skill before opening heavy encodes or uploads. The goal is to choose de
 - Do not auto-search subtitle sites in v1; record this as a future extension when relevant.
 - Skip sources with severe quality, color, subtitle, audio, or encode risk unless the user explicitly asks to experiment.
 - Do not treat "already in the folder" as sufficient reason to encode.
+- Do not encode an exact or materially equivalent spec that already has a playable video. A reusable target page is not evidence that it is empty.
 
 ## Priority Signals
 

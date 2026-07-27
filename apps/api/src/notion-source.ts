@@ -129,6 +129,7 @@ const mediaAssetTypePropertyPattern = /^(?:asset\s*type|\u8d44\u4ea7\u7c7b\u578b
 const displayLabelPropertyPattern = /^(?:display\s*label|\u663e\u793a\u6807\u7b7e|\u986f\u793a\u6a19\u7c64)$/i;
 const editionPropertyPattern = /^(?:edition\s*\/?\s*version|edition|version|cut|\u7248\u672c|\u526a\u8f91\u7248)$/i;
 const episodeNumberPropertyPattern = /^(?:episode\s*number|episode|ep|\u96c6\u6570|\u96c6\u5e8f)$/i;
+const episodeEndNumberPropertyPattern = /^(?:episode\s*end(?:\s*number)?|end\s*episode|\u7ed3\u675f\u96c6\u6570|\u7d50\u675f\u96c6\u6578|\u622a\u6b62\u96c6\u6570)$/i;
 const resolutionPropertyPattern = /^(?:resolution|\u5206\u8fa8\u7387|\u89e3\u50cf\u5ea6)$/i;
 const videoCodecPropertyPattern = /^(?:video\s*codec|codec|\u89c6\u9891\u7f16\u7801|\u8996\u983b\u7de8\u78bc)$/i;
 const containerPropertyPattern = /^(?:container|format|\u5c01\u88c5|\u683c\u5f0f)$/i;
@@ -520,6 +521,23 @@ function episodeNumberFromLabel(value: string) {
   return undefined;
 }
 
+function episodeRangeFromText(value: string) {
+  const patterns = [
+    /\bS\d{1,2}E(\d{1,3})\s*[-~–—至到]\s*(?:S\d{1,2})?E?(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u
+  ];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const start = Number(match?.[1]);
+    const end = Number(match?.[2]);
+    if (Number.isInteger(start) && Number.isInteger(end) && start > 0 && end >= start) {
+      return { start, end };
+    }
+  }
+  return undefined;
+}
+
 function canonicalEpisodeLabel(value: string) {
   const number = episodeNumberFromLabel(value);
   return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
@@ -863,12 +881,15 @@ function mediaAssetMetadataFromProperties(
   const subtitleLanguages = listFromNamedProperty(properties, subtitleLanguagesPropertyPattern, 12);
   const developerMemo = textFromNamedProperty(properties, developerMemoPropertyPattern, 600);
   const originalFileName = textFromNamedProperty(properties, originalFileNamePropertyPattern, 600);
+  const displayLabel = textFromNamedProperty(properties, displayLabelPropertyPattern, 180);
+  const episodeRange = episodeRangeFromText(`${displayLabel ?? ""} ${originalFileName ?? ""}`);
   const metadata: MediaVariantMetadata = {
     assetType,
     mediaAssetPageId: assetPageId,
     availability,
     edition: textFromNamedProperty(properties, editionPropertyPattern, 120),
-    episodeNumber: numberFromNamedProperty(properties, episodeNumberPropertyPattern),
+    episodeNumber: numberFromNamedProperty(properties, episodeNumberPropertyPattern) ?? episodeRange?.start,
+    episodeEndNumber: numberFromNamedProperty(properties, episodeEndNumberPropertyPattern) ?? episodeRange?.end,
     resolution: listFromNamedProperty(properties, resolutionPropertyPattern, 1)?.[0],
     videoCodec: normalizeMediaAssetCodec(listFromNamedProperty(properties, videoCodecPropertyPattern, 1)?.[0]),
     container: listFromNamedProperty(properties, containerPropertyPattern, 1)?.[0]?.toLowerCase(),
@@ -889,7 +910,7 @@ function mediaAssetMetadataFromProperties(
       undefined,
     playbackVerified: checkboxFromNamedProperty(properties, playbackVerifiedPropertyPattern),
     hideFromWebsite: checkboxFromNamedProperty(properties, hideFromWebsitePropertyPattern),
-    sourceLabel: textFromNamedProperty(properties, displayLabelPropertyPattern, 180),
+    sourceLabel: displayLabel,
     fileName: originalFileName,
     originalFileName,
     mediaBlockId: textFromNamedProperty(properties, mediaBlockIdPropertyPattern, 120),

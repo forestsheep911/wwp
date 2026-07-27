@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertPreparedMovieTargetIsEmpty, notionVideoName } from "./lib/notion-movie-target.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-movie-video.mjs");
 
@@ -81,4 +82,33 @@ test("movie uploader installs Notion DNS override before client work", () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("movie prepare-only preflight rejects a target that already contains video", () => {
+  assert.throws(
+    () => assertPreparedMovieTargetIsEmpty({
+      id: "spec-page",
+      videoNames: ["Sinners.2025.1080p.h265.eng.chteng.4.8GB.mp4"]
+    }),
+    /already contains 1 video block.*Stop before encoding/i
+  );
+});
+
+test("movie prepare-only preflight accepts an empty target", () => {
+  assert.doesNotThrow(() => assertPreparedMovieTargetIsEmpty({
+    id: "spec-page",
+    videoNames: []
+  }));
+});
+
+test("movie target preflight reports a hosted video filename instead of its signed URL", () => {
+  assert.equal(
+    notionVideoName({
+      type: "file",
+      file: {
+        url: "https://example.invalid/path/Sinners.2025.1080p.h265.eng.chteng.4.8GB.mp4?signature=secret"
+      }
+    }),
+    "Sinners.2025.1080p.h265.eng.chteng.4.8GB.mp4"
+  );
 });

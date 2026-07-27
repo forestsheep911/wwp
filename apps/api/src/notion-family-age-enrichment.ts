@@ -4,12 +4,13 @@ import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
-import { buildAiCheckUpdates } from "./notion-ai-check-state.js";
+import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
 
 type JsonRecord = Record<string, unknown>;
 
 interface FamilyAgeOptions {
   apply: boolean;
+  refresh: boolean;
   includeLegacyPages: boolean;
   limit: number;
   maxUpdates: number;
@@ -143,6 +144,7 @@ function parseArgs(): FamilyAgeOptions {
 
   return {
     apply: has("--apply"),
+    refresh: has("--refresh"),
     includeLegacyPages: has("--include-legacy-pages"),
     limit: Math.max(1, Math.floor(Number(value("--limit", "20")))),
     maxUpdates: Math.max(1, Math.floor(Number(value("--max-updates", "5")))),
@@ -500,11 +502,11 @@ function isLegacyPageTitle(title: string) {
   return /\[(?:旧媒体承载页|旧重复条目|旧错误结构)[^\]]*\]/u.test(title);
 }
 
-async function planPage(page: JsonRecord): Promise<PagePlan> {
+async function planPage(page: JsonRecord, refresh = false): Promise<PagePlan> {
   const properties = asRecord(page.properties) ?? {};
   const title = titleFromProperties(properties);
   const pageId = asString(page.id);
-  if (!pageNeedsFamilyAge(properties)) {
+  if (!refresh && !pageNeedsFamilyAge(properties)) {
     return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
   }
   const ai = await askFamilyAgeModel(title, properties);
@@ -516,7 +518,14 @@ async function planPage(page: JsonRecord): Promise<PagePlan> {
     ...buildAiCheckUpdates({
       checkedAt: new Date().toISOString(),
       unresolvedIssue: ai.needsReview ? `AI 年龄建议待复核：${ai.reason}` : undefined
-    })
+    }),
+    ...(!ai.needsReview
+      ? buildResolvedAiIssueUpdates({
+          existingAiIssue: propertyText(properties["AI Issue"]),
+          humanIssue: propertyText(properties["Human Issue"]),
+          resolvedPrefix: "AI 年龄建议待复核："
+        })
+      : {})
   };
   const cleanUpdates = Object.fromEntries(Object.entries(updates).filter(([, value]) => Boolean(value)));
   return {
@@ -531,6 +540,9 @@ async function planPage(page: JsonRecord): Promise<PagePlan> {
 
 async function main() {
   const options = parseArgs();
+  if (options.refresh && !options.pageId) {
+    throw new Error("--refresh requires one explicit --page-id.");
+  }
   const notionToken = options.apply
     ? process.env.NOTION_WRITE_TOKEN ?? process.env.NOTION_TOKEN
     : process.env.NOTION_READ_ONLY_TOKEN ?? process.env.NOTION_WRITE_TOKEN ?? process.env.NOTION_TOKEN;
@@ -546,9 +558,9 @@ async function main() {
   const candidatePages = (await collectPages(notion, library, options)).filter((page) => {
     const properties = asRecord(page.properties) ?? {};
     const title = titleFromProperties(properties);
-    return pageNeedsFamilyAge(properties) &&
-      !completedPageIds.has(asString(page.id)) &&
-      !failedPageIds.has(asString(page.id)) &&
+    return (options.refresh || pageNeedsFamilyAge(properties)) &&
+      (options.refresh || !completedPageIds.has(asString(page.id))) &&
+      (options.refresh || !failedPageIds.has(asString(page.id))) &&
       (options.includeLegacyPages || !isLegacyPageTitle(title));
   });
   if (options.writeCandidateCache) {
@@ -562,7 +574,7 @@ async function main() {
   let applied = 0;
   for (const page of pages) {
     try {
-      const plan = await planPage(page);
+      const plan = await planPage(page, options.refresh);
       plans.push(plan);
       if (plan.skipped) skipped[plan.skipped] = (skipped[plan.skipped] ?? 0) + 1;
       if (options.apply && Object.keys(plan.updates).length > 0) {

@@ -1909,8 +1909,8 @@ function VariantButtons({
             size="sm"
             key={group.key}
             onClick={onShowAllVariants}
-            title={`${group.label} / ${group.episodeCount} 集`}
-            aria-label={`${group.label} / ${group.episodeCount} 集`}
+            title={`${group.label} / ${group.rangeLabel}`}
+            aria-label={`${group.label} / ${group.rangeLabel}`}
           >
             <span className="flex min-w-0 flex-wrap gap-1.5">
               {(group.labels.length > 0 ? group.labels : [group.label]).map((label) => (
@@ -1923,7 +1923,7 @@ function VariantButtons({
                 </span>
               ))}
             </span>
-            <Badge className="shrink-0" variant="muted">{group.episodeCount} 集</Badge>
+            <Badge className="shrink-0" variant="muted">{group.rangeLabel}</Badge>
           </Button>
         ))}
         {hiddenGroupCount > 0 ? (

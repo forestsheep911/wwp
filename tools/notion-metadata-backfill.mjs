@@ -335,11 +335,22 @@ function bestDescription(jsonLdDescription, summary) {
 }
 
 function cleanTitle(title) {
-  return title
+  return decodeHtmlEntities(title)
     .replace(/^(?:【敬请期待】|【仅供下载】)\s*/, "")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function decodeHtmlEntities(value) {
+  return String(value)
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&#34;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'");
 }
 
 function canonicalTitleFromStructuredIdentity(properties, metadata = {}) {
@@ -415,18 +426,37 @@ function chineseNumber(value) {
 
 function seasonNumber(title) {
   const cleaned = cleanTitle(title);
+  const chineseSeason = cleaned.match(/第([零一二三四五六七八九十]+)季/u)?.[1];
+  const chineseSeasonNumber = chineseSeason
+    ? ({ 零: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[chineseSeason] ?? undefined)
+    : undefined;
   return (
     cleaned.match(/\bs0?(\d+)\b/i)?.[1] ??
     cleaned.match(/\bseason\s*(\d+)\b/i)?.[1] ??
     cleaned.match(/\bbig\s*bang\s+(\d+)\b/i)?.[1] ??
     cleaned.match(/\bhouse\s+s?0?(\d+)\b/i)?.[1] ??
-    cleaned.match(/第(\d+)季/)?.[1]
+    cleaned.match(/第(\d+)季/u)?.[1] ??
+    chineseSeasonNumber?.toString()
   );
 }
 
 function normalizedSeasonLabel(title) {
   const number = seasonNumber(title);
   return number ? `第${chineseNumber(number)}季` : "";
+}
+
+function preserveSeasonIdentity(currentTitle, canonicalTitle) {
+  if (!canonicalTitle) return canonicalTitle;
+  const number = seasonNumber(currentTitle);
+  if (!number || seasonNumber(canonicalTitle)) return canonicalTitle;
+  const year = titleYear(canonicalTitle);
+  const base = titleWithoutYear(canonicalTitle);
+  const chineseLabel = `第${chineseNumber(number)}季`;
+  const foreignStart = base.search(/\s+(?=[A-Za-z\u3040-\u30ff])/u);
+  const decorated = foreignStart >= 0
+    ? `${base.slice(0, foreignStart)} ${chineseLabel}${base.slice(foreignStart)}`
+    : `${base} ${chineseLabel}`;
+  return year ? `${decorated} (${year})` : decorated;
 }
 
 function seasonSearchTitle(title) {
@@ -474,6 +504,9 @@ function stripHtml(html) {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
     .replace(/&#34;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1033,7 +1066,10 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
 
   const currentTitle = propText(properties.Title);
   const cleanedTitle = cleanTitle(currentTitle);
-  const canonicalTitle = canonicalTitleFromStructuredIdentity(properties, metadata);
+  const canonicalTitle = preserveSeasonIdentity(
+    cleanedTitle,
+    canonicalTitleFromStructuredIdentity(properties, metadata)
+  );
   if (canonicalTitle && titleKey(cleanedTitle) !== titleKey(canonicalTitle)) {
     if (canSafelyCompleteStructuredTitle(cleanedTitle, properties, metadata)) {
       patch.Title = { title: richText(canonicalTitle) };
@@ -1084,6 +1120,22 @@ function preferredDoubanSubjectId(properties, pageId, options = {}) {
 
   const existingSubjectId = propText(properties["Douban Subject ID"]) || propText(properties["Douban"]);
   return existingSubjectId.match(/\d{4,12}/)?.[0];
+}
+
+function snapshotProperty(property) {
+  if (!property?.type) return null;
+  const value = property[property.type];
+  if (property.type === "title" || property.type === "rich_text") {
+    return plainText(value);
+  }
+  if (property.type === "checkbox" || property.type === "number" || property.type === "url") {
+    return value ?? null;
+  }
+  if (property.type === "date") return value?.start ?? null;
+  if (property.type === "select") return value?.name ?? null;
+  if (property.type === "multi_select") return (value ?? []).map(item => item.name);
+  if (property.type === "files") return (value ?? []).map(item => item.name ?? item.file?.url ?? item.external?.url ?? null);
+  return value ?? null;
 }
 
 async function processPage(notion, pageRef, options, cookie) {
@@ -1141,8 +1193,13 @@ async function processPage(notion, pageRef, options, cookie) {
     };
   }
 
+  let readback;
   if (!options.dryRun) {
     await notion.pages.update({ page_id: page.id, properties: patch });
+    const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
+    readback = Object.fromEntries(
+      Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])])
+    );
   }
 
   return {
@@ -1151,7 +1208,8 @@ async function processPage(notion, pageRef, options, cookie) {
     newTitle: patch.Title?.title?.[0]?.text?.content,
     status: options.dryRun ? "dry_run" : "updated",
     subjectId: metadata.subjectId,
-    fields: Object.keys(patch)
+    fields: Object.keys(patch),
+    ...(readback ? { readback } : {})
   };
 }
 

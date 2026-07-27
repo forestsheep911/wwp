@@ -715,6 +715,8 @@ function normalizeManifest(manifest, options) {
       label: item.label || item.expectedTitleContains || item.pageId,
       pageId: item.pageId,
       expectedTitleContains: item.expectedTitleContains,
+      mediaBlockId: item.mediaBlockId,
+      expectedFilename: item.expectedFilename,
       maxAssets: Number(item.maxAssets ?? defaults.maxAssets ?? options.maxAssets),
       maxSpecsPerPage: Number(item.maxSpecsPerPage ?? defaults.maxSpecsPerPage ?? options.maxSpecsPerPage),
       allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean),
@@ -777,8 +779,21 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
     };
   }
 
+  const targetedCandidates = audited.candidates.filter((candidate) =>
+    (!item.mediaBlockId || candidate.mediaBlockId === item.mediaBlockId)
+    && (!item.expectedFilename || candidate.originalFileName === item.expectedFilename)
+  );
+  const targetIssues = [];
+  if ((item.mediaBlockId || item.expectedFilename) && targetedCandidates.length === 0) {
+    targetIssues.push({
+      kind: "manifest_media_target_not_found",
+      mediaBlockId: item.mediaBlockId,
+      expectedFilename: item.expectedFilename,
+      recommendedAction: "Read the exact destination page and register the correct media block or filename before writing Media Assets."
+    });
+  }
   const selected = selectRepresentativeCandidates(
-    audited.candidates,
+    targetedCandidates,
     item.maxAssets ?? options.maxAssets,
     item.allowedAssetTypes
   ).map((candidate) => applyManifestOverrides(candidate, item));
@@ -825,12 +840,12 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
       created: actions.filter((action) => action.action === "created").length,
       skippedExisting: actions.filter((action) => action.action === "skip_existing").length,
       wouldCreate: actions.filter((action) => action.action === "would_create").length,
-      issues: audited.issues.length,
+      issues: audited.issues.length + targetIssues.length,
       skippedTitleMismatch: 0
     },
     selected,
     actions,
-    issues: audited.issues
+    issues: [...audited.issues, ...targetIssues]
   };
 }
 

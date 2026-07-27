@@ -3,9 +3,21 @@ interface AiCheckUpdateOptions {
   unresolvedIssue?: string;
 }
 
-function richText(content: string) {
+export function richText(content: string) {
   return (content.match(/[\s\S]{1,1900}/g) ?? [content])
     .map((chunk) => ({ type: "text", text: { content: chunk } }));
+}
+
+export function buildResolvedAiIssueUpdates(options: {
+  existingAiIssue: string;
+  humanIssue: string;
+  resolvedPrefix: string;
+}): Record<string, unknown> {
+  if (!options.existingAiIssue.trim().startsWith(options.resolvedPrefix)) return {};
+  return {
+    "AI Issue": { rich_text: [] },
+    ...(options.humanIssue.trim() ? {} : { "Needs Review": { checkbox: false } })
+  };
 }
 
 export function buildAiCheckUpdates(options: AiCheckUpdateOptions): Record<string, unknown> {

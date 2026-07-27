@@ -177,6 +177,23 @@ export const notionManagedProperties = [
       { name: "unknown", color: "gray" }
     ]
   },
+  {
+    name: "Workflow Status",
+    type: "select",
+    group: "quality",
+    options: [
+      { name: "待 AI 处理", color: "blue" },
+      { name: "AI 处理中", color: "purple" },
+      { name: "待人工上传", color: "yellow" },
+      { name: "人工上传中", color: "orange" },
+      { name: "已上传待 AI 收尾", color: "blue" },
+      { name: "待人工确认", color: "yellow" },
+      { name: "已确认待 AI 发布", color: "green" },
+      { name: "已完成", color: "green" },
+      { name: "暂缓", color: "gray" }
+    ]
+  },
+  { name: "Workflow Note", type: "rich_text", group: "quality" },
   { name: "Hide from Website", type: "checkbox", group: "quality" },
   { name: "Needs Review", type: "checkbox", group: "quality" },
   { name: "Human Issue", type: "rich_text", group: "quality" },

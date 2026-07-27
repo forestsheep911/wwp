@@ -17,6 +17,8 @@ function parseArgs() {
     includeDirectSpec: false,
     allowPartialEpisodes: false,
     updateExistingMissing: false,
+    correctExisting: false,
+    ensureSchema: true,
     apply: false,
     resolveIp: ""
   };
@@ -36,6 +38,8 @@ function parseArgs() {
     else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
     else if (arg === "--allow-partial-episodes") options.allowPartialEpisodes = true;
     else if (arg === "--update-existing-missing") options.updateExistingMissing = true;
+    else if (arg === "--correct-existing") options.correctExisting = true;
+    else if (arg === "--no-ensure-schema") options.ensureSchema = false;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -53,6 +57,12 @@ function parseArgs() {
   if (!Number.isFinite(options.skipPages) || options.skipPages < 0) throw new Error("--skip-pages must be zero or a positive number.");
   if (!Number.isFinite(options.maxPages) || options.maxPages < 1) throw new Error("--max-pages must be a positive number.");
   if (!Number.isFinite(options.maxAssets) || options.maxAssets < 1) throw new Error("--max-assets must be a positive number.");
+  if (options.correctExisting && !options.metadataManifestPath) {
+    throw new Error("--correct-existing requires --metadata-manifest.");
+  }
+  if (options.correctExisting && options.updateExistingMissing) {
+    throw new Error("--correct-existing cannot be combined with --update-existing-missing.");
+  }
   return options;
 }
 
@@ -65,16 +75,22 @@ function printHelp() {
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --allow-partial-episodes --report .local-data/partial-series-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-metadata.json --update-existing-missing --apply
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-corrections.json --correct-existing --apply
 
-This writer is episode-aware. It creates Media Assets rows for real media blocks
-found under episode child pages. Empty episode placeholders are reported but not
+This writer is episode-range-aware. It creates Media Assets rows for real media blocks
+found under episode-range child pages. Empty placeholders are reported but not
 written. Direct spec-page media is reported by default; with
 --include-direct-spec, direct media is written only when the media title or file
 name contains a parseable episode number. With --allow-partial-episodes, pages
 with some unparseable episode titles can still write the parseable episode rows;
 the unparseable rows remain issues. With --update-existing-missing, existing
 matched Media Assets rows are patched only for empty properties; existing human
-values are not overwritten.
+values are not overwritten. With --correct-existing, only manifest-declared
+technical fields from the safe replacement allowlist may overwrite a matched
+row. Name, Work, Playback Verified, and Hide from Website are never eligible.
+The writer ensures the numeric Media Assets property \`Episode End\` on apply so
+collection rows preserve an inclusive range. Use --no-ensure-schema only for a
+deliberately schema-read-only run.
 `);
 }
 
@@ -169,6 +185,19 @@ function isPlayableMedia(block) {
   );
 }
 
+function isSourceSpecTitle(title = "") {
+  return /(?:原盘|原盤|片源|资源|資源|source|original disc)/iu.test(cleanText(title));
+}
+
+export function playablePlacementIssue(specTitle = "", fileName = "") {
+  if (!isSourceSpecTitle(specTitle)) return null;
+  if (!/\.(mp4|m4v|mov|webm|mkv)(?:[?#].*)?$/i.test(String(fileName ?? ""))) return null;
+  return {
+    kind: "playable_media_in_source_spec",
+    recommendedAction: "Do not write a Media Assets row. Reupload this playable file to the matching playable spec page instead of the source/original-disc spec."
+  };
+}
+
 function chineseEpisodeNumber(value) {
   const digits = { 零: 0, "〇": 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
   let total = 0;
@@ -210,9 +239,31 @@ function episodeNumberFromLabel(value) {
   return chineseEpisodeNumber(cleaned.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
 }
 
+function episodeRangeFromLabel(value) {
+  const cleaned = cleanText(value);
+  const patterns = [
+    /\bS\d{1,2}E(\d{1,3})\s*[-~–—至到]\s*(?:S\d{1,2})?E?(\d{1,3})\b/i,
+    /\b(?:Episode|Ep)[\s._-]*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\b/i,
+    /第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u
+  ];
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    const start = Number(match?.[1]);
+    const end = Number(match?.[2]);
+    if (Number.isInteger(start) && Number.isInteger(end) && start > 0 && end >= start) {
+      return { start, end };
+    }
+  }
+  const episode = episodeNumberFromLabel(cleaned);
+  return episode ? { start: episode, end: episode } : undefined;
+}
+
 function canonicalEpisodeLabel(value) {
-  const number = episodeNumberFromLabel(value);
-  return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
+  const range = episodeRangeFromLabel(value);
+  if (!range) return cleanText(value);
+  const start = String(range.start).padStart(2, "0");
+  const end = String(range.end).padStart(2, "0");
+  return range.end > range.start ? `Episode ${start}-${end}` : `Episode ${start}`;
 }
 
 function pushUnique(target, value) {
@@ -239,7 +290,7 @@ function extensionFromFileName(value) {
   return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
 }
 
-function parseAssetMetadata(label, fileName, episodeNumber) {
+function parseAssetMetadata(label, fileName, episodeNumber, episodeEndNumber = episodeNumber) {
   const labelText = cleanText(label);
   const fileText = cleanText(fileName ?? "");
   const combined = `${labelText} ${fileText}`.trim();
@@ -288,6 +339,7 @@ function parseAssetMetadata(label, fileName, episodeNumber) {
   const metadata = {
     availability: "playable",
     episodeNumber,
+    episodeEndNumber: episodeEndNumber > episodeNumber ? episodeEndNumber : undefined,
     resolution: firstMatch(technicalText, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
     videoCodec: normalizeVideoCodec(technicalText),
     container: extensionFromFileName(fileName),
@@ -330,6 +382,18 @@ async function loadMediaAssetsDataSource(notion) {
   throw new Error("Set NOTION_MEDIA_ASSETS_DATA_SOURCE_ID or NOTION_MEDIA_ASSETS_DATABASE_ID.");
 }
 
+async function ensureSeriesCollectionSchema(notion, dataSource, apply) {
+  if (dataSource.properties?.["Episode End"]) return { dataSource, added: [] };
+  if (!apply) return { dataSource, added: ["Episode End"] };
+  const updated = await notion.dataSources.update({
+    data_source_id: dataSource.id,
+    properties: {
+      "Episode End": { number: { format: "number" } }
+    }
+  });
+  return { dataSource: updated, added: ["Episode End"] };
+}
+
 function titlePropertyName(dataSource) {
   return Object.entries(dataSource.properties ?? {}).find(([, property]) => property.type === "title")?.[0] ?? "Title";
 }
@@ -362,6 +426,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Media Availability", asSelect("playable"));
   setIfProperty(properties, dataSource, "Display Label", { rich_text: richText(candidate.displayLabel) });
   setIfProperty(properties, dataSource, "Episode Number", { number: metadata.episodeNumber });
+  setIfProperty(properties, dataSource, "Episode End", metadata.episodeEndNumber ? { number: metadata.episodeEndNumber } : undefined);
   setIfProperty(properties, dataSource, "Resolution", asSelect(metadata.resolution));
   setIfProperty(properties, dataSource, "Video Codec", asSelect(metadata.videoCodec));
   setIfProperty(properties, dataSource, "Container", asSelect(metadata.container));
@@ -371,7 +436,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
-  // A discovered media block on the exact episode page is the workflow's upload proof.
+  // A discovered media block on the exact episode-range page is the workflow's upload proof.
   setIfProperty(properties, dataSource, "Playback Verified", { checkbox: true });
   setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
@@ -379,7 +444,7 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
   setIfProperty(properties, dataSource, "Media Block ID", { rich_text: richText(candidate.mediaBlockId) });
   setIfProperty(properties, dataSource, "Developer Memo", {
-    rich_text: richText(candidate.developerMemo || "Created by notion-media-assets-write-series.mjs from an episode child page with a real media block. Upload-backed playback verification recorded.")
+    rich_text: richText(candidate.developerMemo || "Created by notion-media-assets-write-series.mjs from an episode-range child page with a real media block. Upload-backed playback verification recorded.")
   });
   return properties;
 }
@@ -558,6 +623,68 @@ function buildMissingProperties(dataSource, existingPage, candidate) {
   return patch;
 }
 
+const SAFE_REPLACE_EXISTING_FIELDS = new Set([
+  "Display Label",
+  "Resolution",
+  "Video Codec",
+  "Container",
+  "Approx Size GB",
+  "Quality Tag",
+  "Audio Languages",
+  "Subtitle Languages",
+  "Subtitle Regions",
+  "Source Lineage",
+  "Developer Memo"
+]);
+
+function normalizeReplaceExistingFields(value, label = "metadata override") {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${label} replaceExistingFields must be an array.`);
+  const fields = [...new Set(value.map((field) => cleanText(String(field))).filter(Boolean))];
+  const disallowed = fields.filter((field) => !SAFE_REPLACE_EXISTING_FIELDS.has(field));
+  if (disallowed.length > 0) {
+    throw new Error(`${label} cannot replace protected or unknown fields: ${disallowed.join(", ")}`);
+  }
+  return fields;
+}
+
+function propertyMatchesPayload(existingProperty, payload) {
+  if (!existingProperty || !payload) return false;
+  if (existingProperty.type === "select") {
+    return (existingProperty.select?.name ?? "") === (payload.select?.name ?? "");
+  }
+  if (existingProperty.type === "multi_select") {
+    const current = (existingProperty.multi_select ?? []).map((item) => item.name).sort();
+    const next = (payload.multi_select ?? []).map((item) => item.name).sort();
+    return JSON.stringify(current) === JSON.stringify(next);
+  }
+  if (existingProperty.type === "number") return existingProperty.number === payload.number;
+  if (existingProperty.type === "rich_text") {
+    const next = (payload.rich_text ?? [])
+      .map((item) => item.plain_text ?? item.text?.content ?? "")
+      .join("")
+      .trim();
+    return propertyPlainText(existingProperty) === next;
+  }
+  return false;
+}
+
+function buildReplacementProperties(dataSource, existingPage, candidate) {
+  const fields = normalizeReplaceExistingFields(candidate.replaceExistingFields, candidate.name);
+  const candidateProperties = buildAssetProperties(dataSource, candidate);
+  const existingProperties = existingPage.properties ?? {};
+  const patch = {};
+
+  for (const name of fields) {
+    const value = candidateProperties[name];
+    if (!value || !dataSource.properties?.[name]) continue;
+    if (propertyMatchesPayload(existingProperties[name], value)) continue;
+    patch[name] = value;
+  }
+
+  return patch;
+}
+
 async function updateExistingMissing(notion, dataSource, existingPage, candidate, apply) {
   const patch = buildMissingProperties(dataSource, existingPage, candidate);
   const fields = Object.keys(patch);
@@ -571,15 +698,127 @@ async function updateExistingMissing(notion, dataSource, existingPage, candidate
   return { action: "updated_existing", pageId: existingPage.id, candidate, fields };
 }
 
+async function correctExisting(notion, dataSource, existingPage, candidate, apply) {
+  const patch = buildReplacementProperties(dataSource, existingPage, candidate);
+  const fields = Object.keys(patch);
+  if (fields.length === 0) {
+    return { action: "skip_existing", pageId: existingPage.id, candidate };
+  }
+  if (!apply) {
+    return { action: "would_correct_existing", pageId: existingPage.id, candidate, fields, properties: patch };
+  }
+  await notion.pages.update({ page_id: existingPage.id, properties: patch });
+  return { action: "corrected_existing", pageId: existingPage.id, candidate, fields };
+}
+
 function selectablePages(auditReport, skipPages, maxPages, includeDirectSpec, allowPartialEpisodes) {
   return (auditReport.pages ?? [])
     .filter((page) => (
-      (page.summary?.hasPlayableEpisodeMedia || (includeDirectSpec && page.summary?.directPlayableMediaCount > 0)) &&
-      (allowPartialEpisodes || page.summary?.unparseableEpisodePages === 0) &&
-      page.summary?.duplicateEpisodeNumbers === 0
+      isOrganizerReportPage(page)
+        ? organizerPageIsSelectable(page, allowPartialEpisodes)
+        : (
+            (page.summary?.hasPlayableEpisodeMedia || (includeDirectSpec && page.summary?.directPlayableMediaCount > 0)) &&
+            (allowPartialEpisodes || page.summary?.unparseableEpisodePages === 0) &&
+            page.summary?.duplicateEpisodeNumbers === 0
+          )
     ))
     .slice(skipPages)
     .slice(0, maxPages);
+}
+
+function isOrganizerReportPage(page) {
+  return Array.isArray(page.specMedia) && Array.isArray(page.specPages);
+}
+
+function organizerPageIsSelectable(page, allowPartialEpisodes) {
+  const validMedia = page.specMedia.filter((item) => item.playable && item.structuralStatus === "valid_episode_media");
+  if (validMedia.length === 0) return false;
+  for (const spec of page.specPages) {
+    const episodes = spec.episodePages ?? [];
+    const numbers = episodes.map((episode) => episode.episodeNumber).filter(Number.isInteger);
+    if (!allowPartialEpisodes && numbers.length !== episodes.length) return false;
+    if (new Set(numbers).size !== numbers.length) return false;
+    const covered = new Set();
+    for (const episode of episodes) {
+      const start = episode.episodeNumber;
+      const end = episode.episodeEndNumber ?? start;
+      if (!Number.isInteger(start) || !Number.isInteger(end) || end < start) continue;
+      for (let number = start; number <= end; number += 1) {
+        if (covered.has(number)) return false;
+        covered.add(number);
+      }
+    }
+  }
+  return true;
+}
+
+function childPageTitle(pathItem = "") {
+  return String(pathItem).startsWith("child_page:") ? String(pathItem).slice("child_page:".length) : "";
+}
+
+export function candidatesFromOrganizerPage(page, metadataOverrides = []) {
+  const candidates = [];
+  const issues = [];
+  const prepared = [];
+  for (const media of page.specMedia ?? []) {
+    if (!media.playable || media.structuralStatus !== "valid_episode_media") continue;
+    const childTitles = (media.path ?? []).map(childPageTitle).filter(Boolean);
+    const specTitle = childTitles[0];
+    const episodeTitle = childTitles.at(-1);
+    const spec = (page.specPages ?? []).find((item) => item.title === specTitle);
+    const episode = (spec?.episodePages ?? []).find((item) => item.title === episodeTitle);
+    if (!spec || !episode || !Number.isInteger(episode.episodeNumber)) {
+      issues.push({
+        kind: "organizer_media_target_unresolved",
+        mediaBlockId: media.blockId,
+        fileName: media.name,
+        specTitle,
+        episodeTitle
+      });
+      continue;
+    }
+    const placementIssue = playablePlacementIssue(spec.title, media.name);
+    if (placementIssue) {
+      issues.push({
+        ...placementIssue,
+        specPageId: spec.pageId,
+        specTitle: spec.title,
+        episodePageId: episode.pageId,
+        episodeTitle: episode.title,
+        mediaBlockId: media.blockId,
+        fileName: media.name
+      });
+      continue;
+    }
+    prepared.push({ media, spec, episode });
+  }
+  const mediaPerEpisode = new Map();
+  for (const item of prepared) {
+    mediaPerEpisode.set(item.episode.pageId, (mediaPerEpisode.get(item.episode.pageId) ?? 0) + 1);
+  }
+  for (const { media, spec, episode } of prepared) {
+    const episodeRange = episodeRangeFromLabel(episode.title);
+    const episodeLabel = canonicalEpisodeLabel(episode.title);
+    const variantSuffix = mediaPerEpisode.get(episode.pageId) > 1 ? ` / ${media.name || media.blockId}` : "";
+    const displayLabel = `${spec.title} / ${episodeLabel}${variantSuffix}`;
+    const workTitle = publicWorkTitle(page.title);
+    candidates.push({
+      workPageId: page.pageId,
+      workTitle,
+      sourcePageId: episode.pageId,
+      mediaBlockId: media.blockId,
+      name: `${workTitle} / ${displayLabel}`,
+      displayLabel,
+      originalFileName: media.name,
+      metadata: parseAssetMetadata(
+        `${spec.title} ${episode.title}`,
+        media.name,
+        episode.episodeNumber,
+        episode.episodeEndNumber ?? episodeRange?.end ?? episode.episodeNumber
+      )
+    });
+  }
+  return { candidates: applyMetadataOverrides(candidates, metadataOverrides), issues };
 }
 
 function normalizeMetadataOverrides(manifestPath) {
@@ -594,6 +833,10 @@ function normalizeMetadataOverrides(manifestPath) {
     mediaBlockId: item.mediaBlockId,
     sourcePageId: item.sourcePageId,
     developerMemo: item.developerMemo ?? defaults.developerMemo,
+    replaceExistingFields: normalizeReplaceExistingFields(
+      item.replaceExistingFields ?? defaults.replaceExistingFields,
+      item.label || item.originalFileName || item.mediaBlockId || `item-${index + 1}`
+    ),
     metadata: {
       ...(defaults.metadata ?? {}),
       ...(item.metadata ?? {})
@@ -618,6 +861,7 @@ function applyMetadataOverrides(candidates, overrides) {
     return {
       ...candidate,
       developerMemo: override.developerMemo ?? candidate.developerMemo,
+      replaceExistingFields: override.replaceExistingFields,
       metadata: {
         ...(candidate.metadata ?? {}),
         ...(override.metadata ?? {})
@@ -645,7 +889,8 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         const directCandidates = [];
         for (const mediaBlock of directPlayable) {
           const fileName = mediaBlockName(mediaBlock);
-          const episodeNumber = episodeNumberFromLabel(fileName);
+          const episodeRange = episodeRangeFromLabel(fileName);
+          const episodeNumber = episodeRange?.start;
           const workTitle = publicWorkTitle(page.title);
           if (!episodeNumber) {
             issues.push({
@@ -657,8 +902,20 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
             });
             continue;
           }
-          directEpisodeNumbers.set(episodeNumber, (directEpisodeNumbers.get(episodeNumber) ?? 0) + 1);
-          const episodeLabel = `Episode ${String(episodeNumber).padStart(2, "0")}`;
+          const placementIssue = playablePlacementIssue(spec.title, fileName);
+          if (placementIssue) {
+            issues.push({
+              ...placementIssue,
+              specPageId: spec.pageId,
+              specTitle: spec.title,
+              mediaBlockId: mediaBlock.id,
+              fileName
+            });
+            continue;
+          }
+          const rangeKey = `${episodeRange.start}-${episodeRange.end}`;
+          directEpisodeNumbers.set(rangeKey, (directEpisodeNumbers.get(rangeKey) ?? 0) + 1);
+          const episodeLabel = canonicalEpisodeLabel(fileName);
           const displayLabel = `${spec.title} / ${episodeLabel} / ${fileName || mediaBlock.id}`;
           directCandidates.push({
             workPageId: page.pageId,
@@ -669,23 +926,25 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
             displayLabel,
             originalFileName: fileName,
             assetUrl: isExternalMediaUrl(mediaBlock) ? mediaUrl(mediaBlock) : undefined,
-            metadata: parseAssetMetadata(`${spec.title} ${episodeLabel}`, fileName, episodeNumber)
+            metadata: parseAssetMetadata(`${spec.title} ${episodeLabel}`, fileName, episodeNumber, episodeRange.end)
           });
         }
         const duplicateDirectEpisodes = new Set();
-        for (const [episodeNumber, count] of directEpisodeNumbers.entries()) {
+        for (const [episodeRange, count] of directEpisodeNumbers.entries()) {
           if (count > 1) {
-            duplicateDirectEpisodes.add(episodeNumber);
+            duplicateDirectEpisodes.add(episodeRange);
             issues.push({
-              kind: "direct_spec_duplicate_episode_number",
+              kind: "direct_spec_duplicate_episode_range",
               specPageId: spec.pageId,
               specTitle: spec.title,
-              episodeNumber,
+              episodeRange,
               count
             });
           }
         }
-        candidates.push(...directCandidates.filter((candidate) => !duplicateDirectEpisodes.has(candidate.metadata?.episodeNumber)));
+        candidates.push(...directCandidates.filter((candidate) => !duplicateDirectEpisodes.has(
+          `${candidate.metadata?.episodeNumber}-${candidate.metadata?.episodeEndNumber ?? candidate.metadata?.episodeNumber}`
+        )));
       }
     }
     for (const episode of spec.episodes ?? []) {
@@ -700,8 +959,22 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         continue;
       }
       for (const mediaBlock of playable) {
+        const episodeRange = episodeRangeFromLabel(episode.title);
         const episodeLabel = canonicalEpisodeLabel(episode.title);
         const fileName = mediaBlockName(mediaBlock);
+        const placementIssue = playablePlacementIssue(spec.title, fileName);
+        if (placementIssue) {
+          issues.push({
+            ...placementIssue,
+            specPageId: spec.pageId,
+            specTitle: spec.title,
+            episodePageId: episode.pageId,
+            episodeTitle: episode.title,
+            mediaBlockId: mediaBlock.id,
+            fileName
+          });
+          continue;
+        }
         const variantSuffix = playable.length > 1 ? ` / ${fileName || mediaBlock.id}` : "";
         const displayLabel = `${spec.title} / ${episodeLabel}${variantSuffix}`;
         const workTitle = publicWorkTitle(page.title);
@@ -714,7 +987,12 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
           displayLabel,
           originalFileName: fileName,
           assetUrl: isExternalMediaUrl(mediaBlock) ? mediaUrl(mediaBlock) : undefined,
-          metadata: parseAssetMetadata(`${spec.title} ${episode.title}`, fileName, episode.episodeNumber)
+          metadata: parseAssetMetadata(
+            `${spec.title} ${episode.title}`,
+            fileName,
+            episode.episodeNumber,
+            episode.episodeEndNumber ?? episodeRange?.end ?? episode.episodeNumber
+          )
         });
       }
     }
@@ -722,11 +1000,22 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
   return { candidates: applyMetadataOverrides(candidates, options.metadataOverrides ?? []), issues };
 }
 
-async function processCandidate(notion, dataSource, existingLookup, candidate, apply, updateExistingMissingEnabled) {
+async function processCandidate(
+  notion,
+  dataSource,
+  existingLookup,
+  candidate,
+  apply,
+  updateExistingMissingEnabled,
+  correctExistingEnabled
+) {
   const existing = existingLookup
     ? await existingLookup.find(candidate)
     : await findExistingAsset(notion, dataSource, candidate);
   if (existing) {
+    if (correctExistingEnabled) {
+      return correctExisting(notion, dataSource, existing, candidate, apply);
+    }
     if (updateExistingMissingEnabled) {
       return updateExistingMissing(notion, dataSource, existing, candidate, apply);
     }
@@ -747,9 +1036,11 @@ function summarizeReports(reports) {
     selected: summary.selected + report.selected,
     created: summary.created + report.created,
     updatedExisting: summary.updatedExisting + report.updatedExisting,
+    correctedExisting: summary.correctedExisting + report.correctedExisting,
     skippedExisting: summary.skippedExisting + report.skippedExisting,
     wouldCreate: summary.wouldCreate + report.wouldCreate,
     wouldUpdateExisting: summary.wouldUpdateExisting + report.wouldUpdateExisting,
+    wouldCorrectExisting: summary.wouldCorrectExisting + report.wouldCorrectExisting,
     issues: summary.issues + report.issues
   }), {
     pages: 0,
@@ -757,9 +1048,11 @@ function summarizeReports(reports) {
     selected: 0,
     created: 0,
     updatedExisting: 0,
+    correctedExisting: 0,
     skippedExisting: 0,
     wouldCreate: 0,
     wouldUpdateExisting: 0,
+    wouldCorrectExisting: 0,
     issues: 0
   });
 }
@@ -780,16 +1073,22 @@ async function main() {
     options.allowPartialEpisodes
   );
   const notion = createNotionClient(token);
-  const mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
+  let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
+  const schema = options.ensureSchema
+    ? await ensureSeriesCollectionSchema(notion, mediaAssetsDataSource, options.apply)
+    : { dataSource: mediaAssetsDataSource, added: [] };
+  mediaAssetsDataSource = schema.dataSource;
   const existingLookup = makeExistingAssetLookup(notion, mediaAssetsDataSource);
   let remainingAssets = options.maxAssets;
   const reports = [];
 
   for (const page of pages) {
-    const { candidates, issues } = await candidatesForSeriesPage(notion, page, {
-      includeDirectSpec: options.includeDirectSpec,
-      metadataOverrides
-    });
+    const { candidates, issues } = isOrganizerReportPage(page)
+      ? candidatesFromOrganizerPage(page, metadataOverrides)
+      : await candidatesForSeriesPage(notion, page, {
+          includeDirectSpec: options.includeDirectSpec,
+          metadataOverrides
+        });
     const selected = candidates.slice(0, remainingAssets);
     remainingAssets -= selected.length;
     const actions = [];
@@ -800,7 +1099,8 @@ async function main() {
         existingLookup,
         candidate,
         options.apply,
-        options.updateExistingMissing
+        options.updateExistingMissing,
+        options.correctExisting
       ));
     }
     reports.push({
@@ -811,9 +1111,11 @@ async function main() {
       selected: selected.length,
       created: actions.filter((action) => action.action === "created").length,
       updatedExisting: actions.filter((action) => action.action === "updated_existing").length,
+      correctedExisting: actions.filter((action) => action.action === "corrected_existing").length,
       skippedExisting: actions.filter((action) => action.action === "skip_existing").length,
       wouldCreate: actions.filter((action) => action.action === "would_create").length,
       wouldUpdateExisting: actions.filter((action) => action.action === "would_update_existing").length,
+      wouldCorrectExisting: actions.filter((action) => action.action === "would_correct_existing").length,
       issues: issues.length,
       issueDetails: issues,
       actions
@@ -830,6 +1132,8 @@ async function main() {
     includeDirectSpec: options.includeDirectSpec,
     allowPartialEpisodes: options.allowPartialEpisodes,
     updateExistingMissing: options.updateExistingMissing,
+    correctExisting: options.correctExisting,
+    schemaAdded: schema.added,
     mediaAssetsDataSourceId: mediaAssetsDataSource.id,
     summary: summarizeReports(reports),
     reports
@@ -846,9 +1150,11 @@ async function main() {
       selected: page.selected,
       created: page.created,
       updatedExisting: page.updatedExisting,
+      correctedExisting: page.correctedExisting,
       skippedExisting: page.skippedExisting,
       wouldCreate: page.wouldCreate,
       wouldUpdateExisting: page.wouldUpdateExisting,
+      wouldCorrectExisting: page.wouldCorrectExisting,
       issues: page.issues
     }))
   }, null, 2));
@@ -857,8 +1163,10 @@ async function main() {
 export {
   buildAssetProperties,
   buildMissingProperties,
+  buildReplacementProperties,
   isEmptyProperty,
-  parseAssetMetadata
+  parseAssetMetadata,
+  selectablePages
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

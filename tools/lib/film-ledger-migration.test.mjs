@@ -97,6 +97,34 @@ test("human-confirmed Cantonese overrides filename Mandarin and records review",
   } finally { f.close(); }
 });
 
+test("review correction can repair the display title and subtitle variant idempotently", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "The Match", year: 2025 });
+    const variant = f.repo.ensureVariant({
+      workId: work.id,
+      specKey: "main",
+      displayTitle: "繁英双语 H.265 4.8GB",
+      audioVariant: "韩语 AAC 5.1",
+      subtitleVariant: "繁英双语硬字幕",
+      outputPath: "E:\\video_made\\the-match.mp4"
+    });
+    const manifest = { variants: [{
+      outputPath: "E:\\video_made\\the-match.mp4",
+      displayTitle: "繁体 H.265 4.8GB",
+      subtitleVariant: "繁体硬字幕"
+    }] };
+
+    assert.deepEqual(applyCorrectionsManifest(f.repo, manifest), { corrected: 1 });
+    const corrected = f.repo.findVariantByOutputPath("E:\\video_made\\the-match.mp4");
+    assert.equal(corrected.display_title, "繁体 H.265 4.8GB");
+    assert.equal(corrected.subtitle_variant, "繁体硬字幕");
+    assert.deepEqual(applyCorrectionsManifest(f.repo, manifest), { corrected: 0 });
+    assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id })
+      .filter(event => event.event_type === "human_review_correction").length, 1);
+  } finally { f.close(); }
+});
+
 test("green Dolby Vision correction never imports as qc_passed", () => {
   const f = fixture();
   try {
@@ -183,6 +211,37 @@ test("production manifests preserve audio and subtitle variants in the ledger", 
   } finally { f.close(); }
 });
 
+test("production manifest does not reopen an explicitly deferred duplicate", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Existing Spec", year: 2025 });
+    const variant = f.repo.ensureVariant({
+      workId: work.id,
+      specKey: "duplicate",
+      displayTitle: "繁英 4.8GB",
+      outputPath: "E:\\duplicate.mp4"
+    });
+    f.repo.transitionProduction(variant.id, "deferred", {
+      failureCode: "duplicate_existing_spec",
+      failureDetail: "Existing playable video already satisfies this spec."
+    });
+
+    const result = importProductionManifest(f.repo, {
+      work: "Existing Spec (2025)",
+      output: "E:\\duplicate.mp4",
+      outputBytes: 456,
+      outputSpec: "繁英 4.8GB",
+      workPageId: "work-page",
+      targetSpecPageId: "spec-page"
+    });
+
+    assert.equal(result.status, "skipped_deferred");
+    assert.equal(result.target, null);
+    assert.equal(f.repo.findVariantByOutputPath("E:\\duplicate.mp4").production_state, "deferred");
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM notion_targets").get().count, 0);
+  } finally { f.close(); }
+});
+
 test("reimporting a completed manifest refreshes the authoritative output evidence", () => {
   const f = fixture();
   try {
@@ -203,5 +262,83 @@ test("reimporting a completed manifest refreshes the authoritative output eviden
     assert.equal(variant.output_size_bytes, 456);
     assert.equal(variant.probe_path, ".local-data/refreshable.json");
     assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id }).filter(event => event.event_type === "production_evidence_refreshed").length, 1);
+  } finally { f.close(); }
+});
+
+test("production manifest reuses an existing Notion work page instead of duplicating it", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Canonical Work", year: 2025, workType: "movie", notionWorkPageId: "existing-work-page" });
+    const result = importProductionManifest(f.repo, {
+      work: "Legacy Work Alias (2025)",
+      output: "E:\\existing-work.mp4",
+      outputBytes: 123,
+      outputSpec: "简英 1GB",
+      workPageId: "existing-work-page",
+      targetSpecPageId: "existing-spec-page"
+    });
+    assert.equal(result.status, "imported");
+    assert.equal(result.variant.work_id, work.id);
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM works").get().count, 1);
+  } finally { f.close(); }
+});
+
+test("production manifest reuses an existing output even when its legacy spec key differs", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Existing Work", year: 2025, workType: "movie", notionWorkPageId: "existing-work-page" });
+    const existing = f.repo.ensureVariant({ workId: work.id, specKey: "legacy-spec-key", displayTitle: "旧规格", outputPath: "E:\\existing-work.mp4" });
+    const result = importProductionManifest(f.repo, {
+      work: "Existing Work (2025)",
+      output: "E:\\existing-work.mp4",
+      outputBytes: 456,
+      outputSpec: "新规格",
+      workPageId: "existing-work-page",
+      targetSpecPageId: "new-spec-page"
+    });
+    assert.equal(result.variant.id, existing.id);
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM variants").get().count, 1);
+    assert.equal(f.repo.findVariantByOutputPath("E:\\existing-work.mp4").output_size_bytes, 456);
+  } finally { f.close(); }
+});
+
+test("production manifest reuses an existing Notion target when the uploaded filename changes", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Target Reuse", year: 2025, notionWorkPageId: "work-page" });
+    const existing = f.repo.ensureVariant({
+      workId: work.id,
+      specKey: "legacy-key",
+      displayTitle: "旧规格",
+      outputPath: "E:\\old-name.mp4"
+    });
+    f.repo.registerNotionTarget(existing.id, {
+      workPageId: "work-page",
+      specPageId: "spec-page",
+      expectedFilename: "old-name.mp4"
+    });
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) {
+      f.repo.transitionProduction(existing.id, state, state === "qc_passed"
+        ? { outputPath: "E:\\old-name.mp4", outputSizeBytes: 100 }
+        : {});
+    }
+
+    const result = importProductionManifest(f.repo, {
+      work: "Target Reuse (2025)",
+      output: "E:\\new-name.mp4",
+      outputBytes: 200,
+      outputSpec: "繁体 H.265 4.8GB",
+      audioVariant: "韩语 AAC 5.1",
+      subtitleVariant: "繁体硬字幕",
+      workPageId: "work-page",
+      targetSpecPageId: "spec-page",
+      evidence: { probe: ".local-data/new-name.json" }
+    });
+
+    assert.equal(result.status, "already_imported");
+    assert.equal(result.variant.id, existing.id);
+    assert.equal(result.variant.output_path, "e:\\new-name.mp4");
+    assert.equal(result.variant.display_title, "繁体 H.265 4.8GB");
+    assert.equal(f.db.prepare("SELECT count(*) count FROM variants").get().count, 1);
   } finally { f.close(); }
 });

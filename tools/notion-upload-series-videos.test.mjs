@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { episodeNumber, validateSeriesSpecTitle } from "./notion-upload-series-videos.mjs";
+import { episodeNumber, episodeRange, validateSeriesSpecTitle } from "./notion-upload-series-videos.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-series-videos.mjs");
 
@@ -50,6 +50,18 @@ test("episode parser accepts a trailing episode number in ordinary filenames", (
   assert.equal(episodeNumber("Hokuto no Ken - 001.mp4"), 1);
   assert.equal(episodeNumber("Series_Episode_12.mkv"), 12);
   assert.equal(episodeNumber("Film 2026.mp4"), undefined);
+});
+
+test("episodeRange parses a series collection filename", () => {
+  assert.deepEqual(
+    episodeRange("Teach.You.a.Lesson.S01E01-E05.2026.1080p.h265.cht.mp4"),
+    { start: 1, end: 5 }
+  );
+  assert.equal(episodeNumber("Teach.You.a.Lesson.S01E01-E05.2026.1080p.h265.cht.mp4"), 1);
+});
+
+test("series collection spec titles may use aggregate size per collection", () => {
+  assert.equal(validateSeriesSpecTitle("检察官的提案 简 H.265 4.8GB/合集"), "检察官的提案 简 H.265 4.8GB/合集");
 });
 
 test("series spec sizes must explicitly describe per-episode size", () => {

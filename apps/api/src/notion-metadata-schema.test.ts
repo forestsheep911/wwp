@@ -9,7 +9,7 @@ import {
   normalizeRottenTomatoesUrl,
   notionManagedProperties
 } from "./notion-metadata-schema.js";
-import { buildAiCheckUpdates } from "./notion-ai-check-state.js";
+import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
 import { schemaPatch } from "./notion-schema-migration.js";
 
 test("collectMetadataHintsFromText captures official critic rating page URLs", () => {
@@ -58,9 +58,11 @@ test("mergeMetadataHints preserves critic site URLs", () => {
   assert.equal(merged.externalIds.metacritic, "https://www.metacritic.com/movie/zodiac");
 });
 
-test("managed schema separates human issues, AI issues, and AI check time", () => {
+test("managed schema separates collaboration, human issues, AI issues, and AI check time", () => {
   const byName = new Map(notionManagedProperties.map((property) => [property.name, property.type]));
 
+  assert.equal(byName.get("Workflow Status"), "select");
+  assert.equal(byName.get("Workflow Note"), "rich_text");
   assert.equal(byName.get("Human Issue"), "rich_text");
   assert.equal(byName.get("AI Issue"), "rich_text");
   assert.equal(byName.get("Last AI Check Time"), "date");
@@ -111,4 +113,27 @@ test("successful AI check with no unresolved issue updates only its check time",
   const updates = buildAiCheckUpdates({ checkedAt: "2026-07-13" });
 
   assert.deepEqual(updates, { "Last AI Check Time": { date: { start: "2026-07-13" } } });
+});
+
+test("resolved family-age issue clears only its AI issue and preserves human review", () => {
+  assert.deepEqual(buildResolvedAiIssueUpdates({
+    existingAiIssue: "AI 年龄建议待复核：资料不足",
+    humanIssue: "",
+    resolvedPrefix: "AI 年龄建议待复核："
+  }), {
+    "AI Issue": { rich_text: [] },
+    "Needs Review": { checkbox: false }
+  });
+  assert.deepEqual(buildResolvedAiIssueUpdates({
+    existingAiIssue: "海报身份待复核",
+    humanIssue: "",
+    resolvedPrefix: "AI 年龄建议待复核："
+  }), {});
+  assert.deepEqual(buildResolvedAiIssueUpdates({
+    existingAiIssue: "AI 年龄建议待复核：资料不足",
+    humanIssue: "人工要求保留复核",
+    resolvedPrefix: "AI 年龄建议待复核："
+  }), {
+    "AI Issue": { rich_text: [] }
+  });
 });

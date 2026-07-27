@@ -145,12 +145,27 @@ function playbackAssetComplete(page) {
     && checkboxValue(properties["Needs Review"]) !== true;
 }
 
-function matchesRecordedAsset(page, { workPageId, sourcePageId, mediaBlockId }) {
+function playbackAssetGate(page) {
+  if (!page) return { code: "media_asset_missing", detail: "No matching Media Assets row was found." };
+  const properties = page.properties ?? {};
+  if (checkboxValue(properties["Hide from Website"]) === true) {
+    return { code: "visibility_gate", detail: "Matching Media Assets row exists, but Hide from Website is true; do not clear it automatically." };
+  }
+  if (checkboxValue(properties["Needs Review"]) === true) {
+    return { code: "needs_review_gate", detail: "Matching Media Assets row exists, but Needs Review is true." };
+  }
+  if (!playbackAssetComplete(page)) {
+    return { code: "asset_fields_incomplete", detail: "Matching Media Assets row exists but required playable fields are incomplete." };
+  }
+  return null;
+}
+
+function matchesRecordedAssetEvidence(page, { workPageId, sourcePageId, mediaBlockId }) {
   const properties = page?.properties ?? {};
   if (!relationIds(properties.Work).includes(workPageId)) return false;
   const sourceMatches = propertyPlainText(properties["Source Page ID"]) === sourcePageId;
   const mediaMatches = Boolean(mediaBlockId) && propertyPlainText(properties["Media Block ID"]) === mediaBlockId;
-  return (sourceMatches || mediaMatches) && playbackAssetComplete(page);
+  return sourceMatches || mediaMatches;
 }
 
 async function listRecordedPageChildren(client, pageId) {
@@ -178,7 +193,9 @@ export function createNotionTargetAdapter(client, {
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
       const media = blocks.find(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block)
-        && (!target.expected_filename || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase()));
+        && (target.media_block_id
+          ? block.id === target.media_block_id
+          : (!target.expected_filename || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase())));
       const traceFilters = [{ property: "Source Page ID", rich_text: { equals: contentPageId } }];
       if (media?.id) traceFilters.push({ property: "Media Block ID", rich_text: { equals: media.id } });
       const assets = await client.dataSources.query({
@@ -191,11 +208,12 @@ export function createNotionTargetAdapter(client, {
           ]
         }
       });
-      const asset = media ? (assets.results ?? []).find(page => matchesRecordedAsset(page, {
+      const asset = media ? (assets.results ?? []).find(page => matchesRecordedAssetEvidence(page, {
         workPageId: target.work_page_id,
         sourcePageId: contentPageId,
         mediaBlockId: media?.id
       })) ?? null : null;
+      const assetGate = media ? playbackAssetGate(asset) : { code: "media_block_missing", detail: "No matching media block was found on the recorded destination page." };
       const structureVerified = recordedStructureMatches(pages, target)
         || await recordedLegacyStructureMatches(client, pages, target);
       return {
@@ -203,7 +221,9 @@ export function createNotionTargetAdapter(client, {
         mediaBlockId: media?.id ?? null,
         mediaVerified: Boolean(media),
         mediaAssetPageId: asset?.id ?? null,
-        assetsVerified: Boolean(asset),
+        assetsVerified: Boolean(asset && playbackAssetComplete(asset)),
+        assetGateCode: assetGate?.code ?? null,
+        assetGateDetail: assetGate?.detail ?? null,
         evidence: { inspectedPageIds: recordedIds, contentPageId, mediaBlockId: media?.id ?? null }
       };
     }

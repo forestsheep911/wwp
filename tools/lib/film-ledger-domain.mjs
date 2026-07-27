@@ -19,6 +19,36 @@ export const PUBLICATION_STATES = Object.freeze([
   "sync_ready"
 ]);
 
+export const WORKFLOW_HANDOFF_STATES = Object.freeze([
+  "待 AI 处理",
+  "AI 处理中",
+  "待人工上传",
+  "人工上传中",
+  "已上传待 AI 收尾",
+  "待人工确认",
+  "已确认待 AI 发布",
+  "已完成",
+  "暂缓"
+]);
+
+export const AI_ACTIONABLE_WORKFLOW_STATES = Object.freeze([
+  "待 AI 处理",
+  "已上传待 AI 收尾",
+  "已确认待 AI 发布"
+]);
+
+const workflowHandoffTransitions = Object.freeze({
+  "待 AI 处理": ["AI 处理中", "暂缓"],
+  "AI 处理中": ["待人工上传", "待人工确认", "已完成", "暂缓"],
+  "待人工上传": ["人工上传中", "已上传待 AI 收尾", "AI 处理中", "暂缓"],
+  "人工上传中": ["已上传待 AI 收尾", "暂缓"],
+  "已上传待 AI 收尾": ["AI 处理中", "待人工上传", "暂缓"],
+  "待人工确认": ["已确认待 AI 发布", "待 AI 处理", "暂缓"],
+  "已确认待 AI 发布": ["AI 处理中", "暂缓"],
+  "已完成": ["待 AI 处理"],
+  "暂缓": ["待 AI 处理"]
+});
+
 const productionTransitions = Object.freeze({
   discovered: ["evaluated", "deferred", "rejected"],
   evaluated: ["selected", "deferred", "rejected"],
@@ -26,7 +56,8 @@ const productionTransitions = Object.freeze({
   encoding: ["qc_failed", "qc_passed"],
   qc_failed: ["selected", "deferred", "rejected"],
   deferred: ["evaluated", "selected", "rejected"],
-  qc_passed: [],
+  // A QC-passed output may still be intentionally retired before upload.
+  qc_passed: ["rejected"],
   rejected: []
 });
 
@@ -53,6 +84,20 @@ export function assertProductionTransition(from, to) {
 
 export function assertPublicationTransition(from, to) {
   return assertTransition("publication", publicationTransitions, from, to);
+}
+
+export function assertWorkflowHandoffState(value) {
+  if (!WORKFLOW_HANDOFF_STATES.includes(value)) {
+    throw new Error(`unsupported workflow handoff state: ${value}`);
+  }
+  return true;
+}
+
+export function assertWorkflowHandoffTransition(from, to) {
+  assertWorkflowHandoffState(to);
+  if (from == null || from === "") return true;
+  if (from === to) return true;
+  return assertTransition("workflow handoff", workflowHandoffTransitions, from, to);
 }
 
 export function isSyncReady(evidence = {}) {

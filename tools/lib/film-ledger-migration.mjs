@@ -94,23 +94,53 @@ export function migrateOrganizerReport(repo, reportPayload) {
 
 export function importProductionManifest(repo, manifest) {
   validateProductionManifest(manifest);
-  const identity = titleIdentity(manifest.work);
-  const work = repo.ensureWork({ ...identity, workType: manifest.workType ?? "movie", notionWorkPageId: manifest.workPageId });
-  const variant = repo.ensureVariant({
-    workId: work.id,
-    specKey: completedProductionSpecKey(manifest.workPageId, manifest.targetSpecPageId, manifest.episodePageId ?? null),
-    displayTitle: manifest.outputSpec,
-    audioVariant: manifest.audioVariant,
-    subtitleVariant: manifest.subtitleVariant,
-    cutVariant: manifest.cutVariant,
-    outputPath: manifest.output,
-    targetSizeBytes: manifest.outputBytes,
-    probePath: manifest.evidence?.probe
-  });
+  let variant = repo.findVariantByOutputPath(manifest.output)
+    ?? repo.findVariantByNotionTarget({
+      workPageId: manifest.workPageId,
+      specPageId: manifest.targetSpecPageId,
+      episodePageId: manifest.episodePageId ?? null
+    });
+  if (!variant) {
+    const identity = titleIdentity(manifest.work);
+    const work = repo.ensureWork({ ...identity, workType: manifest.workType ?? "movie", notionWorkPageId: manifest.workPageId });
+    variant = repo.ensureVariant({
+      workId: work.id,
+      sourceId: manifest.sourceId,
+      specKey: completedProductionSpecKey(manifest.workPageId, manifest.targetSpecPageId, manifest.episodePageId ?? null),
+      displayTitle: manifest.outputSpec,
+      audioVariant: manifest.audioVariant,
+      subtitleVariant: manifest.subtitleVariant,
+      cutVariant: manifest.cutVariant,
+      outputPath: manifest.output,
+      targetSizeBytes: manifest.outputBytes,
+      probePath: manifest.evidence?.probe
+    });
+  } else {
+    repo.applyMigrationCorrection(variant.id, {
+      displayTitle: manifest.outputSpec,
+      audioVariant: manifest.audioVariant,
+      subtitleVariant: manifest.subtitleVariant
+    });
+  }
+  if (["deferred", "rejected"].includes(variant.production_state)) {
+    return {
+      status: `skipped_${variant.production_state}`,
+      variant: repo.findVariantByOutputPath(manifest.output),
+      target: null
+    };
+  }
   const imported = variant.production_state !== "qc_passed";
   if (imported) {
-    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) {
-      repo.transitionProduction(variant.id, state, state === "qc_passed" ? {
+    const nextState = {
+      discovered: "evaluated",
+      evaluated: "selected",
+      selected: "encoding",
+      encoding: "qc_passed"
+    };
+    while (variant.production_state !== "qc_passed") {
+      const state = nextState[variant.production_state];
+      if (!state) throw new Error(`cannot import production manifest from ${variant.production_state}`);
+      variant = repo.transitionProduction(variant.id, state, state === "qc_passed" ? {
         outputPath: manifest.output,
         outputSizeBytes: manifest.outputBytes,
         probePath: manifest.evidence?.probe,

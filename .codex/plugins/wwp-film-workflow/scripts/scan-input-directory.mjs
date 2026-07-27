@@ -117,10 +117,18 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
     fileCount: files.length,
     mediaCount: media.length,
     subtitleCount,
+    subtitleScope: "external_files_only",
+    internalSubtitleProbe: "not_run",
     nfoCount,
     totalBytes,
     totalGB: Number((totalBytes / 1024 / 1024 / 1024).toFixed(2)),
     largestMedia: media.slice(0, maxSamples).map((item) => ({
+      relativePath: path.relative(root, item.path),
+      bytes: item.bytes,
+      gb: Number((item.bytes / 1024 / 1024 / 1024).toFixed(2)),
+      extension: path.extname(item.path).toLowerCase()
+    })),
+    fingerprintMedia: media.slice(0, 5).map((item) => ({
       relativePath: path.relative(root, item.path),
       bytes: item.bytes,
       gb: Number((item.bytes / 1024 / 1024 / 1024).toFixed(2)),

@@ -19,6 +19,7 @@
     "sync:catalog": "npm run sync:catalog --workspace @wwpdw/api",
     "sync:tspdt": "npm run sync:tspdt --workspace @wwpdw/api",
     "notion:metadata": "npm --workspace @wwpdw/api run notion:metadata --",
+    "notion:workflow-handoff": "node tools/notion-workflow-handoff.mjs",
     "notion:audit": "npm --workspace @wwpdw/api run notion:audit --",
     "notion:omdb": "npm --workspace @wwpdw/api run notion:omdb --",
     "notion:imdb-rating": "node tools/notion-imdb-rating-enrichment.mjs",

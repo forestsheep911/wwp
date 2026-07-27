@@ -5,11 +5,13 @@ import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 
+export const DEFAULT_RECENT_PAGE_LIMIT = 3;
+
 function parseArgs() {
   const options = {
     pageIds: [],
     query: "",
-    recent: 12,
+    recent: DEFAULT_RECENT_PAGE_LIMIT,
     all: false,
     rootOnly: false,
     reportPath: ".local-data/notion-manual-upload-organizer-report.json",
@@ -58,7 +60,7 @@ function parseArgs() {
 
 function printHelp() {
   console.log(`Usage:
-  node tools/notion-manual-upload-organizer.mjs --recent 12
+  node tools/notion-manual-upload-organizer.mjs --recent 3
   node tools/notion-manual-upload-organizer.mjs --all
   node tools/notion-manual-upload-organizer.mjs --all --root-only
   node tools/notion-manual-upload-organizer.mjs --all --state .local-data/notion-upload-state.json
@@ -66,8 +68,10 @@ function printHelp() {
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --apply
 
-Default mode is read-only. It scans WWP library pages for manual upload landing
-media, especially video/file blocks placed directly under a work or season page.
+Default mode is read-only and bounded to three recent pages. It scans WWP library
+pages for manual upload landing media, especially video/file blocks placed directly
+under a work or season page. Use exact --page-id values for a known upload; do not
+raise --recent for routine workflow cycles.
 Root-level playable media is reported as structure_incomplete and should be
 organized into a spec child page before final Media Assets writes.
 `);
@@ -189,6 +193,20 @@ function isSourceLikeMedia(block) {
   return /\.(7z|zip|rar|iso|m2ts|bdmv)(?:\.\d+)?(?:[?#].*)?$/i.test(`${info.name} ${info.url}`);
 }
 
+function isSourceSpecTitle(title = "") {
+  return /(?:原盘|原盤|片源|资源|資源|source|original disc)/iu.test(cleanText(title));
+}
+
+export function specMediaPlacementIssue(specTitle = "", mediaName = "") {
+  if (!isSourceSpecTitle(specTitle)) return null;
+  if (!/\.(mp4|m4v|mov|webm|mkv)(?:[?#].*)?$/i.test(String(mediaName ?? ""))) return null;
+  return {
+    code: "playable_media_in_source_spec",
+    detail: "A playable video is under a source/original-disc spec page. Do not write it as a source asset or treat the placement as final; reupload it to the matching playable spec page.",
+    suggestedAction: "reupload_to_playable_spec"
+  };
+}
+
 function shortWorkTitle(title = "") {
   const normalized = cleanText(title);
   const beforeParen = normalized.replace(/\s*[\(（][12][0-9]{3}[\)）]\s*$/u, "").trim();
@@ -225,12 +243,27 @@ function variantLabelFromName(name = "") {
   return match ? match[1].toLowerCase() : "";
 }
 
-function episodeNumberFromName(name = "") {
+function episodeRangeFromName(name = "") {
   const text = String(name ?? "");
+  const rangeMatch = text.match(/\bS\d{1,2}E(\d{1,3})\s*[-~–—至到]\s*(?:S\d{1,2})?E?(\d{1,3})\b/iu)
+    ?? text.match(/\bEpisode[\s._-]*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\b/iu)
+    ?? text.match(/第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u);
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
+    if (Number.isInteger(start) && Number.isInteger(end) && start > 0 && end >= start) {
+      return { start, end };
+    }
+  }
   const match = text.match(/\bS\d{1,2}E(\d{1,3})\b/iu)
     ?? text.match(/\bEpisode[\s._-]*(\d{1,3})\b/iu)
     ?? text.match(/\bE(\d{1,3})\b/iu);
-  return match ? Number(match[1]) : undefined;
+  const episode = match ? Number(match[1]) : undefined;
+  return episode ? { start: episode, end: episode } : undefined;
+}
+
+function episodeNumberFromName(name = "") {
+  return episodeRangeFromName(name)?.start;
 }
 
 export function suggestedSpecTitle(workTitle, mediaName) {
@@ -256,9 +289,13 @@ export function assignSuggestedTargets(rootLandingMedia, specPages) {
       };
     }
 
-    const episodeNumber = episodeNumberFromName(media.name);
+    const episodeRange = episodeRangeFromName(media.name);
+    const episodeNumber = episodeRange?.start;
     if (episodeNumber !== undefined && (spec.episodePages ?? []).length > 0) {
-      const episode = spec.episodePages.find((item) => item.episodeNumber === episodeNumber);
+      const episode = spec.episodePages.find((item) => (
+        item.episodeNumber === episodeNumber &&
+        (item.episodeEndNumber ?? item.episodeNumber) === (episodeRange?.end ?? episodeNumber)
+      ));
       if (episode) {
         return {
           ...media,
@@ -267,6 +304,7 @@ export function assignSuggestedTargets(rootLandingMedia, specPages) {
             pageId: episode.pageId,
             title: episode.title,
             episodeNumber,
+            ...(episodeRange?.end > episodeNumber ? { episodeEndNumber: episodeRange.end } : {}),
             specPageId: spec.pageId,
             specTitle: spec.title,
             status: "ready"
@@ -278,6 +316,7 @@ export function assignSuggestedTargets(rootLandingMedia, specPages) {
         suggestedTarget: {
           kind: "episode_page",
           episodeNumber,
+          ...(episodeRange?.end > episodeNumber ? { episodeEndNumber: episodeRange.end } : {}),
           specPageId: spec.pageId,
           specTitle: spec.title,
           status: "missing_episode_page"
@@ -368,8 +407,9 @@ async function recentPages(notion, dataSource, limit) {
   return response.results;
 }
 
-function summarizeMedia(block, path, structuralStatus, workTitle = "") {
+function summarizeMedia(block, path, structuralStatus, workTitle = "", specTitle = "") {
   const info = mediaPayload(block);
+  const placementIssue = specMediaPlacementIssue(specTitle, info.name);
   const summary = {
     blockId: block.id,
     blockType: block.type,
@@ -384,6 +424,12 @@ function summarizeMedia(block, path, structuralStatus, workTitle = "") {
     structuralStatus,
     path
   };
+  if (placementIssue) {
+    summary.placementIssue = placementIssue.code;
+    summary.placementIssueDetail = placementIssue.detail;
+    summary.recommendedAction = placementIssue.suggestedAction;
+    summary.suggestedTargetSpecTitle = suggestedSpecTitle(workTitle, summary.name);
+  }
   if (structuralStatus === "structure_incomplete_root_landing" && summary.playable) {
     summary.recommendedAction = "Create or reuse the suggested spec child page, then move this uploaded block there manually or reupload the matching local file to that page before final Media Assets write.";
     summary.suggestedSpecTitle = suggestedSpecTitle(workTitle, summary.name);
@@ -391,11 +437,11 @@ function summarizeMedia(block, path, structuralStatus, workTitle = "") {
   return summary;
 }
 
-export function summarizeEpisodeMedia(episodePage, children, parentPath) {
+export function summarizeEpisodeMedia(episodePage, children, parentPath, specTitle = "", workTitle = "") {
   const path = [...parentPath, `child_page:${blockTitle(episodePage)}`];
   return children
     .filter(isMediaBlock)
-    .map((child) => summarizeMedia(child, [...path, child.type], "valid_episode_media"));
+    .map((child) => summarizeMedia(child, [...path, child.type], "valid_episode_media", workTitle, specTitle));
 }
 
 async function scanSpecLikeChild(notion, block, parentPath) {
@@ -405,19 +451,20 @@ async function scanSpecLikeChild(notion, block, parentPath) {
   const episodePages = [];
   const episodeMedia = [];
   for (const child of children.filter((item) => item.type === "child_page")) {
-    const episodeNumber = episodeNumberFromName(blockTitle(child));
-    if (episodeNumber === undefined) continue;
+    const episodeRange = episodeRangeFromName(blockTitle(child));
+    if (episodeRange === undefined) continue;
     episodePages.push({
       pageId: child.id,
       title: blockTitle(child),
-      episodeNumber
+      episodeNumber: episodeRange.start,
+      episodeEndNumber: episodeRange.end
     });
     const episodeChildren = await listChildren(notion, child.id).catch(() => []);
-    episodeMedia.push(...summarizeEpisodeMedia(child, episodeChildren, path));
+    episodeMedia.push(...summarizeEpisodeMedia(child, episodeChildren, path, title, parentPath[0] ?? ""));
   }
   const media = children
     .filter(isMediaBlock)
-    .map((child) => summarizeMedia(child, [...path, child.type], "valid_spec_media"));
+    .map((child) => summarizeMedia(child, [...path, child.type], "valid_spec_media", parentPath[0] ?? "", title));
   return {
     pageId: block.id,
     title,
@@ -474,8 +521,10 @@ async function scanWorkPage(notion, page) {
     specMedia,
     status: rootLandingMedia.some((item) => item.playable)
       ? "needs_manual_upload_organization"
-      : specMedia.some((item) => item.playable)
+      : specMedia.some((item) => item.playable && !item.placementIssue)
         ? "has_structured_playable_media"
+        : specMedia.some((item) => item.placementIssue)
+          ? "needs_spec_placement_correction"
         : "no_playable_media_seen"
   };
 }
@@ -651,8 +700,10 @@ async function main() {
   const summary = {
     pagesScanned: finalScans.length,
     pagesNeedingOrganization: finalScans.filter((item) => item.status === "needs_manual_upload_organization").length,
+    pagesNeedingSpecPlacementCorrection: finalScans.filter((item) => item.status === "needs_spec_placement_correction").length,
     rootPlayableBlocks: finalScans.flatMap((item) => item.rootLandingMedia).filter((item) => item.playable).length,
-    structuredPlayableBlocks: finalScans.flatMap((item) => item.specMedia).filter((item) => item.playable).length,
+    structuredPlayableBlocks: finalScans.flatMap((item) => item.specMedia).filter((item) => item.playable && !item.placementIssue).length,
+    misplacedPlayableBlocks: finalScans.flatMap((item) => item.specMedia).filter((item) => item.placementIssue).length,
     newMediaBlocksSinceLastScan: marked.newBlockIds.length
   };
   writeReport(options.statePath, marked.state);

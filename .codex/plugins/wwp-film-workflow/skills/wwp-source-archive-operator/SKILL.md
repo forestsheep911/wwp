@@ -28,6 +28,7 @@ Source/original-disc work is optional and guarded. It is different from playable
 - Large source uploads must not silently switch to a bandwidth-expensive or proxy-heavy path.
 - Do not remove operational prefixes such as download-only labels merely because source files exist.
 - Keep source/archive manifests under `.local-data/source-archives/` unless the user specifies another local state path.
+- For local disk cleanup, run `node tools/film-cleanup-candidates.mjs --output-root <directory> --json`. Treat only `eligible: true` rows as deletion candidates; the report is read-only and never substitutes for explicit deletion authorization.
 - Do not let source/archive reconciliation count as work metadata completion. Use the metadata workflow for the work page, then use source Media Assets only for file/archive evidence.
 
 ## Reference

@@ -4,6 +4,7 @@ import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
+import { deriveMetadataCompleteness } from "./notion-metadata-completeness.js";
 import {
   collectMetadataHintsFromText,
   createMetadataHints,
@@ -580,6 +581,11 @@ async function planPage(
     structuredTitles.originalTitle ||
     structuredTitles.englishTitle
   );
+  const completeness = deriveMetadataCompleteness({
+    hasExternalId,
+    conflicts,
+    values: Object.fromEntries(Object.entries(pageProperties).map(([name, property]) => [name, propertyText(property)]))
+  });
   const updates: Record<string, unknown> = {};
 
   addUpdate(updates, availableProperties, pageProperties, "WW Work ID", workId);
@@ -594,10 +600,17 @@ async function planPage(
   addUpdate(updates, availableProperties, pageProperties, "English Title", structuredTitles.englishTitle);
   addUpdate(updates, availableProperties, pageProperties, "Release Year", year ? Number(year) : undefined);
   addUpdate(updates, availableProperties, pageProperties, "Match Status", conflicts.length > 0 ? "conflict" : hasExternalId ? "candidate" : "unmatched");
-  addUpdate(updates, availableProperties, pageProperties, "Metadata Status", conflicts.length > 0 ? "conflict" : hasExternalId ? "partial" : "draft");
+  const currentMetadataStatus = propertyText(pageProperties["Metadata Status"]);
+  addUpdate(updates, availableProperties, pageProperties, "Metadata Status", completeness.status, {
+    overwrite: currentMetadataStatus !== completeness.status
+  });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Source", combineSources(pageProperties, hasStructuredTitle ? "notion-title" : hasExternalId ? "notion-text" : "notion-page"));
-  addUpdate(updates, availableProperties, pageProperties, "Metadata Confidence", conflicts.length > 0 ? 0.2 : hasExternalId ? 0.9 : 0.3);
-  addUpdate(updates, availableProperties, pageProperties, "Needs Review", conflicts.length > 0 || !hasExternalId, { overwrite: conflicts.length > 0 });
+  addUpdate(updates, availableProperties, pageProperties, "Metadata Confidence", conflicts.length > 0 ? 0.2 : completeness.status === "verified" ? 0.95 : hasExternalId ? 0.9 : 0.3);
+  const needsReview = conflicts.length > 0 || !hasExternalId || completeness.missingCoreFields.length > 0 || completeness.unresolvedIssues.length > 0;
+  const currentNeedsReview = propertyText(pageProperties["Needs Review"]) === "true";
+  addUpdate(updates, availableProperties, pageProperties, "Needs Review", needsReview, {
+    overwrite: currentNeedsReview !== needsReview
+  });
   addUpdate(updates, availableProperties, pageProperties, "Metadata Updated At", new Date().toISOString().slice(0, 10), { overwrite: Object.keys(updates).length > 0 });
 
   return {

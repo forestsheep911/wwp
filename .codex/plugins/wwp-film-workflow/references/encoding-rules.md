@@ -10,6 +10,7 @@
 - Subtitle-dependent versions: burn the selected Chinese subtitle into the video by default.
 - Mandarin-language films: prefer no hard subtitles unless the source already has unavoidable hard subtitles.
 - Notion playable uploads must stay below the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but keep the lower decimal-byte cap as upload safety margin. Target about 4.7-4.9GB when making a high-bitrate version; do not plan 6GB as a Notion upload candidate.
+- For TV series, reduce manual upload count by concatenating consecutive, QC-passed, stream-compatible episode MP4s into collection assets. Target 4,850,000,000 bytes, split only on episode boundaries, and fail closed above 5,000,000,000 bytes.
 - Compact playable versions are also valuable when a work lacks a smaller easy-streaming spec. A practical compact target is roughly 1.0-1.8GB for a feature film; exact size is less important than watchable quality, correct subtitles/audio, and a clean final probe.
 - Do not let high-bitrate production crowd out compact backfill forever. When the queue is quiet, uploads are slow, or a source already has a verified high-bitrate spec, consider producing a compact version for useful works that lack one.
 - If an encode is trending over the limit, stop early and recalculate the bitrate instead of finishing an unusable upload candidate.
@@ -41,6 +42,8 @@ Report the full available subtitle set and the subset produced. More subtitle va
 
 - Different hard-subtitle variants usually cannot reuse the same encoded video stream because the pixels differ.
 - Same picture and same hard subtitles with different audio can reuse video stream via remux/stream-copy or audio-only encode.
+- Use `scripts/remux-audio-variant.mjs` after the first video variant passes QC when a second specification changes only the audio track. Probe both final MP4 files and confirm matching video codec, dimensions, duration, and packet-level stream-copy evidence before publication.
+- Preserve the complete copied video stream in every audio variant. Do not use `-shortest`: a slightly shorter alternate audio track can truncate tail video packets and make the supposedly shared video stream differ. Require matching demuxed video SHA-256 hashes before publication.
 - Soft subtitle delivery can reuse the same video stream with different subtitle tracks, but this is not the default WWP playable delivery.
 - Commentary, Mandarin, Cantonese, and original-audio combinations should reuse a QC-passed video stream when the visual stream is identical.
 - When creating multiple audio variants from the same visual stream, budget the shared video stream so each final MP4 remains below the Notion playable upload limit after audio and MP4 mux overhead are added.
