@@ -42,6 +42,23 @@ The process listens on all local interfaces, so the NAS can reach it at:
 http://<home-PC-LAN-IP>:43187
 ```
 
+If Windows classifies the Ethernet connection as `Public`, open an elevated
+PowerShell window once and add a LAN-only inbound rule:
+
+```powershell
+New-NetFirewallRule `
+  -DisplayName "WWP Home Site 43187 (LAN only)" `
+  -Direction Inbound `
+  -Action Allow `
+  -Protocol TCP `
+  -LocalPort 43187 `
+  -RemoteAddress LocalSubnet `
+  -Profile Public,Private
+```
+
+This permits the NAS to reach the home process without allowing arbitrary
+non-local source addresses directly through Windows Firewall.
+
 ## Configuration
 
 Place machine-specific values in the ignored repository `.env`:
