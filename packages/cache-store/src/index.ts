@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AzureCacheStore } from "./azure.js";
+import { FilesystemCacheStore } from "./filesystem.js";
 import { LocalCacheStore } from "./local.js";
 import { LocalMovieCatalogStore } from "./movie-catalog.js";
 import { AzureSearchIndexStore, LocalSearchIndexStore } from "./search-index.js";
@@ -10,6 +11,7 @@ import type { CacheBackend, CacheStore } from "./types.js";
 export type { CacheBackend, CacheStore } from "./types.js";
 export { addDays, cacheAssetIdleTtlDays, createJob, isFreshReady } from "./jobs.js";
 export { AzureCacheStore } from "./azure.js";
+export { FilesystemCacheStore } from "./filesystem.js";
 export { LocalCacheStore } from "./local.js";
 export type {
   SearchIndexEntry,
@@ -59,6 +61,11 @@ export function createCacheStore(backend = process.env.CACHE_BACKEND as CacheBac
   if (backend === "azure") {
     return new AzureCacheStore();
   }
+  if (backend === "filesystem") {
+    return new FilesystemCacheStore(
+      process.env.WWPDW_MEDIA_ROOT ?? path.join(repoRoot, ".local-data", "home-storage")
+    );
+  }
 
   return new LocalCacheStore(process.env.WWPDW_LOCAL_DATA_DIR
     ? path.resolve(process.env.WWPDW_LOCAL_DATA_DIR, "cache-state.json")
@@ -66,7 +73,7 @@ export function createCacheStore(backend = process.env.CACHE_BACKEND as CacheBac
 }
 
 export function createSearchIndexStore(
-  backend = process.env.CACHE_BACKEND as CacheBackend
+  backend = (process.env.SEARCH_INDEX_BACKEND ?? process.env.CACHE_BACKEND) as CacheBackend
 ): LocalSearchIndexStore | AzureSearchIndexStore {
   if (backend === "azure") {
     return new AzureSearchIndexStore();
@@ -90,7 +97,7 @@ export function createTspdtRankingStore(): LocalTspdtRankingStore {
 }
 
 export function createTspdtBrowseStore(
-  backend = process.env.CACHE_BACKEND as CacheBackend
+  backend = (process.env.TSPDT_BROWSE_BACKEND ?? process.env.SEARCH_INDEX_BACKEND ?? process.env.CACHE_BACKEND) as CacheBackend
 ): LocalTspdtBrowseStore | AzureTspdtBrowseStore {
   if (backend === "azure") {
     return new AzureTspdtBrowseStore();

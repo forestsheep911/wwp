@@ -434,6 +434,8 @@ export interface MediaDiagnostics {
   checkedAt: string;
   contentType?: string;
   contentLength?: number;
+  durationSeconds?: number;
+  fingerprint?: string;
   blobName?: string;
   rangeSupported?: boolean;
   sourceContentType?: string;

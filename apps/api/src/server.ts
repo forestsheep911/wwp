@@ -1,5 +1,6 @@
 import "./env.js";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createReadStream } from "node:fs";
 import http from "node:http";
 import { URL } from "node:url";
 import {
@@ -141,6 +142,9 @@ const adminMovieRequestMemberName = "Admin";
 const forumAdminMemberId = "admin";
 const forumAdminMemberName = "Admin";
 const adminKey = process.env.WWPDW_ADMIN_KEY;
+const playbackGrantMinutes = Math.max(5, Math.floor(Number(process.env.WWPDW_PLAYBACK_GRANT_MINUTES ?? 360)));
+const maximumPlaybackStreams = Math.max(1, Math.floor(Number(process.env.WWPDW_MAX_PLAYBACK_STREAMS ?? 4)));
+let activePlaybackStreams = 0;
 
 interface RequestContext {
   requestId: string;
@@ -299,6 +303,27 @@ function safeEqual(left: string, right: string) {
   }
 
   return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function createPlaybackGrant(assetKey: string, sessionId: string) {
+  const expiresAt = Date.now() + playbackGrantMinutes * 60 * 1000;
+  const payload = `${assetKey}\n${sessionId}\n${expiresAt}`;
+  const signature = createHmac("sha256", adminKey ?? "wwpdw-unconfigured")
+    .update(payload)
+    .digest("base64url");
+  return `${expiresAt}.${signature}`;
+}
+
+function playbackGrantValid(grant: string | null, assetKey: string, sessionId: string) {
+  const [expiresValue, suppliedSignature, extra] = grant?.split(".") ?? [];
+  if (!expiresValue || !suppliedSignature || extra) return false;
+  const expiresAt = Number(expiresValue);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) return false;
+  const payload = `${assetKey}\n${sessionId}\n${expiresAt}`;
+  const expectedSignature = createHmac("sha256", adminKey ?? "wwpdw-unconfigured")
+    .update(payload)
+    .digest("base64url");
+  return safeEqual(suppliedSignature, expectedSignature);
 }
 
 function isAdminKey(value: string | undefined) {
@@ -2329,6 +2354,9 @@ async function handlePlayback(
 
   sendJson(response, 200, {
     ...playback,
+    playbackUrl: playback.playbackUrl.startsWith("/api/media/")
+      ? `${playback.playbackUrl}?grant=${encodeURIComponent(createPlaybackGrant(assetKey, context.session!.id))}`
+      : playback.playbackUrl,
     videoCodec,
     charge: chargeResult?.ok && chargeResult.charged ? chargeResult.charge : undefined,
     memberCredits: chargeResult?.ok ? chargeResult.code.credits : undefined,
@@ -2339,6 +2367,150 @@ async function handlePlayback(
         windowExpiresAt: chargeResult.windowExpiresAt
       }
       : undefined
+  });
+}
+
+function requestedByteRange(rangeHeader: string | undefined, contentLength: number) {
+  if (!rangeHeader) return undefined;
+  const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match || (!match[1] && !match[2])) return null;
+
+  let start: number;
+  let end: number;
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    start = Math.max(0, contentLength - suffixLength);
+    end = contentLength - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : contentLength - 1;
+  }
+
+  if (
+    !Number.isSafeInteger(start)
+    || !Number.isSafeInteger(end)
+    || start < 0
+    || end < start
+    || start >= contentLength
+  ) {
+    return null;
+  }
+
+  return { start, end: Math.min(end, contentLength - 1) };
+}
+
+async function handleLocalMedia(
+  assetKey: string,
+  grant: string | null,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  if (!playbackGrantValid(grant, assetKey, context.session!.id)) {
+    sendJson(response, 403, { error: "Playback grant is missing, invalid, or expired." });
+    return;
+  }
+  if (request.method !== "HEAD" && activePlaybackStreams >= maximumPlaybackStreams) {
+    response.setHeader("Retry-After", "5");
+    sendJson(response, 503, { error: "All local playback streams are currently in use." });
+    return;
+  }
+  const mediaFile = await store.getMediaFile?.(assetKey);
+  if (!mediaFile) {
+    sendJson(response, 404, { error: "Local media file was not found." });
+    return;
+  }
+
+  const range = requestedByteRange(request.headers.range, mediaFile.contentLength);
+  response.setHeader("Accept-Ranges", "bytes");
+  response.setHeader("Content-Type", mediaFile.contentType);
+  response.setHeader("Cache-Control", "private, no-store");
+
+  if (range === null) {
+    response.statusCode = 416;
+    response.setHeader("Content-Range", `bytes */${mediaFile.contentLength}`);
+    response.end();
+    return;
+  }
+
+  const start = range?.start ?? 0;
+  const end = range?.end ?? mediaFile.contentLength - 1;
+  const responseLength = end - start + 1;
+  response.statusCode = range ? 206 : 200;
+  response.setHeader("Content-Length", responseLength);
+  if (range) {
+    response.setHeader("Content-Range", `bytes ${start}-${end}/${mediaFile.contentLength}`);
+  }
+
+  logInfo("api.media.stream", {
+    requestId: context.requestId,
+    assetKey,
+    start,
+    end,
+    contentLength: mediaFile.contentLength,
+    partial: Boolean(range),
+    durationMs: durationMs(startedAt)
+  });
+
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  activePlaybackStreams += 1;
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(mediaFile.absolutePath, { start, end });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activePlaybackStreams = Math.max(0, activePlaybackStreams - 1);
+    };
+    stream.once("error", (error) => {
+      release();
+      reject(error);
+    });
+    response.once("close", () => {
+      stream.destroy();
+      release();
+      resolve();
+    });
+    response.once("finish", () => {
+      release();
+      resolve();
+    });
+    stream.pipe(response);
+  });
+}
+
+async function handleLocalPoster(
+  posterKey: string,
+  request: http.IncomingMessage,
+  response: http.ServerResponse
+) {
+  const poster = await store.getPosterFile?.(posterKey);
+  if (!poster) {
+    sendJson(response, 404, { error: "Local poster was not found." });
+    return;
+  }
+
+  response.statusCode = 200;
+  response.setHeader("Content-Type", poster.contentType);
+  response.setHeader("Content-Length", poster.contentLength);
+  response.setHeader("Cache-Control", "private, max-age=86400");
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(poster.absolutePath);
+    stream.once("error", reject);
+    response.once("close", resolve);
+    response.once("finish", resolve);
+    stream.pipe(response);
   });
 }
 
@@ -3445,6 +3617,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         searchIndex: {
           enabled: searchIndexEnabled,
           ...(await searchIndex.getHealth())
+        },
+        playback: {
+          activeStreams: activePlaybackStreams,
+          maximumStreams: maximumPlaybackStreams,
+          grantMinutes: playbackGrantMinutes
         }
       });
       return;
@@ -3829,6 +4006,24 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     const playbackMatch = pathname.match(/^\/api\/playback\/([^/]+)$/);
     if (request.method === "GET" && playbackMatch) {
       await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context, identity!);
+      return;
+    }
+
+    const mediaMatch = pathname.match(/^\/api\/media\/([^/]+)$/);
+    if ((request.method === "GET" || request.method === "HEAD") && mediaMatch) {
+      await handleLocalMedia(
+        decodeURIComponent(mediaMatch[1]),
+        url.searchParams.get("grant"),
+        request,
+        response,
+        context
+      );
+      return;
+    }
+
+    const posterMatch = pathname.match(/^\/api\/posters\/([^/]+)$/);
+    if ((request.method === "GET" || request.method === "HEAD") && posterMatch) {
+      await handleLocalPoster(decodeURIComponent(posterMatch[1]), request, response);
       return;
     }
 

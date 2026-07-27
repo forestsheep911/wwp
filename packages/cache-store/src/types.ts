@@ -7,7 +7,15 @@ import type {
   SearchResult
 } from "@wwpdw/shared";
 
-export type CacheBackend = "local" | "azure";
+export type CacheBackend = "local" | "filesystem" | "azure";
+
+export interface LocalMediaFile {
+  absolutePath: string;
+  contentLength: number;
+  contentType: string;
+}
+
+export interface LocalPosterFile extends LocalMediaFile {}
 
 export interface CleanupExpiredResult {
   scannedAssets: number;
@@ -61,5 +69,7 @@ export interface CacheStore {
   cacheMoviePosters(result: SearchResult, options?: CacheMoviePostersOptions): Promise<SearchResult>;
   hydrateMoviePosterUrls(result: SearchResult): Promise<SearchResult>;
   getPlayback(assetKey: string): Promise<PlaybackResponse | undefined>;
+  getMediaFile?(assetKey: string): Promise<LocalMediaFile | undefined>;
+  getPosterFile?(posterKey: string): Promise<LocalPosterFile | undefined>;
   cleanupExpired(now?: Date): Promise<CleanupExpiredResult>;
 }

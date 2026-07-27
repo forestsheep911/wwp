@@ -85,7 +85,11 @@ export class SessionStore {
     this.idleTtlMs = options.idleTtlMs ?? positiveDuration(process.env.WWPDW_SESSION_IDLE_SECONDS, defaultIdleTtlMs);
     this.absoluteTtlMs = options.absoluteTtlMs ?? positiveDuration(process.env.WWPDW_SESSION_ABSOLUTE_SECONDS, defaultAbsoluteTtlMs);
     this.renewalThresholdMs = options.renewalThresholdMs ?? positiveDuration(process.env.WWPDW_SESSION_RENEWAL_SECONDS, defaultRenewalThresholdMs);
-    this.backend = options.backend ?? (process.env.CACHE_BACKEND === "azure" ? "azure" : "local");
+    const configuredBackend =
+      process.env.WWPDW_SESSION_BACKEND ??
+      process.env.WWPDW_AUTH_BACKEND ??
+      process.env.CACHE_BACKEND;
+    this.backend = options.backend ?? (configuredBackend === "azure" ? "azure" : "local");
     this.statePath = path.join(options.localDataDir ?? process.env.WWPDW_LOCAL_DATA_DIR ?? ".local-data", "session-state.json");
     if (this.backend === "azure") {
       const account = options.accountName ?? process.env.AZURE_STORAGE_ACCOUNT_NAME ?? "stwwcachee9219db7";

@@ -158,7 +158,8 @@ const noticeRetention = 1000;
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 
 function backend(): AccessBackend {
-  return process.env.CACHE_BACKEND === "azure" ? "azure" : "local";
+  const configured = process.env.WWPDW_AUTH_BACKEND ?? process.env.CACHE_BACKEND;
+  return configured === "azure" ? "azure" : "local";
 }
 
 function localStatePath() {

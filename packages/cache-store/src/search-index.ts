@@ -691,6 +691,14 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   private readonly credential = new DefaultAzureCredential();
   private ready?: Promise<void>;
   private entriesCache?: { expiresAt: number; entries: SearchIndexEntry[] };
+  private readonly snapshotPath = process.env.SEARCH_INDEX_SNAPSHOT_PATH?.trim()
+    ? path.resolve(process.env.SEARCH_INDEX_SNAPSHOT_PATH)
+    : undefined;
+  private snapshotLoaded = false;
+  private snapshotEntries?: SearchIndexEntry[];
+  private snapshotRefresh?: Promise<SearchIndexEntry[]>;
+  private snapshotRefreshedAt?: string;
+  private snapshotRefreshError?: string;
 
   constructor() {
     this.tableClient = this.config.connectionString
@@ -705,10 +713,15 @@ export class AzureSearchIndexStore implements SearchIndexStore {
 
   async getHealth() {
     await this.ensureReady();
+    await this.loadSnapshot();
     return {
       backend: this.backend,
       accountName: this.config.accountName,
-      tableName: this.config.tableName
+      tableName: this.config.tableName,
+      snapshotPath: this.snapshotPath,
+      snapshotEntries: this.snapshotEntries?.length,
+      snapshotRefreshedAt: this.snapshotRefreshedAt,
+      snapshotRefreshError: this.snapshotRefreshError
     };
   }
 
@@ -757,8 +770,9 @@ export class AzureSearchIndexStore implements SearchIndexStore {
     const now = indexedAt ?? new Date().toISOString();
     const entries = results.map((result) => entryForResult(result, now));
     for (const entry of entries) {
-      await this.saveEntry(entry);
+      await this.saveEntry(entry, false);
     }
+    await this.upsertSnapshotEntries(entries);
     return entries;
   }
 
@@ -767,6 +781,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
     this.entriesCache = undefined;
     try {
       await this.tableClient.deleteEntity(moviePartitionKey, encodeRowKey(assetKey));
+      await this.removeSnapshotEntry(assetKey);
       return true;
     } catch (error) {
       if (isNotFound(error)) {
@@ -841,7 +856,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
     }
   }
 
-  private async saveEntry(entry: SearchIndexEntry) {
+  private async saveEntry(entry: SearchIndexEntry, updateSnapshot = true) {
     this.entriesCache = undefined;
     await this.tableClient.upsertEntity<PayloadEntity>(
       {
@@ -854,6 +869,7 @@ export class AzureSearchIndexStore implements SearchIndexStore {
       },
       "Replace"
     );
+    if (updateSnapshot) await this.upsertSnapshotEntry(entry);
   }
 
   private async saveRun(run: SearchIndexRun) {
@@ -876,25 +892,147 @@ export class AzureSearchIndexStore implements SearchIndexStore {
       return this.entriesCache.entries.map(cloneEntry);
     }
 
+    const snapshot = await this.loadSnapshot();
+    if (snapshot) {
+      this.cacheEntries(snapshot);
+      this.startSnapshotRefresh();
+      return snapshot.map(cloneEntry);
+    }
+
+    const entries = await this.refreshSnapshot();
+    return entries.map(cloneEntry);
+  }
+
+  async refreshSnapshot() {
+    if (this.snapshotRefresh) {
+      return this.snapshotRefresh;
+    }
+
+    this.snapshotRefresh = (async () => {
+      const entries = await this.fetchEntries();
+      this.snapshotEntries = entries.map(cloneEntry);
+      this.snapshotLoaded = true;
+      this.snapshotRefreshedAt = new Date().toISOString();
+      this.snapshotRefreshError = undefined;
+      this.cacheEntries(entries);
+      await this.writeSnapshot(entries);
+      return entries.map(cloneEntry);
+    })();
+
+    try {
+      return await this.snapshotRefresh;
+    } catch (error) {
+      this.snapshotRefreshError = error instanceof Error ? error.message : "Search index snapshot refresh failed.";
+      throw error;
+    } finally {
+      this.snapshotRefresh = undefined;
+    }
+  }
+
+  private startSnapshotRefresh() {
+    if (this.snapshotRefresh) return;
+    void this.refreshSnapshot().catch(() => undefined);
+  }
+
+  private async fetchEntries() {
     const entries: SearchIndexEntry[] = [];
-    const entities = this.tableClient.listEntities<PayloadEntity>({
+    let pageNumber = 0;
+    const pages = this.tableClient.listEntities<PayloadEntity>({
       queryOptions: {
         filter: `PartitionKey eq '${moviePartitionKey}'`
       }
+    }).byPage({
+      maxPageSize: Math.min(
+        500,
+        Math.max(10, Math.floor(Number(process.env.SEARCH_INDEX_AZURE_PAGE_SIZE ?? 100)))
+      )
     });
 
-    for await (const entity of entities) {
-      entries.push(deserialize<SearchIndexEntry>(entity));
-    }
-
-    if (searchIndexEntryCacheTtlMs > 0) {
-      this.entriesCache = {
-        expiresAt: now + searchIndexEntryCacheTtlMs,
-        entries: entries.map(cloneEntry)
-      };
+    for await (const page of pages) {
+      pageNumber += 1;
+      for (const entity of page) {
+        entries.push(deserialize<SearchIndexEntry>(entity));
+      }
+      if (process.env.SEARCH_INDEX_SNAPSHOT_PROGRESS === "true") {
+        console.log(JSON.stringify({
+          event: "search_index.snapshot.page",
+          page: pageNumber,
+          pageEntries: page.length,
+          totalEntries: entries.length
+        }));
+      }
     }
 
     return entries;
+  }
+
+  private cacheEntries(entries: SearchIndexEntry[]) {
+    if (searchIndexEntryCacheTtlMs <= 0) return;
+    this.entriesCache = {
+      expiresAt: Date.now() + searchIndexEntryCacheTtlMs,
+      entries: entries.map(cloneEntry)
+    };
+  }
+
+  private async loadSnapshot() {
+    if (this.snapshotLoaded) return this.snapshotEntries;
+    this.snapshotLoaded = true;
+    if (!this.snapshotPath) return undefined;
+
+    try {
+      const parsed = JSON.parse(await readFile(this.snapshotPath, "utf8")) as {
+        refreshedAt?: string;
+        entries?: SearchIndexEntry[];
+      };
+      if (!Array.isArray(parsed.entries)) return undefined;
+      this.snapshotEntries = parsed.entries.map(cloneEntry);
+      this.snapshotRefreshedAt = parsed.refreshedAt;
+      return this.snapshotEntries;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.snapshotRefreshError = error instanceof Error ? error.message : "Search index snapshot could not be read.";
+      }
+      return undefined;
+    }
+  }
+
+  private async writeSnapshot(entries: SearchIndexEntry[]) {
+    if (!this.snapshotPath) return;
+    await mkdir(path.dirname(this.snapshotPath), { recursive: true });
+    const tempPath = `${this.snapshotPath}.${process.pid}.tmp`;
+    await writeFile(tempPath, `${JSON.stringify({
+      version: 1,
+      refreshedAt: this.snapshotRefreshedAt ?? new Date().toISOString(),
+      entries
+    })}\n`, "utf8");
+    await rename(tempPath, this.snapshotPath);
+  }
+
+  private async upsertSnapshotEntry(entry: SearchIndexEntry) {
+    await this.upsertSnapshotEntries([entry]);
+  }
+
+  private async upsertSnapshotEntries(entries: SearchIndexEntry[]) {
+    await this.loadSnapshot();
+    if (!this.snapshotEntries) return;
+    for (const entry of entries) {
+      const existingIndex = this.snapshotEntries.findIndex((candidate) => candidate.assetKey === entry.assetKey);
+      if (existingIndex >= 0) {
+        this.snapshotEntries[existingIndex] = cloneEntry(entry);
+      } else {
+        this.snapshotEntries.push(cloneEntry(entry));
+      }
+    }
+    this.cacheEntries(this.snapshotEntries);
+    await this.writeSnapshot(this.snapshotEntries);
+  }
+
+  private async removeSnapshotEntry(assetKey: string) {
+    await this.loadSnapshot();
+    if (!this.snapshotEntries) return;
+    this.snapshotEntries = this.snapshotEntries.filter((entry) => entry.assetKey !== assetKey);
+    this.cacheEntries(this.snapshotEntries);
+    await this.writeSnapshot(this.snapshotEntries);
   }
 
   private async listRuns() {
