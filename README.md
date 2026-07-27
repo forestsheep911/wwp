@@ -20,6 +20,7 @@ For handoff, operations, data flow, and troubleshooting, start with:
 
 - `docs/HANDOFF.md`
 - `docs/ARCHITECTURE_CHECK.md`
+- `docs/HOME-SITE-ARCHITECTURE.md` for the proposed home-hosted media node
 - `infra/README.md`
 
 ## Local Development
