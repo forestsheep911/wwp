@@ -67,6 +67,7 @@ import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-s
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
+import { serveStaticWeb } from "./static-web.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
@@ -3834,6 +3835,10 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     const assetMatch = pathname.match(/^\/api\/assets\/([^/]+)$/);
     if (request.method === "GET" && assetMatch) {
       await handleAssetLookup(decodeURIComponent(assetMatch[1]), response, context);
+      return;
+    }
+
+    if (await serveStaticWeb(request, response, pathname)) {
       return;
     }
 
