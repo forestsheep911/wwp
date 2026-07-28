@@ -6,7 +6,11 @@ import path from "node:path";
 import test from "node:test";
 
 import type { SearchResult } from "@wwpdw/shared";
-import { FilesystemCacheStore, stablePosterIdentity } from "./filesystem.js";
+import {
+  FilesystemCacheStore,
+  hlsManifestReferencesValid,
+  stablePosterIdentity
+} from "./filesystem.js";
 
 function mp4Box(type: string, payload = Buffer.alloc(0)) {
   const result = Buffer.alloc(8 + payload.length);
@@ -149,5 +153,34 @@ test("Notion poster identity ignores rotating signed query parameters", () => {
       url: `${baseUrl}?X-Amz-Date=20260729T000000Z&X-Amz-Signature=new`,
       source: "notion"
     })
+  );
+});
+
+test("HLS validation rejects a playlist whose referenced segment is missing", () => {
+  const manifest = [
+    "#EXTM3U",
+    '#EXT-X-MAP:URI="init.mp4"',
+    "#EXTINF:6,",
+    "segment-00000.m4s",
+    "#EXTINF:6,",
+    "segment-00001.m4s",
+    "#EXT-X-ENDLIST"
+  ].join("\n");
+  assert.equal(
+    hlsManifestReferencesValid(manifest, [
+      "index.m3u8",
+      "init.mp4",
+      "segment-00001.m4s"
+    ]),
+    false
+  );
+  assert.equal(
+    hlsManifestReferencesValid(manifest, [
+      "index.m3u8",
+      "init.mp4",
+      "segment-00000.m4s",
+      "segment-00001.m4s"
+    ]),
+    true
   );
 });

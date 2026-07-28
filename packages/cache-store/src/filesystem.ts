@@ -68,6 +68,24 @@ interface FilesystemCacheStoreOptions {
   hlsPlaybackBuilder?: HlsPlaybackBuilder;
 }
 
+export function hlsManifestReferencesValid(manifest: string, files: string[]) {
+  const availableFiles = new Set(files);
+  const initMatch = manifest.match(/^#EXT-X-MAP:URI="([^"]+)"$/m);
+  const segments = manifest
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  return (
+    initMatch?.[1] === "init.mp4"
+    && availableFiles.has("init.mp4")
+    && segments.length > 0
+    && segments.every((segment) => (
+      hlsSegmentPattern.test(segment)
+      && availableFiles.has(segment)
+    ))
+  );
+}
+
 async function buildHlsPlayback(sourcePath: string, targetDirectory: string) {
   const startedAt = Date.now();
   const buildingDirectory = `${targetDirectory}-building`;
@@ -129,6 +147,7 @@ async function buildHlsPlayback(sourcePath: string, targetDirectory: string) {
       || !initMetadata.isFile()
       || initMetadata.size <= 0
       || segments.length === 0
+      || !hlsManifestReferencesValid(manifest, files)
     ) {
       throw new Error("Generated HLS output did not pass validation.");
     }
@@ -328,6 +347,7 @@ export class FilesystemCacheStore implements CacheStore {
   private readonly posterRoot: string;
   private readonly tempRoot: string;
   private readonly database: DatabaseSync;
+  private readonly hlsPlaybackEnabled: boolean;
   private readonly hlsPlaybackBuilder: HlsPlaybackBuilder;
   private readonly posterDownloads = new Map<string, Promise<MoviePoster>>();
   private readonly posterContainer = new BlobServiceClient(
@@ -340,6 +360,8 @@ export class FilesystemCacheStore implements CacheStore {
     this.mediaRoot = path.join(this.root, "media");
     this.posterRoot = path.join(this.root, "posters");
     this.tempRoot = path.join(this.root, "tmp");
+    this.hlsPlaybackEnabled = options.hlsPlaybackBuilder !== undefined
+      || process.env.WWPDW_HLS_PLAYBACK_ENABLED === "true";
     this.hlsPlaybackBuilder = options.hlsPlaybackBuilder ?? buildHlsPlayback;
     const stateRoot = path.join(this.root, "state");
     mkdirSync(this.mediaRoot, { recursive: true });
@@ -602,11 +624,13 @@ export class FilesystemCacheStore implements CacheStore {
     }
     const contentType = contentTypeFor(sourceUrl, download.contentType);
     const durationSeconds = await probeDurationSeconds(finalPath);
-    job.progress = Math.max(job.progress, 96);
-    job.message = "正在生成流畅播放分段。";
-    job.updatedAt = new Date().toISOString();
-    await this.saveJob(job);
-    await this.hlsPlaybackBuilder(finalPath, path.join(path.dirname(finalPath), "hls"));
+    if (this.hlsPlaybackEnabled) {
+      job.progress = Math.max(job.progress, 96);
+      job.message = "正在生成流畅播放分段。";
+      job.updatedAt = new Date().toISOString();
+      await this.saveJob(job);
+      await this.hlsPlaybackBuilder(finalPath, path.join(path.dirname(finalPath), "hls"));
+    }
     const media: MediaDiagnostics = {
       checkedAt: new Date().toISOString(),
       contentType,
@@ -670,7 +694,7 @@ export class FilesystemCacheStore implements CacheStore {
     const asset = await this.getAsset(assetKey);
     if (!isFreshReady(asset) || !asset?.playbackUrl) return undefined;
     const absolutePath = this.absolutePathFromUrl(asset.playbackUrl);
-    const hlsReady = absolutePath
+    const hlsReady = this.hlsPlaybackEnabled && absolutePath
       ? await stat(path.join(path.dirname(absolutePath), "hls", "index.m3u8"))
         .then((metadata) => metadata.isFile())
         .catch(() => false)
@@ -846,7 +870,8 @@ export class FilesystemCacheStore implements CacheStore {
         await file.write(value);
         bytes += value.length;
         const maximumBytes = mediaMaxBytes();
-        if (maximumBytes > 0 && cachedBytesAtStart + bytes * 2 > maximumBytes) {
+        const projectedBytes = this.hlsPlaybackEnabled ? bytes * 2 : bytes;
+        if (maximumBytes > 0 && cachedBytesAtStart + projectedBytes > maximumBytes) {
           throw new Error(`Local media cache quota of ${maximumBytes} bytes would be exceeded.`);
         }
         const nextProgress = expectedBytes
@@ -1009,7 +1034,9 @@ export class FilesystemCacheStore implements CacheStore {
 
   private async assertDownloadCapacity(expectedBytes: number | undefined, existingBytes: number) {
     const maximumBytes = mediaMaxBytes();
-    const requiredBytes = expectedBytes ? expectedBytes * 2 : undefined;
+    const requiredBytes = expectedBytes
+      ? expectedBytes * (this.hlsPlaybackEnabled ? 2 : 1)
+      : undefined;
     if (maximumBytes > 0 && requiredBytes && this.cachedMediaBytes() + requiredBytes > maximumBytes) {
       throw new Error(`Local media cache quota of ${maximumBytes} bytes would be exceeded.`);
     }
@@ -1019,7 +1046,7 @@ export class FilesystemCacheStore implements CacheStore {
     const fileSystem = await statfs(this.root);
     const availableBytes = Number(fileSystem.bavail) * Number(fileSystem.bsize);
     const remainingDownloadBytes = Math.max(0, expectedBytes - existingBytes);
-    const playbackSegmentBytes = expectedBytes;
+    const playbackSegmentBytes = this.hlsPlaybackEnabled ? expectedBytes : 0;
     if (availableBytes - remainingDownloadBytes - playbackSegmentBytes < mediaMinFreeBytes()) {
       throw new Error(`Local media cache must keep ${mediaMinFreeBytes()} bytes free.`);
     }
