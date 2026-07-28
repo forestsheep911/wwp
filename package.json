@@ -13,7 +13,7 @@
     "dev:api": "npm run dev --workspace @wwpdw/api",
     "dev:worker": "npm run dev --workspace @wwpdw/worker",
     "home:build": "npm run build --workspace @wwpdw/web",
-    "home:test": "node --test --import tsx apps/api/src/static-web.test.ts",
+    "home:test": "node --test --import tsx apps/api/src/static-web.test.ts apps/api/src/playback-admission.test.ts",
     "home:sync-index": "node --import tsx tools/sync-home-search-index.mjs",
     "home:start": "node --import tsx tools/start-home-site.mjs",
     "home:serve": "npm run home:build && npm run home:start",

@@ -595,6 +595,9 @@ export interface PlaybackResponse {
   title: string;
   playbackUrl: string;
   expiresAt: string;
+  admission?: {
+    ticketId: string;
+  };
   media?: MediaDiagnostics;
   videoCodec?: string;
   charge?: MemberCreditCharge;
@@ -604,6 +607,26 @@ export interface PlaybackResponse {
     windowHours: number;
     windowExpiresAt?: string;
   };
+}
+
+export type PlaybackLoadLevel = "low" | "medium" | "high" | "full";
+
+export interface PlaybackCapacity {
+  enabled: boolean;
+  active: number;
+  maximum: number;
+  queued: number;
+  level: PlaybackLoadLevel;
+}
+
+export interface PlaybackAdmissionResponse {
+  assetKey: string;
+  title: string;
+  status: "queued" | "admitted";
+  ticketId?: string;
+  position?: number;
+  leaseExpiresAt?: string;
+  capacity: PlaybackCapacity;
 }
 
 export type MemberCreditLimitReason = "balance";

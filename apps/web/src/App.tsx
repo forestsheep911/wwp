@@ -15,6 +15,7 @@ import type {
   MemberNoticeEntry,
   MovieRequestEntry,
   MovieRequestStatus,
+  PlaybackAdmissionResponse,
   PlaybackResponse,
   SearchResponse,
   SearchResult
@@ -42,6 +43,8 @@ import {
   getForumThread,
   getCreditPolicy,
   getPlayback,
+  releasePlaybackAdmission,
+  requestPlaybackAdmission,
   isUnauthorizedError,
   listCachedAssets,
   listCacheJobs,
@@ -86,6 +89,8 @@ import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
+import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
+import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { ProfilePage } from "./cinema/components/ProfilePage";
 import { SearchDialog } from "./cinema/components/SearchDialog";
@@ -252,6 +257,11 @@ function CinemaApp() {
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
+  const [playbackQueue, setPlaybackQueue] = useState<{
+    admission: PlaybackAdmissionResponse;
+    result?: SearchResult;
+    options: { syncHistory?: boolean };
+  }>();
   const [downloadRequestAssetKeys, setDownloadRequestAssetKeys] = useState<string[]>([]);
   const [directDownloadDialog, setDirectDownloadDialog] = useState<DirectDownloadDialogState | undefined>();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -789,7 +799,16 @@ function CinemaApp() {
 
   async function requestCreditAction(action: PendingCreditAction) {
     setError("");
-    if (creditPolicy.billingEnabled === false) {
+    let resolvedPolicy = creditPolicy;
+    if (resolvedPolicy.billingEnabled !== false) {
+      try {
+        resolvedPolicy = await getCreditPolicy();
+        setCreditPolicy(resolvedPolicy);
+      } catch {
+        // Fall through to the existing preview path when policy refresh is unavailable.
+      }
+    }
+    if (resolvedPolicy.billingEnabled === false) {
       try {
         await executeCreditAction(action);
       } catch (actionError) {
@@ -1032,12 +1051,33 @@ function CinemaApp() {
     }
 
     try {
-      const response = await getPlayback(assetKey);
+      const admission = await requestPlaybackAdmission(assetKey);
+      if (admission.status === "queued") {
+        setPlaybackQueue({ admission, result, options });
+        if (options.syncHistory !== false) {
+          writeRoute(routeForCurrentView({ playerAssetKey: assetKey }), "push");
+        }
+        return;
+      }
+      await enterAdmittedPlayback(admission, result, options);
+    } catch (playbackError) {
+      handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
+    }
+  }
+
+  async function enterAdmittedPlayback(
+    admission: PlaybackAdmissionResponse,
+    result?: SearchResult,
+    options: { syncHistory?: boolean } = {}
+  ) {
+    try {
+      const response = await getPlayback(admission.assetKey, admission.ticketId);
       const nextPlayback = {
         ...response,
-        videoCodec: response.videoCodec ?? variantVideoCodec(result, assetKey)
+        videoCodec: response.videoCodec ?? variantVideoCodec(result, admission.assetKey)
       };
       updateCurrentMemberCredits(nextPlayback.memberCredits);
+      setPlaybackQueue(undefined);
       setPlayback(nextPlayback);
       rememberPlayback(nextPlayback, result);
       if (options.syncHistory !== false) {
@@ -1046,6 +1086,10 @@ function CinemaApp() {
         }), "push");
       }
     } catch (playbackError) {
+      if (admission.ticketId) {
+        void releasePlaybackAdmission(admission.ticketId).catch(() => undefined);
+      }
+      setPlaybackQueue(undefined);
       handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
     }
   }
@@ -1069,7 +1113,7 @@ function CinemaApp() {
         return undefined;
       }
 
-      const response = await getPlayback(assetKey);
+      const response = await getPlayback(assetKey, playback?.admission?.ticketId);
       updateCurrentMemberCredits(response.memberCredits);
       setPlayback((currentPlayback) => (
         currentPlayback?.assetKey === assetKey
@@ -1085,11 +1129,33 @@ function CinemaApp() {
   }
 
   function closePlayer() {
+    const ticketId = playback?.admission?.ticketId ?? playbackQueue?.admission.ticketId;
+    if (ticketId) {
+      void releasePlaybackAdmission(ticketId).catch(() => undefined);
+    }
     setPlayback(undefined);
+    setPlaybackQueue(undefined);
     writeRoute(routeForCurrentView({
       playerAssetKey: undefined
     }), "replace");
   }
+
+  useEffect(() => {
+    const ticketId = playback?.admission?.ticketId;
+    if (!ticketId) return;
+    const keepAlive = () => {
+      void requestPlaybackAdmission(playback.assetKey, ticketId).catch(() => undefined);
+    };
+    const timer = window.setInterval(keepAlive, 20_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") keepAlive();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [playback?.admission?.ticketId, playback?.assetKey]);
 
   function clearHistory() {
     setHistory([]);
@@ -2590,10 +2656,31 @@ function CinemaApp() {
         <Player
           playback={playback}
           onClose={closePlayer}
+          onPlaybackEnded={closePlayer}
           onRenewPlayback={() => renewCurrentPlayback(playback.assetKey)}
         />
         {creditConfirmDialog}
       </>
+    );
+  }
+
+  if (playbackQueue) {
+    return (
+      <PlaybackQueue
+        admission={playbackQueue.admission}
+        onAdmitted={(admission) => {
+          void enterAdmittedPlayback(admission, playbackQueue.result, {
+            ...playbackQueue.options,
+            syncHistory: false
+          });
+        }}
+        onCancel={closePlayer}
+        onUpdate={(admission) => {
+          setPlaybackQueue((current) => current
+            ? { ...current, admission }
+            : current);
+        }}
+      />
     );
   }
 
@@ -2924,6 +3011,7 @@ export default function App() {
   return (
     <ToastProvider>
       <CinemaApp />
+      <PlaybackLoadIndicator />
     </ToastProvider>
   );
 }

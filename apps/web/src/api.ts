@@ -36,6 +36,8 @@ import type {
   MovieSummaryResponse,
   NowPlayingResponse,
   MovieRequestsResponse,
+  PlaybackAdmissionResponse,
+  PlaybackCapacity,
   PlaybackResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
@@ -97,6 +99,33 @@ export async function wakeBackend() {
     signal: AbortSignal.timeout(backendWakeTimeoutMs)
   });
   return response.ok;
+}
+
+export async function getPlaybackCapacity(): Promise<PlaybackCapacity> {
+  const response = await fetch(healthRequestUrl(apiBaseUrl), {
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000)
+  });
+  if (!response.ok) {
+    throw new Error(`Health request failed with ${response.status}`);
+  }
+  const health = await response.json() as {
+    playback?: {
+      activeStreams?: number;
+      maximumStreams?: number;
+      queued?: number;
+      level?: PlaybackCapacity["level"];
+      queueEnabled?: boolean;
+    };
+  };
+  const playback = health.playback;
+  return {
+    enabled: Boolean(playback?.queueEnabled),
+    active: playback?.activeStreams ?? 0,
+    maximum: playback?.maximumStreams ?? 0,
+    queued: playback?.queued ?? 0,
+    level: playback?.level ?? "low"
+  };
 }
 
 function createRequestId() {
@@ -330,8 +359,27 @@ export function getCacheStatus(jobId: string) {
   return request<EnsureCacheResponse>(apiUrl(`/api/cache/${encodeURIComponent(jobId)}`));
 }
 
-export function getPlayback(assetKey: string) {
-  return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}`));
+export function requestPlaybackAdmission(assetKey: string, ticketId?: string) {
+  const params = new URLSearchParams();
+  if (ticketId) params.set("ticket", ticketId);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request<PlaybackAdmissionResponse>(
+    apiUrl(`/api/playback-admission/${encodeURIComponent(assetKey)}${suffix}`)
+  );
+}
+
+export function releasePlaybackAdmission(ticketId: string) {
+  return request<{ ok: true }>(
+    apiUrl(`/api/playback-admission-ticket/${encodeURIComponent(ticketId)}`),
+    { method: "DELETE", keepalive: true }
+  );
+}
+
+export function getPlayback(assetKey: string, admissionTicketId?: string) {
+  const params = new URLSearchParams();
+  if (admissionTicketId) params.set("admission", admissionTicketId);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}${suffix}`));
 }
 
 export function getCacheAsset(assetKey: string) {

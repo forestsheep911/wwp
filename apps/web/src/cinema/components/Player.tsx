@@ -20,16 +20,19 @@ function expiresInMs(expiresAt: string) {
 function ArtPlayerView({
   playback,
   onRenewPlayback,
-  onFatalPlaybackError
+  onFatalPlaybackError,
+  onPlaybackEnded
 }: {
   playback: PlaybackResponse;
   onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
   onFatalPlaybackError: (failure: FatalPlaybackFailure) => void;
+  onPlaybackEnded: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const artRef = useRef<Artplayer | null>(null);
   const playbackRef = useRef(playback);
   const onRenewPlaybackRef = useRef(onRenewPlayback);
+  const onPlaybackEndedRef = useRef(onPlaybackEnded);
   const renewPromiseRef = useRef<Promise<PlaybackResponse | undefined> | undefined>(undefined);
 
   useEffect(() => {
@@ -39,6 +42,10 @@ function ArtPlayerView({
   useEffect(() => {
     onRenewPlaybackRef.current = onRenewPlayback;
   }, [onRenewPlayback]);
+
+  useEffect(() => {
+    onPlaybackEndedRef.current = onPlaybackEnded;
+  }, [onPlaybackEnded]);
 
   const renewPlayback = useCallback(async (force = false) => {
     const current = playbackRef.current;
@@ -132,6 +139,7 @@ function ArtPlayerView({
     art.on("video:stalled", renewIfNeeded);
     art.on("video:error", handlePlaybackFailure);
     art.on("error", handlePlaybackFailure);
+    art.on("video:ended", () => onPlaybackEndedRef.current());
     art.on("document:visibilitychange", renewWhenVisible);
 
     const renewTimer = window.setInterval(() => {
@@ -171,10 +179,12 @@ function ArtPlayerView({
 export function Player({
   playback,
   onClose,
+  onPlaybackEnded,
   onRenewPlayback
 }: {
   playback: PlaybackResponse;
   onClose: () => void;
+  onPlaybackEnded: () => void;
   onRenewPlayback: () => Promise<PlaybackResponse | undefined>;
 }) {
   const isMock = playback.playbackUrl.startsWith("mock://");
@@ -229,6 +239,7 @@ export function Player({
               playback={playback}
               onRenewPlayback={onRenewPlayback}
               onFatalPlaybackError={setRuntimeFailure}
+              onPlaybackEnded={onPlaybackEnded}
             />
           )}
         </div>

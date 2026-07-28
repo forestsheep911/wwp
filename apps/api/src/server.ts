@@ -45,6 +45,7 @@ import {
   type MovieSummaryRequest,
   type MovieRequestsResponse,
   type MovieRequestStatus,
+  type PlaybackCapacity,
   type RatingValue,
   type RegisterMemberRequest,
   type ResetMemberPasscodeRequest,
@@ -68,6 +69,7 @@ import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-s
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
+import { PlaybackAdmissionQueue } from "./playback-admission.js";
 import { serveStaticWeb } from "./static-web.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
@@ -147,7 +149,22 @@ const forumAdminMemberName = "Admin";
 const adminKey = process.env.WWPDW_ADMIN_KEY;
 const playbackGrantMinutes = Math.max(5, Math.floor(Number(process.env.WWPDW_PLAYBACK_GRANT_MINUTES ?? 360)));
 const maximumPlaybackStreams = Math.max(1, Math.floor(Number(process.env.WWPDW_MAX_PLAYBACK_STREAMS ?? 4)));
+const localPlaybackAdmissionEnabled = Boolean(store.getMediaFile);
+const playbackAdmissionQueue = new PlaybackAdmissionQueue(maximumPlaybackStreams);
 let activePlaybackStreams = 0;
+
+function playbackCapacity(): PlaybackCapacity {
+  if (localPlaybackAdmissionEnabled) {
+    return playbackAdmissionQueue.capacity();
+  }
+  return {
+    enabled: false,
+    active: activePlaybackStreams,
+    maximum: maximumPlaybackStreams,
+    queued: 0,
+    level: "low"
+  };
+}
 
 interface RequestContext {
   requestId: string;
@@ -2255,11 +2272,19 @@ async function handleStatus(jobId: string, response: http.ServerResponse, contex
 
 async function handlePlayback(
   assetKey: string,
+  admissionTicketId: string | null,
   response: http.ServerResponse,
   context: RequestContext,
   identity: AccessIdentity
 ) {
   const startedAt = Date.now();
+  if (
+    localPlaybackAdmissionEnabled
+    && !playbackAdmissionQueue.admitted(admissionTicketId ?? undefined, context.session!.id, assetKey)
+  ) {
+    sendJson(response, 409, { error: "A playback seat is required before opening local media." });
+    return;
+  }
   const asset = await store.getAsset(assetKey, { fresh: true });
   if (!asset || !isFreshReady(asset)) {
     logWarn("api.playback.not_ready", {
@@ -2368,8 +2393,11 @@ async function handlePlayback(
   sendJson(response, 200, {
     ...playback,
     playbackUrl: playback.playbackUrl.startsWith("/api/media/")
-      ? `${playback.playbackUrl}?grant=${encodeURIComponent(createPlaybackGrant(assetKey, context.session!.id))}`
+      ? `${playback.playbackUrl}?grant=${encodeURIComponent(createPlaybackGrant(assetKey, context.session!.id))}&admission=${encodeURIComponent(admissionTicketId!)}`
       : playback.playbackUrl,
+    admission: localPlaybackAdmissionEnabled && admissionTicketId
+      ? { ticketId: admissionTicketId }
+      : undefined,
     videoCodec,
     charge: chargeResult?.ok && chargeResult.charged ? chargeResult.charge : undefined,
     memberCredits: chargeResult?.ok ? chargeResult.code.credits : undefined,
@@ -2381,6 +2409,41 @@ async function handlePlayback(
       }
       : undefined
   });
+}
+
+async function handlePlaybackAdmission(
+  assetKey: string,
+  ticketId: string | null,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const asset = await store.getAsset(assetKey, { fresh: true });
+  if (!asset || !isFreshReady(asset)) {
+    sendJson(response, 409, { error: "Asset is not ready for playback." });
+    return;
+  }
+
+  if (!localPlaybackAdmissionEnabled) {
+    sendJson(response, 200, {
+      assetKey,
+      title: asset.title,
+      status: "admitted",
+      capacity: playbackCapacity()
+    });
+    return;
+  }
+
+  const admission = playbackAdmissionQueue.request({
+    sessionId: context.session!.id,
+    assetKey,
+    title: asset.title,
+    ticketId: ticketId ?? undefined
+  });
+  if (!admission) {
+    sendJson(response, 410, { error: "This playback queue ticket is no longer available." });
+    return;
+  }
+  sendJson(response, 200, admission);
 }
 
 function requestedByteRange(rangeHeader: string | undefined, contentLength: number) {
@@ -2416,6 +2479,7 @@ function requestedByteRange(rangeHeader: string | undefined, contentLength: numb
 async function handleLocalMedia(
   assetKey: string,
   grant: string | null,
+  admissionTicketId: string | null,
   request: http.IncomingMessage,
   response: http.ServerResponse,
   context: RequestContext
@@ -2425,9 +2489,11 @@ async function handleLocalMedia(
     sendJson(response, 403, { error: "Playback grant is missing, invalid, or expired." });
     return;
   }
-  if (request.method !== "HEAD" && activePlaybackStreams >= maximumPlaybackStreams) {
-    response.setHeader("Retry-After", "5");
-    sendJson(response, 503, { error: "All local playback streams are currently in use." });
+  if (
+    localPlaybackAdmissionEnabled
+    && !playbackAdmissionQueue.admitted(admissionTicketId ?? undefined, context.session!.id, assetKey)
+  ) {
+    sendJson(response, 409, { error: "This playback seat is no longer active." });
     return;
   }
   const mediaFile = await store.getMediaFile?.(assetKey);
@@ -3620,7 +3686,8 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
-    if (request.method === "GET" && pathname === "/health") {
+    if (request.method === "GET" && (pathname === "/health" || pathname === "/api/health")) {
+      const capacity = playbackCapacity();
       sendJson(response, 200, {
         ok: true,
         access: Boolean(adminKey),
@@ -3632,9 +3699,13 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
           ...(await searchIndex.getHealth())
         },
         playback: {
-          activeStreams: activePlaybackStreams,
+          activeStreams: capacity.active,
           maximumStreams: maximumPlaybackStreams,
-          grantMinutes: playbackGrantMinutes
+          grantMinutes: playbackGrantMinutes,
+          activeConnections: activePlaybackStreams,
+          queued: capacity.queued,
+          level: capacity.level,
+          queueEnabled: capacity.enabled
         }
       });
       return;
@@ -4016,9 +4087,36 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    const playbackAdmissionMatch = pathname.match(/^\/api\/playback-admission\/([^/]+)$/);
+    if (request.method === "GET" && playbackAdmissionMatch) {
+      await handlePlaybackAdmission(
+        decodeURIComponent(playbackAdmissionMatch[1]),
+        url.searchParams.get("ticket"),
+        response,
+        context
+      );
+      return;
+    }
+
+    const playbackAdmissionReleaseMatch = pathname.match(/^\/api\/playback-admission-ticket\/([^/]+)$/);
+    if (request.method === "DELETE" && playbackAdmissionReleaseMatch) {
+      const released = playbackAdmissionQueue.release(
+        decodeURIComponent(playbackAdmissionReleaseMatch[1]),
+        context.session!.id
+      );
+      sendJson(response, released ? 200 : 404, released ? { ok: true } : { error: "Playback queue ticket was not found." });
+      return;
+    }
+
     const playbackMatch = pathname.match(/^\/api\/playback\/([^/]+)$/);
     if (request.method === "GET" && playbackMatch) {
-      await handlePlayback(decodeURIComponent(playbackMatch[1]), response, context, identity!);
+      await handlePlayback(
+        decodeURIComponent(playbackMatch[1]),
+        url.searchParams.get("admission"),
+        response,
+        context,
+        identity!
+      );
       return;
     }
 
@@ -4027,6 +4125,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       await handleLocalMedia(
         decodeURIComponent(mediaMatch[1]),
         url.searchParams.get("grant"),
+        url.searchParams.get("admission"),
         request,
         response,
         context
