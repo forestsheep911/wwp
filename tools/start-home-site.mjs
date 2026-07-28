@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
@@ -54,6 +55,8 @@ const notionFullSyncMinimumEntries = Math.max(
   1,
   Number(process.env.WWPDW_HOME_NOTION_FULL_SYNC_MIN_ENTRIES ?? 500)
 );
+
+await seedLocalSearchIndexFromSnapshot();
 
 console.log(JSON.stringify({
   event: "home.start",
@@ -119,5 +122,50 @@ async function runNotionSyncLoop() {
 
     const waitMinutes = succeeded ? notionSyncIntervalMinutes : 5;
     await new Promise((resolve) => setTimeout(resolve, waitMinutes * 60 * 1000));
+  }
+}
+
+async function seedLocalSearchIndexFromSnapshot() {
+  const snapshotPath = path.resolve(
+    process.env.SEARCH_INDEX_SNAPSHOT_PATH ??
+      path.join(localDataDirectory, "search-index-snapshot.json")
+  );
+  if (!existsSync(snapshotPath)) {
+    return;
+  }
+
+  const { createSearchIndexStore } = await import("../packages/cache-store/src/index.ts");
+  const searchIndex = createSearchIndexStore("local");
+  const stats = await searchIndex.getStats();
+  if (stats.entryCount >= notionFullSyncMinimumEntries) {
+    return;
+  }
+
+  try {
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
+    const results = Array.isArray(snapshot.entries)
+      ? snapshot.entries
+        .map((entry) => entry?.result)
+        .filter((result) => result?.assetKey && result?.title && result?.updatedAt)
+      : [];
+
+    if (results.length <= stats.entryCount) {
+      return;
+    }
+
+    await searchIndex.upsertResults(results);
+    console.log(JSON.stringify({
+      event: "home.search_index.seeded",
+      previousEntryCount: stats.entryCount,
+      seededResultCount: results.length,
+      snapshotPath,
+      index: searchIndex.description
+    }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "home.search_index.seed_failed",
+      snapshotPath,
+      errorMessage: error instanceof Error ? error.message : String(error)
+    }));
   }
 }

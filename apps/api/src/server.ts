@@ -1680,7 +1680,9 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
         ? channel === "recommended"
           ? await searchIndex.sample(limit)
           : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit)
-        : (await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))).slice(0, fetchLimit);
+        : (searchIndex.backend === "local"
+          ? await searchIndex.search("", fetchLimit)
+          : (await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))).slice(0, fetchLimit));
       browseSource = mode === "random" ? "index_random" : "index";
     } catch (error) {
       logWarn("api.browse.index_read_failed", {

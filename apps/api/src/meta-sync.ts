@@ -28,6 +28,7 @@ interface SyncOptions {
   pageSize: number;
   concurrency: number;
   progressEvery: number;
+  localPublishBatchSize: number;
   incrementalOverlapMinutes: number;
   incrementalBootstrapLimit: number;
   deleteMissingOnFull: boolean;
@@ -100,6 +101,7 @@ function syncOptions(): SyncOptions {
     ),
     concurrency: Math.min(4, Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_CONCURRENCY", 1)))),
     progressEvery: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_PROGRESS_EVERY", 10))),
+    localPublishBatchSize: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_LOCAL_PUBLISH_BATCH_SIZE", 50))),
     incrementalOverlapMinutes: Math.max(0, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_OVERLAP_MINUTES", 10))),
     incrementalBootstrapLimit: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_BOOTSTRAP_LIMIT", 200))),
     deleteMissingOnFull: booleanOption("SEARCH_INDEX_FULL_DELETE_MISSING", true),
@@ -180,6 +182,45 @@ export async function runMetaSync() {
   const seenAssetKeys = new Set<string>();
   const pendingLocalResults: SearchResult[] = [];
   const run = await searchIndex.startRun(options.mode);
+  let localPublished = 0;
+
+  const publishPendingLocalResults = async () => {
+    if (pendingLocalResults.length === 0) return;
+    const batch = pendingLocalResults.splice(0, pendingLocalResults.length);
+    let posterCompleted = 0;
+    const localResults = options.posterCacheEnabled
+      ? await mapWithConcurrency(
+        batch,
+        options.concurrency,
+        async (result) => {
+          const cached = await cacheStore.cacheMoviePosters(result, {
+            refreshPosters: refreshPostersForResult(result)
+          });
+          posterCompleted += 1;
+          if (posterCompleted % options.progressEvery === 0 || posterCompleted === batch.length) {
+            logInfo("meta.sync.poster_cache.progress", {
+              runId: run.id,
+              completed: localPublished + posterCompleted,
+              batchCompleted: posterCompleted,
+              batchSize: batch.length,
+              durationMs: durationMs(startedAt)
+            });
+          }
+          return cached;
+        }
+      )
+      : batch;
+    await searchIndex.upsertResults(localResults);
+    localPublished += localResults.length;
+    logInfo("meta.sync.local_publish", {
+      runId: run.id,
+      published: localPublished,
+      batchSize: localResults.length,
+      scanned: run.scanned,
+      saved: run.saved,
+      durationMs: durationMs(startedAt)
+    });
+  };
 
   logInfo("meta.sync.start", {
     runId: run.id,
@@ -190,6 +231,7 @@ export async function runMetaSync() {
     delayMs: options.delayMs,
     pageSize: options.pageSize,
     concurrency: options.concurrency,
+    localPublishBatchSize: options.localPublishBatchSize,
     posterCacheEnabled: options.posterCacheEnabled,
     previousEntryCount: stats.entryCount
   });
@@ -246,6 +288,13 @@ export async function runMetaSync() {
         seenAssetKeys.add(item.result.assetKey);
       }
 
+      if (
+        searchIndex.backend === "local"
+        && pendingLocalResults.length >= options.localPublishBatchSize
+      ) {
+        await publishPendingLocalResults();
+      }
+
       if (run.scanned % options.progressEvery === 0) {
         await updateRunSafely(run);
         logInfo("meta.sync.progress", {
@@ -260,31 +309,7 @@ export async function runMetaSync() {
       }
     }
 
-    if (pendingLocalResults.length > 0) {
-      let posterCompleted = 0;
-      const localResults = options.posterCacheEnabled
-        ? await mapWithConcurrency(
-          pendingLocalResults,
-          options.concurrency,
-          async (result) => {
-            const cached = await cacheStore.cacheMoviePosters(result, {
-              refreshPosters: refreshPostersForResult(result)
-            });
-            posterCompleted += 1;
-            if (posterCompleted % options.progressEvery === 0 || posterCompleted === pendingLocalResults.length) {
-              logInfo("meta.sync.poster_cache.progress", {
-                runId: run.id,
-                completed: posterCompleted,
-                total: pendingLocalResults.length,
-                durationMs: durationMs(startedAt)
-              });
-            }
-            return cached;
-          }
-        )
-        : pendingLocalResults;
-      await searchIndex.upsertResults(localResults);
-    }
+    await publishPendingLocalResults();
 
     if (options.mode === "full" && options.deleteMissingOnFull) {
       run.deleted = await searchIndex.deleteEntriesNotIn(seenAssetKeys);
