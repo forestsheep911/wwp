@@ -111,7 +111,7 @@ interface AdminPanelProps {
   onDeleteCacheJob: (jobId: string) => void;
   onDeleteCachedAsset: (assetKey: string) => void;
   onUpdateCredits: (id: string) => void;
-  onCreateResetInvitation: (id: string) => void;
+  onCreateResetInvitation: (id: string) => Promise<boolean>;
   onUpdateMovieRequestStatus: (id: string, status: MovieRequestStatus) => void;
   onViewCreditUsage: (id: string) => void;
   onRevoke: (id: string) => void;
@@ -161,6 +161,8 @@ export function AdminPanel({
   onViewCreditUsage,
   onRevoke
 }: AdminPanelProps) {
+  const [activeAdminTab, setActiveAdminTab] = useState("cached");
+
   if (!adminUnlocked) {
     return (
       <Card className="rounded-xl sm:rounded-lg">
@@ -205,7 +207,7 @@ export function AdminPanel({
         </div>
       ) : null}
 
-      <Tabs defaultValue="cached">
+      <Tabs value={activeAdminTab} onValueChange={setActiveAdminTab}>
         <TabsList className="max-w-[calc(100vw-1.5rem)] sm:flex sm:w-full sm:max-w-full">
           <TabsTrigger value="cached">
             <Database className="h-4 w-4" />
@@ -281,7 +283,11 @@ export function AdminPanel({
             onDelete={onDelete}
             onRevoke={onRevoke}
             onUpdateCredits={onUpdateCredits}
-            onCreateResetInvitation={onCreateResetInvitation}
+            onCreateResetInvitation={async (id) => {
+              if (await onCreateResetInvitation(id)) {
+                setActiveAdminTab("invites");
+              }
+            }}
             onViewCreditUsage={onViewCreditUsage}
             setMemberCreditEdit={setMemberCreditEdit}
             setMemberBulkCredits={setMemberBulkCredits}
@@ -678,7 +684,7 @@ function AdminMembersPanel({
   onDelete: (id: string) => void;
   onRevoke: (id: string) => void;
   onUpdateCredits: (id: string) => void;
-  onCreateResetInvitation: (id: string) => void;
+  onCreateResetInvitation: (id: string) => Promise<void>;
   onViewCreditUsage: (id: string) => void;
   setMemberBulkCredits: (value: number) => void;
   setMemberCreditEdit: (id: string, value: number) => void;
@@ -939,6 +945,10 @@ function AdminInvitesPanel({
                         {link ? (
                           <p className="mt-1 break-all text-xs leading-5 text-emerald-200 sm:truncate">
                             {link}
+                          </p>
+                        ) : invitation.status === "unused" ? (
+                          <p className="mt-1 text-xs leading-5 text-amber-200">
+                            {copy.admin.invitationSecretUnavailable}
                           </p>
                         ) : null}
                         <p className="mt-1 text-xs text-slate-500">

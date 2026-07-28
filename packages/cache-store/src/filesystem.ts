@@ -189,6 +189,24 @@ function assetDirectoryName(assetKey: string) {
   return createHash("sha256").update(assetKey, "utf8").digest("hex").slice(0, 32);
 }
 
+export function stablePosterIdentity(poster: MoviePoster) {
+  const sourceUrl = poster.originalUrl ?? poster.url;
+  if (poster.blobName) {
+    return poster.blobName;
+  }
+
+  if (/(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i.test(sourceUrl)) {
+    try {
+      const parsed = new URL(sourceUrl);
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch {
+      return sourceUrl.split(/[?#]/, 1)[0] ?? sourceUrl;
+    }
+  }
+
+  return sourceUrl;
+}
+
 export class FilesystemCacheStore implements CacheStore {
   readonly backend = "filesystem" as const;
   readonly description: string;
@@ -732,8 +750,7 @@ export class FilesystemCacheStore implements CacheStore {
   }
 
   private posterKey(poster: MoviePoster) {
-    const identity = poster.blobName ?? poster.originalUrl ?? poster.url;
-    return createHash("sha256").update(identity, "utf8").digest("hex").slice(0, 32);
+    return createHash("sha256").update(stablePosterIdentity(poster), "utf8").digest("hex").slice(0, 32);
   }
 
   private async cachePoster(

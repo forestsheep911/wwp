@@ -6,22 +6,16 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "..");
 config({ path: path.join(repositoryRoot, ".env"), override: false, quiet: true });
 
-process.env.SEARCH_INDEX_SNAPSHOT_PATH ??= path.join(
-  repositoryRoot,
-  ".local-data",
-  "home-site",
-  "search-index-snapshot.json"
+process.env.WWPDW_LOCAL_DATA_DIR = path.resolve(
+  process.env.WWPDW_HOME_DATA_DIR ?? path.join(repositoryRoot, ".local-data", "home-site")
 );
-process.env.SEARCH_INDEX_SNAPSHOT_PROGRESS ??= "true";
+process.env.CACHE_BACKEND = process.env.WWPDW_HOME_CACHE_BACKEND ?? "filesystem";
+process.env.WWPDW_MEDIA_ROOT ??= "F:\\wwp_storage";
+process.env.SEARCH_INDEX_BACKEND = "local";
+process.env.TSPDT_BROWSE_BACKEND = "local";
+process.env.SEARCH_INDEX_WRITE_THROUGH = "false";
+process.env.SEARCH_INDEX_SYNC_CONCURRENCY ??= "2";
+process.env.WWPDW_META_SYNC_LIBRARY_MODE = "true";
 
-const { AzureSearchIndexStore } = await import("../packages/cache-store/src/search-index.ts");
-const store = new AzureSearchIndexStore();
-const startedAt = Date.now();
-const entries = await store.refreshSnapshot();
-
-console.log(JSON.stringify({
-  event: "search_index.snapshot.complete",
-  entries: entries.length,
-  elapsedMs: Date.now() - startedAt,
-  snapshotPath: path.resolve(process.env.SEARCH_INDEX_SNAPSHOT_PATH)
-}));
+const { runMetaSync } = await import("../apps/api/src/meta-sync.ts");
+await runMetaSync();

@@ -69,6 +69,7 @@ export interface NotionLibraryScanOptions {
   limit?: number;
   delayMs?: number;
   pageSize?: number;
+  concurrency?: number;
 }
 
 export interface NotionLibraryScanItem {
@@ -1635,6 +1636,24 @@ function sleep(ms: number) {
   });
 }
 
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(values.length, Math.max(1, concurrency));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]);
+    }
+  }));
+  return results;
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return promise;
@@ -1741,6 +1760,7 @@ export class NotionSearchSource {
     const limit = options.limit && options.limit > 0 ? Math.floor(options.limit) : Infinity;
     const pageSize = Math.min(100, Math.max(1, Math.floor(options.pageSize ?? 25)));
     const delayMs = Math.max(0, Math.floor(options.delayMs ?? 0));
+    const concurrency = Math.min(4, Math.max(1, Math.floor(options.concurrency ?? 1)));
     const since = options.since ? new Date(options.since).toISOString() : undefined;
     let yielded = 0;
     let startCursor: string | undefined;
@@ -1762,13 +1782,14 @@ export class NotionSearchSource {
         ]
       } as never);
 
+      const pages: JsonRecord[] = [];
       for (const rawPage of response.results.filter(isPageResult)) {
-        const page = rawPage as JsonRecord;
-        if (yielded >= limit) {
+        if (yielded + pages.length >= limit) {
           shouldStop = true;
           break;
         }
 
+        const page = rawPage as JsonRecord;
         if (page.archived === true || page.in_trash === true) {
           continue;
         }
@@ -1779,63 +1800,67 @@ export class NotionSearchSource {
           break;
         }
 
-        const properties = asRecord(page.properties) ?? {};
-        const title = titleFromProperties(properties);
-        if (pageHiddenFromWebsite(page)) {
-          yield {
-            pageId: asString(page.id),
-            title,
-            lastEditedTime,
-            deleteAssetKey: `notion-page-${asString(page.id)}`,
-            skipped: "hidden_from_website"
-          };
-          yielded += 1;
-          if (delayMs > 0) {
-            await sleep(delayMs);
-          }
-          continue;
-        }
+        pages.push(page);
+      }
 
-        try {
-          const result = await this.pageToSearchResultWithRetry(page, { libraryMode: true });
-          if (!hasPlayableMedia(result)) {
-            yield {
-              pageId: asString(page.id),
-              title,
-              lastEditedTime,
-              deleteAssetKey: `notion-page-${asString(page.id)}`,
-              skipped: "no_playable_media"
-            };
-            yielded += 1;
-            if (delayMs > 0) {
-              await sleep(delayMs);
-            }
-            continue;
-          }
-
-          yield {
-            pageId: asString(page.id),
-            title,
-            lastEditedTime,
-            result
-          };
-        } catch (error) {
-          yield {
-            pageId: asString(page.id),
-            title,
-            lastEditedTime,
-            error: error instanceof Error ? error.message : "Could not parse Notion library page."
-          };
-        }
-
-        yielded += 1;
+      const items = await mapWithConcurrency(pages, concurrency, async (page) => {
+        const item = await this.scanLibraryPage(page);
         if (delayMs > 0) {
           await sleep(delayMs);
         }
+        return item;
+      });
+      for (const item of items) {
+        yield item;
+        yielded += 1;
       }
 
       startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
     } while (!shouldStop && startCursor && yielded < limit);
+  }
+
+  private async scanLibraryPage(page: JsonRecord): Promise<NotionLibraryScanItem> {
+    const pageId = asString(page.id);
+    const lastEditedTime = asString(page.last_edited_time) || new Date().toISOString();
+    const properties = asRecord(page.properties) ?? {};
+    const title = titleFromProperties(properties);
+
+    if (pageHiddenFromWebsite(page)) {
+      return {
+        pageId,
+        title,
+        lastEditedTime,
+        deleteAssetKey: `notion-page-${pageId}`,
+        skipped: "hidden_from_website"
+      };
+    }
+
+    try {
+      const result = await this.pageToSearchResultWithRetry(page, { libraryMode: true });
+      if (!hasPlayableMedia(result)) {
+        return {
+          pageId,
+          title,
+          lastEditedTime,
+          deleteAssetKey: `notion-page-${pageId}`,
+          skipped: "no_playable_media"
+        };
+      }
+
+      return {
+        pageId,
+        title,
+        lastEditedTime,
+        result
+      };
+    } catch (error) {
+      return {
+        pageId,
+        title,
+        lastEditedTime,
+        error: error instanceof Error ? error.message : "Could not parse Notion library page."
+      };
+    }
   }
 
   async refreshAsset(input: {

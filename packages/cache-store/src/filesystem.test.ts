@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import type { SearchResult } from "@wwpdw/shared";
-import { FilesystemCacheStore } from "./filesystem.js";
+import { FilesystemCacheStore, stablePosterIdentity } from "./filesystem.js";
 
 function mp4Box(type: string, payload = Buffer.alloc(0)) {
   const result = Buffer.alloc(8 + payload.length);
@@ -102,7 +102,6 @@ test("filesystem cache downloads media, survives a second store instance, and de
     assert(localPoster);
     assert.equal(localPoster.contentType, "image/jpeg");
     assert.deepEqual(await readFile(localPoster.absolutePath), poster);
-
     reopened = new FilesystemCacheStore(root);
     assert.equal((await reopened.getAsset(result.assetKey))?.status, "ready");
     assert.equal((await reopened.getMediaFile(result.assetKey))?.contentLength, media.length);
@@ -121,4 +120,18 @@ test("filesystem cache downloads media, survives a second store instance, and de
     });
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Notion poster identity ignores rotating signed query parameters", () => {
+  const baseUrl = "https://prod-files-secure.s3.us-west-2.amazonaws.com/work/poster.webp";
+  assert.equal(
+    stablePosterIdentity({
+      url: `${baseUrl}?X-Amz-Date=20260728T000000Z&X-Amz-Signature=old`,
+      source: "notion"
+    }),
+    stablePosterIdentity({
+      url: `${baseUrl}?X-Amz-Date=20260729T000000Z&X-Amz-Signature=new`,
+      source: "notion"
+    })
+  );
 });

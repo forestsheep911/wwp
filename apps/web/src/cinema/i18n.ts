@@ -728,14 +728,14 @@ export const zhCN = {
     noMembers: "暂无成员",
     balance: "余额",
     setCredits: "设置 🍀",
-    resetInvite: "重置邀请",
+    resetInvite: "生成重置链接",
     revoke: "停用",
     signupInvite: "注册邀请",
     signupDescription: "生成一次性邀请码；成员加入时自行设置名称。",
     initialBalance: "🍀 初始余额",
     generateInvite: "生成邀请码",
     invitationHistory: "邀请历史",
-    invitationDescription: "复制一次性链接，并查看注册和重置码状态。重置码 7 天有效，新的重置码会让旧码失效。",
+    invitationDescription: "一次性链接的完整内容只在生成当次显示，请立即复制。重置码 7 天有效，新的重置码会让旧码失效。",
     unusedCount: (count: number) => `${count} 个未使用`,
     usedCount: (count: number) => `${count} 个已使用`,
     noInvitations: "暂无邀请",
@@ -744,6 +744,7 @@ export const zhCN = {
     invitationFor: (member: string) => `给 ${member}`,
     invitationCredits: (remaining: number, unit: string, member?: string) => `${remaining}${unit}${member ? ` / 已被 ${member} 使用` : ""}`,
     copyInvitationLink: "复制邀请链接",
+    invitationSecretUnavailable: "完整链接已隐藏；如果当时没有复制，请重新生成。",
     cachedTitle: "已缓存视频",
     cachedDescription: "管理员可以删除这些已就绪的缓存文件。",
     loadingCached: "正在加载已缓存视频",
@@ -855,7 +856,7 @@ export const zhCN = {
     },
     resetInviteCreated: {
       title: "重置链接已生成",
-      description: "复制链接发给成员即可重设通行码。"
+      description: "已切换到邀请页；完整链接只显示这一次，请立即复制。"
     },
     copied: {
       title: "已复制",

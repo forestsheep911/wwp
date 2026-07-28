@@ -1713,8 +1713,10 @@ function CinemaApp() {
         description: copy.toast.resetInviteCreated.description,
         variant: "success"
       });
+      return true;
     } catch (passcodeUpdateError) {
       setAdminError(errorMessage(passcodeUpdateError, copy.fallbackErrors.resetInvitation));
+      return false;
     } finally {
       setAdminLoading(false);
     }

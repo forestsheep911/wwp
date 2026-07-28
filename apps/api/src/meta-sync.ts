@@ -26,6 +26,7 @@ interface SyncOptions {
   limit?: number;
   delayMs: number;
   pageSize: number;
+  concurrency: number;
   progressEvery: number;
   incrementalOverlapMinutes: number;
   incrementalBootstrapLimit: number;
@@ -97,6 +98,7 @@ function syncOptions(): SyncOptions {
       100,
       Math.max(1, Math.floor(Number(args.get("page-size") ?? numberOption("SEARCH_INDEX_SYNC_PAGE_SIZE", 25))))
     ),
+    concurrency: Math.min(4, Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_CONCURRENCY", 1)))),
     progressEvery: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_SYNC_PROGRESS_EVERY", 10))),
     incrementalOverlapMinutes: Math.max(0, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_OVERLAP_MINUTES", 10))),
     incrementalBootstrapLimit: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_BOOTSTRAP_LIMIT", 200))),
@@ -116,6 +118,24 @@ function sinceWithOverlap(value: string | undefined, overlapMinutes: number) {
   }
 
   return new Date(time - overlapMinutes * 60 * 1000).toISOString();
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Math.min(values.length, Math.max(1, concurrency));
+  await Promise.all(Array.from({ length: workers }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }));
+  return results;
 }
 
 async function updateRunSafely(run: SearchIndexRun) {
@@ -147,7 +167,7 @@ function refreshPostersForResult(result: SearchResult) {
   };
 }
 
-async function runSync() {
+export async function runMetaSync() {
   const startedAt = Date.now();
   const options = syncOptions();
   const stats = await searchIndex.getStats();
@@ -158,6 +178,7 @@ async function runSync() {
     ? options.incrementalBootstrapLimit
     : undefined);
   const seenAssetKeys = new Set<string>();
+  const pendingLocalResults: SearchResult[] = [];
   const run = await searchIndex.startRun(options.mode);
 
   logInfo("meta.sync.start", {
@@ -168,6 +189,7 @@ async function runSync() {
     limit,
     delayMs: options.delayMs,
     pageSize: options.pageSize,
+    concurrency: options.concurrency,
     posterCacheEnabled: options.posterCacheEnabled,
     previousEntryCount: stats.entryCount
   });
@@ -177,7 +199,8 @@ async function runSync() {
       since,
       limit,
       delayMs: options.delayMs,
-      pageSize: options.pageSize
+      pageSize: options.pageSize,
+      concurrency: options.concurrency
     })) {
       run.scanned += 1;
       run.lastSourceUpdatedAt = [run.lastSourceUpdatedAt, item.lastEditedTime]
@@ -209,14 +232,18 @@ async function runSync() {
           });
         }
       } else {
-        const result = options.posterCacheEnabled
-          ? await cacheStore.cacheMoviePosters(item.result, {
-            refreshPosters: refreshPostersForResult(item.result)
-          })
-          : item.result;
-        await searchIndex.upsertResult(result);
+        if (searchIndex.backend === "local") {
+          pendingLocalResults.push(item.result);
+        } else {
+          const result = options.posterCacheEnabled
+            ? await cacheStore.cacheMoviePosters(item.result, {
+              refreshPosters: refreshPostersForResult(item.result)
+            })
+            : item.result;
+          await searchIndex.upsertResult(result);
+        }
         run.saved += 1;
-        seenAssetKeys.add(result.assetKey);
+        seenAssetKeys.add(item.result.assetKey);
       }
 
       if (run.scanned % options.progressEvery === 0) {
@@ -231,6 +258,32 @@ async function runSync() {
           durationMs: durationMs(startedAt)
         });
       }
+    }
+
+    if (pendingLocalResults.length > 0) {
+      let posterCompleted = 0;
+      const localResults = options.posterCacheEnabled
+        ? await mapWithConcurrency(
+          pendingLocalResults,
+          options.concurrency,
+          async (result) => {
+            const cached = await cacheStore.cacheMoviePosters(result, {
+              refreshPosters: refreshPostersForResult(result)
+            });
+            posterCompleted += 1;
+            if (posterCompleted % options.progressEvery === 0 || posterCompleted === pendingLocalResults.length) {
+              logInfo("meta.sync.poster_cache.progress", {
+                runId: run.id,
+                completed: posterCompleted,
+                total: pendingLocalResults.length,
+                durationMs: durationMs(startedAt)
+              });
+            }
+            return cached;
+          }
+        )
+        : pendingLocalResults;
+      await searchIndex.upsertResults(localResults);
     }
 
     if (options.mode === "full" && options.deleteMissingOnFull) {
@@ -317,9 +370,10 @@ function mergeTspdtImdbIds() {
   });
 }
 
-try {
-  await runSync();
-  process.exit(0);
-} catch {
-  process.exit(1);
+if (process.env.WWPDW_META_SYNC_LIBRARY_MODE !== "true") {
+  try {
+    await runMetaSync();
+  } catch {
+    process.exitCode = 1;
+  }
 }

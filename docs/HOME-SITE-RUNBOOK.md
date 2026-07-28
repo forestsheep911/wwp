@@ -6,11 +6,12 @@ Public URL: `https://www888eee.synology.me:38443`
 
 ## Current Scope
 
-The home process serves the production React build, WWP API, and cache worker
-from one launcher. It uses the same Azure Tables as the hosted site for member
-accounts, sessions, notices, forum data, requests, credits, search index, and
-TSPDT browse data. Video bytes and cache-job state stay on the home PC under
-`F:\wwp_storage`.
+The home process serves the production React build, WWP API, cache worker, and
+Notion metadata synchronizer from one launcher. Member accounts, sessions,
+notices, forum data, requests, and credits stay shared through Azure Tables.
+The movie search index, TSPDT browse data, posters, video bytes, and cache-job
+state are local. Movie metadata is synchronized directly from Notion and does
+not use the hosted Azure movie index as an upstream source.
 
 ## Build and Start
 
@@ -74,8 +75,13 @@ WWPDW_PLAYBACK_GRANT_MINUTES=360
 WWPDW_WEB_DIST_DIR=apps/web/dist
 WWPDW_AUTH_BACKEND=azure
 WWPDW_SESSION_BACKEND=azure
-SEARCH_INDEX_BACKEND=azure
-TSPDT_BROWSE_BACKEND=azure
+SEARCH_INDEX_BACKEND=local
+TSPDT_BROWSE_BACKEND=local
+SEARCH_INDEX_WRITE_THROUGH=false
+WWPDW_HOME_NOTION_SYNC_ENABLED=true
+WWPDW_HOME_NOTION_SYNC_INTERVAL_MINUTES=30
+WWPDW_HOME_NOTION_FULL_SYNC_MIN_ENTRIES=500
+SEARCH_INDEX_SYNC_CONCURRENCY=2
 ```
 
 When `WWPDW_HOME_PUBLIC_ORIGIN` starts with `https://`, the home launcher uses
@@ -99,9 +105,9 @@ Storage Blob Data Reader
 ```
 
 Table access keeps members, sessions, invitations, credits, notices, forum
-threads, movie requests, and audit records common with the hosted site. Blob
-read access is used only to seed the small local poster cache; video bytes stay
-on `F:\wwp_storage`.
+threads, movie requests, and audit records common with the hosted site. Movie
+metadata is not read from Azure Tables. Video bytes and the local poster cache
+stay on `F:\wwp_storage`.
 
 Run `az login` again if the user credential is explicitly revoked or the Azure
 CLI cache is removed. No storage account key is stored in `.env`.
@@ -145,7 +151,8 @@ Expected behavior:
 - `/assets/*` returns the hashed production assets with immutable cache
   headers.
 - a browser route such as `/library/recent` returns the React shell.
-- `/health` reports the filesystem media root plus Azure access/search stores.
+- `/health` reports the filesystem media root, local movie index, and Azure
+  access/session stores.
 - `/api/playback/<asset-key>` issues a session-bound, expiring playback grant.
 - `/api/media/<asset-key>?grant=...` supports authenticated byte ranges.
 - `/api/posters/<poster-key>` serves the local poster cache.
@@ -174,17 +181,26 @@ when switching to battery power. Logs are written to:
 Each log rotates to a single `.1` archive before a new process starts if it
 has reached 20 MB.
 
-The Azure movie index is mirrored to
-`.local-data/home-site/search-index-snapshot.json`. Refresh it manually after a
-large catalog update with:
+The Notion movie library is synchronized into
+`.local-data/home-site/search-index.json`. The launcher starts an incremental
+sync immediately and repeats it every 30 minutes. If the local index contains
+fewer than 500 entries, it performs a full rebuild first.
+
+Run an incremental sync manually with:
 
 ```powershell
 npm run home:sync-index
 ```
 
-Normal browse and search read this snapshot immediately. A running home process
-refreshes it from Azure in the background, in bounded pages, instead of
-blocking startup on one large table response.
+Run a complete Notion rebuild after a large catalog or schema change with:
+
+```powershell
+npm run home:sync-index -- full
+```
+
+Normal browse and search read the local index immediately. Synchronization
+downloads posters into the local filesystem cache and updates the local TSPDT
+browse projection after a successful run.
 
 To stop or remove the task:
 

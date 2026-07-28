@@ -1,31 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SearchResult } from "@wwpdw/shared";
-import { posterIndexAfterImageEvent } from "../poster-state";
-const notionTemporaryPosterPattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
-
-function isBlobPosterUrl(url: string) {
-  return /^https:\/\/[^/?#]+\.blob\.core\.windows\.net\//i.test(url);
-}
-
-function isHttpsPosterUrl(url: string) {
-  return /^https:\/\//i.test(url);
-}
-
-function isNotionTemporaryPosterUrl(url: string) {
-  return notionTemporaryPosterPattern.test(url);
-}
-
-function posterPriority(url: string) {
-  if (isBlobPosterUrl(url)) {
-    return 0;
-  }
-
-  if (!isHttpsPosterUrl(url)) {
-    return 99;
-  }
-
-  return isNotionTemporaryPosterUrl(url) ? 2 : 1;
-}
+import { posterIndexAfterImageEvent, posterUrlPriority } from "../poster-state";
 
 function posterUrls(result: SearchResult) {
   const candidates = [
@@ -38,7 +13,7 @@ function posterUrls(result: SearchResult) {
     .filter((url): url is string => Boolean(url))
     .map((url) => ({
       url,
-      priority: posterPriority(url)
+      priority: posterUrlPriority(url)
     }))
     .filter((item) => item.priority < 99);
 
