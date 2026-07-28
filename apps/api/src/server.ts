@@ -1,7 +1,9 @@
 import "./env.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import http from "node:http";
+import path from "node:path";
 import { URL } from "node:url";
 import {
   durationMs,
@@ -2424,6 +2426,7 @@ async function handlePlayback(
   sendJson(response, 200, {
     ...playback,
     playbackUrl: playback.playbackUrl.startsWith("/api/media/")
+      || playback.playbackUrl.startsWith("/api/hls/")
       ? `${playback.playbackUrl}?grant=${encodeURIComponent(createPlaybackGrant(assetKey, context.session!.id))}&admission=${encodeURIComponent(admissionTicketId!)}`
       : playback.playbackUrl,
     admission: localPlaybackAdmissionEnabled && admissionTicketId
@@ -2440,6 +2443,60 @@ async function handlePlayback(
       }
       : undefined
   });
+}
+
+const playbackDiagnosticEvents = new Set([
+  "loadstart",
+  "loadedmetadata",
+  "loadeddata",
+  "canplay",
+  "playing",
+  "waiting",
+  "stalled",
+  "suspend",
+  "error"
+]);
+
+function finiteDiagnosticNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+async function handlePlaybackDiagnostic(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const body = await readBody<{
+    assetKey?: string;
+    event?: string;
+    readyState?: number;
+    networkState?: number;
+    currentTime?: number;
+    duration?: number;
+    bufferedEnd?: number;
+    errorCode?: number;
+  }>(request);
+  const assetKey = body.assetKey?.trim().slice(0, 500);
+  const clientEvent = body.event?.trim().toLowerCase();
+  if (!assetKey || !clientEvent || !playbackDiagnosticEvents.has(clientEvent)) {
+    sendJson(response, 400, { error: "Playback diagnostic event is invalid." });
+    return;
+  }
+
+  logInfo("api.playback.client_event", {
+    requestId: context.requestId,
+    assetKey,
+    clientEvent,
+    readyState: finiteDiagnosticNumber(body.readyState),
+    networkState: finiteDiagnosticNumber(body.networkState),
+    currentTime: finiteDiagnosticNumber(body.currentTime),
+    duration: finiteDiagnosticNumber(body.duration),
+    bufferedEnd: finiteDiagnosticNumber(body.bufferedEnd),
+    errorCode: finiteDiagnosticNumber(body.errorCode),
+    ipAddress: requestIp(request),
+    device: requestDevice(request).device
+  });
+  sendJson(response, 202, { ok: true });
 }
 
 async function handlePlaybackAdmission(
@@ -2561,6 +2618,9 @@ async function handleLocalMedia(
     end,
     contentLength: mediaFile.contentLength,
     partial: Boolean(range),
+    requestedRange: request.headers.range,
+    ipAddress: requestIp(request),
+    device: requestDevice(request).device,
     durationMs: durationMs(startedAt)
   });
 
@@ -2573,26 +2633,177 @@ async function handleLocalMedia(
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(mediaFile.absolutePath, { start, end });
     let released = false;
-    const release = () => {
+    let streamedBytes = 0;
+    const release = (outcome: "completed" | "client_closed" | "stream_error") => {
       if (released) return;
       released = true;
       activePlaybackStreams = Math.max(0, activePlaybackStreams - 1);
+      logInfo("api.media.stream.complete", {
+        requestId: context.requestId,
+        assetKey,
+        start,
+        end,
+        requestedBytes: responseLength,
+        streamedBytes,
+        outcome,
+        durationMs: durationMs(startedAt)
+      });
     };
+    stream.on("data", (chunk) => {
+      streamedBytes += chunk.length;
+    });
     stream.once("error", (error) => {
-      release();
+      release("stream_error");
       reject(error);
     });
     response.once("close", () => {
       stream.destroy();
-      release();
+      release(response.writableFinished ? "completed" : "client_closed");
       resolve();
     });
     response.once("finish", () => {
-      release();
+      release("completed");
       resolve();
     });
     stream.pipe(response);
   });
+}
+
+const hlsSegmentName = /^segment-\d{5}\.m4s$/;
+
+function hlsResourceAllowed(resource: string) {
+  return resource === "index.m3u8" || resource === "init.mp4" || hlsSegmentName.test(resource);
+}
+
+function appendHlsAccessQuery(resource: string, query: string) {
+  return `${resource}?${query}`;
+}
+
+function signedHlsManifest(contents: string, grant: string, admissionTicketId: string | null) {
+  const query = new URLSearchParams({
+    grant,
+    ...(admissionTicketId ? { admission: admissionTicketId } : {})
+  }).toString();
+  return contents
+    .replace(/URI="([^"]+)"/g, (_match, resource: string) => `URI="${appendHlsAccessQuery(resource, query)}"`)
+    .split(/\r?\n/)
+    .map((line) => line && !line.startsWith("#") ? appendHlsAccessQuery(line, query) : line)
+    .join("\n");
+}
+
+async function handleLocalHls(
+  assetKey: string,
+  resource: string,
+  grant: string | null,
+  admissionTicketId: string | null,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const startedAt = Date.now();
+  if (!grant || !playbackGrantValid(grant, assetKey, context.session!.id)) {
+    sendJson(response, 403, { error: "Playback grant is missing, invalid, or expired." });
+    return;
+  }
+  if (
+    localPlaybackAdmissionEnabled
+    && !playbackAdmissionQueue.admitted(admissionTicketId ?? undefined, context.session!.id, assetKey)
+  ) {
+    sendJson(response, 409, { error: "This playback seat is no longer active." });
+    return;
+  }
+  if (!hlsResourceAllowed(resource)) {
+    sendJson(response, 404, { error: "HLS resource was not found." });
+    return;
+  }
+
+  const mediaFile = await store.getMediaFile?.(assetKey);
+  if (!mediaFile) {
+    sendJson(response, 404, { error: "Local media file was not found." });
+    return;
+  }
+  const resourcePath = path.join(path.dirname(mediaFile.absolutePath), "hls", resource);
+
+  if (resource === "index.m3u8") {
+    try {
+      const manifest = signedHlsManifest(await readFile(resourcePath, "utf8"), grant, admissionTicketId);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Content-Length", Buffer.byteLength(manifest));
+      response.end(request.method === "HEAD" ? undefined : manifest);
+    } catch {
+      sendJson(response, 404, { error: "HLS manifest was not found." });
+    }
+    return;
+  }
+
+  try {
+    const metadata = await stat(resourcePath);
+    if (!metadata.isFile()) throw new Error("HLS resource is not a file.");
+    const range = requestedByteRange(request.headers.range, metadata.size);
+    if (range === null) {
+      response.statusCode = 416;
+      response.setHeader("Content-Range", `bytes */${metadata.size}`);
+      response.end();
+      return;
+    }
+    const start = range?.start ?? 0;
+    const end = range?.end ?? metadata.size - 1;
+    const responseLength = end - start + 1;
+    response.statusCode = range ? 206 : 200;
+    response.setHeader("Accept-Ranges", "bytes");
+    response.setHeader("Content-Type", resource === "init.mp4" ? "video/mp4" : "video/iso.segment");
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Content-Length", responseLength);
+    if (range) response.setHeader("Content-Range", `bytes ${start}-${end}/${metadata.size}`);
+    if (request.method === "HEAD") {
+      response.end();
+      return;
+    }
+
+    activePlaybackStreams += 1;
+    await new Promise<void>((resolve, reject) => {
+      const stream = createReadStream(resourcePath, { start, end });
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activePlaybackStreams = Math.max(0, activePlaybackStreams - 1);
+      };
+      stream.once("error", (error) => {
+        release();
+        reject(error);
+      });
+      response.once("close", () => {
+        stream.destroy();
+        release();
+        resolve();
+      });
+      response.once("finish", () => {
+        release();
+        resolve();
+      });
+      stream.pipe(response);
+    });
+    logInfo("api.hls.stream", {
+      requestId: context.requestId,
+      assetKey,
+      resource,
+      bytes: responseLength,
+      ipAddress: requestIp(request),
+      device: requestDevice(request).device,
+      durationMs: durationMs(startedAt)
+    });
+  } catch (error) {
+    logWarn("api.hls.stream_failed", {
+      requestId: context.requestId,
+      assetKey,
+      resource,
+      ...errorLogFields(error)
+    });
+    if (!response.headersSent) sendJson(response, 404, { error: "HLS resource was not found." });
+  }
 }
 
 async function handleLocalPoster(
@@ -4102,6 +4313,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "POST" && pathname === "/api/playback-diagnostic") {
+      await handlePlaybackDiagnostic(request, response, context);
+      return;
+    }
+
     if (request.method === "POST" && pathname === "/api/cache") {
       await handleEnsureCache(request, response, context, identity!);
       return;
@@ -4153,8 +4369,25 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     const mediaMatch = pathname.match(/^\/api\/media\/([^/]+)$/);
     if ((request.method === "GET" || request.method === "HEAD") && mediaMatch) {
+      const encodedAssetKey = mediaMatch[1].endsWith(".mp4")
+        ? mediaMatch[1].slice(0, -4)
+        : mediaMatch[1];
       await handleLocalMedia(
-        decodeURIComponent(mediaMatch[1]),
+        decodeURIComponent(encodedAssetKey),
+        url.searchParams.get("grant"),
+        url.searchParams.get("admission"),
+        request,
+        response,
+        context
+      );
+      return;
+    }
+
+    const hlsMatch = pathname.match(/^\/api\/hls\/([^/]+)\/([^/]+)$/);
+    if ((request.method === "GET" || request.method === "HEAD") && hlsMatch) {
+      await handleLocalHls(
+        decodeURIComponent(hlsMatch[1]),
+        decodeURIComponent(hlsMatch[2]),
         url.searchParams.get("grant"),
         url.searchParams.get("admission"),
         request,

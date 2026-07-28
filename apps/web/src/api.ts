@@ -382,6 +382,24 @@ export function getPlayback(assetKey: string, admissionTicketId?: string) {
   return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}${suffix}`));
 }
 
+export interface PlaybackClientDiagnostic {
+  assetKey: string;
+  event: string;
+  readyState: number;
+  networkState: number;
+  currentTime?: number;
+  duration?: number;
+  bufferedEnd?: number;
+  errorCode?: number;
+}
+
+export function reportPlaybackDiagnostic(diagnostic: PlaybackClientDiagnostic) {
+  return request<{ ok: true }>(apiUrl("/api/playback-diagnostic"), {
+    method: "POST",
+    body: JSON.stringify(diagnostic)
+  });
+}
+
 export function getCacheAsset(assetKey: string) {
   return request<CacheAssetLookupResponse>(apiUrl(`/api/assets/${encodeURIComponent(assetKey)}`));
 }

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Artplayer from "artplayer";
+import type Hls from "hls.js";
 import { Play, TriangleAlert } from "lucide-react";
 import type { PlaybackResponse } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
+import { reportPlaybackDiagnostic } from "../../api";
 import { formatLongDate } from "../format";
 import { copy } from "../i18n";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
@@ -92,6 +94,31 @@ function ArtPlayerView({
     const art = new Artplayer({
       container: containerRef.current,
       url: playback.playbackUrl,
+      type: playback.playbackUrl.includes(".m3u8") ? "m3u8" : "mp4",
+      customType: {
+        m3u8(video, url, player) {
+          if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = url;
+            return;
+          }
+          let destroyed = false;
+          let hls: Hls | undefined;
+          player.on("destroy", () => {
+            destroyed = true;
+            hls?.destroy();
+          });
+          void import("hls.js").then(({ default: HlsRuntime }) => {
+            if (destroyed) return;
+            if (!HlsRuntime.isSupported()) {
+              video.src = url;
+              return;
+            }
+            hls = new HlsRuntime();
+            hls.loadSource(url);
+            hls.attachMedia(video);
+          });
+        }
+      },
       theme: "#34d399",
       volume: 0.8,
       autoplay: false,
@@ -115,6 +142,43 @@ function ArtPlayerView({
     });
     artRef.current = art;
 
+    const lastReportedAt = new Map<string, number>();
+    const reportVideoState = (event: Event) => {
+      const now = Date.now();
+      const eventName = event.type;
+      const minimumIntervalMs = eventName === "waiting" || eventName === "stalled" ? 10_000 : Infinity;
+      const previous = lastReportedAt.get(eventName);
+      if (previous !== undefined && now - previous < minimumIntervalMs) return;
+      lastReportedAt.set(eventName, now);
+
+      const video = art.video;
+      const bufferedEnd = video.buffered.length > 0
+        ? video.buffered.end(video.buffered.length - 1)
+        : undefined;
+      void reportPlaybackDiagnostic({
+        assetKey: playback.assetKey,
+        event: eventName,
+        readyState: video.readyState,
+        networkState: video.networkState,
+        currentTime: Number.isFinite(video.currentTime) ? video.currentTime : undefined,
+        duration: Number.isFinite(video.duration) ? video.duration : undefined,
+        bufferedEnd: Number.isFinite(bufferedEnd) ? bufferedEnd : undefined,
+        errorCode: video.error?.code
+      }).catch(() => undefined);
+    };
+    const diagnosticEvents = [
+      "loadstart",
+      "loadedmetadata",
+      "loadeddata",
+      "canplay",
+      "playing",
+      "waiting",
+      "stalled",
+      "suspend",
+      "error"
+    ];
+    diagnosticEvents.forEach((eventName) => art.video.addEventListener(eventName, reportVideoState));
+
     const renewIfNeeded = () => {
       void renewPlayback(false);
     };
@@ -123,9 +187,7 @@ function ArtPlayerView({
       if (failure) {
         art.pause();
         onFatalPlaybackError(failure);
-        return;
       }
-      void renewPlayback(true);
     };
     const renewWhenVisible = () => {
       if (document.visibilityState === "visible") {
@@ -138,7 +200,6 @@ function ArtPlayerView({
     art.on("video:waiting", renewIfNeeded);
     art.on("video:stalled", renewIfNeeded);
     art.on("video:error", handlePlaybackFailure);
-    art.on("error", handlePlaybackFailure);
     art.on("video:ended", () => onPlaybackEndedRef.current());
     art.on("document:visibilitychange", renewWhenVisible);
 
@@ -150,6 +211,7 @@ function ArtPlayerView({
 
     return () => {
       window.clearInterval(renewTimer);
+      diagnosticEvents.forEach((eventName) => art.video.removeEventListener(eventName, reportVideoState));
       artRef.current = null;
       art.destroy(false);
     };

@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveStaticWebFile } from "./static-web.js";
+import {
+  preferredStaticContentEncoding,
+  resolveStaticWebFile
+} from "./static-web.js";
 
 test("static web resolver serves assets and React browser routes safely", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wwpdw-static-web-"));
@@ -38,4 +41,27 @@ test("static web resolver rejects traversal and missing file-like paths", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("static web compression prefers Brotli and respects quality values", () => {
+  assert.equal(
+    preferredStaticContentEncoding("gzip, deflate, br", "text/javascript; charset=utf-8", 10_000),
+    "br"
+  );
+  assert.equal(
+    preferredStaticContentEncoding("br;q=0.2, gzip;q=0.8", "text/css; charset=utf-8", 10_000),
+    "gzip"
+  );
+  assert.equal(
+    preferredStaticContentEncoding("br;q=0, gzip;q=0", "text/html; charset=utf-8", 10_000),
+    undefined
+  );
+  assert.equal(
+    preferredStaticContentEncoding("br", "video/mp4", 10_000),
+    undefined
+  );
+  assert.equal(
+    preferredStaticContentEncoding("br", "text/javascript; charset=utf-8", 512),
+    undefined
+  );
 });

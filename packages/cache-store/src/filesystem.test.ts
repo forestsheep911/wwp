@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,7 +54,19 @@ test("filesystem cache downloads media, survives a second store instance, and de
   assert(address && typeof address === "object");
 
   const root = await mkdtemp(path.join(tmpdir(), "wwpdw-filesystem-cache-"));
-  const store = new FilesystemCacheStore(root);
+  let hlsSourcePath = "";
+  const store = new FilesystemCacheStore(root, {
+    hlsPlaybackBuilder: async (sourcePath, targetDirectory) => {
+      hlsSourcePath = sourcePath;
+      await mkdir(targetDirectory, { recursive: true });
+      await writeFile(
+        path.join(targetDirectory, "index.m3u8"),
+        "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6,\nsegment-00000.m4s\n#EXT-X-ENDLIST\n"
+      );
+      await writeFile(path.join(targetDirectory, "init.mp4"), Buffer.from("init"));
+      await writeFile(path.join(targetDirectory, "segment-00000.m4s"), Buffer.from("segment"));
+    }
+  });
   let reopened: FilesystemCacheStore | undefined;
   try {
     const result: SearchResult = {
@@ -82,8 +94,12 @@ test("filesystem cache downloads media, survives a second store instance, and de
     assert.equal(asset.media?.mp4?.status, "faststart");
     const localFile = await store.getMediaFile(result.assetKey);
     assert(localFile);
+    assert.equal(hlsSourcePath, localFile.absolutePath);
     assert.deepEqual(await readFile(localFile.absolutePath), media);
-    assert.equal((await store.getPlayback(result.assetKey))?.playbackUrl, "/api/media/filesystem-smoke");
+    assert.equal(
+      (await store.getPlayback(result.assetKey))?.playbackUrl,
+      "/api/hls/filesystem-smoke/index.m3u8"
+    );
 
     const withPoster = await store.hydrateMoviePosterUrls({
       ...result,

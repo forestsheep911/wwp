@@ -1,6 +1,15 @@
 import { readFile, stat } from "node:fs/promises";
 import type http from "node:http";
 import path from "node:path";
+import { promisify } from "node:util";
+import {
+  brotliCompress,
+  constants as zlibConstants,
+  gzip
+} from "node:zlib";
+
+const compressBrotli = promisify(brotliCompress);
+const compressGzip = promisify(gzip);
 
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -24,6 +33,46 @@ export interface StaticWebFile {
   cacheControl: string;
   contentType: string;
   size: number;
+}
+
+type StaticContentEncoding = "br" | "gzip";
+
+function encodingQuality(header: string, encoding: StaticContentEncoding) {
+  let wildcardQuality: number | undefined;
+  for (const entry of header.toLowerCase().split(",")) {
+    const [name, ...parameters] = entry.trim().split(";").map((part) => part.trim());
+    const qualityParameter = parameters.find((parameter) => parameter.startsWith("q="));
+    const quality = qualityParameter
+      ? Number(qualityParameter.slice(2))
+      : 1;
+    const normalizedQuality = Number.isFinite(quality)
+      ? Math.max(0, Math.min(1, quality))
+      : 0;
+    if (name === encoding) return normalizedQuality;
+    if (name === "*") wildcardQuality = normalizedQuality;
+  }
+  return wildcardQuality ?? 0;
+}
+
+function compressibleContentType(contentType: string) {
+  return contentType.startsWith("text/")
+    || contentType.startsWith("application/javascript")
+    || contentType.startsWith("application/json")
+    || contentType.startsWith("image/svg+xml");
+}
+
+export function preferredStaticContentEncoding(
+  acceptEncoding: string | undefined,
+  contentType: string,
+  size: number
+): StaticContentEncoding | undefined {
+  if (!acceptEncoding || size < 1_024 || !compressibleContentType(contentType)) {
+    return undefined;
+  }
+  const brotliQuality = encodingQuality(acceptEncoding, "br");
+  const gzipQuality = encodingQuality(acceptEncoding, "gzip");
+  if (brotliQuality <= 0 && gzipQuality <= 0) return undefined;
+  return brotliQuality >= gzipQuality ? "br" : "gzip";
 }
 
 function safeRelativePath(pathname: string) {
@@ -109,18 +158,36 @@ export async function serveStaticWeb(
     return false;
   }
 
+  const rawBody = await readFile(file.absolutePath);
+  const contentEncoding = preferredStaticContentEncoding(
+    request.headers["accept-encoding"],
+    file.contentType,
+    file.size
+  );
+  const body = contentEncoding === "br"
+    ? await compressBrotli(rawBody, {
+        params: {
+          [zlibConstants.BROTLI_PARAM_QUALITY]: 5
+        }
+      })
+    : contentEncoding === "gzip"
+      ? await compressGzip(rawBody, { level: 6 })
+      : rawBody;
+
   response.writeHead(200, {
     "Cache-Control": file.cacheControl,
-    "Content-Length": String(file.size),
+    ...(contentEncoding ? { "Content-Encoding": contentEncoding } : {}),
+    "Content-Length": String(body.length),
     "Content-Type": file.contentType,
     "Referrer-Policy": "same-origin",
+    "Vary": "Accept-Encoding",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY"
   });
   if (request.method === "HEAD") {
     response.end();
   } else {
-    response.end(await readFile(file.absolutePath));
+    response.end(body);
   }
   return true;
 }

@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync
 } from "node:fs";
 import {
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
@@ -36,6 +38,12 @@ import {
   isIdleReadyAsset,
   sourceTraceFromResult
 } from "./jobs.js";
+import {
+  durationMs,
+  errorLogFields,
+  logError,
+  logInfo
+} from "@wwpdw/shared";
 import { posterDownloadCandidates, posterRequestHeaders } from "./poster-cache.js";
 import type {
   CacheMoviePostersOptions,
@@ -52,6 +60,98 @@ const filesystemPrefix = "filesystem://";
 const uploadProgressStart = 24;
 const uploadProgressEnd = 90;
 const execFileAsync = promisify(execFile);
+const hlsSegmentPattern = /^segment-\d{5}\.m4s$/;
+
+type HlsPlaybackBuilder = (sourcePath: string, targetDirectory: string) => Promise<void>;
+
+interface FilesystemCacheStoreOptions {
+  hlsPlaybackBuilder?: HlsPlaybackBuilder;
+}
+
+async function buildHlsPlayback(sourcePath: string, targetDirectory: string) {
+  const startedAt = Date.now();
+  const buildingDirectory = `${targetDirectory}-building`;
+  const manifestPath = path.join(buildingDirectory, "index.m3u8");
+  await rm(buildingDirectory, { recursive: true, force: true });
+  await mkdir(buildingDirectory, { recursive: true });
+
+  try {
+    const videoCodec = await probeVideoCodecName(sourcePath);
+    const codecTagArguments = videoCodec === "hevc" ? ["-tag:v", "hvc1"] : [];
+    await execFileAsync(
+      process.env.FFMPEG_PATH ?? "ffmpeg",
+      [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        sourcePath,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c",
+        "copy",
+        ...codecTagArguments,
+        "-hls_time",
+        "6",
+        "-hls_playlist_type",
+        "vod",
+        "-hls_segment_type",
+        "fmp4",
+        "-hls_fmp4_init_filename",
+        "init.mp4",
+        "-hls_segment_filename",
+        "segment-%05d.m4s",
+        "-hls_flags",
+        "independent_segments+temp_file",
+        "index.m3u8"
+      ],
+      {
+        cwd: buildingDirectory,
+        timeout: Math.max(60_000, configuredBytes("WWPDW_HLS_PREPARE_TIMEOUT_MS", 30 * 60_000)),
+        windowsHide: true,
+        maxBuffer: 1024 * 1024
+      }
+    );
+
+    const [manifest, files, initMetadata] = await Promise.all([
+      readFile(manifestPath, "utf8"),
+      readdir(buildingDirectory),
+      stat(path.join(buildingDirectory, "init.mp4"))
+    ]);
+    const segments = files.filter((file) => hlsSegmentPattern.test(file));
+    if (
+      !manifest.startsWith("#EXTM3U")
+      || !manifest.includes("#EXT-X-ENDLIST")
+      || !initMetadata.isFile()
+      || initMetadata.size <= 0
+      || segments.length === 0
+    ) {
+      throw new Error("Generated HLS output did not pass validation.");
+    }
+    const firstSegment = await stat(path.join(buildingDirectory, segments[0]!));
+    if (!firstSegment.isFile() || firstSegment.size <= 0) {
+      throw new Error("Generated HLS output contains an empty segment.");
+    }
+
+    await rm(targetDirectory, { recursive: true, force: true });
+    await rename(buildingDirectory, targetDirectory);
+    logInfo("cache.filesystem.hls_ready", {
+      segmentCount: segments.length,
+      durationMs: durationMs(startedAt)
+    });
+  } catch (error) {
+    await rm(buildingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    logError("cache.filesystem.hls_failed", {
+      durationMs: durationMs(startedAt),
+      ...errorLogFields(error)
+    });
+    throw new Error("本地播放分段生成失败，请稍后重试。");
+  }
+}
 
 function configuredBytes(name: string, fallback: number) {
   const parsed = Number(process.env[name] ?? fallback);
@@ -75,6 +175,19 @@ async function probeDurationSeconds(filePath: string) {
     );
     const duration = Number(stdout.trim());
     return Number.isFinite(duration) && duration > 0 ? duration : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function probeVideoCodecName(filePath: string) {
+  try {
+    const { stdout } = await execFileAsync(
+      process.env.FFPROBE_PATH ?? "ffprobe",
+      ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=noprint_wrappers=1:nokey=1", filePath],
+      { timeout: 15_000, windowsHide: true, maxBuffer: 64 * 1024 }
+    );
+    return stdout.trim().toLowerCase() || undefined;
   } catch {
     return undefined;
   }
@@ -215,17 +328,19 @@ export class FilesystemCacheStore implements CacheStore {
   private readonly posterRoot: string;
   private readonly tempRoot: string;
   private readonly database: DatabaseSync;
+  private readonly hlsPlaybackBuilder: HlsPlaybackBuilder;
   private readonly posterDownloads = new Map<string, Promise<MoviePoster>>();
   private readonly posterContainer = new BlobServiceClient(
     `https://${process.env.AZURE_STORAGE_ACCOUNT_NAME ?? "stwwcachee9219db7"}.blob.core.windows.net`,
     new DefaultAzureCredential()
   ).getContainerClient(process.env.AZURE_STORAGE_BLOB_CONTAINER ?? "cached-videos");
 
-  constructor(rootDirectory: string) {
+  constructor(rootDirectory: string, options: FilesystemCacheStoreOptions = {}) {
     this.root = path.resolve(rootDirectory);
     this.mediaRoot = path.join(this.root, "media");
     this.posterRoot = path.join(this.root, "posters");
     this.tempRoot = path.join(this.root, "tmp");
+    this.hlsPlaybackBuilder = options.hlsPlaybackBuilder ?? buildHlsPlayback;
     const stateRoot = path.join(this.root, "state");
     mkdirSync(this.mediaRoot, { recursive: true });
     mkdirSync(this.posterRoot, { recursive: true });
@@ -487,6 +602,11 @@ export class FilesystemCacheStore implements CacheStore {
     }
     const contentType = contentTypeFor(sourceUrl, download.contentType);
     const durationSeconds = await probeDurationSeconds(finalPath);
+    job.progress = Math.max(job.progress, 96);
+    job.message = "正在生成流畅播放分段。";
+    job.updatedAt = new Date().toISOString();
+    await this.saveJob(job);
+    await this.hlsPlaybackBuilder(finalPath, path.join(path.dirname(finalPath), "hls"));
     const media: MediaDiagnostics = {
       checkedAt: new Date().toISOString(),
       contentType,
@@ -549,6 +669,12 @@ export class FilesystemCacheStore implements CacheStore {
   async getPlayback(assetKey: string) {
     const asset = await this.getAsset(assetKey);
     if (!isFreshReady(asset) || !asset?.playbackUrl) return undefined;
+    const absolutePath = this.absolutePathFromUrl(asset.playbackUrl);
+    const hlsReady = absolutePath
+      ? await stat(path.join(path.dirname(absolutePath), "hls", "index.m3u8"))
+        .then((metadata) => metadata.isFile())
+        .catch(() => false)
+      : false;
     const playedAt = new Date();
     asset.lastPlayedAt = playedAt.toISOString();
     asset.expiresAt = addDays(playedAt, cacheAssetIdleTtlDays()).toISOString();
@@ -556,7 +682,9 @@ export class FilesystemCacheStore implements CacheStore {
     return {
       assetKey: asset.assetKey,
       title: asset.title,
-      playbackUrl: `/api/media/${encodeURIComponent(asset.assetKey)}`,
+      playbackUrl: hlsReady
+        ? `/api/hls/${encodeURIComponent(asset.assetKey)}/index.m3u8`
+        : `/api/media/${encodeURIComponent(asset.assetKey)}.mp4`,
       expiresAt: asset.expiresAt,
       media: asset.media
     };
@@ -718,7 +846,7 @@ export class FilesystemCacheStore implements CacheStore {
         await file.write(value);
         bytes += value.length;
         const maximumBytes = mediaMaxBytes();
-        if (maximumBytes > 0 && cachedBytesAtStart + bytes > maximumBytes) {
+        if (maximumBytes > 0 && cachedBytesAtStart + bytes * 2 > maximumBytes) {
           throw new Error(`Local media cache quota of ${maximumBytes} bytes would be exceeded.`);
         }
         const nextProgress = expectedBytes
@@ -869,12 +997,20 @@ export class FilesystemCacheStore implements CacheStore {
   private cachedMediaBytes() {
     return Object.values(this.readState().assets)
       .filter((asset) => asset.status === "ready")
-      .reduce((total, asset) => total + (asset.media?.contentLength ?? 0), 0);
+      .reduce((total, asset) => {
+        const contentLength = asset.media?.contentLength ?? 0;
+        const mediaPath = asset.playbackUrl ? this.absolutePathFromUrl(asset.playbackUrl) : undefined;
+        const hasHls = mediaPath
+          ? existsSync(path.join(path.dirname(mediaPath), "hls", "index.m3u8"))
+          : false;
+        return total + contentLength + (hasHls ? contentLength : 0);
+      }, 0);
   }
 
   private async assertDownloadCapacity(expectedBytes: number | undefined, existingBytes: number) {
     const maximumBytes = mediaMaxBytes();
-    if (maximumBytes > 0 && expectedBytes && this.cachedMediaBytes() + expectedBytes > maximumBytes) {
+    const requiredBytes = expectedBytes ? expectedBytes * 2 : undefined;
+    if (maximumBytes > 0 && requiredBytes && this.cachedMediaBytes() + requiredBytes > maximumBytes) {
       throw new Error(`Local media cache quota of ${maximumBytes} bytes would be exceeded.`);
     }
 
@@ -883,7 +1019,8 @@ export class FilesystemCacheStore implements CacheStore {
     const fileSystem = await statfs(this.root);
     const availableBytes = Number(fileSystem.bavail) * Number(fileSystem.bsize);
     const remainingDownloadBytes = Math.max(0, expectedBytes - existingBytes);
-    if (availableBytes - remainingDownloadBytes < mediaMinFreeBytes()) {
+    const playbackSegmentBytes = expectedBytes;
+    if (availableBytes - remainingDownloadBytes - playbackSegmentBytes < mediaMinFreeBytes()) {
       throw new Error(`Local media cache must keep ${mediaMinFreeBytes()} bytes free.`);
     }
   }
