@@ -89,6 +89,7 @@ import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
+import { PlaybackOpening } from "./cinema/components/PlaybackOpening";
 import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
 import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
@@ -257,6 +258,7 @@ function CinemaApp() {
   const [asset, setAsset] = useState<CacheAsset | undefined>();
   const [trackedItems, setTrackedItems] = useState<TrackedCacheItem[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | undefined>();
+  const [playbackOpening, setPlaybackOpening] = useState(Boolean(initialRoute.playerAssetKey));
   const [playbackQueue, setPlaybackQueue] = useState<{
     admission: PlaybackAdmissionResponse;
     result?: SearchResult;
@@ -635,6 +637,7 @@ function CinemaApp() {
       cancelBrowseRetry();
       setAdminUnlocked(false);
       setPlayback(undefined);
+      setPlaybackOpening(false);
       setJob(undefined);
       setAsset(undefined);
       setTrackedItems([]);
@@ -812,6 +815,7 @@ function CinemaApp() {
       try {
         await executeCreditAction(action);
       } catch (actionError) {
+        if (action.kind === "playback") setPlaybackOpening(false);
         handleRequestError(actionError, copy.fallbackErrors.creditAction);
       }
       return;
@@ -821,8 +825,10 @@ function CinemaApp() {
       const preview = await previewCreditAction(action);
       setPendingCreditAction(action);
       setCreditPreview(preview);
+      if (action.kind === "playback") setPlaybackOpening(false);
       setCreditConfirmOpen(true);
     } catch (previewError) {
+      if (action.kind === "playback") setPlaybackOpening(false);
       handleRequestError(previewError, copy.fallbackErrors.checkCredit);
     }
   }
@@ -858,11 +864,7 @@ function CinemaApp() {
     const target = variantToCacheTarget(result, variant);
     const tracked = trackedByAssetKey.get(variant.assetKey);
     if (variantIsPlaybackReady(variant, tracked)) {
-      await requestCreditAction({
-        kind: "playback",
-        assetKey: variant.assetKey,
-        result: target
-      });
+      await openPlayer(variant.assetKey, target);
       return;
     }
 
@@ -994,7 +996,7 @@ function CinemaApp() {
       });
       mergeCacheAssetIntoVisibleResults(response.asset);
       if (response.asset.status === "ready") {
-        await openPlayer(response.asset.assetKey, target);
+        await openPlayer(response.asset.assetKey, target, { target: "currentTab" });
       }
       await refreshResultsInBackground();
       if (after === "historyRecache") {
@@ -1027,17 +1029,30 @@ function CinemaApp() {
   async function openPlayer(
     assetKey = asset?.assetKey,
     result?: SearchResult,
-    options: { syncHistory?: boolean } = {}
+    options: { syncHistory?: boolean; target?: "newTab" | "currentTab" } = {}
   ) {
     if (!assetKey) {
       return;
     }
 
+    if (options.target !== "currentTab") {
+      const playerUrl = routeUrl(routeForCurrentView({
+        detailAssetKey: undefined,
+        playerAssetKey: assetKey
+      }));
+      const playerWindow = window.open(playerUrl, "_blank");
+      if (playerWindow) {
+        playerWindow.opener = null;
+        return;
+      }
+    }
+
+    setPlaybackOpening(true);
     await requestCreditAction({
       kind: "playback",
       assetKey,
       result,
-      options
+      options: { syncHistory: options.syncHistory }
     });
   }
 
@@ -1050,9 +1065,11 @@ function CinemaApp() {
       return;
     }
 
+    setPlaybackOpening(true);
     try {
       const admission = await requestPlaybackAdmission(assetKey);
       if (admission.status === "queued") {
+        setPlaybackOpening(false);
         setPlaybackQueue({ admission, result, options });
         if (options.syncHistory !== false) {
           writeRoute(routeForCurrentView({ playerAssetKey: assetKey }), "push");
@@ -1079,6 +1096,7 @@ function CinemaApp() {
       updateCurrentMemberCredits(nextPlayback.memberCredits);
       setPlaybackQueue(undefined);
       setPlayback(nextPlayback);
+      setPlaybackOpening(false);
       rememberPlayback(nextPlayback, result);
       if (options.syncHistory !== false) {
         writeRoute(routeForCurrentView({
@@ -1090,6 +1108,7 @@ function CinemaApp() {
         void releasePlaybackAdmission(admission.ticketId).catch(() => undefined);
       }
       setPlaybackQueue(undefined);
+      setPlaybackOpening(false);
       handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
     }
   }
@@ -1135,6 +1154,7 @@ function CinemaApp() {
     }
     setPlayback(undefined);
     setPlaybackQueue(undefined);
+    setPlaybackOpening(false);
     writeRoute(routeForCurrentView({
       playerAssetKey: undefined
     }), "replace");
@@ -2199,6 +2219,7 @@ function CinemaApp() {
     setCreditConfirmLoading(false);
     setCreditPreview(undefined);
     setPendingCreditAction(undefined);
+    setPlaybackOpening(false);
     setMovieRequestOpen(false);
     setMovieRequestText("");
     setMovieRequestError("");
@@ -2447,7 +2468,10 @@ function CinemaApp() {
     }
 
     if (initialPermittedRoute.playerAssetKey) {
-      void openPlayer(initialPermittedRoute.playerAssetKey, undefined, { syncHistory: false });
+      void openPlayer(initialPermittedRoute.playerAssetKey, undefined, {
+        syncHistory: false,
+        target: "currentTab"
+      });
     }
   }, [activeTab, initialRoute.playerAssetKey, query, role, unlocked]);
 
@@ -2487,7 +2511,10 @@ function CinemaApp() {
       }
 
       if (nextRoute.playerAssetKey) {
-        void openPlayer(nextRoute.playerAssetKey, undefined, { syncHistory: false });
+        void openPlayer(nextRoute.playerAssetKey, undefined, {
+          syncHistory: false,
+          target: "currentTab"
+        });
       }
     }
 
@@ -2611,6 +2638,9 @@ function CinemaApp() {
   );
 
   if (authRestoring) {
+    if (initialRoute.playerAssetKey) {
+      return <PlaybackOpening restoringSession />;
+    }
     return (
       <ServiceWakeDialog
         open
@@ -2649,6 +2679,10 @@ function CinemaApp() {
       onConfirm={() => void confirmCreditAction()}
     />
   );
+
+  if (playbackOpening) {
+    return <PlaybackOpening />;
+  }
 
   if (playback) {
     return (
