@@ -476,6 +476,8 @@ export interface CacheJob {
   status: CacheStatus;
   progress: number;
   message: string;
+  queuePosition?: number;
+  queueLength?: number;
   createdAt: string;
   updatedAt: string;
   resolve?: ResolveResult;

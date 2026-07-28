@@ -727,7 +727,7 @@ export class FilesystemCacheStore implements CacheStore {
         if (Date.now() - lastSavedAt >= 2500 || nextProgress > lastProgress) {
           job.status = "uploading";
           job.progress = Math.max(job.progress, nextProgress);
-          job.message = "正在建立本地播放缓存。";
+          job.message = "正在建立本地可播放文件。";
           job.updatedAt = new Date().toISOString();
           lastSavedAt = Date.now();
           lastProgress = job.progress;

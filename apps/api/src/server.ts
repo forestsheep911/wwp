@@ -152,6 +152,11 @@ const maximumPlaybackStreams = Math.max(1, Math.floor(Number(process.env.WWPDW_M
 const localPlaybackAdmissionEnabled = Boolean(store.getMediaFile);
 const playbackAdmissionQueue = new PlaybackAdmissionQueue(maximumPlaybackStreams);
 let activePlaybackStreams = 0;
+let preparationQueueSnapshot: {
+  expiresAt: number;
+  positions: Map<string, number>;
+  length: number;
+} | undefined;
 
 function playbackCapacity(): PlaybackCapacity {
   if (localPlaybackAdmissionEnabled) {
@@ -164,6 +169,27 @@ function playbackCapacity(): PlaybackCapacity {
     queued: 0,
     level: "low"
   };
+}
+
+async function preparationQueueJob(job: CacheJob) {
+  if (job.status !== "queued") {
+    return job;
+  }
+  const now = Date.now();
+  if (!preparationQueueSnapshot || preparationQueueSnapshot.expiresAt <= now) {
+    const queuedJobs = (await store.listActiveJobs(1_000))
+      .filter((candidate) => candidate.status === "queued")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    preparationQueueSnapshot = {
+      expiresAt: now + 2_000,
+      positions: new Map(queuedJobs.map((candidate, index) => [candidate.id, index + 1])),
+      length: queuedJobs.length
+    };
+  }
+  const queuePosition = preparationQueueSnapshot.positions.get(job.id);
+  return queuePosition
+    ? { ...job, queuePosition, queueLength: preparationQueueSnapshot.length }
+    : job;
 }
 
 interface RequestContext {
@@ -2021,6 +2047,7 @@ async function handleEnsureCache(
 
   const activeJobsBefore = await store.listActiveJobs(1);
   const output = await store.ensureCache(result);
+  preparationQueueSnapshot = undefined;
   const requestedAt = new Date().toISOString();
   output.job.requestId ??= context.requestId;
   output.job.lastRequestId = context.requestId;
@@ -2058,6 +2085,7 @@ async function handleEnsureCache(
 
   sendJson(response, 200, {
     ...output,
+    job: await preparationQueueJob(output.job),
     trigger,
     charge: charge?.ok ? charge.charge : undefined,
     memberCredits: charge?.ok ? charge.code.credits : undefined
@@ -2265,7 +2293,7 @@ async function handleStatus(jobId: string, response: http.ServerResponse, contex
   });
 
   sendJson(response, 200, {
-    job,
+    job: await preparationQueueJob(job),
     asset
   });
 }

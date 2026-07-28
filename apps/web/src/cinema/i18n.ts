@@ -77,7 +77,7 @@ export const zhCN = {
     account: "账号",
     spending: "消费记录",
     forum: "讨论",
-    tasks: "缓存任务",
+    tasks: "准备任务",
     history: "播放历史",
     favorites: "我的收藏",
     watchlist: "发现影片",
@@ -181,8 +181,8 @@ export const zhCN = {
     }
   },
   cachedShelf: {
-    loading: "正在加载已缓存影片",
-    empty: "暂无已缓存影片",
+    loading: "正在加载已准备影片",
+    empty: "暂无已准备影片",
     playableCount: (count: number) => `${count} 可播放`
   },
   history: {
@@ -226,7 +226,7 @@ export const zhCN = {
     description: "按类型、地区、年代和可播放状态逐步缩小范围，找到真正想看的内容。",
     available: (count: number) => `${count} 部影片`,
     matched: (count: number) => `筛出 ${count} 部`,
-    cachedReady: (count: number) => `${count} 部已缓存`,
+    cachedReady: (count: number) => `${count} 部已准备`,
     loadingCatalog: "正在加载片库",
     loadMore: "加载更多片库",
     filtersTitle: "筛选",
@@ -245,24 +245,24 @@ export const zhCN = {
     },
     costs: {
       all: "全部片库",
-      ready: "已缓存",
+      ready: "已准备",
       freeReplay: "免费播放时间内"
     },
     sort: {
       latest: "最新",
       rating: "高分好评",
-      cached: "最近缓存"
+      cached: "最近准备"
     },
     all: "全部",
     play: "播放",
     prepare: "准备",
-    viewReadyOnlyHint: "资费选中已缓存或免费播放时，只显示已经准备好的可播内容。",
+    viewReadyOnlyHint: "资费选中已准备或免费播放时，只显示已经准备好的可播内容。",
     replayFree: "免费播放中",
     noPlayableVariant: "暂无可用规格",
     loading: "正在加载可播放影片",
     empty: "还没有可选影片",
     emptyFilter: "这个条件下没有影片",
-    cachedAt: (date: string) => `缓存 ${date}`,
+    cachedAt: (date: string) => `准备完成 ${date}`,
     updatedAt: (date: string) => `更新 ${date}`,
     refresh: "刷新片单"
   },
@@ -279,7 +279,7 @@ export const zhCN = {
     stale: "正在显示上一次可用数据",
     observedAt: (date: string) => `观察时间 ${date}`,
     fetchedAt: (date: string) => `读取 ${date}`,
-    cacheHit: "缓存",
+    cacheHit: "已有数据",
     cacheRefresh: "已刷新",
     cacheStale: "旧数据",
     rank: (rank: number) => `#${rank}`,
@@ -329,16 +329,16 @@ export const zhCN = {
     }
   },
   tasks: {
-    title: "缓存任务",
-    description: "准备中的任务和可播放的缓存内容",
+    title: "准备任务",
+    description: "正在准备和已经可以播放的内容",
     preparing: "准备中",
-    cached: "已缓存",
+    cached: "已准备",
     mine: "我的",
     publicPool: "公共池",
     noPreparing: "没有准备中的任务",
-    loadingCached: "正在加载已缓存内容",
-    emptyCached: "这里还没有已缓存内容",
-    floatingTitle: "缓存任务",
+    loadingCached: "正在加载已准备内容",
+    emptyCached: "这里还没有已准备内容",
+    floatingTitle: "准备任务",
     currentTitle: "当前准备任务",
     noCurrent: "本次浏览器还没有正在准备的影片",
     browserTasks: "本次浏览器发起的准备任务",
@@ -383,23 +383,23 @@ export const zhCN = {
       },
       {
         title: "先想清楚再准备",
-        body: "很多片子不是天然在线流媒体。点规格后，系统要去确认片源、搬到播放缓存、检查能不能在线播放；这一步会占用服务器、存储和网络流量。"
+        body: "很多片子不是天然在线流媒体。点规格后，系统要确认片源、准备可播放文件，并检查能不能在线播放；这一步会占用服务器、存储和网络流量。"
       },
       {
         title: "代币是用量感觉",
         body: "🍀 代币不是为了卡住大家，而是让每个人对用量有直观感觉。代币不够可以找管理员索取，但请尽量避免误点、重复准备和随手试大文件。"
       },
       {
-        title: "缓存为什么要花钱",
-        body: "缓存就是把片子提前放到可以播放的位置。它会占空间，也会产生上传、下载和保存成本；片子越大、规格越高，准备一次消耗越明显。"
+        title: "准备为什么要花钱",
+        body: "准备就是把片子提前放到可以播放的位置。它会占空间，也会产生上传、下载和保存成本；片子越大、规格越高，准备一次消耗越明显。"
       },
       {
         title: "播放也会另花钱",
-        body: "缓存好了不代表后续播放完全免费。在线播放会持续走网络流量，尤其是长片和高清规格；所以真正开始看时，还会按播放规则确认观看代币。"
+        body: "准备好了不代表后续播放完全免费。在线播放会持续走网络流量，尤其是长片和高清规格；所以真正开始看时，还会按播放规则确认观看代币。"
       },
       {
-        title: "命中缓存就少浪费",
-        body: "如果别人已经准备过，或同一部片还在缓存期内，你可以直接播放，速度也更快。短时间内重看同一部片通常不会重复收取观看代币。"
+        title: "已经准备就少等待",
+        body: "如果别人已经准备过，或同一版本仍然可用，你可以直接播放，速度也更快。短时间内重看同一部片通常不会重复收取观看代币。"
       },
       {
         title: "不会开放充值",
@@ -411,20 +411,20 @@ export const zhCN = {
       },
       {
         title: "不要宣传外传",
-        body: "这个站只给熟人小范围使用。不要公开宣传，不要分享通行码、播放链接或缓存内容；如果想推荐给线下亲友，先找管理员商量。"
+        body: "这个站只给熟人小范围使用。不要公开宣传，不要分享通行码、播放链接或已经准备的内容；如果想推荐给线下亲友，先找管理员商量。"
       }
     ],
     flowTitle: "简单流程",
-    flowBody: "先在推荐、电影、电视、动画里挑片；确定真的要看，再选择合适规格。如果还没准备好，就等它完成缓存；准备完成后再确认播放。看过的片子会进播放历史，已缓存的片子可以从账号菜单里的缓存任务找到。",
+    flowBody: "先在推荐、电影、电视、动画里挑片；确定真的要看，再选择合适规格。如果还没准备好，就等待准备完成；准备完成后再确认播放。看过的片子会进播放历史，已准备的片子可以从账号菜单里的准备任务找到。",
     faqTitle: "先解决眼前问题",
-    faqDescription: "遇到播放、代币、缓存、求片这些问题，可以先在这里查。写得尽量像管理员当面解释，不像产品手册。",
-    faqSearchPlaceholder: "搜索代币、缓存、播放、字幕、求片...",
+    faqDescription: "遇到播放、代币、准备、求片这些问题，可以先在这里查。写得尽量像管理员当面解释，不像产品手册。",
+    faqSearchPlaceholder: "搜索代币、准备、播放、字幕、求片...",
     faqEmpty: "没有匹配的问题，可以换个词试试，或者直接找管理员。",
     faqCategories: [
       { id: "all", label: "全部" },
       { id: "start", label: "新手" },
       { id: "credit", label: "代币" },
-      { id: "cache", label: "缓存" },
+      { id: "cache", label: "准备" },
       { id: "playback", label: "播放" },
       { id: "request", label: "求片" },
       { id: "account", label: "账号" }
@@ -433,27 +433,27 @@ export const zhCN = {
       {
         category: "start",
         question: "第一次进来应该怎么用？",
-        answer: "先从推荐、电影、电视、动画里挑片，点进去看简介和规格。确定真的要看，再选一个合适规格；如果还没有缓存，就等系统准备完成，最后再确认播放。"
+        answer: "先从推荐、电影、电视、动画里挑片，点进去看简介和规格。确定真的要看，再选一个合适规格；如果还没有准备好，就等待系统完成准备，最后再确认播放。"
       },
       {
         category: "cache",
         question: "为什么不能像视频网站一样点开就播？",
-        answer: "这里很多片子来自收藏片源，不是一直放在在线播放线路上。第一次观看前，系统要把片源整理到缓存位置，确认格式、网络和播放链接都可用。"
+        answer: "这里很多片子来自收藏片源，不是一直放在在线播放线路上。第一次观看前，系统要把片源准备到可播放位置，确认格式、网络和播放链接都可用。"
       },
       {
         category: "credit",
         question: "代币是充值货币吗？",
-        answer: "不是。这里不会开放充值入口。代币更像用量提醒，让大家知道准备缓存和在线播放都不是零成本；不够用可以找管理员补。"
+        answer: "不是。这里不会开放充值入口。代币更像用量提醒，让大家知道准备和在线播放都不是零成本；不够用可以找管理员补。"
       },
       {
         category: "credit",
         question: "为什么准备和播放可能分开扣？",
-        answer: "准备缓存是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量，按约 100MB 计 1🍀。两件事消耗的资源不同，所以会分开确认。"
+        answer: "准备是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量，按约 100MB 计 1🍀。两件事消耗的资源不同，所以会分开确认。"
       },
       {
         category: "cache",
         question: "别人准备过的片我还要再准备吗？",
-        answer: "通常不用。如果同一个版本还在缓存期内，你会直接命中缓存，速度更快，也能减少重复消耗。缓存过期或版本不同，才可能需要重新准备。"
+        answer: "通常不用。如果同一个版本仍然已经准备好，你可以直接播放，速度更快，也能减少重复消耗。文件过期或版本不同，才可能需要重新准备。"
       },
       {
         category: "playback",
@@ -478,12 +478,12 @@ export const zhCN = {
       {
         category: "account",
         question: "可以把通行码发给别人吗？",
-        answer: "不要公开分享通行码、播放链接或缓存内容。如果想推荐线下亲友使用，先找管理员商量，避免片库变成不可控的公开站。"
+        answer: "不要公开分享通行码、播放链接或已经准备的内容。如果想推荐线下亲友使用，先找管理员商量，避免片库变成不可控的公开站。"
       },
       {
         category: "start",
         question: "看完以后在哪里找历史记录？",
-        answer: "看过的内容会进入播放历史。已经准备好的缓存内容，也可以从账号菜单里的缓存任务或已缓存入口里找。"
+        answer: "看过的内容会进入播放历史。已经准备好的内容，也可以从账号菜单里的准备任务或已准备入口里找。"
       },
       {
         category: "playback",
@@ -499,36 +499,36 @@ export const zhCN = {
         id: "starter",
         title: "第一次使用路线",
         kicker: "新手入门",
-        summary: "从进站、找片、选规格、等待缓存到播放历史，按真实使用顺序走一遍。",
+        summary: "从进站、找片、选规格、等待准备到播放历史，按真实使用顺序走一遍。",
         tags: ["找片", "规格", "历史"],
         points: [
           "先用频道和搜索缩小范围，不要看到多个版本就随手全点。",
           "选规格时优先考虑设备和网络，手机或普通电视不一定需要最大文件。",
-          "准备完成后再确认播放，看过的内容可以从历史和缓存入口回看。"
+          "准备完成后再确认播放，看过的内容可以从历史和已准备入口回看。"
         ]
       },
       {
         id: "credits",
         title: "代币与基础设施成本",
         kicker: "用量感觉",
-        summary: "解释代币为什么存在，以及缓存、存储、播放流量各自花在哪里。",
+        summary: "解释代币为什么存在，以及准备、存储、播放流量各自花在哪里。",
         tags: ["代币", "成本", "节约"],
         points: [
           "代币不是充值体系，而是让用量变得可见。",
-          "缓存会占用服务器、对象存储和传输资源。",
-          "在线播放本身也会产生流量，所以播放确认和缓存确认是两回事。"
+          "准备会占用服务器、对象存储和传输资源。",
+          "在线播放本身也会产生流量，所以播放确认和准备确认是两回事。"
         ]
       },
       {
         id: "cache",
-        title: "缓存与在线播放",
+        title: "准备与在线播放",
         kicker: "幕后流程",
-        summary: "用普通话解释片源、缓存、播放链接、有效期和重看窗口。",
-        tags: ["缓存", "链接", "重看"],
+        summary: "用普通话解释片源、准备、播放链接、有效期和重看窗口。",
+        tags: ["准备", "链接", "重看"],
         points: [
-          "片源像仓库里的原材料，缓存像临时摆到柜台上的可播放版本。",
+          "片源像仓库里的原材料，准备就是把可播放版本摆到柜台上。",
           "播放链接通常有有效期，过期后需要重新生成或检查。",
-          "命中缓存能节省准备时间，也能避免重复搬运大文件。"
+          "已经准备好的版本能节省等待时间，也能避免重复搬运大文件。"
         ]
       },
       {
@@ -697,8 +697,8 @@ export const zhCN = {
     adminKey: "管理员密钥",
     unlock: "解锁",
     tabs: {
-      cached: "已缓存",
-      jobs: "缓存任务",
+      cached: "已准备",
+      jobs: "准备任务",
       passes: "成员",
       invites: "邀请",
       requests: "求片",
@@ -745,18 +745,18 @@ export const zhCN = {
     invitationCredits: (remaining: number, unit: string, member?: string) => `${remaining}${unit}${member ? ` / 已被 ${member} 使用` : ""}`,
     copyInvitationLink: "复制邀请链接",
     invitationSecretUnavailable: "完整链接已隐藏；如果当时没有复制，请重新生成。",
-    cachedTitle: "已缓存视频",
-    cachedDescription: "管理员可以删除这些已就绪的缓存文件。",
-    loadingCached: "正在加载已缓存视频",
-    noCached: "暂无已缓存视频",
-    deleteCache: "删除缓存",
+    cachedTitle: "已准备视频",
+    cachedDescription: "管理员可以删除这些已经准备好的视频文件。",
+    loadingCached: "正在加载已准备视频",
+    noCached: "暂无已准备视频",
+    deleteCache: "删除已准备文件",
     asset: "资源",
     job: "任务",
-    cacheFile: "缓存文件",
+    cacheFile: "准备文件",
     range: "分段请求",
-    jobsTitle: "最近缓存任务",
-    jobsDescription: "用于排查缓存问题的后台状态、资源键和请求 ID。",
-    noJobs: "暂无缓存任务记录",
+    jobsTitle: "最近准备任务",
+    jobsDescription: "用于排查准备问题的后台状态、资源键和请求 ID。",
+    noJobs: "暂无准备任务记录",
     sourcePage: "源页面",
     breadcrumb: "路径",
     updated: "更新",
@@ -788,7 +788,7 @@ export const zhCN = {
       fetching: "准备中",
       downloading: "获取中",
       processing: "准备播放",
-      uploading: "建立缓存",
+      uploading: "建立可播放文件",
       ready: "可播放",
       failed: "失败"
     },
@@ -796,19 +796,19 @@ export const zhCN = {
       "Waiting for a cache worker.": "等待开始准备。",
       "Fetching source metadata.": "正在准备片源。",
       "Resolving the media source.": "正在确认可播放版本。",
-      "Copying the resolved media into the cache lane.": "正在建立播放缓存。",
+      "Copying the resolved media into the cache lane.": "正在建立可播放文件。",
       "Publishing the cached asset.": "正在完成播放准备。",
-      "Uploading the resolved media into Blob cache.": "正在建立播放缓存。",
+      "Uploading the resolved media into Blob cache.": "正在建立可播放文件。",
       "正在检查播放状态。": "正在检查播放状态。",
       "Ready for playback.": "可以播放。",
       "Failed to cache the resolved media.": "准备失败。"
     },
-    notCached: "未缓存",
+    notCached: "未准备",
     checking: "检查中",
     expired: "已过期",
     failedRetry: "准备失败，可以重新准备。",
     errors: {
-      blockListInvalid: "缓存写入失败，请重新准备。",
+      blockListInvalid: "准备文件写入失败，请重新准备。",
       assetNotReady: "这条影片还没有准备好播放。",
       playbackSizeMissing: "视频大小信息缺失，暂时无法计算播放花费。请重新准备或联系管理员。"
     }
@@ -820,16 +820,16 @@ export const zhCN = {
     cacheRequest: "准备请求失败。",
     directDownload: "无法获取下载链接。",
     playbackNotReady: "视频还没有准备好播放。",
-    historyStatus: "无法刷新播放历史的缓存状态。",
-    cachedTitles: "无法加载已缓存影片。",
+    historyStatus: "无法刷新播放历史的准备状态。",
+    cachedTitles: "无法加载已准备影片。",
     browseTitles: "无法加载浏览影片。",
     memberAccess: "无法加载成员通行码。",
     loginAudit: "无法加载登录记录。",
     movieRequests: "无法加载求片请求。",
-    cacheJobs: "无法加载缓存任务。",
-    retryCacheJob: "无法重试缓存任务。",
-    deleteCacheEntry: "无法删除缓存条目。",
-    deleteCachedVideo: "无法删除已缓存视频。",
+    cacheJobs: "无法加载准备任务。",
+    retryCacheJob: "无法重试准备任务。",
+    deleteCacheEntry: "无法删除准备条目。",
+    deleteCachedVideo: "无法删除已准备视频。",
     updateMovieRequest: "无法更新求片请求。",
     adminKey: "管理员密钥不匹配。",
     generateInvitation: "无法生成邀请码。",

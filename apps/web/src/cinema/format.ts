@@ -647,6 +647,12 @@ export function jobMessageLabel(job: CacheJob) {
     return copy.cache.failedRetry;
   }
 
+  if (job.status === "queued" && job.queuePosition) {
+    return job.queueLength && job.queueLength > 1
+      ? `准备排队中 · 第 ${job.queuePosition} 位，共 ${job.queueLength} 项`
+      : `准备排队中 · 第 ${job.queuePosition} 位`;
+  }
+
   return cacheMessageLabel(job.message);
 }
 

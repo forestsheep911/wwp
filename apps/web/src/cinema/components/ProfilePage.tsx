@@ -92,7 +92,7 @@ export function ProfilePage({
       </ProfileSection>
 
       <ProfileSection title="观看动态">
-        <ProfileAction icon={<ListChecks />} label="准备任务" detail="查看缓存进度和结果" onClick={onOpenTasks} />
+        <ProfileAction icon={<ListChecks />} label="准备任务" detail="查看准备进度和结果" onClick={onOpenTasks} />
         <ProfileAction icon={<Clapperboard />} label="最近在看" detail="家庭影院近期播放" onClick={onOpenNowPlaying} />
         <ProfileAction icon={<MessageCircle />} label="家庭讨论" detail="分享片单和观后感" onClick={onOpenForum} />
       </ProfileSection>
@@ -117,7 +117,7 @@ export function ProfilePage({
         {showAdmin ? (
           <ProfileAction icon={<ShieldCheck />} label="管理后台" detail="成员、资源和系统管理" onClick={onOpenAdmin} />
         ) : null}
-        <ProfileAction icon={<BookOpen />} label="使用说明" detail="播放、缓存和代币说明" onClick={onOpenHelp} />
+        <ProfileAction icon={<BookOpen />} label="使用说明" detail="播放、准备和代币说明" onClick={onOpenHelp} />
         <ProfileAction
           icon={theme === "dark" ? <Sun /> : <Moon />}
           label={theme === "dark" ? "切换浅色外观" : "切换深色外观"}

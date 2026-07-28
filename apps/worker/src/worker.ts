@@ -49,7 +49,7 @@ const timedStages: Array<{
     to: "uploading",
     delayMs: 0,
     progress: 24,
-    message: "正在建立播放缓存。"
+    message: "正在建立可播放文件。"
   },
   {
     from: "uploading",
@@ -95,7 +95,7 @@ async function completeReadyJob(job: CacheJob, now: Date) {
   const startedAt = Date.now();
   job.status = "uploading";
   job.progress = Math.max(job.progress, 24);
-  job.message = "正在建立播放缓存。";
+  job.message = "正在建立可播放文件。";
   job.updatedAt = now.toISOString();
   await persistJob(job);
 
@@ -170,7 +170,7 @@ async function resolveJob(job: CacheJob, now: Date) {
   if (resolve.kind === "direct_file" && resolve.url) {
     job.status = "uploading";
     job.progress = 24;
-    job.message = "正在建立播放缓存。";
+    job.message = "正在建立可播放文件。";
   } else {
     job.status = "failed";
     job.progress = Math.max(job.progress, 18);

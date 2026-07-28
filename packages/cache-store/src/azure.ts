@@ -1162,7 +1162,7 @@ export class AzureCacheStore implements CacheStore {
 
       input.job.status = "uploading";
       input.job.progress = nextProgress;
-      input.job.message = "正在建立播放缓存。";
+      input.job.message = "正在建立可播放文件。";
       input.job.updatedAt = new Date().toISOString();
       lastSavedProgress = nextProgress;
       await this.saveJob(input.job);

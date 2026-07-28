@@ -1,16 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MediaVariant, SearchResult } from "@wwpdw/shared";
+import type { CacheJob, MediaVariant, SearchResult } from "@wwpdw/shared";
 import {
   basicInfoLine,
   bestDetailSummary,
   bestSummary,
   groupEpisodeVariantsBySpec,
+  jobMessageLabel,
   variantHasSizeMetadata,
   variantSpecLabels,
   variantSpecText
 } from "../src/cinema/format";
+
+test("queued preparation jobs show their live queue position", () => {
+  const job: CacheJob = {
+    id: "job-2",
+    assetKey: "film-2",
+    title: "第二部影片",
+    source: "Notion",
+    status: "queued",
+    progress: 0,
+    message: "Waiting for a cache worker.",
+    queuePosition: 2,
+    queueLength: 4,
+    createdAt: "2026-07-28T00:00:00.000Z",
+    updatedAt: "2026-07-28T00:00:00.000Z"
+  };
+
+  assert.equal(jobMessageLabel(job), "准备排队中 · 第 2 位，共 4 项");
+});
 
 function result(overrides: Partial<SearchResult>): SearchResult {
   return {
