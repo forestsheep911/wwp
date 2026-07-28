@@ -500,6 +500,18 @@ export function listLoginAudit(limit = 50) {
   return request<AdminLoginAuditResponse>(apiUrl(`/api/admin/login-audit?${params.toString()}`));
 }
 
+export interface AdminOssPlaybackPocStatus {
+  enabled: boolean;
+  expiresMinutes: number;
+  mediaUrl?: string;
+  objectKey?: string;
+  reason?: string;
+}
+
+export function getAdminOssPlaybackPocStatus() {
+  return request<AdminOssPlaybackPocStatus>(apiUrl("/api/admin/oss-playback-poc"));
+}
+
 export function listMovieRequests(limit = 100) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<MovieRequestsResponse>(apiUrl(`/api/admin/movie-requests?${params.toString()}`));

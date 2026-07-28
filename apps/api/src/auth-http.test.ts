@@ -23,3 +23,17 @@ test("production session cookie is HttpOnly, Secure, and cross-site compatible",
     process.env.NODE_ENV = prior;
   }
 });
+
+test("development session cookie works on local HTTP origins", () => {
+  const prior = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
+  try {
+    const cookie = sessionCookie("session.secret", "2026-08-14T00:00:00.000Z");
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /SameSite=Lax/);
+    assert.doesNotMatch(cookie, /Secure/);
+    assert.match(clearSessionCookie(), /SameSite=Lax/);
+  } finally {
+    process.env.NODE_ENV = prior;
+  }
+});

@@ -30,13 +30,15 @@ export function readCookie(request: http.IncomingMessage, name = sessionCookieNa
 }
 
 export function sessionCookie(value: string, expiresAt: string) {
-  const secure = process.env.NODE_ENV !== "development";
-  return `${sessionCookieName}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=None; ${secure ? "Secure; " : ""}Expires=${new Date(expiresAt).toUTCString()}`;
+  const secure = process.env.NODE_ENV === "production";
+  const sameSite = secure ? "None" : "Lax";
+  return `${sessionCookieName}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=${sameSite}; ${secure ? "Secure; " : ""}Expires=${new Date(expiresAt).toUTCString()}`;
 }
 
 export function clearSessionCookie() {
-  const secure = process.env.NODE_ENV !== "development";
-  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=None; ${secure ? "Secure; " : ""}Max-Age=0`;
+  const secure = process.env.NODE_ENV === "production";
+  const sameSite = secure ? "None" : "Lax";
+  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=${sameSite}; ${secure ? "Secure; " : ""}Max-Age=0`;
 }
 
 export function csrfValid(request: http.IncomingMessage, expected: string) {

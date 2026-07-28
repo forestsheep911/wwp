@@ -70,6 +70,7 @@ import { createSearchSource } from "./search-source.js";
 import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { internalServerErrorPayload } from "./api-error.js";
+import { AliyunOssPocUnavailableError, createAliyunOssPoc } from "./aliyun-oss-poc.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 import { PlaybackAdmissionQueue } from "./playback-admission.js";
@@ -82,6 +83,7 @@ const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
 const sessionStore = createSessionStore();
 const workerTrigger = new CacheWorkerTrigger();
+const aliyunOssPoc = createAliyunOssPoc();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
@@ -3707,6 +3709,44 @@ async function handleSearchIndexStats(response: http.ServerResponse, context: Re
   sendJson(response, 200, { stats });
 }
 
+function handleAliyunOssPocStatus(response: http.ServerResponse, context: RequestContext) {
+  const status = aliyunOssPoc.status();
+  logInfo("api.admin.oss_playback_poc.status", {
+    requestId: context.requestId,
+    enabled: status.enabled
+  });
+  sendJson(
+    response,
+    200,
+    {
+      ...status,
+      mediaUrl: status.enabled ? "/api/admin/oss-playback-poc/media" : undefined
+    },
+    { "Cache-Control": "no-store" }
+  );
+}
+
+function handleAliyunOssPocSignedUrl(response: http.ServerResponse, context: RequestContext) {
+  try {
+    const signed = aliyunOssPoc.createSignedUrl();
+    logInfo("api.admin.oss_playback_poc.signed_url", {
+      requestId: context.requestId,
+      expiresAt: signed.expiresAt
+    });
+    sendJson(response, 200, signed, { "Cache-Control": "no-store" });
+  } catch (error) {
+    if (error instanceof AliyunOssPocUnavailableError) {
+      logWarn("api.admin.oss_playback_poc.unavailable", {
+        requestId: context.requestId,
+        message: error.message
+      });
+      sendJson(response, 503, { error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
 async function handleRetryCacheJob(jobId: string, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const job = await store.getJob(jobId);
@@ -4008,6 +4048,26 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       if (!requireAdmin(identity, response, context)) return;
       const sessions = await sessionStore.listActive();
       sendJson(response, 200, { sessions: sessions.map(({ secretHash, csrfToken, ...session }) => session) });
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc") {
+      if (!requireAdmin(identity, response, context)) return;
+      handleAliyunOssPocStatus(response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc/signed-url") {
+      if (!requireAdmin(identity, response, context)) return;
+      handleAliyunOssPocSignedUrl(response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc/media") {
+      if (!requireAdmin(identity, response, context)) return;
+      sendJson(response, 409, {
+        error: "OSS media requests require the browser playback adapter."
+      });
       return;
     }
 

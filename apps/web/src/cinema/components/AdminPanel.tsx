@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import {
   Activity,
   Bell,
+  Cloud,
   Database,
   Copy,
   Fingerprint,
@@ -59,6 +60,7 @@ import {
 import type { BadgeVariant, ManagedMemberCode, ManagedMemberInvitation } from "../types";
 import { EmptyState } from "./EmptyState";
 import { Metric } from "./MediaDiagnosticsView";
+import { OssPlaybackPocPanel } from "./OssPlaybackPocPanel";
 
 function invitationLink(invitation: ManagedMemberInvitation) {
   if (!invitation.code || typeof window === "undefined") {
@@ -250,6 +252,10 @@ export function AdminPanel({
             {copy.admin.tabs.security}
             <Badge variant="secondary">{loginAudit.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="oss-poc">
+            <Cloud className="h-4 w-4" />
+            OSS 测试
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="cached">
@@ -332,6 +338,10 @@ export function AdminPanel({
             loading={loginAuditLoading}
             onRefresh={onRefreshLoginAudit}
           />
+        </TabsContent>
+
+        <TabsContent value="oss-poc">
+          <OssPlaybackPocPanel />
         </TabsContent>
       </Tabs>
     </div>

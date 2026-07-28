@@ -14,9 +14,21 @@ param(
     [string]$AdminContainerSecretName = "wwpdw-admin-key",
     [string]$BailianKeyVaultSecretName = "BAILIAN-API-KEY",
     [string]$BailianContainerSecretName = "bailian-api-key",
+    [string]$AliyunAccessKeyIdKeyVaultSecretName = "ALIBABA-CLOUD-ACCESS-KEY-ID",
+    [string]$AliyunAccessKeyIdContainerSecretName = "alibaba-cloud-access-key-id",
+    [string]$AliyunAccessKeySecretKeyVaultSecretName = "ALIBABA-CLOUD-ACCESS-KEY-SECRET",
+    [string]$AliyunAccessKeySecretContainerSecretName = "alibaba-cloud-access-key-secret",
     [string]$AdminKey = $env:WWPDW_ADMIN_KEY,
     [string]$AllowedWebOrigins = $env:WWPDW_ALLOWED_WEB_ORIGINS,
     [string]$BailianApiKey = $env:BAILIAN_API_KEY,
+    [string]$AliyunAccessKeyId = $env:ALIBABA_CLOUD_ACCESS_KEY_ID,
+    [string]$AliyunAccessKeySecret = $env:ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+    [string]$AliyunOssPocEnabled = $env:ALIYUN_OSS_POC_ENABLED,
+    [string]$AliyunOssRegion = $env:ALIYUN_OSS_REGION,
+    [string]$AliyunOssBucket = $env:ALIYUN_OSS_BUCKET,
+    [string]$AliyunOssEndpoint = $env:ALIYUN_OSS_ENDPOINT,
+    [string]$AliyunOssPocObjectKey = $env:ALIYUN_OSS_POC_OBJECT_KEY,
+    [string]$AliyunOssSignedUrlMinutes = $env:ALIYUN_OSS_SIGNED_URL_MINUTES,
     [string]$AiSummaryModelPreset = $env:WWPDW_AI_SUMMARY_MODEL_PRESET,
     [string]$AiSummaryModel = $env:WWPDW_AI_SUMMARY_MODEL,
     [string]$BailianBaseUrl = $env:BAILIAN_BASE_URL,
@@ -54,6 +66,7 @@ function Get-DotEnvValue {
         return $null
     }
 
+    $result = $null
     foreach ($line in Get-Content $envPath) {
         if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
             continue
@@ -64,10 +77,13 @@ function Get-DotEnvValue {
             continue
         }
 
-        return $matches[2].Trim().Trim('"').Trim("'")
+        $value = $matches[2].Trim().Trim('"').Trim("'")
+        if ($value) {
+            $result = $value
+        }
     }
 
-    return $null
+    return $result
 }
 
 $subscriptionId = & $AzCli account show --query id --output tsv
@@ -132,6 +148,38 @@ if (-not $AiSummaryModel) {
 
 if (-not $BailianBaseUrl) {
     $BailianBaseUrl = Get-DotEnvValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
+}
+
+if (-not $AliyunAccessKeyId) {
+    $AliyunAccessKeyId = Get-DotEnvValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_ID")
+}
+
+if (-not $AliyunAccessKeySecret) {
+    $AliyunAccessKeySecret = Get-DotEnvValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+}
+
+if (-not $AliyunOssPocEnabled) {
+    $AliyunOssPocEnabled = Get-DotEnvValue -Names @("ALIYUN_OSS_POC_ENABLED")
+}
+
+if (-not $AliyunOssRegion) {
+    $AliyunOssRegion = Get-DotEnvValue -Names @("ALIYUN_OSS_REGION")
+}
+
+if (-not $AliyunOssBucket) {
+    $AliyunOssBucket = Get-DotEnvValue -Names @("ALIYUN_OSS_BUCKET")
+}
+
+if (-not $AliyunOssEndpoint) {
+    $AliyunOssEndpoint = Get-DotEnvValue -Names @("ALIYUN_OSS_ENDPOINT")
+}
+
+if (-not $AliyunOssPocObjectKey) {
+    $AliyunOssPocObjectKey = Get-DotEnvValue -Names @("ALIYUN_OSS_POC_OBJECT_KEY")
+}
+
+if (-not $AliyunOssSignedUrlMinutes) {
+    $AliyunOssSignedUrlMinutes = Get-DotEnvValue -Names @("ALIYUN_OSS_SIGNED_URL_MINUTES")
 }
 
 $OmdbApiKey = Get-DotEnvValue -Names @("OMDB_API_KEY")
@@ -253,6 +301,30 @@ if ($AiSummaryModel) {
 
 if ($BailianBaseUrl) {
     $envVars += "BAILIAN_BASE_URL=$BailianBaseUrl"
+}
+
+if ($AliyunOssPocEnabled) {
+    $envVars += "ALIYUN_OSS_POC_ENABLED=$AliyunOssPocEnabled"
+}
+
+if ($AliyunOssRegion) {
+    $envVars += "ALIYUN_OSS_REGION=$AliyunOssRegion"
+}
+
+if ($AliyunOssBucket) {
+    $envVars += "ALIYUN_OSS_BUCKET=$AliyunOssBucket"
+}
+
+if ($AliyunOssEndpoint) {
+    $envVars += "ALIYUN_OSS_ENDPOINT=$AliyunOssEndpoint"
+}
+
+if ($AliyunOssPocObjectKey) {
+    $envVars += "ALIYUN_OSS_POC_OBJECT_KEY=$AliyunOssPocObjectKey"
+}
+
+if ($AliyunOssSignedUrlMinutes) {
+    $envVars += "ALIYUN_OSS_SIGNED_URL_MINUTES=$AliyunOssSignedUrlMinutes"
 }
 
 $existingAppName = & $AzCli containerapp list `
@@ -433,4 +505,88 @@ if ($adminSecretId) {
         --output none
 } else {
     Write-Host "WWPDW admin key secret was not found; administrator login will reject requests until WWPDW_ADMIN_KEY is set."
+}
+
+$aliyunAccessKeyIdSecretId = & $AzCli keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $AliyunAccessKeyIdKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+
+if (-not $aliyunAccessKeyIdSecretId -and $AliyunAccessKeyId) {
+    Write-Host "Creating Alibaba Cloud access key ID secret reference in Key Vault."
+    $tempSecretPath = New-TemporaryFile
+    try {
+        Set-Content -Path $tempSecretPath -Value $AliyunAccessKeyId -NoNewline
+        & $AzCli keyvault secret set `
+            --vault-name $KeyVaultName `
+            --name $AliyunAccessKeyIdKeyVaultSecretName `
+            --file $tempSecretPath `
+            --output none
+    } finally {
+        Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $aliyunAccessKeyIdSecretId = & $AzCli keyvault secret show `
+        --vault-name $KeyVaultName `
+        --name $AliyunAccessKeyIdKeyVaultSecretName `
+        --query id `
+        --output tsv
+}
+
+$aliyunAccessKeySecretSecretId = & $AzCli keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $AliyunAccessKeySecretKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+
+if (-not $aliyunAccessKeySecretSecretId -and $AliyunAccessKeySecret) {
+    Write-Host "Creating Alibaba Cloud access key secret reference in Key Vault."
+    $tempSecretPath = New-TemporaryFile
+    try {
+        Set-Content -Path $tempSecretPath -Value $AliyunAccessKeySecret -NoNewline
+        & $AzCli keyvault secret set `
+            --vault-name $KeyVaultName `
+            --name $AliyunAccessKeySecretKeyVaultSecretName `
+            --file $tempSecretPath `
+            --output none
+    } finally {
+        Remove-Item -LiteralPath $tempSecretPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $aliyunAccessKeySecretSecretId = & $AzCli keyvault secret show `
+        --vault-name $KeyVaultName `
+        --name $AliyunAccessKeySecretKeyVaultSecretName `
+        --query id `
+        --output tsv
+}
+
+if ($aliyunAccessKeyIdSecretId -and $aliyunAccessKeySecretSecretId) {
+    $aliyunAccessKeyIdSecretUri = $aliyunAccessKeyIdSecretId -replace "/[0-9a-fA-F]{32}$", ""
+    $aliyunAccessKeySecretSecretUri = $aliyunAccessKeySecretSecretId -replace "/[0-9a-fA-F]{32}$", ""
+    Write-Host "Attaching Alibaba Cloud OSS signing secret references."
+
+    & $AzCli containerapp secret set `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --secrets `
+            "$AliyunAccessKeyIdContainerSecretName=keyvaultref:$aliyunAccessKeyIdSecretUri,identityref:$($identity.id)" `
+            "$AliyunAccessKeySecretContainerSecretName=keyvaultref:$aliyunAccessKeySecretSecretUri,identityref:$($identity.id)" `
+        --output none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not attach Alibaba Cloud OSS secrets to the API Container App."
+    }
+
+    & $AzCli containerapp update `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --set-env-vars `
+            "ALIBABA_CLOUD_ACCESS_KEY_ID=secretref:$AliyunAccessKeyIdContainerSecretName" `
+            "ALIBABA_CLOUD_ACCESS_KEY_SECRET=secretref:$AliyunAccessKeySecretContainerSecretName" `
+        --output none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not configure Alibaba Cloud OSS secret environment variables."
+    }
+} else {
+    Write-Host "Alibaba Cloud access keys were not found; the OSS playback POC will stay unavailable."
 }
