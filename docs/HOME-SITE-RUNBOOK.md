@@ -162,7 +162,8 @@ Expected behavior:
 - `/api/playback/<asset-key>` issues a session-bound, expiring playback grant.
 - `/api/media/<asset-key>?grant=...` supports authenticated byte ranges.
 - `/api/posters/<poster-key>` serves the local poster cache.
-- At most four media streams run concurrently by default.
+- At most two preparation jobs and eight media streams run concurrently by
+  default. Additional work remains queued.
 
 ## Automatic Startup
 

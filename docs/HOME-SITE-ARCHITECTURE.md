@@ -135,7 +135,7 @@ Required behavior:
   `Content-Range`, and stable seeking behavior.
 - Authorize media through a short-lived signed local playback grant. Never
   expose an unrestricted disk directory.
-- Keep concurrency conservative by default: one preparation job and a bounded
+- Keep concurrency conservative by default: two preparation jobs and a bounded
   number of playback streams.
 - Resume interrupted downloads when the source supports ranges.
 
@@ -254,4 +254,3 @@ the Phase 0 proof or when carrier-grade NAT prevents direct ingress. Build the
 Azure one-time login exchange before exposing member accounts publicly, and
 build a real filesystem cache backend before claiming that the current local
 mode can play media.
-
