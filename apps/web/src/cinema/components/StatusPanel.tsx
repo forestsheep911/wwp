@@ -71,7 +71,9 @@ export function StatusPanel({
             {asset?.status === "ready" ? (
               <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
-                {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
+                {creditPolicy.billingEnabled
+                  ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                  : copy.watchlist.play}
               </Button>
             ) : null}
           </div>

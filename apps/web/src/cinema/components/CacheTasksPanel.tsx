@@ -168,7 +168,9 @@ function PreparingList({
             {asset?.status === "ready" ? (
               <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
-                {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
+                {creditPolicy.billingEnabled
+                  ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                  : copy.watchlist.play}
               </Button>
             ) : null}
           </CardContent>
@@ -213,7 +215,9 @@ function ReadyAssetList({
             </div>
             <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
               <CheckCircle2 className="h-4 w-4" />
-              {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
+              {creditPolicy.billingEnabled
+                ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                : copy.watchlist.play}
             </Button>
           </CardContent>
         </Card>

@@ -264,9 +264,13 @@ function FavoriteCard({
         {variant ? (
           <Button className="w-full justify-center sm:w-auto sm:justify-self-end" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
             <Play className="h-4 w-4" />
-            {ready
-              ? formatCreditAmount(playbackCreditCost(variant.cache?.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-              : `${copy.watchlist.prepare} ${formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)}`}
+            {creditPolicy.billingEnabled
+              ? ready
+                ? formatCreditAmount(playbackCreditCost(variant.cache?.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                : `${copy.watchlist.prepare} ${formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)}`
+              : ready
+                ? copy.watchlist.play
+                : copy.watchlist.prepare}
           </Button>
         ) : (
           <Badge className="justify-self-end" variant="danger">

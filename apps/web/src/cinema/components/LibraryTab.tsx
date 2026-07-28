@@ -1976,9 +1976,14 @@ function VariantButtons({
         ? jobVariant(tracked.job.status)
         : cacheVariant(displayAsset);
     const isActiveCacheHit = pending || trackedCacheNeedsStatusRefresh(tracked);
-    const costLabel = displayAsset?.status === "ready"
+    const actionLabel = displayAsset?.status === "ready"
+      ? copy.watchlist.play
+      : copy.watchlist.prepare;
+    const costLabel = creditPolicy.billingEnabled
+      ? displayAsset?.status === "ready"
         ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-        : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol);
+        : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)
+      : actionLabel;
     const costDisplayLabel = displayAsset?.status === "ready" && !isActiveCacheHit
       ? `▶ ${costLabel}`
       : costLabel;
@@ -2009,7 +2014,7 @@ function VariantButtons({
           </span>
           <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
             {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {!isActiveCacheHit ? (
+            {!isActiveCacheHit && creditPolicy.billingEnabled ? (
               <Badge className={costBadgeClass} variant="warning">
                 {costDisplayLabel}
               </Badge>

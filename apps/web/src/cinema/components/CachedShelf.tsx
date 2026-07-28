@@ -63,7 +63,9 @@ export function CachedShelf({
               </div>
               <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
                 <Play className="h-4 w-4" />
-                {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
+                {creditPolicy.billingEnabled
+                  ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                  : copy.watchlist.play}
               </Button>
             </CardContent>
           </Card>

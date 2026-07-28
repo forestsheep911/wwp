@@ -61,13 +61,17 @@ export function HistoryPanel({
               {statusByAssetKey[item.assetKey]?.playable ? (
                 <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onPlay(item.assetKey, item.result)}>
                   <Play className="h-4 w-4" />
-                  {formatCreditAmount(playbackCreditCost(statusByAssetKey[item.assetKey]?.asset?.media?.contentLength ?? item.contentLength, creditPolicy), creditPolicy.unitSymbol)}
+                  {creditPolicy.billingEnabled
+                    ? formatCreditAmount(playbackCreditCost(statusByAssetKey[item.assetKey]?.asset?.media?.contentLength ?? item.contentLength, creditPolicy), creditPolicy.unitSymbol)
+                    : copy.watchlist.play}
                 </Button>
               ) : null}
               {!statusByAssetKey[item.assetKey]?.playable && item.result ? (
                 <Button className="w-full sm:w-auto" type="button" size="sm" variant="secondary" onClick={() => onRecache(item)}>
                   <RefreshCw className="h-4 w-4" />
-                  {formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)}
+                  {creditPolicy.billingEnabled
+                    ? formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)
+                    : copy.watchlist.prepare}
                 </Button>
               ) : null}
             </div>
