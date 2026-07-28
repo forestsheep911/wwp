@@ -27,3 +27,18 @@ test("playbackCreditCost refuses missing or invalid sizes", () => {
   assert.equal(hasBillablePlaybackSize(0), false);
   assert.equal(hasBillablePlaybackSize(1), true);
 });
+
+test("playbackCreditCost is zero when billing is disabled", () => {
+  const freePolicy = {
+    ...defaultCreditPolicy,
+    billingEnabled: false
+  };
+  assert.equal(playbackCreditCost(undefined, freePolicy), 0);
+  assert.equal(playbackCreditCost(1_000_000_000, freePolicy), 0);
+});
+
+test("playbackCreditCost keeps legacy policy responses chargeable", () => {
+  assert.equal(playbackCreditCost(200 * 1000 * 1000, {
+    playbackCreditBytes: defaultCreditPolicy.playbackCreditBytes
+  }), 2);
+});

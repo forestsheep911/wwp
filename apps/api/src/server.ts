@@ -136,6 +136,9 @@ const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
 const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? defaultCreditPolicy.cacheCredits)));
 const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? defaultCreditPolicy.playbackReplayFreeHours)));
 const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? defaultCreditPolicy.playbackCreditBytes)));
+const creditBillingEnabled = !["0", "false", "no", "off"].includes(
+  (process.env.WWPDW_CREDIT_BILLING_ENABLED ?? "true").toLowerCase()
+);
 const movieRequestStatuses: MovieRequestStatus[] = ["new", "planned", "fulfilled", "dismissed"];
 const adminMovieRequestMemberId = "admin";
 const adminMovieRequestMemberName = "Admin";
@@ -1771,8 +1774,9 @@ function playbackSizeMissingErrorMessage() {
 
 function creditPolicyPayload(): CreditPolicyResponse {
   return {
+    billingEnabled: creditBillingEnabled,
     unitSymbol: defaultCreditPolicy.unitSymbol,
-    cacheCredits: cacheCreditCost,
+    cacheCredits: creditBillingEnabled ? cacheCreditCost : 0,
     playbackCreditBytes,
     playbackReplayFreeHours
   };
@@ -1788,7 +1792,7 @@ function previewPayload(input: {
   windowExpiresAt?: string;
 }): CreditPreviewResponse {
   const remaining = input.identity.credits?.remaining;
-  const chargeable = input.identity.role === "member" && !input.freeReason && input.credits > 0;
+  const chargeable = creditBillingEnabled && input.identity.role === "member" && !input.freeReason && input.credits > 0;
   const remainingAfter = chargeable && remaining !== undefined
     ? Math.max(0, remaining - input.credits)
     : remaining;
@@ -1803,7 +1807,11 @@ function previewPayload(input: {
     canAfford: !chargeable || remaining === undefined || remaining >= input.credits,
     remaining,
     remainingAfter,
-    freeReason: input.identity.role === "admin" ? "admin" : input.freeReason,
+    freeReason: input.identity.role === "admin"
+      ? "admin"
+      : !creditBillingEnabled
+        ? "billing_disabled"
+        : input.freeReason,
     windowHours: input.action === "playback" ? playbackReplayFreeHours : undefined,
     windowExpiresAt: input.windowExpiresAt
   };
@@ -1953,7 +1961,11 @@ async function handleEnsureCache(
   const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
   const readyHit = isFreshReady(existingAsset);
   const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
-  const shouldChargeMember = identity.role === "member" && Boolean(identity.memberId) && !readyHit && !activeAssetJobHit;
+  const shouldChargeMember = creditBillingEnabled &&
+    identity.role === "member" &&
+    Boolean(identity.memberId) &&
+    !readyHit &&
+    !activeAssetJobHit;
   const charge = shouldChargeMember
     ? await accessStore.chargeMemberCredits(identity.memberId!, {
       credits: cacheCreditCost,
@@ -2260,7 +2272,7 @@ async function handlePlayback(
     return;
   }
 
-  const shouldChargeMember = identity.role === "member" && Boolean(identity.memberId);
+  const shouldChargeMember = creditBillingEnabled && identity.role === "member" && Boolean(identity.memberId);
   const playbackCredits = playbackCreditCost(asset?.media?.contentLength, creditPolicyPayload());
   if (shouldChargeMember && playbackCredits === undefined) {
     logWarn("api.playback.credit_size_missing", {

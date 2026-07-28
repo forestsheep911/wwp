@@ -930,6 +930,8 @@ export function freeReasonLabel(reason?: CreditPreviewFreeReason) {
   switch (reason) {
     case "admin":
       return "管理员免费";
+    case "billing_disabled":
+      return "本地站免费";
     case "cache_ready":
       return "已准备好";
     case "cache_active":

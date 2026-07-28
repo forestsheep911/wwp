@@ -11,7 +11,9 @@ Notion metadata synchronizer from one launcher. Member accounts, sessions,
 notices, forum data, requests, and credits stay shared through Azure Tables.
 The movie search index, TSPDT browse data, posters, video bytes, and cache-job
 state are local. Movie metadata is synchronized directly from Notion and does
-not use the hosted Azure movie index as an upstream source.
+not use the hosted Azure movie index as an upstream source. Local cache
+preparation and playback are free and do not show a charge confirmation;
+the Azure site keeps its existing credit rules.
 
 ## Build and Start
 
@@ -83,6 +85,10 @@ WWPDW_HOME_NOTION_SYNC_INTERVAL_MINUTES=30
 WWPDW_HOME_NOTION_FULL_SYNC_MIN_ENTRIES=500
 SEARCH_INDEX_SYNC_CONCURRENCY=2
 ```
+
+The launcher forces `WWPDW_CREDIT_BILLING_ENABLED=false` for the home process.
+The variable defaults to `true` elsewhere, so the Azure deployment remains
+chargeable unless explicitly changed.
 
 When `WWPDW_HOME_PUBLIC_ORIGIN` starts with `https://`, the home launcher uses
 production secure cookies. The origin must include the explicit public port.

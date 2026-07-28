@@ -789,6 +789,15 @@ function CinemaApp() {
 
   async function requestCreditAction(action: PendingCreditAction) {
     setError("");
+    if (creditPolicy.billingEnabled === false) {
+      try {
+        await executeCreditAction(action);
+      } catch (actionError) {
+        handleRequestError(actionError, copy.fallbackErrors.creditAction);
+      }
+      return;
+    }
+
     try {
       const preview = await previewCreditAction(action);
       setPendingCreditAction(action);

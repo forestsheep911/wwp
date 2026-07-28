@@ -643,6 +643,7 @@ export type CreditPreviewAction = "cache" | "playback";
 
 export type CreditPreviewFreeReason =
   | "admin"
+  | "billing_disabled"
   | "cache_ready"
   | "cache_active"
   | "playback_replay";
@@ -670,6 +671,7 @@ export interface CreditPreviewResponse {
 }
 
 export interface CreditPolicyResponse {
+  billingEnabled: boolean;
   unitSymbol: string;
   cacheCredits: number;
   playbackCreditBytes: number;
@@ -677,6 +679,7 @@ export interface CreditPolicyResponse {
 }
 
 export const defaultCreditPolicy: CreditPolicyResponse = {
+  billingEnabled: true,
   unitSymbol: "🍀",
   cacheCredits: 10,
   playbackCreditBytes: 100 * 1000 * 1000,
@@ -689,8 +692,13 @@ export function hasBillablePlaybackSize(contentLength: number | undefined): cont
 
 export function playbackCreditCost(
   contentLength: number | undefined,
-  policy: Pick<CreditPolicyResponse, "playbackCreditBytes">
+  policy: Pick<CreditPolicyResponse, "playbackCreditBytes"> &
+    Partial<Pick<CreditPolicyResponse, "billingEnabled">>
 ) {
+  if (policy.billingEnabled === false) {
+    return 0;
+  }
+
   if (!hasBillablePlaybackSize(contentLength)) {
     return undefined;
   }

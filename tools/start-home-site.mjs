@@ -36,6 +36,7 @@ process.env.SEARCH_INDEX_BACKEND = "local";
 process.env.TSPDT_BROWSE_BACKEND = "local";
 process.env.SEARCH_INDEX_WRITE_THROUGH = "false";
 process.env.SEARCH_INDEX_SYNC_CONCURRENCY ??= "2";
+process.env.WWPDW_CREDIT_BILLING_ENABLED = "false";
 process.env.WORKER_MODE ??= "daemon";
 process.env.WORKER_MAX_CONCURRENT ??= "1";
 process.env.WWPDW_ALLOWED_WEB_ORIGINS ??= localOrigins.join(",");
@@ -65,6 +66,7 @@ console.log(JSON.stringify({
   authBackend: process.env.WWPDW_AUTH_BACKEND,
   sessionBackend: process.env.WWPDW_SESSION_BACKEND,
   searchIndexBackend: process.env.SEARCH_INDEX_BACKEND,
+  creditBillingEnabled: process.env.WWPDW_CREDIT_BILLING_ENABLED,
   notionSyncEnabled,
   notionSyncIntervalMinutes,
   nodeEnvironment: process.env.NODE_ENV

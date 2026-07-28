@@ -1727,6 +1727,7 @@ export class NotionSearchSource {
   private readonly configuredMediaAssetsDatabaseId = process.env.NOTION_MEDIA_ASSETS_DATABASE_ID;
   private libraryMetadata?: Promise<LibraryMetadata | undefined>;
   private mediaAssetsMetadata?: Promise<LibraryMetadata | undefined>;
+  private mediaAssetScanPagesByWork?: Promise<Map<string, JsonRecord[]>>;
 
   constructor(private readonly options = defaultOptions) {
     installNotionDnsOverride();
@@ -1762,6 +1763,9 @@ export class NotionSearchSource {
     const delayMs = Math.max(0, Math.floor(options.delayMs ?? 0));
     const concurrency = Math.min(4, Math.max(1, Math.floor(options.concurrency ?? 1)));
     const since = options.since ? new Date(options.since).toISOString() : undefined;
+    if (!since) {
+      await this.prepareMediaAssetScanCache();
+    }
     let yielded = 0;
     let startCursor: string | undefined;
     let shouldStop = false;
@@ -2172,7 +2176,74 @@ export class NotionSearchSource {
     return undefined;
   }
 
+  private mediaAssetWorkKey(pageId: string) {
+    return pageId.replace(/-/g, "").toLowerCase();
+  }
+
+  private async prepareMediaAssetScanCache() {
+    if (!this.hasMediaAssetsConfig()) {
+      return;
+    }
+
+    this.mediaAssetScanPagesByWork ??= this.loadMediaAssetScanPagesByWork();
+    await this.mediaAssetScanPagesByWork;
+  }
+
+  private async loadMediaAssetScanPagesByWork() {
+    const pagesByWork = new Map<string, JsonRecord[]>();
+    const mediaAssets = await this.getMediaAssetsMetadata();
+    const workProperty = mediaAssets ? this.mediaAssetsWorkPropertyName(mediaAssets) : undefined;
+    if (!mediaAssets || !workProperty) {
+      return pagesByWork;
+    }
+
+    let startCursor: string | undefined;
+    do {
+      const response = await this.notion.dataSources.query({
+        data_source_id: mediaAssets.dataSourceId,
+        page_size: 100,
+        start_cursor: startCursor,
+        result_type: "page"
+      } as never);
+
+      for (const page of response.results.filter(isPageResult) as JsonRecord[]) {
+        if (page.archived === true || page.in_trash === true) {
+          continue;
+        }
+
+        const properties = asRecord(page.properties) ?? {};
+        const relation = asArray(asRecord(properties[workProperty])?.relation);
+        for (const relatedPage of relation) {
+          const workPageId = asString(asRecord(relatedPage)?.id);
+          if (!workPageId) {
+            continue;
+          }
+
+          const key = this.mediaAssetWorkKey(workPageId);
+          const existing = pagesByWork.get(key);
+          if (existing) {
+            existing.push(page);
+          } else {
+            pagesByWork.set(key, [page]);
+          }
+        }
+      }
+
+      startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+      if (startCursor) {
+        await sleep(350);
+      }
+    } while (startCursor);
+
+    return pagesByWork;
+  }
+
   private async queryMediaAssetPagesForWork(workPageId: string) {
+    if (this.mediaAssetScanPagesByWork) {
+      const pagesByWork = await this.mediaAssetScanPagesByWork;
+      return pagesByWork.get(this.mediaAssetWorkKey(workPageId)) ?? [];
+    }
+
     const mediaAssets = await this.getMediaAssetsMetadata();
     const workProperty = mediaAssets ? this.mediaAssetsWorkPropertyName(mediaAssets) : undefined;
     if (!mediaAssets || !workProperty) {
