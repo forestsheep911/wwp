@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
 
@@ -57,6 +58,7 @@ const sessionPartitionKey = "session";
 const defaultIdleTtlMs = 30 * 24 * 60 * 60 * 1000;
 const defaultAbsoluteTtlMs = 90 * 24 * 60 * 60 * 1000;
 const defaultRenewalThresholdMs = 24 * 60 * 60 * 1000;
+const localRenameRetryDelaysMs = [10, 25, 50, 100, 250];
 
 function positiveDuration(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -79,6 +81,7 @@ export class SessionStore {
   private readonly backend: "local" | "azure";
   private readonly statePath: string;
   private readonly table?: TableClient;
+  private localMutationTail: Promise<void> = Promise.resolve();
 
   constructor(options: SessionStoreOptions = {}) {
     this.now = options.now ?? (() => new Date());
@@ -144,9 +147,40 @@ export class SessionStore {
   }
 
   private async readLocal(): Promise<SessionState> { try { return JSON.parse(await readFile(this.statePath, "utf8")) as SessionState; } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return { sessions: {} }; throw e; } }
-  private async writeLocal(state: SessionState) { await mkdir(path.dirname(this.statePath), { recursive: true }); const temp = `${this.statePath}.${randomUUID()}.tmp`; await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, "utf8"); await rename(temp, this.statePath); }
+  private async replaceLocalFile(temp: string) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await rename(temp, this.statePath);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const retryDelay = localRenameRetryDelaysMs[attempt];
+        if (!retryDelay || !["EACCES", "EBUSY", "EPERM"].includes(code ?? "")) throw error;
+        await delay(retryDelay);
+      }
+    }
+  }
+  private async writeLocal(state: SessionState) {
+    await mkdir(path.dirname(this.statePath), { recursive: true });
+    const temp = `${this.statePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+      await this.replaceLocalFile(temp);
+    } finally {
+      await rm(temp, { force: true }).catch(() => undefined);
+    }
+  }
+  private async mutateLocal(record: SessionRecord) {
+    const mutation = this.localMutationTail.then(async () => {
+      const state = await this.readLocal();
+      state.sessions[record.id] = record;
+      await this.writeLocal(state);
+    });
+    this.localMutationTail = mutation.catch(() => undefined);
+    await mutation;
+  }
   private async get(id: string) { if (!this.table) return (await this.readLocal()).sessions[id]; try { const entity = await this.table.getEntity<Record<string, unknown>>(sessionPartitionKey, id); return JSON.parse(String(entity.payload)) as SessionRecord; } catch (e) { if ((e as { statusCode?: number }).statusCode === 404) return undefined; throw e; } }
-  private async put(record: SessionRecord) { if (!this.table) { const state = await this.readLocal(); state.sessions[record.id] = record; await this.writeLocal(state); return; } await this.table.upsertEntity({ partitionKey: sessionPartitionKey, rowKey: record.id, subjectKey: subjectKey(record.subject), revokedAt: record.revokedAt ?? "", payload: JSON.stringify(record) }, "Replace"); }
+  private async put(record: SessionRecord) { if (!this.table) { await this.mutateLocal(record); return; } await this.table.upsertEntity({ partitionKey: sessionPartitionKey, rowKey: record.id, subjectKey: subjectKey(record.subject), revokedAt: record.revokedAt ?? "", payload: JSON.stringify(record) }, "Replace"); }
   private async list() { if (!this.table) return Object.values((await this.readLocal()).sessions); const records: SessionRecord[] = []; for await (const entity of this.table.listEntities<Record<string, unknown>>({ queryOptions: { filter: `PartitionKey eq '${sessionPartitionKey}'` } })) records.push(JSON.parse(String(entity.payload)) as SessionRecord); return records; }
 }
 

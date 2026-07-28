@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -42,4 +42,25 @@ test("rejects expired and revoked sessions and revokes all sessions for a subjec
   const expiring = await store.create(member);
   now = new Date("2026-07-14T00:00:03.000Z");
   assert.equal(await store.authenticate(expiring.cookieValue), undefined);
+});
+
+test("serializes concurrent local session writes without losing records or leaving temp files", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "wwp-session-"));
+  const store = createSessionStore({ backend: "local", localDataDir: dir });
+
+  const issued = await Promise.all(Array.from(
+    { length: 40 },
+    (_, index) => store.create({
+      role: "member",
+      memberId: `member-${index}`,
+      memberName: `Family ${index}`
+    })
+  ));
+  const state = JSON.parse(await readFile(path.join(dir, "session-state.json"), "utf8")) as {
+    sessions: Record<string, unknown>;
+  };
+  const files = await readdir(dir);
+
+  assert.equal(Object.keys(state.sessions).length, issued.length);
+  assert.deepEqual(files.filter((file) => file.endsWith(".tmp")), []);
 });

@@ -67,6 +67,7 @@ import { getNowPlaying } from "./now-playing-source.js";
 import { createSearchSource } from "./search-source.js";
 import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-source-refresh.js";
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
+import { internalServerErrorPayload } from "./api-error.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 import { PlaybackAdmissionQueue } from "./playback-admission.js";
@@ -4187,9 +4188,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       path: context.path,
       ...errorLogFields(error)
     });
-    sendJson(response, 500, {
-      error: error instanceof Error ? error.message : "Unexpected server error."
-    });
+    sendJson(response, 500, internalServerErrorPayload(requestId));
   } finally {
     logInfo("api.request", {
       requestId,
