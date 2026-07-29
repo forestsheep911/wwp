@@ -6,6 +6,8 @@ import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 
+const DEFAULT_MAX_ASSETS = 200;
+
 function parseArgs() {
   const options = {
     auditReportPath: "",
@@ -13,7 +15,7 @@ function parseArgs() {
     metadataManifestPath: "",
     skipPages: 0,
     maxPages: 2,
-    maxAssets: 50,
+    maxAssets: DEFAULT_MAX_ASSETS,
     includeDirectSpec: false,
     allowPartialEpisodes: false,
     updateExistingMissing: false,
@@ -1102,6 +1104,17 @@ async function main() {
         });
     const selected = candidates.slice(0, remainingAssets);
     remainingAssets -= selected.length;
+    const pageIssues = [...issues];
+    if (selected.length < candidates.length) {
+      pageIssues.push({
+        kind: "asset_limit_reached",
+        pageId: page.pageId,
+        title: page.title,
+        candidatesFound: candidates.length,
+        selected: selected.length,
+        remaining: candidates.length - selected.length
+      });
+    }
     const actions = [];
     for (const candidate of selected) {
       actions.push(await processCandidate(
@@ -1127,8 +1140,8 @@ async function main() {
       wouldCreate: actions.filter((action) => action.action === "would_create").length,
       wouldUpdateExisting: actions.filter((action) => action.action === "would_update_existing").length,
       wouldCorrectExisting: actions.filter((action) => action.action === "would_correct_existing").length,
-      issues: issues.length,
-      issueDetails: issues,
+      issues: pageIssues.length,
+      issueDetails: pageIssues,
       actions
     });
     if (remainingAssets <= 0) break;
@@ -1175,6 +1188,7 @@ export {
   buildAssetProperties,
   buildMissingProperties,
   buildReplacementProperties,
+  DEFAULT_MAX_ASSETS,
   isEmptyProperty,
   parseAssetMetadata,
   selectablePages

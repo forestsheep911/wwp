@@ -5,6 +5,7 @@ import {
   buildAssetProperties,
   buildMissingProperties,
   buildReplacementProperties,
+  DEFAULT_MAX_ASSETS,
   candidatesFromOrganizerPage,
   comparableUploadFileName,
   metadataOverrideMatches,
@@ -12,6 +13,10 @@ import {
   playablePlacementIssue,
   selectablePages
 } from "./notion-media-assets-write-series.mjs";
+
+test("series asset writer default batch covers a 110-episode season", () => {
+  assert.equal(DEFAULT_MAX_ASSETS, 200);
+});
 
 test("metadata overrides survive Notion filename punctuation cleanup on the exact episode page", () => {
   const localName = "【AGE】[JOJO&UHA-WING&Kamigami][180253][01][720P][CHS] AVC.mp4";
