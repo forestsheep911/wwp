@@ -38,6 +38,7 @@ import type {
   MovieRequestsResponse,
   PlaybackAdmissionResponse,
   PlaybackCapacity,
+  PlaybackLine,
   PlaybackResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
@@ -285,15 +286,16 @@ export function createForumReply(id: string, input: CreateForumReplyRequest) {
   );
 }
 
-export function searchAssets(query: string) {
+export function searchAssets(query: string, line?: PlaybackLine) {
   const params = new URLSearchParams({ q: query });
+  if (line) params.set("line", line);
   return request<SearchResponse>(apiUrl(`/api/search?${params.toString()}`));
 }
 
 export function browseAssets(
   limit = 60,
   offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId } = {}
+  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine } = {}
 ) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (options.mode) {
@@ -304,6 +306,9 @@ export function browseAssets(
   }
   if (options.view) {
     params.set("view", options.view);
+  }
+  if (options.line) {
+    params.set("line", options.line);
   }
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
 }
@@ -335,12 +340,13 @@ export function getCreditPolicy() {
   return request<CreditPolicyResponse>(apiUrl("/api/credit-policy"));
 }
 
-export function ensureCache(result: SearchResult) {
+export function ensureCache(result: SearchResult, line?: PlaybackLine) {
   return request<EnsureCacheResponse>(apiUrl("/api/cache"), {
     method: "POST",
     body: JSON.stringify({
       assetKey: result.assetKey,
-      result
+      result,
+      line
     })
   });
 }
@@ -375,9 +381,10 @@ export function releasePlaybackAdmission(ticketId: string) {
   );
 }
 
-export function getPlayback(assetKey: string, admissionTicketId?: string) {
+export function getPlayback(assetKey: string, admissionTicketId?: string, line?: PlaybackLine) {
   const params = new URLSearchParams();
   if (admissionTicketId) params.set("admission", admissionTicketId);
+  if (line) params.set("line", line);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return request<PlaybackResponse>(apiUrl(`/api/playback/${encodeURIComponent(assetKey)}${suffix}`));
 }
@@ -400,12 +407,16 @@ export function reportPlaybackDiagnostic(diagnostic: PlaybackClientDiagnostic) {
   });
 }
 
-export function getCacheAsset(assetKey: string) {
-  return request<CacheAssetLookupResponse>(apiUrl(`/api/assets/${encodeURIComponent(assetKey)}`));
+export function getCacheAsset(assetKey: string, line?: PlaybackLine) {
+  const params = new URLSearchParams();
+  if (line) params.set("line", line);
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request<CacheAssetLookupResponse>(apiUrl(`/api/assets/${encodeURIComponent(assetKey)}${suffix}`));
 }
 
-export function listCachedAssets(limit = 100) {
+export function listCachedAssets(limit = 100, line?: PlaybackLine) {
   const params = new URLSearchParams({ limit: String(limit) });
+  if (line) params.set("line", line);
   return request<CachedAssetsResponse>(apiUrl(`/api/cached-assets?${params.toString()}`));
 }
 

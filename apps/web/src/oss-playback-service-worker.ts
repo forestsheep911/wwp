@@ -1,4 +1,4 @@
-const serviceWorkerPath = "/oss-playback-sw.js?v=2";
+const serviceWorkerPath = "/oss-playback-sw.js?v=3";
 
 function waitForController(timeoutMs = 10_000) {
   if (navigator.serviceWorker.controller) return Promise.resolve();

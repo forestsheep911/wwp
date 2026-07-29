@@ -96,7 +96,7 @@ export class OssPreparationStore {
   }
 
   async findByAssetKey(assetKey: string) {
-    return (await this.list(200)).find((job) => job.assetKey === assetKey);
+    return (await this.list(1_000)).find((job) => job.assetKey === assetKey);
   }
 
   async list(limit = 50) {

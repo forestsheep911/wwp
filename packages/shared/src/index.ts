@@ -7,6 +7,9 @@ export type CacheStatus =
   | "ready"
   | "failed";
 
+export type PlaybackLine = "domestic" | "international";
+export type PlaybackLinePreference = "auto" | PlaybackLine;
+
 export type ResolverLayer = "official_api" | "rule" | "browser" | "ai";
 
 export type ResolveKind =
@@ -458,6 +461,7 @@ export interface CacheAsset {
   requestedByMemberId?: string;
   requestedByMemberName?: string;
   media?: MediaDiagnostics;
+  line?: PlaybackLine;
 }
 
 export interface CacheJob {
@@ -483,6 +487,7 @@ export interface CacheJob {
   resolve?: ResolveResult;
   completedAt?: string;
   error?: string;
+  line?: PlaybackLine;
 }
 
 export interface LocalCacheState {
@@ -564,6 +569,7 @@ export interface NowPlayingResponse {
 export interface EnsureCacheRequest {
   assetKey: string;
   result?: SearchResult;
+  line?: PlaybackLine;
 }
 
 export interface CacheTriggerStatus {
@@ -577,6 +583,7 @@ export interface EnsureCacheResponse {
   trigger?: CacheTriggerStatus;
   charge?: MemberCreditCharge;
   memberCredits?: MemberCreditSummary;
+  line?: PlaybackLine;
 }
 
 export interface DirectDownloadRequest {
@@ -609,6 +616,7 @@ export interface PlaybackResponse {
     windowHours: number;
     windowExpiresAt?: string;
   };
+  line?: PlaybackLine;
 }
 
 export type PlaybackLoadLevel = "low" | "medium" | "high" | "full";
@@ -678,6 +686,7 @@ export interface CreditPreviewRequest {
   assetKey: string;
   title?: string;
   result?: SearchResult;
+  line?: PlaybackLine;
 }
 
 export interface CreditPreviewResponse {

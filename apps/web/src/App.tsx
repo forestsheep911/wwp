@@ -16,6 +16,8 @@ import type {
   MovieRequestEntry,
   MovieRequestStatus,
   PlaybackAdmissionResponse,
+  PlaybackLine,
+  PlaybackLinePreference,
   PlaybackResponse,
   SearchResponse,
   SearchResult
@@ -91,6 +93,7 @@ import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
 import { PlaybackOpening } from "./cinema/components/PlaybackOpening";
 import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
+import { PlaybackLineSwitch } from "./cinema/components/PlaybackLineSwitch";
 import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { ProfilePage } from "./cinema/components/ProfilePage";
@@ -140,6 +143,13 @@ import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
 import { variantVideoCodec } from "./cinema/media-compatibility";
 import { directDownloadUrl, directPlaybackUrl, triggerDirectDownload } from "./cinema/download";
+import {
+  readPlaybackLinePreference,
+  resolvePlaybackLine,
+  suggestedPlaybackLine,
+  writePlaybackLinePreference
+} from "./cinema/playback-line";
+import { ensureOssPlaybackServiceWorker } from "./oss-playback-service-worker";
 import type {
   AppTab,
   AppTheme,
@@ -240,6 +250,11 @@ function CinemaApp() {
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
   const [browseView, setBrowseView] = useState<BrowseViewId>(initialRoute.browseView);
   const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
+  const [playbackLineSuggestion] = useState<PlaybackLine>(() => suggestedPlaybackLine());
+  const [playbackLinePreference, setPlaybackLinePreference] = useState<PlaybackLinePreference>(
+    () => readPlaybackLinePreference()
+  );
+  const resolvedPlaybackLine = resolvePlaybackLine(playbackLinePreference, playbackLineSuggestion);
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
@@ -352,30 +367,44 @@ function CinemaApp() {
     loadingInitial: false,
     loadingMore: false
   });
+  const previousPlaybackLineRef = useRef(resolvedPlaybackLine);
 
   const trackedPollKey = useMemo(
     () =>
       trackedItems
-        .filter(trackedCacheNeedsStatusRefresh)
+        .filter((item) => (
+          (item.job.line ?? "international") === resolvedPlaybackLine
+          && trackedCacheNeedsStatusRefresh(item)
+        ))
         .map((item) => `${item.job.id}:${item.job.status}:${item.asset?.status ?? "missing"}`)
         .join("|"),
-    [trackedItems]
+    [trackedItems, resolvedPlaybackLine]
   );
 
   const trackedPreparingItems = useMemo(
-    () => trackedItems.filter(trackedCacheNeedsStatusRefresh),
-    [trackedItems]
+    () => trackedItems.filter((item) => (
+      (item.job.line ?? "international") === resolvedPlaybackLine
+      && trackedCacheNeedsStatusRefresh(item)
+    )),
+    [trackedItems, resolvedPlaybackLine]
+  );
+  const selectedTrackedItems = useMemo(
+    () => trackedItems.filter((item) => (item.job.line ?? "international") === resolvedPlaybackLine),
+    [trackedItems, resolvedPlaybackLine]
   );
 
   const trackedByAssetKey = useMemo(() => {
     const itemsByAssetKey = new Map<string, TrackedCacheItem>();
     for (const item of trackedItems) {
+      if ((item.job.line ?? "international") !== resolvedPlaybackLine) {
+        continue;
+      }
       if (!itemsByAssetKey.has(item.job.assetKey)) {
         itemsByAssetKey.set(item.job.assetKey, item);
       }
     }
     return itemsByAssetKey;
-  }, [trackedItems]);
+  }, [trackedItems, resolvedPlaybackLine]);
 
   const favoriteAssetKeys = useMemo(
     () => new Set(favorites.filter((item) => item.favoriteAt).map((item) => item.assetKey)),
@@ -404,6 +433,43 @@ function CinemaApp() {
     document.documentElement.style.colorScheme = theme;
     writeJsonStorage(themeStorageKey, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (previousPlaybackLineRef.current === resolvedPlaybackLine) {
+      return;
+    }
+    previousPlaybackLineRef.current = resolvedPlaybackLine;
+    browseViewCacheRef.current.clear();
+    browseRouteLoadRef.current = "";
+    setResults([]);
+    setBrowseResults([]);
+    setSearchPreviewResults([]);
+    setAsset(undefined);
+    setJob(undefined);
+    setCachedAssets([]);
+    setHistoryAssetStatus({});
+    setPlayback(undefined);
+    setPlaybackQueue(undefined);
+    setPlaybackOpening(false);
+    if (unlocked) {
+      if (query.trim()) {
+        void refreshResults({ showLoading: true, activateLibrary: false });
+      } else if (activeTab === "library") {
+        refreshBrowseAssets({ force: true });
+      }
+      if (activeTab === "cached") {
+        void refreshCachedAssets();
+      }
+      if (activeTab === "history") {
+        void refreshHistoryAssetStatus();
+      }
+    }
+  }, [resolvedPlaybackLine]);
+
+  function changePlaybackLine(preference: PlaybackLinePreference) {
+    writePlaybackLinePreference(preference);
+    setPlaybackLinePreference(preference);
+  }
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
     if (route.tab === "admin" && role && role !== "admin") {
@@ -669,7 +735,7 @@ function CinemaApp() {
       setError("");
     }
     try {
-      const response = await searchAssets(normalizedQuery);
+      const response = await searchAssets(normalizedQuery, resolvedPlaybackLine);
       setResults(response.results);
       setFocusedLibraryAssetKey(undefined);
       if (options.activateLibrary) {
@@ -785,7 +851,7 @@ function CinemaApp() {
         assetKey: action.assetKey
       };
 
-    const preview = await previewCredit(request);
+    const preview = await previewCredit({ ...request, line: resolvedPlaybackLine });
     updateCurrentMemberCreditsFromPreview(preview);
     return preview;
   }
@@ -985,7 +1051,7 @@ function CinemaApp() {
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
     try {
-      const response = await ensureCache(target);
+      const response = await ensureCache(target, resolvedPlaybackLine);
       updateCurrentMemberCredits(response.memberCredits);
       setJob(response.job);
       setAsset(response.asset);
@@ -1067,6 +1133,9 @@ function CinemaApp() {
 
     setPlaybackOpening(true);
     try {
+      if (resolvedPlaybackLine === "domestic") {
+        await ensureOssPlaybackServiceWorker();
+      }
       const admission = await requestPlaybackAdmission(assetKey);
       if (admission.status === "queued") {
         setPlaybackOpening(false);
@@ -1088,7 +1157,7 @@ function CinemaApp() {
     options: { syncHistory?: boolean } = {}
   ) {
     try {
-      const response = await getPlayback(admission.assetKey, admission.ticketId);
+      const response = await getPlayback(admission.assetKey, admission.ticketId, resolvedPlaybackLine);
       const nextPlayback = {
         ...response,
         videoCodec: response.videoCodec ?? variantVideoCodec(result, admission.assetKey)
@@ -1132,7 +1201,7 @@ function CinemaApp() {
         return undefined;
       }
 
-      const response = await getPlayback(assetKey, playback?.admission?.ticketId);
+      const response = await getPlayback(assetKey, playback?.admission?.ticketId, playback?.line ?? resolvedPlaybackLine);
       updateCurrentMemberCredits(response.memberCredits);
       setPlayback((currentPlayback) => (
         currentPlayback?.assetKey === assetKey
@@ -1263,7 +1332,10 @@ function CinemaApp() {
 
     try {
       const statuses = await Promise.all(
-        assetKeys.map(async (assetKey) => [assetKey, await getCacheAsset(assetKey)] as const)
+        assetKeys.map(async (assetKey) => [
+          assetKey,
+          await getCacheAsset(assetKey, resolvedPlaybackLine)
+        ] as const)
       );
       setHistoryAssetStatus(Object.fromEntries(statuses));
     } catch (historyStatusError) {
@@ -1274,7 +1346,7 @@ function CinemaApp() {
   async function refreshCachedAssets() {
     setCachedAssetsLoading(true);
     try {
-      const response = await listCachedAssets(100);
+      const response = await listCachedAssets(100, resolvedPlaybackLine);
       setCachedAssets(response.items.map((item) => item.asset));
     } catch (cachedAssetsError) {
       handleRequestError(cachedAssetsError, copy.fallbackErrors.cachedTitles);
@@ -1284,7 +1356,7 @@ function CinemaApp() {
   }
 
   function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
-    return view ? `${channel}:${view}` : undefined;
+    return view ? `${resolvedPlaybackLine}:${channel}:${view}` : undefined;
   }
 
   function applyBrowseCache(entry: BrowseViewCacheEntry) {
@@ -1333,7 +1405,7 @@ function CinemaApp() {
     const requestChannel = options.channel ?? browseChannel;
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
     const persistentCacheKey = browseCacheKey(
-      role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
+      `${role === "member" && member?.id ? `member:${member.id}` : role ?? "guest"}:${resolvedPlaybackLine}`,
       requestChannel,
       requestView
     );
@@ -1380,7 +1452,12 @@ function CinemaApp() {
 
       try {
         const offset = append ? browseNextOffset : 0;
-        const response = await browseAssets(limit, offset, { mode, channel: requestChannel, view: requestView });
+        const response = await browseAssets(limit, offset, {
+          mode,
+          channel: requestChannel,
+          view: requestView,
+          line: resolvedPlaybackLine
+        });
 
         if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
           return;
@@ -2326,7 +2403,7 @@ function CinemaApp() {
     setSearchPreviewLoading(true);
     const timer = window.setTimeout(async () => {
       try {
-        const response = await searchAssets(normalizedQuery);
+        const response = await searchAssets(normalizedQuery, resolvedPlaybackLine);
         if (searchPreviewRequestRef.current !== requestId) {
           return;
         }
@@ -2364,7 +2441,10 @@ function CinemaApp() {
   }, [unlocked]);
 
   useEffect(() => {
-    const activeItems = trackedItems.filter(trackedCacheNeedsStatusRefresh);
+    const activeItems = trackedItems.filter((item) => (
+      (item.job.line ?? "international") === resolvedPlaybackLine
+      && trackedCacheNeedsStatusRefresh(item)
+    ));
     if (activeItems.length === 0) {
       return;
     }
@@ -2852,7 +2932,7 @@ function CinemaApp() {
             browseHasMore={browseHasMore}
             browseLoadMode={browseLoadMode}
             historyItems={history}
-            trackedItems={trackedItems}
+            trackedItems={selectedTrackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
             pendingDownloadAssetKeys={downloadRequestAssetKeys}
             favoriteAssetKeys={favoriteAssetKeys}
@@ -3029,10 +3109,15 @@ function CinemaApp() {
           />
         ) : undefined}
       />
+      <PlaybackLineSwitch
+        preference={playbackLinePreference}
+        resolvedLine={resolvedPlaybackLine}
+        onChange={changePlaybackLine}
+      />
       {activeTab !== "tasks" ? (
         <TaskDock
           creditPolicy={creditPolicy}
-          items={trackedItems}
+          items={selectedTrackedItems}
           onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
           onOpenTasks={() => navigateToTab("tasks")}
         />

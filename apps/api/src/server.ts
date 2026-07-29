@@ -17,6 +17,7 @@ import {
   type AccessRole,
   type AdjustMemberCreditsRequest,
   type AuthCheckResponse,
+  type CacheAsset,
   type CacheJob,
   type CacheStatus,
   type CacheAssetLookupResponse,
@@ -48,6 +49,7 @@ import {
   type MovieRequestsResponse,
   type MovieRequestStatus,
   type PlaybackCapacity,
+  type PlaybackLine,
   type RatingValue,
   type RegisterMemberRequest,
   type ResetMemberPasscodeRequest,
@@ -1308,13 +1310,83 @@ function visibleCacheAsset<T extends { status: string; expiresAt?: string; playb
   return asset;
 }
 
+function requestPlaybackLine(value: string | null | undefined): PlaybackLine {
+  return value === "domestic" ? "domestic" : "international";
+}
+
+function ossCacheStatus(job: OssPreparationJob): CacheStatus {
+  if (job.status === "ready") return "ready";
+  if (job.status === "failed" || job.status === "cancelled") return "failed";
+  if (job.status === "queued") return "queued";
+  return "downloading";
+}
+
+function ossJobToCacheAsset(job: OssPreparationJob): CacheAsset {
+  const status = ossCacheStatus(job);
+  return {
+    assetKey: job.assetKey,
+    title: job.title,
+    source: "aliyun-oss",
+    status,
+    jobId: job.id,
+    playbackUrl: status === "ready" ? `/api/oss-playback/${encodeURIComponent(job.id)}/media` : undefined,
+    cachedAt: job.completedAt,
+    lastRequestedAt: job.updatedAt,
+    media: {
+      checkedAt: job.updatedAt,
+      contentLength: job.contentLength ?? job.expectedBytes,
+      contentType: job.contentType ?? "video/mp4",
+      rangeSupported: status === "ready"
+    },
+    line: "domestic"
+  };
+}
+
+function ossJobToCacheJob(job: OssPreparationJob): CacheJob {
+  return {
+    id: job.id,
+    assetKey: job.assetKey,
+    title: job.title,
+    source: "notion",
+    status: ossCacheStatus(job),
+    progress: job.progress,
+    message: job.message,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+    error: job.error,
+    line: "domestic"
+  };
+}
+
+async function syncedOssJobByAssetKey(assetKey: string) {
+  const job = await ossPreparationStore.findByAssetKey(assetKey);
+  return job ? syncOssPreparationJob(job) : undefined;
+}
+
+async function ossAssetsFor(assetKeys: string[]) {
+  const wanted = new Set(assetKeys);
+  const selected = new Map<string, OssPreparationJob>();
+  for (const job of await ossPreparationStore.list(1_000)) {
+    if (wanted.has(job.assetKey) && !selected.has(job.assetKey)) {
+      selected.set(job.assetKey, job);
+    }
+  }
+  const entries = await Promise.all(Array.from(selected, async ([assetKey, job]) => {
+    const synced = await syncOssPreparationJob(job).catch(() => job);
+    return [assetKey, ossJobToCacheAsset(synced)] as const;
+  }));
+  return Object.fromEntries(entries) as Record<string, CacheAsset>;
+}
+
 async function handleSearch(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const query = url.searchParams.get("q")?.trim() ?? "";
   const searchLoad = await loadSearchResults(query);
   const searchResults = searchLoad.results;
   rememberResults(searchResults);
-  const results = await enrichResultsWithCache(searchResults);
+  const line = requestPlaybackLine(url.searchParams.get("line"));
+  const results = await enrichResultsWithCache(searchResults, line);
 
   logInfo("api.search", {
     requestId: context.requestId,
@@ -1377,7 +1449,7 @@ async function handleMovieSummary(
   }
 }
 
-async function enrichResultsWithCache(searchResults: SearchResult[]) {
+async function enrichResultsWithCache(searchResults: SearchResult[], line: PlaybackLine = "international") {
   const hydratedResults = await Promise.all(
     searchResults.map(async (item) => store.hydrateMoviePosterUrls(await enrichResultRatings(item)))
   );
@@ -1385,7 +1457,9 @@ async function enrichResultsWithCache(searchResults: SearchResult[]) {
     item.assetKey,
     ...(item.variants?.map((variant) => variant.assetKey) ?? [])
   ]);
-  const assets = await store.listAssets(assetKeys);
+  const assets = line === "domestic"
+    ? await ossAssetsFor(assetKeys)
+    : await store.listAssets(assetKeys);
   return hydratedResults.map((item) => ({
     ...item,
     cache: visibleCacheAsset(assets[item.assetKey]),
@@ -1657,6 +1731,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const offset = requestOffset(url);
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
+  const line = requestPlaybackLine(url.searchParams.get("line"));
   const pagedLimitMaximum = channel === "movie" && view === "tspdtRank"
     ? 2000
     : view === "popular" || view === "mostWatched"
@@ -1671,7 +1746,8 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
       limit,
       channel,
       view,
-      mode
+      mode,
+      line
     });
     if (served) {
       return;
@@ -1724,7 +1800,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const pageResults = mode === "random" ? sortedResults.slice(0, limit) : sortedResults.slice(offset, offset + limit);
   const hasMore = mode === "random" ? false : sortedResults.length > offset + limit;
   rememberResults(pageResults);
-  const results = await enrichResultsWithCache(pageResults);
+  const results = await enrichResultsWithCache(pageResults, line);
 
   logInfo("api.browse", {
     requestId: context.requestId,
@@ -1763,6 +1839,7 @@ async function serveStaticTspdtBrowse(
     channel: BrowseChannel;
     view: BrowseViewId;
     mode: "paged" | "random";
+    line: PlaybackLine;
   }
 ) {
   try {
@@ -1775,7 +1852,7 @@ async function serveStaticTspdtBrowse(
     const pageResults = pageEntries.map((entry) => entry.result);
     const hasMore = state.entries.length > options.offset + options.limit;
     rememberResults(pageResults);
-    const results = await enrichResultsWithCache(pageResults);
+    const results = await enrichResultsWithCache(pageResults, options.line);
 
     logInfo("api.browse", {
       requestId: context.requestId,
@@ -1893,6 +1970,7 @@ async function handleCreditPreview(
   const startedAt = Date.now();
   const body = await readBody<CreditPreviewRequest>(request);
   const assetKey = body.assetKey?.trim();
+  const line = requestPlaybackLine(body.line);
   if (!assetKey || (body.action !== "cache" && body.action !== "playback")) {
     sendJson(response, 400, { error: "Credit preview requires an action and assetKey." });
     return;
@@ -1907,9 +1985,20 @@ async function handleCreditPreview(
       return;
     }
 
-    const existingAsset = await store.getAsset(assetKey, { fresh: true });
-    const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
-    const readyHit = isFreshReady(existingAsset);
+    const domesticJob = line === "domestic" ? await syncedOssJobByAssetKey(assetKey) : undefined;
+    const existingAsset = line === "international"
+      ? await store.getAsset(assetKey, { fresh: true })
+      : domesticJob
+        ? ossJobToCacheAsset(domesticJob)
+        : undefined;
+    const existingJob = line === "international" && existingAsset?.jobId
+      ? await store.getJob(existingAsset.jobId)
+      : domesticJob
+        ? ossJobToCacheJob(domesticJob)
+        : undefined;
+    const readyHit = line === "domestic"
+      ? domesticJob?.status === "ready"
+      : isFreshReady(existingAsset);
     const activeAssetJobHit = Boolean(existingAsset && existingJob && !terminalJobStatuses.includes(existingJob.status));
     const usage = await memberCreditUsage(identity, 1);
     const preview = previewPayload({
@@ -1925,6 +2014,7 @@ async function handleCreditPreview(
 
     logInfo("api.credit.preview", {
       requestId: context.requestId,
+      line,
       action: "cache",
       assetKey,
       credits: preview.credits,
@@ -1936,8 +2026,14 @@ async function handleCreditPreview(
     return;
   }
 
-  const asset = await store.getAsset(assetKey, { fresh: true });
-  if (!asset || !isFreshReady(asset)) {
+  const domesticJob = line === "domestic" ? await syncedOssJobByAssetKey(assetKey) : undefined;
+  const asset = line === "domestic"
+    ? domesticJob
+      ? ossJobToCacheAsset(domesticJob)
+      : undefined
+    : await store.getAsset(assetKey, { fresh: true });
+  const ready = line === "domestic" ? domesticJob?.status === "ready" : isFreshReady(asset);
+  if (!asset || !ready) {
     sendJson(response, 409, { error: "Asset is not ready for playback." });
     return;
   }
@@ -1978,6 +2074,7 @@ async function handleCreditPreview(
 
   logInfo("api.credit.preview", {
     requestId: context.requestId,
+    line,
     action: "playback",
     assetKey,
     credits: preview.credits,
@@ -2015,6 +2112,78 @@ async function handleEnsureCache(
   }
 
   const result = await refreshResultBeforeCache(candidate, context);
+  const line = requestPlaybackLine(body.line);
+
+  if (line === "domestic") {
+    if (!aliyunFcPrepare.enabled || !aliyunOssStorage.enabled) {
+      sendJson(response, 503, {
+        error: "国内线路暂时不可用，请切换到国际 Azure 线路后重试。"
+      });
+      return;
+    }
+    if (!result.sourceUrl?.startsWith("https://")) {
+      sendJson(response, 422, { error: "这个片源暂时没有可用的 HTTPS 来源。" });
+      return;
+    }
+
+    const existing = await syncedOssJobByAssetKey(result.assetKey);
+    const readyHit = existing?.status === "ready";
+    const activeHit = Boolean(existing && ["queued", "running", "cancelling"].includes(existing.status));
+    const shouldChargeMember = creditBillingEnabled &&
+      identity.role === "member" &&
+      Boolean(identity.memberId) &&
+      !readyHit &&
+      !activeHit;
+    const charge = shouldChargeMember
+      ? await accessStore.chargeMemberCredits(identity.memberId!, {
+        credits: cacheCreditCost,
+        assetKey: result.assetKey,
+        title: result.title,
+        requestId: context.requestId
+      })
+      : undefined;
+
+    if (shouldChargeMember && !charge) {
+      sendJson(response, 403, { error: "This member pass is no longer available." });
+      return;
+    }
+    if (charge && !charge.ok) {
+      sendJson(response, 429, {
+        error: creditLimitErrorMessage(),
+        reason: charge.reason,
+        credits: charge.code.credits
+      });
+      return;
+    }
+
+    const output = await ensureOssPreparationForResult(result, context);
+    const publicJob = ossJobToCacheJob(output.job);
+    const publicAsset = ossJobToCacheAsset(output.job);
+    logInfo("api.cache.ensure", {
+      requestId: context.requestId,
+      line,
+      assetKey: result.assetKey,
+      jobId: output.job.id,
+      assetStatus: publicAsset.status,
+      jobStatus: publicJob.status,
+      readyHit,
+      chargedCredits: charge?.ok ? charge.charge.credits : 0,
+      memberId: identity.memberId,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 200, {
+      asset: publicAsset,
+      job: publicJob,
+      line,
+      trigger: {
+        status: output.created ? "started" : "skipped",
+        message: output.created ? "国内 OSS 准备任务已启动。" : "国内 OSS 已有准备任务。"
+      },
+      charge: charge?.ok ? charge.charge : undefined,
+      memberCredits: charge?.ok ? charge.code.credits : undefined
+    });
+    return;
+  }
 
   const existingAsset = await store.getAsset(result.assetKey, { fresh: true });
   const existingJob = existingAsset?.jobId ? await store.getJob(existingAsset.jobId) : undefined;
@@ -2087,6 +2256,7 @@ async function handleEnsureCache(
 
   logInfo("api.cache.ensure", {
     requestId: context.requestId,
+    line,
     assetKey: result.assetKey,
     jobId: output.job.id,
     assetStatus: output.asset.status,
@@ -2101,7 +2271,9 @@ async function handleEnsureCache(
 
   sendJson(response, 200, {
     ...output,
-    job: await preparationQueueJob(output.job),
+    asset: { ...output.asset, line },
+    job: { ...await preparationQueueJob(output.job), line },
+    line,
     trigger,
     charge: charge?.ok ? charge.charge : undefined,
     memberCredits: charge?.ok ? charge.code.credits : undefined
@@ -2283,6 +2455,23 @@ function requestBrowseChannel(url: URL): BrowseChannel {
 
 async function handleStatus(jobId: string, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
+  const ossJob = await ossPreparationStore.get(jobId);
+  if (ossJob) {
+    const synced = await syncOssPreparationJob(ossJob);
+    const publicJob = ossJobToCacheJob(synced);
+    const asset = ossJobToCacheAsset(synced);
+    logInfo("api.cache.status", {
+      requestId: context.requestId,
+      line: "domestic",
+      jobId,
+      assetKey: publicJob.assetKey,
+      jobStatus: publicJob.status,
+      progress: publicJob.progress,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 200, { job: publicJob, asset, line: "domestic" });
+    return;
+  }
   const job = await store.getJob(jobId);
 
   if (!job) {
@@ -2309,14 +2498,16 @@ async function handleStatus(jobId: string, response: http.ServerResponse, contex
   });
 
   sendJson(response, 200, {
-    job: await preparationQueueJob(job),
-    asset
+    job: { ...await preparationQueueJob(job), line: "international" },
+    asset: asset ? { ...asset, line: "international" } : asset,
+    line: "international"
   });
 }
 
 async function handlePlayback(
   assetKey: string,
   admissionTicketId: string | null,
+  line: PlaybackLine,
   response: http.ServerResponse,
   context: RequestContext,
   identity: AccessIdentity
@@ -2327,6 +2518,84 @@ async function handlePlayback(
     && !playbackAdmissionQueue.admitted(admissionTicketId ?? undefined, context.session!.id, assetKey)
   ) {
     sendJson(response, 409, { error: "A playback seat is required before opening local media." });
+    return;
+  }
+  if (line === "domestic") {
+    const job = await syncedOssJobByAssetKey(assetKey);
+    if (!job || job.status !== "ready") {
+      logWarn("api.playback.not_ready", {
+        requestId: context.requestId,
+        line,
+        assetKey,
+        assetStatus: job?.status,
+        durationMs: durationMs(startedAt)
+      });
+      sendJson(response, 409, {
+        error: "国内线路尚未准备好；可以先准备，或切换到国际 Azure 线路。"
+      });
+      return;
+    }
+    const asset = ossJobToCacheAsset(job);
+    const shouldChargeMember = creditBillingEnabled && identity.role === "member" && Boolean(identity.memberId);
+    const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload());
+    if (shouldChargeMember && playbackCredits === undefined) {
+      sendJson(response, 409, { error: playbackSizeMissingErrorMessage() });
+      return;
+    }
+    const chargeResult = shouldChargeMember
+      ? await accessStore.chargeMemberPlayback(identity.memberId!, {
+        credits: playbackCredits!,
+        assetKey,
+        title: job.title,
+        requestId: context.requestId,
+        windowHours: playbackReplayFreeHours
+      })
+      : undefined;
+    if (shouldChargeMember && !chargeResult) {
+      sendJson(response, 403, { error: "This member pass is no longer available." });
+      return;
+    }
+    if (chargeResult && !chargeResult.ok) {
+      sendJson(response, 429, {
+        error: creditLimitErrorMessage(),
+        reason: chargeResult.reason,
+        credits: chargeResult.code.credits
+      });
+      return;
+    }
+    const signed = aliyunOssStorage.createSignedUrl(job.objectKey);
+    const videoCodec = await playbackVideoCodec(assetKey).catch(() => undefined);
+    logInfo("api.playback.ready", {
+      requestId: context.requestId,
+      line,
+      assetKey,
+      contentType: asset.media?.contentType,
+      contentLength: asset.media?.contentLength,
+      videoCodec,
+      signedUrlExpiresAt: signed.expiresAt,
+      memberId: identity.memberId,
+      playbackCredits,
+      chargedCredits: chargeResult?.ok && chargeResult.charged ? chargeResult.charge.credits : 0,
+      durationMs: durationMs(startedAt)
+    });
+    sendJson(response, 200, {
+      assetKey,
+      title: job.title,
+      playbackUrl: `/api/oss-playback/${encodeURIComponent(job.id)}/media`,
+      expiresAt: signed.expiresAt,
+      media: asset.media,
+      videoCodec,
+      line,
+      charge: chargeResult?.ok && chargeResult.charged ? chargeResult.charge : undefined,
+      memberCredits: chargeResult?.ok ? chargeResult.code.credits : undefined,
+      playbackCredit: chargeResult?.ok
+        ? {
+          charged: chargeResult.charged,
+          windowHours: playbackReplayFreeHours,
+          windowExpiresAt: chargeResult.windowExpiresAt
+        }
+        : undefined
+    });
     return;
   }
   const asset = await store.getAsset(assetKey, { fresh: true });
@@ -2436,6 +2705,7 @@ async function handlePlayback(
 
   sendJson(response, 200, {
     ...playback,
+    line,
     playbackUrl: playback.playbackUrl.startsWith("/api/media/")
       || playback.playbackUrl.startsWith("/api/hls/")
       ? `${playback.playbackUrl}?grant=${encodeURIComponent(createPlaybackGrant(assetKey, context.session!.id))}&admission=${encodeURIComponent(admissionTicketId!)}`
@@ -2848,18 +3118,25 @@ async function handleLocalPoster(
 
 async function handleAssetLookup(
   assetKey: string,
+  line: PlaybackLine,
   response: http.ServerResponse,
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const asset = await store.getAsset(assetKey, { fresh: true });
+  const domesticJob = line === "domestic" ? await syncedOssJobByAssetKey(assetKey) : undefined;
+  const asset = line === "domestic"
+    ? domesticJob
+      ? ossJobToCacheAsset(domesticJob)
+      : undefined
+    : await store.getAsset(assetKey, { fresh: true });
   const payload: CacheAssetLookupResponse = {
     asset,
-    playable: isFreshReady(asset)
+    playable: line === "domestic" ? domesticJob?.status === "ready" : isFreshReady(asset)
   };
 
   logInfo("api.asset.lookup", {
     requestId: context.requestId,
+    line,
     assetKey,
     assetStatus: asset?.status,
     playable: payload.playable,
@@ -2872,13 +3149,20 @@ async function handleAssetLookup(
 async function handleListCachedAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 50, 200);
-  const assets = await store.listCachedAssets(limit);
+  const line = requestPlaybackLine(url.searchParams.get("line"));
+  const assets = line === "domestic"
+    ? (await ossPreparationStore.list(1_000))
+      .filter((job) => job.status === "ready")
+      .slice(0, limit)
+      .map(ossJobToCacheAsset)
+    : (await store.listCachedAssets(limit)).map((asset) => ({ ...asset, line }));
   const payload: CachedAssetsResponse = {
     items: assets.map((asset) => ({ asset }))
   };
 
   logInfo("api.cached_assets.list", {
     requestId: context.requestId,
+    line,
     count: payload.items.length,
     limit,
     durationMs: durationMs(startedAt)
@@ -3745,6 +4029,64 @@ function ossExpectedBytes(result: SearchResult) {
   return Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+async function ensureOssPreparationForResult(result: SearchResult, context: RequestContext) {
+  const existing = await ossPreparationStore.findByAssetKey(result.assetKey);
+  if (existing && !["failed", "cancelled"].includes(existing.status)) {
+    return {
+      created: false,
+      job: await syncOssPreparationJob(existing)
+    };
+  }
+
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const job: OssPreparationJob = {
+    id,
+    taskId: `wwpdw-${id}`,
+    assetKey: result.assetKey,
+    title: result.title,
+    sourceUrl: result.sourceUrl,
+    objectKey: ossPreparationObjectKey(result),
+    status: "queued",
+    progress: 5,
+    message: "正在排队，轮到后会自动开始。",
+    expectedBytes: ossExpectedBytes(result),
+    createdAt: now,
+    updatedAt: now
+  };
+  await ossPreparationStore.put(job);
+  try {
+    await aliyunFcPrepare.invoke({
+      jobId: job.id,
+      objectKey: job.objectKey,
+      sourceUrl: job.sourceUrl,
+      title: job.title,
+      contentType: "video/mp4",
+      expectedBytes: job.expectedBytes
+    });
+    logInfo("api.oss_preparation.created", {
+      requestId: context.requestId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      objectKey: job.objectKey,
+      expectedBytes: job.expectedBytes
+    });
+    return { created: true, job };
+  } catch (error) {
+    const failed: OssPreparationJob = {
+      ...job,
+      status: "failed",
+      progress: 100,
+      message: "准备任务未能启动。",
+      error: ossPreparationError(error),
+      updatedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    };
+    await ossPreparationStore.put(failed);
+    throw error;
+  }
+}
+
 async function syncOssPreparationJob(job: OssPreparationJob) {
   if (["ready", "failed", "cancelled"].includes(job.status)) return job;
   const task = await aliyunFcPrepare.getTask(job.taskId);
@@ -3823,11 +4165,6 @@ async function handleCreateOssPreparation(
     });
     return;
   }
-  const existing = await ossPreparationStore.findByAssetKey(assetKey);
-  if (existing && !["failed", "cancelled"].includes(existing.status)) {
-    sendJson(response, 200, { job: ossPreparationStore.toPublic(await syncOssPreparationJob(existing)) });
-    return;
-  }
 
   let candidate = recentResults.get(assetKey);
   if (!candidate) {
@@ -3842,55 +4179,10 @@ async function handleCreateOssPreparation(
     sendJson(response, 422, { error: "这个片源暂时没有可用的 HTTPS 来源。" });
     return;
   }
-
-  const now = new Date().toISOString();
-  const id = randomUUID();
-  const taskId = `wwpdw-${id}`;
-  const job: OssPreparationJob = {
-    id,
-    taskId,
-    assetKey: result.assetKey,
-    title: result.title,
-    sourceUrl: result.sourceUrl,
-    objectKey: ossPreparationObjectKey(result),
-    status: "queued",
-    progress: 5,
-    message: "正在排队，轮到后会自动开始。",
-    expectedBytes: ossExpectedBytes(result),
-    createdAt: now,
-    updatedAt: now
-  };
-  await ossPreparationStore.put(job);
-  try {
-    await aliyunFcPrepare.invoke({
-      jobId: job.id,
-      objectKey: job.objectKey,
-      sourceUrl: job.sourceUrl,
-      title: job.title,
-      contentType: "video/mp4",
-      expectedBytes: job.expectedBytes
-    });
-    logInfo("api.admin.oss_preparation.created", {
-      requestId: context.requestId,
-      jobId: job.id,
-      assetKey: job.assetKey,
-      objectKey: job.objectKey,
-      expectedBytes: job.expectedBytes
-    });
-    sendJson(response, 202, { job: ossPreparationStore.toPublic(job) });
-  } catch (error) {
-    const failed: OssPreparationJob = {
-      ...job,
-      status: "failed",
-      progress: 100,
-      message: "准备任务未能启动。",
-      error: ossPreparationError(error),
-      updatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString()
-    };
-    await ossPreparationStore.put(failed);
-    throw error;
-  }
+  const output = await ensureOssPreparationForResult(result, context);
+  sendJson(response, output.created ? 202 : 200, {
+    job: ossPreparationStore.toPublic(output.job)
+  });
 }
 
 async function handleListOssPreparations(
@@ -4325,6 +4617,19 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    const publicOssPlaybackMatch = pathname.match(/^\/api\/oss-playback\/([^/]+)\/(signed-url|media)$/);
+    if (request.method === "GET" && publicOssPlaybackMatch) {
+      const jobId = decodeURIComponent(publicOssPlaybackMatch[1]);
+      if (publicOssPlaybackMatch[2] === "signed-url") {
+        await handleOssPreparationSignedUrl(jobId, response);
+      } else {
+        sendJson(response, 409, {
+          error: "OSS media requests require the browser playback adapter."
+        });
+      }
+      return;
+    }
+
     if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc") {
       if (!requireAdmin(identity, response, context)) return;
       handleAliyunOssPocStatus(response, context);
@@ -4743,6 +5048,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       await handlePlayback(
         decodeURIComponent(playbackMatch[1]),
         url.searchParams.get("admission"),
+        requestPlaybackLine(url.searchParams.get("line")),
         response,
         context,
         identity!
@@ -4788,7 +5094,12 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     const assetMatch = pathname.match(/^\/api\/assets\/([^/]+)$/);
     if (request.method === "GET" && assetMatch) {
-      await handleAssetLookup(decodeURIComponent(assetMatch[1]), response, context);
+      await handleAssetLookup(
+        decodeURIComponent(assetMatch[1]),
+        requestPlaybackLine(url.searchParams.get("line")),
+        response,
+        context
+      );
       return;
     }
 
