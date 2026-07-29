@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Database, Loader2, Play, RefreshCw } from "lucide-react";
+import { Database, Loader2, Play, RefreshCw, Route } from "lucide-react";
 import type { CacheAsset, CreditPolicyResponse, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -18,6 +18,7 @@ import { copy } from "../i18n";
 import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
+import { PreparedLineBadges } from "./PreparedLineBadges";
 
 type MainTab = "preparing" | "ready";
 type ReadyTab = "mine" | "public";
@@ -156,7 +157,12 @@ function PreparingList({
                 <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-50">{job.title}</p>
                 <p className="mt-1 text-xs leading-5 text-slate-400">{jobMessageLabel(job)}</p>
               </div>
-              <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge variant={job.line === "domestic" ? "default" : "secondary"}>
+                  {job.line === "domestic" ? "国内线路" : "国际线路"}
+                </Badge>
+                <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
+              </div>
             </div>
             <Progress value={job.progress} />
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -212,12 +218,15 @@ function ReadyAssetList({
               <p className="mt-1 text-sm leading-6 text-slate-400 sm:leading-normal">
                 {mediaQuality(asset.media)} / {formatBytes(asset.media?.contentLength)} / {formatDateTime(asset.lastPlayedAt ?? asset.cachedAt ?? asset.lastRequestedAt)}
               </p>
+              <div className="mt-2">
+                <PreparedLineBadges asset={asset} />
+              </div>
             </div>
             <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
-              <CheckCircle2 className="h-4 w-4" />
+              <Route className="h-4 w-4" />
               {creditPolicy.billingEnabled
                 ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                : copy.watchlist.play}
+                : "选择线路播放"}
             </Button>
           </CardContent>
         </Card>

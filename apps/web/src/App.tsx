@@ -90,6 +90,10 @@ import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
+import {
+  PlaybackLineDialog,
+  type PlaybackLineChoice
+} from "./cinema/components/PlaybackLineDialog";
 import { PlaybackOpening } from "./cinema/components/PlaybackOpening";
 import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
 import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
@@ -105,7 +109,6 @@ import { copy } from "./cinema/i18n";
 import {
   mergeCacheAssetIntoResults,
   trackedCacheNeedsStatusRefresh,
-  variantIsPlaybackReady,
   variantToCacheTarget
 } from "./cinema/cache-flow";
 import {
@@ -167,14 +170,22 @@ type PendingCreditAction =
   | {
     kind: "cache";
     target: SearchResult;
+    line: PlaybackLine;
     after?: "historyRecache";
   }
   | {
     kind: "playback";
     assetKey: string;
+    line: PlaybackLine;
     result?: SearchResult;
     options?: { syncHistory?: boolean };
   };
+
+type PlaybackLineDialogState = PlaybackLineChoice & {
+  result?: SearchResult;
+  after?: "historyRecache";
+  options?: { syncHistory?: boolean; target?: "newTab" | "currentTab" };
+};
 
 const defaultMemberCredits = 200;
 
@@ -246,7 +257,7 @@ function CinemaApp() {
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
   const [browseView, setBrowseView] = useState<BrowseViewId>(initialRoute.browseView);
   const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
-  const [resolvedPlaybackLine, setResolvedPlaybackLine] = useState<PlaybackLine>(() => readPlaybackLine());
+  const [preferredPlaybackLine, setPreferredPlaybackLine] = useState<PlaybackLine>(() => readPlaybackLine());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
@@ -268,9 +279,11 @@ function CinemaApp() {
   const [playbackOpening, setPlaybackOpening] = useState(Boolean(initialRoute.playerAssetKey));
   const [playbackQueue, setPlaybackQueue] = useState<{
     admission: PlaybackAdmissionResponse;
+    line: PlaybackLine;
     result?: SearchResult;
     options: { syncHistory?: boolean };
   }>();
+  const [playbackLineChoice, setPlaybackLineChoice] = useState<PlaybackLineDialogState>();
   const [downloadRequestAssetKeys, setDownloadRequestAssetKeys] = useState<string[]>([]);
   const [directDownloadDialog, setDirectDownloadDialog] = useState<DirectDownloadDialogState | undefined>();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -359,44 +372,29 @@ function CinemaApp() {
     loadingInitial: false,
     loadingMore: false
   });
-  const previousPlaybackLineRef = useRef(resolvedPlaybackLine);
-
   const trackedPollKey = useMemo(
     () =>
       trackedItems
-        .filter((item) => (
-          (item.job.line ?? "international") === resolvedPlaybackLine
-          && trackedCacheNeedsStatusRefresh(item)
-        ))
+        .filter((item) => trackedCacheNeedsStatusRefresh(item))
         .map((item) => `${item.job.id}:${item.job.status}:${item.asset?.status ?? "missing"}`)
         .join("|"),
-    [trackedItems, resolvedPlaybackLine]
+    [trackedItems]
   );
 
   const trackedPreparingItems = useMemo(
-    () => trackedItems.filter((item) => (
-      (item.job.line ?? "international") === resolvedPlaybackLine
-      && trackedCacheNeedsStatusRefresh(item)
-    )),
-    [trackedItems, resolvedPlaybackLine]
-  );
-  const selectedTrackedItems = useMemo(
-    () => trackedItems.filter((item) => (item.job.line ?? "international") === resolvedPlaybackLine),
-    [trackedItems, resolvedPlaybackLine]
+    () => trackedItems.filter((item) => trackedCacheNeedsStatusRefresh(item)),
+    [trackedItems]
   );
 
   const trackedByAssetKey = useMemo(() => {
     const itemsByAssetKey = new Map<string, TrackedCacheItem>();
     for (const item of trackedItems) {
-      if ((item.job.line ?? "international") !== resolvedPlaybackLine) {
-        continue;
-      }
       if (!itemsByAssetKey.has(item.job.assetKey)) {
         itemsByAssetKey.set(item.job.assetKey, item);
       }
     }
     return itemsByAssetKey;
-  }, [trackedItems, resolvedPlaybackLine]);
+  }, [trackedItems]);
 
   const favoriteAssetKeys = useMemo(
     () => new Set(favorites.filter((item) => item.favoriteAt).map((item) => item.assetKey)),
@@ -426,41 +424,9 @@ function CinemaApp() {
     writeJsonStorage(themeStorageKey, theme);
   }, [theme]);
 
-  useEffect(() => {
-    if (previousPlaybackLineRef.current === resolvedPlaybackLine) {
-      return;
-    }
-    previousPlaybackLineRef.current = resolvedPlaybackLine;
-    browseViewCacheRef.current.clear();
-    browseRouteLoadRef.current = "";
-    setResults([]);
-    setBrowseResults([]);
-    setSearchPreviewResults([]);
-    setAsset(undefined);
-    setJob(undefined);
-    setCachedAssets([]);
-    setHistoryAssetStatus({});
-    setPlayback(undefined);
-    setPlaybackQueue(undefined);
-    setPlaybackOpening(false);
-    if (unlocked) {
-      if (query.trim()) {
-        void refreshResults({ showLoading: true, activateLibrary: false });
-      } else if (activeTab === "library") {
-        refreshBrowseAssets({ force: true });
-      }
-      if (activeTab === "cached") {
-        void refreshCachedAssets();
-      }
-      if (activeTab === "history") {
-        void refreshHistoryAssetStatus();
-      }
-    }
-  }, [resolvedPlaybackLine]);
-
-  function changePlaybackLine(line: PlaybackLine) {
+  function rememberPlaybackLine(line: PlaybackLine) {
     writePlaybackLine(line);
-    setResolvedPlaybackLine(line);
+    setPreferredPlaybackLine(line);
   }
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
@@ -727,7 +693,7 @@ function CinemaApp() {
       setError("");
     }
     try {
-      const response = await searchAssets(normalizedQuery, resolvedPlaybackLine);
+      const response = await searchAssets(normalizedQuery);
       setResults(response.results);
       setFocusedLibraryAssetKey(undefined);
       if (options.activateLibrary) {
@@ -843,7 +809,7 @@ function CinemaApp() {
         assetKey: action.assetKey
       };
 
-    const preview = await previewCredit({ ...request, line: resolvedPlaybackLine });
+    const preview = await previewCredit({ ...request, line: action.line });
     updateCurrentMemberCreditsFromPreview(preview);
     return preview;
   }
@@ -856,6 +822,7 @@ function CinemaApp() {
     setCreditConfirmOpen(false);
     setCreditPreview(undefined);
     setPendingCreditAction(undefined);
+    setPlaybackLineChoice(undefined);
   }
 
   async function requestCreditAction(action: PendingCreditAction) {
@@ -911,32 +878,91 @@ function CinemaApp() {
 
   async function executeCreditAction(action: PendingCreditAction) {
     if (action.kind === "cache") {
-      await executeCache(action.target, action.after);
+      await executeCache(action.target, action.line, action.after);
       return;
     }
 
-    await executeOpenPlayer(action.assetKey, action.result, action.options);
+    await executeOpenPlayer(action.assetKey, action.line, action.result, action.options);
+  }
+
+  async function openPlaybackLineDialog(
+    assetKey: string,
+    result?: SearchResult,
+    options: {
+      syncHistory?: boolean;
+      target?: "newTab" | "currentTab";
+      after?: "historyRecache";
+    } = {}
+  ) {
+    const title = result?.title
+      ?? cachedAssets.find((item) => item.assetKey === assetKey)?.title
+      ?? history.find((item) => item.assetKey === assetKey)?.title
+      ?? "在线播放";
+    setPlaybackLineChoice({
+      assetKey,
+      title,
+      result,
+      after: options.after,
+      options: {
+        syncHistory: options.syncHistory,
+        target: options.target
+      },
+      canPrepare: Boolean(result),
+      loading: true
+    });
+
+    try {
+      const [domestic, international] = await Promise.all([
+        getCacheAsset(assetKey, "domestic"),
+        getCacheAsset(assetKey, "international")
+      ]);
+      setPlaybackLineChoice((current) => current?.assetKey === assetKey
+        ? {
+          ...current,
+          loading: false,
+          availability: { domestic, international }
+        }
+        : current);
+    } catch (lineError) {
+      setPlaybackLineChoice((current) => current?.assetKey === assetKey
+        ? {
+          ...current,
+          loading: false,
+          error: cacheErrorLabel(errorMessage(lineError, "暂时无法检查播放线路。"))
+        }
+        : current);
+    }
+  }
+
+  async function choosePlaybackLine(line: PlaybackLine) {
+    const choice = playbackLineChoice;
+    if (!choice || choice.loading) {
+      return;
+    }
+    const playable = choice.availability?.[line]?.playable;
+    rememberPlaybackLine(line);
+    setPlaybackLineChoice(undefined);
+
+    if (playable) {
+      await openPlayer(choice.assetKey, choice.result, {
+        ...choice.options,
+        line
+      });
+      return;
+    }
+    if (choice.result) {
+      await requestCreditAction({
+        kind: "cache",
+        target: choice.result,
+        line,
+        after: choice.after
+      });
+    }
   }
 
   async function selectResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToCacheTarget(result, variant);
-    const tracked = trackedByAssetKey.get(variant.assetKey);
-    if (variantIsPlaybackReady(variant, tracked)) {
-      await openPlayer(variant.assetKey, target);
-      return;
-    }
-
-    setCacheRequestAssetKeys((currentKeys) => (
-      currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
-    ));
-    try {
-      await requestCreditAction({
-        kind: "cache",
-        target
-      });
-    } finally {
-      setCacheRequestAssetKeys((currentKeys) => currentKeys.filter((assetKey) => assetKey !== target.assetKey));
-    }
+    await openPlaybackLineDialog(variant.assetKey, target);
   }
 
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
@@ -1036,14 +1062,14 @@ function CinemaApp() {
     }
   }
 
-  async function executeCache(target: SearchResult, after?: "historyRecache") {
+  async function executeCache(target: SearchResult, line: PlaybackLine, after?: "historyRecache") {
     setError("");
     setPlayback(undefined);
     setCacheRequestAssetKeys((currentKeys) => (
       currentKeys.includes(target.assetKey) ? currentKeys : [...currentKeys, target.assetKey]
     ));
     try {
-      const response = await ensureCache(target, resolvedPlaybackLine);
+      const response = await ensureCache(target, line);
       updateCurrentMemberCredits(response.memberCredits);
       setJob(response.job);
       setAsset(response.asset);
@@ -1054,7 +1080,7 @@ function CinemaApp() {
       });
       mergeCacheAssetIntoVisibleResults(response.asset);
       if (response.asset.status === "ready") {
-        await openPlayer(response.asset.assetKey, target, { target: "currentTab" });
+        await openPlayer(response.asset.assetKey, target, { target: "currentTab", line });
       }
       await refreshResultsInBackground();
       if (after === "historyRecache") {
@@ -1087,7 +1113,7 @@ function CinemaApp() {
   async function openPlayer(
     assetKey = asset?.assetKey,
     result?: SearchResult,
-    options: { syncHistory?: boolean; target?: "newTab" | "currentTab" } = {}
+    options: { syncHistory?: boolean; target?: "newTab" | "currentTab"; line?: PlaybackLine } = {}
   ) {
     if (!assetKey) {
       return;
@@ -1109,6 +1135,7 @@ function CinemaApp() {
     await requestCreditAction({
       kind: "playback",
       assetKey,
+      line: options.line ?? preferredPlaybackLine,
       result,
       options: { syncHistory: options.syncHistory }
     });
@@ -1116,6 +1143,7 @@ function CinemaApp() {
 
   async function executeOpenPlayer(
     assetKey = asset?.assetKey,
+    line: PlaybackLine,
     result?: SearchResult,
     options: { syncHistory?: boolean } = {}
   ) {
@@ -1125,19 +1153,19 @@ function CinemaApp() {
 
     setPlaybackOpening(true);
     try {
-      if (resolvedPlaybackLine === "domestic") {
+      if (line === "domestic") {
         await ensureOssPlaybackServiceWorker();
       }
       const admission = await requestPlaybackAdmission(assetKey);
       if (admission.status === "queued") {
         setPlaybackOpening(false);
-        setPlaybackQueue({ admission, result, options });
+        setPlaybackQueue({ admission, line, result, options });
         if (options.syncHistory !== false) {
           writeRoute(routeForCurrentView({ playerAssetKey: assetKey }), "push");
         }
         return;
       }
-      await enterAdmittedPlayback(admission, result, options);
+      await enterAdmittedPlayback(admission, line, result, options);
     } catch (playbackError) {
       handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
     }
@@ -1145,11 +1173,12 @@ function CinemaApp() {
 
   async function enterAdmittedPlayback(
     admission: PlaybackAdmissionResponse,
+    line: PlaybackLine,
     result?: SearchResult,
     options: { syncHistory?: boolean } = {}
   ) {
     try {
-      const response = await getPlayback(admission.assetKey, admission.ticketId, resolvedPlaybackLine);
+      const response = await getPlayback(admission.assetKey, admission.ticketId, line);
       const nextPlayback = {
         ...response,
         videoCodec: response.videoCodec ?? variantVideoCodec(result, admission.assetKey)
@@ -1179,6 +1208,7 @@ function CinemaApp() {
       const preview = await previewCreditAction({
         kind: "playback",
         assetKey,
+        line: playback?.line ?? preferredPlaybackLine,
         options: { syncHistory: false }
       });
 
@@ -1186,6 +1216,7 @@ function CinemaApp() {
         setPendingCreditAction({
           kind: "playback",
           assetKey,
+          line: playback?.line ?? preferredPlaybackLine,
           options: { syncHistory: false }
         });
         setCreditPreview(preview);
@@ -1193,7 +1224,7 @@ function CinemaApp() {
         return undefined;
       }
 
-      const response = await getPlayback(assetKey, playback?.admission?.ticketId, playback?.line ?? resolvedPlaybackLine);
+      const response = await getPlayback(assetKey, playback?.admission?.ticketId, playback?.line ?? preferredPlaybackLine);
       updateCurrentMemberCredits(response.memberCredits);
       setPlayback((currentPlayback) => (
         currentPlayback?.assetKey === assetKey
@@ -1326,7 +1357,7 @@ function CinemaApp() {
       const statuses = await Promise.all(
         assetKeys.map(async (assetKey) => [
           assetKey,
-          await getCacheAsset(assetKey, resolvedPlaybackLine)
+          await getCacheAsset(assetKey)
         ] as const)
       );
       setHistoryAssetStatus(Object.fromEntries(statuses));
@@ -1338,7 +1369,7 @@ function CinemaApp() {
   async function refreshCachedAssets() {
     setCachedAssetsLoading(true);
     try {
-      const response = await listCachedAssets(100, resolvedPlaybackLine);
+      const response = await listCachedAssets(100);
       setCachedAssets(response.items.map((item) => item.asset));
     } catch (cachedAssetsError) {
       handleRequestError(cachedAssetsError, copy.fallbackErrors.cachedTitles);
@@ -1348,7 +1379,7 @@ function CinemaApp() {
   }
 
   function browseViewCacheKey(channel: BrowseChannel, view?: BrowseViewId) {
-    return view ? `${resolvedPlaybackLine}:${channel}:${view}` : undefined;
+    return view ? `${channel}:${view}` : undefined;
   }
 
   function applyBrowseCache(entry: BrowseViewCacheEntry) {
@@ -1397,7 +1428,7 @@ function CinemaApp() {
     const requestChannel = options.channel ?? browseChannel;
     const cacheKey = browseViewCacheKey(requestChannel, requestView);
     const persistentCacheKey = browseCacheKey(
-      `${role === "member" && member?.id ? `member:${member.id}` : role ?? "guest"}:${resolvedPlaybackLine}`,
+      role === "member" && member?.id ? `member:${member.id}` : role ?? "guest",
       requestChannel,
       requestView
     );
@@ -1447,8 +1478,7 @@ function CinemaApp() {
         const response = await browseAssets(limit, offset, {
           mode,
           channel: requestChannel,
-          view: requestView,
-          line: resolvedPlaybackLine
+          view: requestView
         });
 
         if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
@@ -1491,11 +1521,7 @@ function CinemaApp() {
       return;
     }
 
-    await requestCreditAction({
-      kind: "cache",
-      target: entry.result,
-      after: "historyRecache"
-    });
+    await openPlaybackLineDialog(entry.assetKey, entry.result, { after: "historyRecache" });
   }
 
   function applyAuth(auth: AuthCheckResponse) {
@@ -2395,7 +2421,7 @@ function CinemaApp() {
     setSearchPreviewLoading(true);
     const timer = window.setTimeout(async () => {
       try {
-        const response = await searchAssets(normalizedQuery, resolvedPlaybackLine);
+        const response = await searchAssets(normalizedQuery);
         if (searchPreviewRequestRef.current !== requestId) {
           return;
         }
@@ -2433,10 +2459,7 @@ function CinemaApp() {
   }, [unlocked]);
 
   useEffect(() => {
-    const activeItems = trackedItems.filter((item) => (
-      (item.job.line ?? "international") === resolvedPlaybackLine
-      && trackedCacheNeedsStatusRefresh(item)
-    ));
+    const activeItems = trackedItems.filter((item) => trackedCacheNeedsStatusRefresh(item));
     if (activeItems.length === 0) {
       return;
     }
@@ -2775,7 +2798,7 @@ function CinemaApp() {
       <PlaybackQueue
         admission={playbackQueue.admission}
         onAdmitted={(admission) => {
-          void enterAdmittedPlayback(admission, playbackQueue.result, {
+          void enterAdmittedPlayback(admission, playbackQueue.line, playbackQueue.result, {
             ...playbackQueue.options,
             syncHistory: false
           });
@@ -2852,6 +2875,12 @@ function CinemaApp() {
         }}
       />
       {creditConfirmDialog}
+      <PlaybackLineDialog
+        choice={playbackLineChoice}
+        preferredLine={preferredPlaybackLine}
+        onClose={() => setPlaybackLineChoice(undefined)}
+        onSelect={(line) => void choosePlaybackLine(line)}
+      />
       <MovieRequestDialog
         error={movieRequestError}
         loading={movieRequestLoading}
@@ -2884,7 +2913,6 @@ function CinemaApp() {
       <CinemaLayout
         activeTab={activeTab}
         activeBrowseChannel={browseChannel}
-        playbackLine={resolvedPlaybackLine}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
@@ -2894,7 +2922,6 @@ function CinemaApp() {
         theme={theme}
         onActiveTabChange={navigateToTab}
         onBrowseChannelChange={openBrowseChannel}
-        onPlaybackLineChange={changePlaybackLine}
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
         onOpenForum={() => navigateToTab("forum")}
@@ -2926,7 +2953,7 @@ function CinemaApp() {
             browseHasMore={browseHasMore}
             browseLoadMode={browseLoadMode}
             historyItems={history}
-            trackedItems={selectedTrackedItems}
+            trackedItems={trackedItems}
             pendingAssetKeys={cacheRequestAssetKeys}
             pendingDownloadAssetKeys={downloadRequestAssetKeys}
             favoriteAssetKeys={favoriteAssetKeys}
@@ -2950,7 +2977,7 @@ function CinemaApp() {
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
             loading={cachedAssetsLoading}
-            onOpen={(assetKey) => void openPlayer(assetKey)}
+            onOpen={(cachedAsset) => void openPlaybackLineDialog(cachedAsset.assetKey)}
             onRefresh={() => void refreshCachedAssets()}
           />
         )}
@@ -2960,7 +2987,7 @@ function CinemaApp() {
             items={history}
             statusByAssetKey={historyAssetStatus}
             onClear={clearHistory}
-            onPlay={(assetKey, result) => void openPlayer(assetKey, result)}
+            onPlay={(assetKey, result) => void openPlaybackLineDialog(assetKey, result)}
             onRecache={(entry) => void recacheHistoryEntry(entry)}
           />
         )}
@@ -3052,7 +3079,7 @@ function CinemaApp() {
             currentMemberId={member?.id}
             loadingCached={cachedAssetsLoading}
             preparingItems={trackedPreparingItems}
-            onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
+            onOpenPlayer={(assetKey, result) => void openPlaybackLineDialog(assetKey, result)}
             onRefreshCached={() => void refreshCachedAssets()}
           />
         )}
@@ -3104,10 +3131,10 @@ function CinemaApp() {
         ) : undefined}
       />
       {activeTab !== "tasks" ? (
-        <TaskDock
-          creditPolicy={creditPolicy}
-          items={selectedTrackedItems}
-          onOpenPlayer={(assetKey, result) => void openPlayer(assetKey, result)}
+          <TaskDock
+            creditPolicy={creditPolicy}
+            items={trackedItems}
+            onOpenPlayer={(assetKey, result) => void openPlaybackLineDialog(assetKey, result)}
           onOpenTasks={() => navigateToTab("tasks")}
         />
       ) : null}

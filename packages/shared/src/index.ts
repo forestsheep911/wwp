@@ -461,6 +461,7 @@ export interface CacheAsset {
   requestedByMemberName?: string;
   media?: MediaDiagnostics;
   line?: PlaybackLine;
+  preparedLines?: PlaybackLine[];
 }
 
 export interface CacheJob {

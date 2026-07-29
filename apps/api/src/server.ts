@@ -82,6 +82,7 @@ import {
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 import { PlaybackAdmissionQueue } from "./playback-admission.js";
+import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
@@ -1314,6 +1315,10 @@ function requestPlaybackLine(value: string | null | undefined): PlaybackLine {
   return value === "domestic" ? "domestic" : "international";
 }
 
+function optionalPlaybackLine(value: string | null | undefined): PlaybackLine | undefined {
+  return value === "domestic" || value === "international" ? value : undefined;
+}
+
 function ossCacheStatus(job: OssPreparationJob): CacheStatus {
   if (job.status === "ready") return "ready";
   if (job.status === "failed" || job.status === "cancelled") return "failed";
@@ -1379,13 +1384,66 @@ async function ossAssetsFor(assetKeys: string[]) {
   return Object.fromEntries(entries) as Record<string, CacheAsset>;
 }
 
+function preparedAssetForLines(
+  domesticAsset?: CacheAsset,
+  internationalAsset?: CacheAsset
+): CacheAsset | undefined {
+  const visibleDomestic = visibleCacheAsset(domesticAsset);
+  const visibleInternational = visibleCacheAsset(internationalAsset);
+  return mergePreparedLineAssets(visibleDomestic, visibleInternational);
+}
+
+async function cacheAssetsForLines(assetKeys: string[], line?: PlaybackLine) {
+  if (line === "domestic") {
+    const assets = await ossAssetsFor(assetKeys);
+    return Object.fromEntries(Object.entries(assets).map(([assetKey, asset]) => [
+      assetKey,
+      {
+        ...asset,
+        line,
+        preparedLines: asset.status === "ready" ? [line] : []
+      }
+    ])) as Record<string, CacheAsset>;
+  }
+  if (line === "international") {
+    const assets = await store.listAssets(assetKeys);
+    return Object.fromEntries(Object.entries(assets).flatMap(([assetKey, asset]) => {
+      const visible = visibleCacheAsset(asset);
+      return visible
+        ? [[
+          assetKey,
+          {
+            ...visible,
+            line,
+            preparedLines: visible.status === "ready" ? [line] : []
+          }
+        ] as const]
+        : [];
+    })) as Record<string, CacheAsset>;
+  }
+
+  const [domesticAssets, internationalAssets] = await Promise.all([
+    ossAssetsFor(assetKeys),
+    store.listAssets(assetKeys)
+  ]);
+  return Object.fromEntries(assetKeys.flatMap((assetKey) => {
+    const asset = preparedAssetForLines(
+      domesticAssets[assetKey],
+      internationalAssets[assetKey]
+        ? { ...internationalAssets[assetKey], line: "international" }
+        : undefined
+    );
+    return asset ? [[assetKey, asset] as const] : [];
+  })) as Record<string, CacheAsset>;
+}
+
 async function handleSearch(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const query = url.searchParams.get("q")?.trim() ?? "";
   const searchLoad = await loadSearchResults(query);
   const searchResults = searchLoad.results;
   rememberResults(searchResults);
-  const line = requestPlaybackLine(url.searchParams.get("line"));
+  const line = optionalPlaybackLine(url.searchParams.get("line"));
   const results = await enrichResultsWithCache(searchResults, line);
 
   logInfo("api.search", {
@@ -1449,7 +1507,7 @@ async function handleMovieSummary(
   }
 }
 
-async function enrichResultsWithCache(searchResults: SearchResult[], line: PlaybackLine = "international") {
+async function enrichResultsWithCache(searchResults: SearchResult[], line?: PlaybackLine) {
   const hydratedResults = await Promise.all(
     searchResults.map(async (item) => store.hydrateMoviePosterUrls(await enrichResultRatings(item)))
   );
@@ -1457,9 +1515,7 @@ async function enrichResultsWithCache(searchResults: SearchResult[], line: Playb
     item.assetKey,
     ...(item.variants?.map((variant) => variant.assetKey) ?? [])
   ]);
-  const assets = line === "domestic"
-    ? await ossAssetsFor(assetKeys)
-    : await store.listAssets(assetKeys);
+  const assets = await cacheAssetsForLines(assetKeys, line);
   return hydratedResults.map((item) => ({
     ...item,
     cache: visibleCacheAsset(assets[item.assetKey]),
@@ -1731,7 +1787,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const offset = requestOffset(url);
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
-  const line = requestPlaybackLine(url.searchParams.get("line"));
+  const line = optionalPlaybackLine(url.searchParams.get("line"));
   const pagedLimitMaximum = channel === "movie" && view === "tspdtRank"
     ? 2000
     : view === "popular" || view === "mostWatched"
@@ -1839,7 +1895,7 @@ async function serveStaticTspdtBrowse(
     channel: BrowseChannel;
     view: BrowseViewId;
     mode: "paged" | "random";
-    line: PlaybackLine;
+    line?: PlaybackLine;
   }
 ) {
   try {
@@ -3118,20 +3174,33 @@ async function handleLocalPoster(
 
 async function handleAssetLookup(
   assetKey: string,
-  line: PlaybackLine,
+  line: PlaybackLine | undefined,
   response: http.ServerResponse,
   context: RequestContext
 ) {
   const startedAt = Date.now();
-  const domesticJob = line === "domestic" ? await syncedOssJobByAssetKey(assetKey) : undefined;
+  const [domesticJob, internationalAsset] = await Promise.all([
+    line === "international" ? Promise.resolve(undefined) : syncedOssJobByAssetKey(assetKey),
+    line === "domestic" ? Promise.resolve(undefined) : store.getAsset(assetKey, { fresh: true })
+  ]);
+  const domesticAsset = domesticJob ? ossJobToCacheAsset(domesticJob) : undefined;
   const asset = line === "domestic"
-    ? domesticJob
-      ? ossJobToCacheAsset(domesticJob)
-      : undefined
-    : await store.getAsset(assetKey, { fresh: true });
+    ? domesticAsset
+    : line === "international"
+      ? internationalAsset
+        ? { ...internationalAsset, line }
+        : undefined
+      : preparedAssetForLines(
+        domesticAsset,
+        internationalAsset ? { ...internationalAsset, line: "international" } : undefined
+      );
   const payload: CacheAssetLookupResponse = {
     asset,
-    playable: line === "domestic" ? domesticJob?.status === "ready" : isFreshReady(asset)
+    playable: line === "domestic"
+      ? domesticJob?.status === "ready"
+      : line === "international"
+        ? isFreshReady(internationalAsset)
+        : Boolean(asset?.preparedLines?.length)
   };
 
   logInfo("api.asset.lookup", {
@@ -3149,20 +3218,43 @@ async function handleAssetLookup(
 async function handleListCachedAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const limit = requestLimit(url, 50, 200);
-  const line = requestPlaybackLine(url.searchParams.get("line"));
-  const assets = line === "domestic"
-    ? (await ossPreparationStore.list(1_000))
-      .filter((job) => job.status === "ready")
-      .slice(0, limit)
-      .map(ossJobToCacheAsset)
-    : (await store.listCachedAssets(limit)).map((asset) => ({ ...asset, line }));
+  const line = optionalPlaybackLine(url.searchParams.get("line"));
+  const [domesticAssets, internationalAssets] = await Promise.all([
+    line === "international"
+      ? Promise.resolve([])
+      : ossPreparationStore.list(1_000).then((jobs) => jobs
+        .filter((job) => job.status === "ready")
+        .map(ossJobToCacheAsset)),
+    line === "domestic"
+      ? Promise.resolve([])
+      : store.listCachedAssets(limit).then((assets) => assets.map((asset) => ({
+        ...asset,
+        line: "international" as const
+      })))
+  ]);
+  const byAssetKey = new Map<string, { domestic?: CacheAsset; international?: CacheAsset }>();
+  for (const asset of domesticAssets) {
+    byAssetKey.set(asset.assetKey, { ...byAssetKey.get(asset.assetKey), domestic: asset });
+  }
+  for (const asset of internationalAssets) {
+    byAssetKey.set(asset.assetKey, { ...byAssetKey.get(asset.assetKey), international: asset });
+  }
+  const assets = Array.from(byAssetKey.values(), ({ domestic, international }) => (
+    preparedAssetForLines(domestic, international)
+  ))
+    .filter((asset): asset is CacheAsset => Boolean(asset))
+    .sort((left, right) => (
+      new Date(right.lastPlayedAt ?? right.cachedAt ?? right.lastRequestedAt).getTime()
+      - new Date(left.lastPlayedAt ?? left.cachedAt ?? left.lastRequestedAt).getTime()
+    ))
+    .slice(0, limit);
   const payload: CachedAssetsResponse = {
     items: assets.map((asset) => ({ asset }))
   };
 
   logInfo("api.cached_assets.list", {
     requestId: context.requestId,
-    line,
+    line: line ?? "all",
     count: payload.items.length,
     limit,
     durationMs: durationMs(startedAt)
@@ -5096,7 +5188,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     if (request.method === "GET" && assetMatch) {
       await handleAssetLookup(
         decodeURIComponent(assetMatch[1]),
-        requestPlaybackLine(url.searchParams.get("line")),
+        optionalPlaybackLine(url.searchParams.get("line")),
         response,
         context
       );
