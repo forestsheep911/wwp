@@ -58,6 +58,7 @@ interface ParseOptions {
   titleMatchLimit: number;
   libraryQueryLimit: number;
   variantLimit: number;
+  mediaAssetConcurrency: number;
   requestTimeoutMs: number;
   scanPageParseTimeoutMs: number;
   scanPageParseRetries: number;
@@ -90,9 +91,10 @@ const defaultOptions: ParseOptions = {
   titleScanLimit: Number(process.env.NOTION_TITLE_SCAN_LIMIT ?? 120),
   titleMatchLimit: Number(process.env.NOTION_TITLE_MATCH_LIMIT ?? 6),
   libraryQueryLimit: Number(process.env.NOTION_LIBRARY_QUERY_LIMIT ?? 300),
-  variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 8),
+  variantLimit: Number(process.env.NOTION_VARIANT_LIMIT ?? 200),
+  mediaAssetConcurrency: Number(process.env.NOTION_MEDIA_ASSET_CONCURRENCY ?? 2),
   requestTimeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000),
-  scanPageParseTimeoutMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS ?? 60000),
+  scanPageParseTimeoutMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS ?? 300000),
   scanPageParseRetries: Number(process.env.NOTION_SCAN_PAGE_PARSE_RETRIES ?? 2),
   scanPageParseRetryDelayMs: Number(process.env.NOTION_SCAN_PAGE_PARSE_RETRY_DELAY_MS ?? 2000)
 };
@@ -2403,21 +2405,14 @@ export class NotionSearchSource {
 
   private async mediaAssetVariantsForWork(workPageId: string, workTitle: string) {
     const pages = await this.queryMediaAssetPagesForWork(workPageId);
-    const variants: MediaVariant[] = [];
-
-    for (const page of pages) {
-      const variant = await this.mediaAssetPageToVariant(page, variants.length, workTitle, workPageId);
-      if (!variant) {
-        continue;
-      }
-
-      variants.push(variant);
-      if (variants.length >= this.options.variantLimit) {
-        break;
-      }
-    }
-
-    return variants;
+    const resolved = await mapWithConcurrency(
+      pages.map((page, index) => ({ page, index })),
+      Math.min(4, Math.max(1, Math.floor(this.options.mediaAssetConcurrency))),
+      ({ page, index }) => this.mediaAssetPageToVariant(page, index, workTitle, workPageId)
+    );
+    return resolved
+      .filter((variant): variant is MediaVariant => Boolean(variant))
+      .slice(0, this.options.variantLimit);
   }
 
   private pageMatches(page: JsonRecord, query: string) {

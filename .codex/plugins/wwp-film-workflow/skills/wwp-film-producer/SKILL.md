@@ -5,6 +5,41 @@ description: Use when coordinating WWP film or series production, choosing the n
 
 # WWP Film Producer
 
+## Stable Production Defaults
+
+The following are the current production defaults. Treat them as the normal
+route unless the user gives a more specific instruction:
+
+- Work-level metadata is worth doing even when the source is unsuitable for
+  playback or encoding is still running. Metadata and playable production are
+  related but independent lanes.
+- Automatic Notion upload is the default after a route probe. Manual upload is
+  a bounded fallback for a slow or failed route, or an explicit user choice.
+- Series delivery is one playable file per Episode page. Do not build a
+  multi-episode collection merely to reduce upload count; collections require
+  explicit opt-in.
+- `Workflow Status` and `Workflow Note` are the collaboration channel for
+  upload handoff. Do not infer completion from `last_edited_time`.
+- A playable item is not complete until the exact destination structure, media
+  block, ffprobe-backed Media Assets row, ledger `sync_ready`, parent release,
+  website sync, and live readback all pass. Only then may the local output move
+  to `E:\待人工删除`.
+
+These defaults were validated by the recent automatic-upload trial and are the
+baseline for future `开始制作影视库` runs:
+
+- Use the Notion hostname and a direct-route preflight for large uploads. Keep
+  the resumable multipart manifest and retry only the failed part; manual upload
+  is the fallback when the measured route cannot finish within the upload window.
+- A user-uploaded file is acknowledged through `Workflow Status` and
+  `Workflow Note`, then verified by exact destination-page readback. A parent
+  page timestamp is never an upload signal.
+- For a series, prepare the season, spec, and every Episode page before any
+  upload. Produce and publish one file per episode unless the user explicitly
+  requests a collection.
+- Metadata backfill, source intake, and playable encoding continue as separate
+  bounded lanes while an encode or upload is waiting.
+
 Coordinate WWP film work end to end. Load this first when the user asks to make, continue, publish, repair, or summarize a film/series production task. The complete cycle contract is in `../../references/workflow-cycle.md`.
 
 ## Start Command
@@ -19,11 +54,66 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 6. Record uncertain or deferred decisions and continue with other candidates instead of interrupting the batch. Ask only when a decision blocks every useful next action or requires user-only evidence/action.
 7. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final playable completion; set `Workflow Status=已完成` only after the current requested cycle is read back.
 
+## Stable Workflow Contract
+
+These are the current production defaults. A later user instruction may override
+an individual default for the current work, but the agent must record the
+override in the ledger and `Workflow Note` rather than silently changing the
+workflow.
+
+The following defaults are considered settled for the current plugin revision:
+
+- Metadata creation and repair starts as soon as a work is identified; playable
+  production may be deferred or rejected without deferring the catalog entry.
+- A series is prepared and published as one file per Episode page. Collections
+  are exceptional and require an explicit user instruction for that delivery.
+- Automatic Notion upload is attempted after a direct-route preflight. Manual
+  upload is only a bounded fallback, and must use a page prepared in advance.
+- A production item exits only after Notion structure, media block, Media Assets,
+  ledger `sync_ready`, parent release, website sync, and live readback all pass.
+- Finished local outputs are moved to `E:\待人工删除`; normal workflow never
+  deletes them directly.
+
+These are workflow defaults, not user-interface requirements. New API-created
+Notion pages may use a simple machine-readable page tree and do not need legacy
+toggle, callout, or base-like visual containers.
+
+- The complete workflow is metadata-first and media-independent: identify the
+  work, prevent duplicates, create or repair the work page, and backfill useful
+  metadata even when the source is not playable, the encode is deferred, or no
+  Media Asset exists yet.
+- Playable production is a separate lane. It requires a bounded source and QC
+  decision, while metadata work may continue in parallel during encoding,
+  upload, route retries, or manual handoff.
+- The input directory is always request- or ledger-configured. Never treat
+  `I:\MAKE\queue` as a permanent path. The default output directory is
+  `E:\video_made` only when the user has not specified another one.
+- For new work, prepare the complete destination tree before upload because
+  Notion cannot move an uploaded media block through the API: movie work page ->
+  spec page; series/season page -> spec page -> one Episode page per episode.
+- Automatic Notion upload is the default after route preflight. Manual upload is
+  a bounded fallback, and must use the exact prepared destination page plus the
+  collaboration status channel.
+- Series are published one episode per file by default. A multi-episode
+  collection is an explicit exception, not an upload optimization.
+- A work is not finally complete at encode, upload, or Media Assets write alone.
+  The required order is destination structure, uploaded block, ffprobe-backed
+  Media Assets, exact ledger reconciliation to `sync_ready`, parent release,
+  incremental website sync, and live API readback. Only then may the work be
+  marked `已完成`.
+- Verified finished outputs are moved to `E:\待人工删除` for later human
+  deletion. Never place the quarantine directory under `E:\video_made`, and do
+  not delete source files or quarantine files as part of normal completion.
+- Each cycle must report all lanes: handoff, intake, metadata maintenance,
+  playable production, publication/Media Assets, and source/archive follow-up.
+  An empty publication queue or a rate-limited Notion request never ends the
+  complete workflow cycle.
+
 ## Targeted Recent-Item Checks
 
 - Do not run a global Notion scan just to audit historical spec titles or page structure. Notion API rate limits make that an invalid default workflow.
 - After a production, rename, structure preparation, or manual-upload handoff, inspect only the recent items touched by that run, with a default maximum of 3 exact work/spec targets.
-- Check those targets for per-collection size naming, language/audio labels, duplicate specs, overlapping episode ranges, and root-level media placement. Leave older untouched items for later user-directed repair; an incomplete historical audit is acceptable.
+- Check those targets for per-episode size naming, language/audio labels, duplicate specs, episode mapping, and root-level media placement. Check per-collection naming and overlapping ranges only when collection delivery was explicitly enabled. Leave older untouched items for later user-directed repair; an incomplete historical audit is acceptable.
 - Prefer exact page IDs recorded in the local ledger. Do not substitute a broad title search or watcher scan when the target IDs are already known.
 
 ## Route
@@ -44,10 +134,10 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 3. Identify works, perform duplicate/alias preflight, and create/reuse metadata work pages. Metadata tasks are high priority even when playable production is blocked or deferred.
 4. Process a small metadata-maintenance batch independently: repair identity, fill sourced fields, run AI advisory fields, and record unresolved issues. This includes old catalog entries with missing or stale fields, not only newly discovered works. Do not stop because no media block is waiting.
 5. Select playable candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk.
-6. For accepted playable candidates, create or reuse the Notion work page and intended destination pages before long encode/upload work when they are missing. Confirm that a reused destination does not already contain a materially equivalent playable video; preparation must fail closed when the exact movie spec is occupied. Notion's API cannot move uploaded media blocks between pages in this workflow, so destination preparation is mandatory, not optional. Movie uploads need an empty spec child page. Series uploads need a spec page plus size-bounded episode-range child pages. When manual upload is likely, report the target title and page ID before encoding starts so the user can upload the finished file to the correct child page rather than the work-page root.
+6. For accepted playable candidates, create or reuse the Notion work page and intended destination pages before long encode/upload work when they are missing. Confirm that a reused destination does not already contain a materially equivalent playable video; preparation must fail closed when the exact movie spec is occupied. Notion's API cannot move uploaded media blocks between pages in this workflow, so destination preparation is mandatory, not optional. Movie uploads need an empty spec child page. Series uploads need a spec page plus one Episode child page per episode by default. When manual upload is likely, report the target title and page ID before encoding starts so the user can upload the finished file to the correct child page rather than the work-page root.
 7. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
 8. Run probe/QC before upload.
-9. Publish playable output to Notion, then write Media Assets from `ffprobe` and production manifests.
+9. Publish playable output to Notion automatically by default after a successful route probe. Preserve the resumable upload manifest. Fall back to an exact manual-upload handoff only when the route is below the safe-start threshold, bounded retries still fail, or the user explicitly chooses manual upload. Then write Media Assets from `ffprobe` and production manifests.
 10. Revisit remaining metadata tasks while uploads or encodes wait; publication is only one queue.
 11. Report intake, catalog maintenance, production, upload, Media Assets, website-sync, and deferred-decision states separately. `node tools/film-ledger.mjs cycle --limit 3 --json` is the bounded start-of-cycle dashboard; Media Assets is only the publication reconciliation substage.
 
@@ -59,7 +149,7 @@ Every execution cycle must treat these as parallel work lanes, in this order:
 2. **Intake**: inspect a small batch of newly discovered or changed source directories, resolve identity and duplicate risk, bind each source, and create its work-level metadata task.
 3. **Metadata maintenance**: process a small batch of new and old work pages independently of playback. Fill sourced fields, repair canonical identity, generate AI advisory values after sourced data is coherent, and record unresolved `AI Issue` items.
 4. **Production**: select only candidates that pass source, Chinese-subtitle, language, quality, value, and risk rules; prepare the destination structure before encoding.
-5. **Publication and Media Assets**: reconcile only bounded exact targets. A missing upload is a pending handoff, not a reason to stop the other lanes.
+5. **Publication and Media Assets**: reconcile only bounded exact targets. Prefer resumable automatic upload; use manual upload as a recorded fallback, not the normal path. A missing upload is a pending handoff, not a reason to stop the other lanes.
 6. **Source/archive and deferred maintenance**: retain blocked, user-decision, source-only, cleanup, and later-backfill tasks with reasons and next-review times; do not silently discard them.
 
 The cycle may end only after these work areas have been checked and the next bounded batch is recorded. `publication` being empty, or all current media blocks being accounted for, never means the overall film-library workflow is complete while intake, catalog maintenance, source/archive follow-up, or `metadata_backfill` review is still due. For the full stop criteria, read `../../references/workflow-cycle.md`.
@@ -72,11 +162,13 @@ The cycle may end only after these work areas have been checked and the next bou
 - Spec backfill can be as important as new-film creation when the existing specs are weak.
 - Metadata collection is not gated by playable readiness. If a scanned work is worth cataloging, create or repair its work-level metadata even when no video is ready to upload.
 - Do not block work-page creation and sourced metadata backfill on video upload readiness. Playable Media Assets rows still require real uploaded/probed media evidence.
-- Avoid root-level manual upload cleanup by preparing the page structure early. Because uploaded media blocks cannot be moved by Notion API, a planned movie encode must have a target spec child page, and a planned series encode must have a target spec page plus episode-range child pages, before the user is expected to upload files manually. If the target pages cannot be prepared, do not invite manual upload yet.
+- Avoid root-level manual upload cleanup by preparing the page structure early. Because uploaded media blocks cannot be moved by Notion API, a planned movie encode must have a target spec child page, and a planned series encode must have a target spec page plus Episode child pages, before upload. If the target pages cannot be prepared, do not start automatic upload or invite manual upload yet.
+- For normal series delivery, create and upload one playable file per Episode page. Do not build collection files merely to reduce upload work; collection delivery requires an explicit user instruction and the uploader's explicit opt-in flag.
 - Source/original-disc upload is not the default playable production path.
 - A deferred production decision must not be reconsidered every cycle. Keep it
   visible in status, but only select it again after its `next_review_at` is due
   or after an explicit human retry.
+- If the user explicitly cancels an optional variant after QC but before upload, confirm that no upload is in flight, archive only its exact empty placeholder page, and retire the ledger variant with `retire-variant`. Do not leave a cancelled output in `upload_pending` where a later cycle can select it again.
 - An empty production queue does not mean the workflow is idle. Check `queue --stage intake` and `queue --stage metadata` before stopping.
 - Do not claim completion until Notion or Media Assets readback proves the external state.
 - Treat `Workflow Status` as collaboration state only. It does not replace `Media Availability`, `Hide from Website`, `Needs Review`, production state, or publication state.

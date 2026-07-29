@@ -430,6 +430,43 @@ test("CLI can reselect a failed production for a corrected retry", async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI retires a cancelled QC-passed variant from publication work", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-retire-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Cancelled Variant", year: 2025, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "cancelled", displayTitle: "Cancelled Variant 4.7GB" });
+    repo.transitionProduction(variant.id, "evaluated");
+    repo.transitionProduction(variant.id, "selected");
+    repo.transitionProduction(variant.id, "encoding");
+    repo.transitionProduction(variant.id, "qc_passed", { outputPath: "cancelled.mp4", outputSizeBytes: 1000 });
+    repo.registerNotionTarget(variant.id, { workPageId: "work", specPageId: "empty-spec", expectedFilename: "cancelled.mp4" });
+    db.close();
+
+    const retired = run([
+      "--db", dbPath,
+      "retire-variant",
+      "--variant", String(variant.id),
+      "--failure-code", "user_cancelled_optional_spec",
+      "--failure-detail", "User declined this optional specification",
+      "--json"
+    ], dir);
+    assert.equal(retired.status, 0, retired.stderr);
+    const row = JSON.parse(retired.stdout);
+    assert.equal(row.production_state, "rejected");
+    assert.equal(row.failure_code, "user_cancelled_optional_spec");
+    assert.equal(row.failure_detail, "User declined this optional specification");
+
+    const handoff = run(["--db", dbPath, "handoff", "--json"], dir);
+    assert.equal(handoff.status, 0, handoff.stderr);
+    assert.deepEqual(JSON.parse(handoff.stdout), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI reconcile-notion enforces a maximum of three before loading an adapter", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-reconcile-"));
   try {

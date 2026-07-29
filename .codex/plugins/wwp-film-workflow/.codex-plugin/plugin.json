@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.10",
+  "version": "0.1.20",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "WWP Film Workflow",
     "shortDescription": "Route WWP intake, metadata, playable video, Notion, and Media Assets work.",
-    "longDescription": "Project-local Codex workflow rules for explicit human/AI handoffs, ingesting new resources, preventing duplicate works, maintaining metadata-first catalog entries, selecting films and series, creating work/spec pages early, encoding playable MP4 variants, publishing to Notion, writing Media Assets, backfilling manual uploads, handling source archives, and filling structured film metadata through identity, Douban, OMDb, TMDb, and AI advisory lanes.",
+    "longDescription": "Project-local Codex workflow rules for explicit human/AI handoffs, ingesting new resources, preventing duplicate works, maintaining metadata-first catalog entries, selecting films and series, creating work/spec/episode pages early, encoding browser-compatible playable MP4 variants, resumably uploading them to Notion, writing Media Assets, verifying live website sync, backfilling manual uploads, handling source archives, and filling structured film metadata through identity, Douban, OMDb, TMDb, and AI advisory lanes. Series delivery defaults to one file per episode; collections require an explicit instruction.",
     "developerName": "WWP local workflow",
     "category": "Productivity",
     "capabilities": [

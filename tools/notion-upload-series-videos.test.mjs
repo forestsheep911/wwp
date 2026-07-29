@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { episodeNumber, episodeRange, validateSeriesSpecTitle } from "./notion-upload-series-videos.mjs";
+import {
+  episodeNumber,
+  episodeRange,
+  validateCollectionOptIn,
+  validateSeriesSpecTitle
+} from "./notion-upload-series-videos.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-series-videos.mjs");
 
@@ -15,7 +20,8 @@ test("series uploader documents and accepts prepare-only mode", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--prepare-only/);
-  assert.match(result.stdout, /before long encode or manual upload handoff/i);
+  assert.match(result.stdout, /before long encode or upload/i);
+  assert.match(result.stdout, /--allow-collections/);
 });
 
 test("series uploader allows create-structure mode for an existing series page without title", () => {
@@ -36,6 +42,25 @@ test("series uploader allows create-structure mode for an existing series page w
 
     assert.equal(/--create requires --title/.test(result.stderr), false, result.stderr);
     assert.match(result.stderr, /NOTION_WRITE_TOKEN or NOTION_TOKEN is required/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("series uploader refuses implicit spec-page selection", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "wwp-series-upload-spec-"));
+  try {
+    const result = spawnSync(process.execPath, [
+      scriptPath,
+      "--page-id",
+      "series-page",
+      "--source-dir",
+      cwd,
+      "--spec-title",
+      "Series 繁 0.8-1.2GB/集"
+    ], { cwd, encoding: "utf8" });
+
+    assert.match(result.stderr, /requires --target-spec-page-id or --create-spec/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -62,6 +87,15 @@ test("episodeRange parses a series collection filename", () => {
 
 test("series collection spec titles may use aggregate size per collection", () => {
   assert.equal(validateSeriesSpecTitle("检察官的提案 简 H.265 4.8GB/合集"), "检察官的提案 简 H.265 4.8GB/合集");
+});
+
+test("series collections require explicit opt-in", () => {
+  const collection = [{ name: "Series.S01E01-E05.mp4", episode: 1, episodeEnd: 5 }];
+  const episode = [{ name: "Series.S01E01.mp4", episode: 1, episodeEnd: 1 }];
+  assert.throws(() => validateCollectionOptIn(collection, "Series 繁 4.8GB/合集"), /--allow-collections/);
+  assert.throws(() => validateCollectionOptIn(episode, "Series 繁 4.8GB/合集"), /--allow-collections/);
+  assert.doesNotThrow(() => validateCollectionOptIn(collection, "Series 繁 4.8GB/合集", true));
+  assert.doesNotThrow(() => validateCollectionOptIn(episode, "Series 繁 0.8GB/集"));
 });
 
 test("series spec sizes must explicitly describe per-episode size", () => {

@@ -462,6 +462,18 @@ an expiry window of roughly one hour. A large file must finish all parts and the
 Operational defaults that have worked:
 
 - Use 20MiB API parts for multipart sends.
+- Preserve the `api.notion.com` hostname for large uploads. Do not apply
+  `NOTION_API_RESOLVE_IP` implicitly: a fixed IP removes the hostname Clash
+  needs for its Notion domain rule and can send the upload through the generic
+  proxy fallback.
+- Run `node tools/notion-upload-route-probe.mjs --file <sample.mp4> --parts 3
+  --no-resolve-override --complete` before a near-5GB upload. Start the real
+  upload only when the route is direct and measured throughput is at least
+  `2 MiB/s`.
+- The 2026-07-28 controlled test measured about `0.15 MiB/s` through the forced
+  fixed-IP proxy route versus `3.31-9.41 MiB/s` through
+  `Notion -> 国内直连 -> DIRECT`. Seven direct 20MiB parts completed in about
+  24 seconds, averaging roughly `5.9 MiB/s`.
 - For source archives, package video inputs with `7z a -t7z -mx=0`.
 - Split source archives into volumes that can finish within the Notion expiry
   window on the current network.

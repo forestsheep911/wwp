@@ -16,6 +16,15 @@ function usage() {
 
 Manifest:
 {
+  "sourceDir": "E:\\\\video_made",
+  "filePattern": "Series.Title.S01E*.mp4",
+  "outputDir": "E:\\\\video_made",
+  "outputPrefix": "Series.Title",
+  "season": 1
+}
+
+Alternatively, list inputs explicitly:
+{
   "outputDir": "E:\\\\video_made",
   "outputPrefix": "Series.Title",
   "season": 1,
@@ -138,10 +147,11 @@ function probeInput(ffprobe, input) {
 }
 
 function streamSignature(probe) {
-  return JSON.stringify(probe.streams.map((stream) => ({
+  return JSON.stringify(probe.streams
+    .filter((stream) => stream.codec_type === "video" || stream.codec_type === "audio")
+    .map((stream) => ({
     codecType: stream.codec_type,
     codecName: stream.codec_name,
-    codecTag: stream.codec_tag_string,
     width: stream.width,
     height: stream.height,
     pixFmt: stream.pix_fmt,
@@ -149,11 +159,39 @@ function streamSignature(probe) {
     sampleRate: stream.sample_rate,
     channels: stream.channels,
     channelLayout: stream.channel_layout
-  })));
+    })));
 }
 
 function concatListLine(filePath) {
   return `file '${filePath.replaceAll("'", "'\\''")}'`;
+}
+
+function globToRegExp(pattern) {
+  const escaped = String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+function episodeNumberFromName(fileName, season) {
+  const match = String(fileName).match(new RegExp(`S${String(season).padStart(2, "0")}E(\\d{1,3})(?!\\d)`, "i"))
+    ?? String(fileName).match(/\bS\d{1,2}E(\d{1,3})(?!\d)/i);
+  const episode = Number(match?.[1]);
+  return Number.isInteger(episode) && episode > 0 ? episode : undefined;
+}
+
+function manifestEpisodes(manifest, manifestPath, season) {
+  if (Array.isArray(manifest.episodes)) return manifest.episodes;
+  if (!manifest.sourceDir || !manifest.filePattern) {
+    throw new Error("manifest requires episodes[] or sourceDir plus filePattern");
+  }
+  const sourceDir = path.resolve(path.dirname(manifestPath), manifest.sourceDir);
+  const pattern = globToRegExp(manifest.filePattern);
+  return fs.readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && pattern.test(entry.name))
+    .map((entry) => ({
+      episode: episodeNumberFromName(entry.name, season),
+      input: path.join(sourceDir, entry.name)
+    }))
+    .sort((left, right) => (left.episode ?? Number.MAX_SAFE_INTEGER) - (right.episode ?? Number.MAX_SAFE_INTEGER));
 }
 
 function buildCollection(options, group, output) {
@@ -175,7 +213,7 @@ function buildCollection(options, group, output) {
         : [];
     run(options.ffmpeg, [
       "-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", listPath,
-      "-map", "0", "-c", "copy", ...videoTagArgs, "-movflags", "+faststart", partPath
+      "-map", "0:v", "-map", "0:a", "-c", "copy", ...videoTagArgs, "-movflags", "+faststart", partPath
     ], `concat episodes ${group.episodeStart}-${group.episodeEnd}`);
     const bytes = fs.statSync(partPath).size;
     if (bytes > options.maxBytes) {
@@ -201,11 +239,11 @@ function main() {
   const outputDir = path.resolve(manifest.outputDir);
   const outputPrefix = String(manifest.outputPrefix ?? "").trim();
   const season = Number(manifest.season ?? 1);
-  if (!outputPrefix || !Number.isInteger(season) || season < 0 || !Array.isArray(manifest.episodes)) {
-    throw new Error("manifest requires outputDir, outputPrefix, season, and episodes[]");
+  if (!outputPrefix || !Number.isInteger(season) || season < 0) {
+    throw new Error("manifest requires outputDir, outputPrefix, and season");
   }
 
-  const episodes = manifest.episodes.map((item) => {
+  const episodes = manifestEpisodes(manifest, manifestPath, season).map((item) => {
     const input = path.resolve(path.dirname(manifestPath), item.input);
     if (!fs.existsSync(input)) throw new Error(`input not found: ${input}`);
     const probe = probeInput(options.ffprobe, input);

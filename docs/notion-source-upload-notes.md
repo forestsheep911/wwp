@@ -88,6 +88,21 @@ Network observations:
 - `700m` split should be a better test size: 35 parts at 20MiB per full part, with a realistic chance to complete if the network path is healthy.
 - In the poor network run, 20MiB parts took roughly 50 seconds to several minutes, which is not enough for 700MiB within 1 hour.
 
+### 2026-07-28 Route Probe
+
+- `tools/notion-upload-route-probe.mjs` reproduced the slow path at about
+  `0.15 MiB/s` per 20MiB part.
+- The slow API target had been resolved to `208.103.161.1` inside Node before
+  Clash saw it. Clash therefore had no `api.notion.com` host metadata and sent
+  the connection through `Match -> 兜底代理 -> 规则代理 -> 自建自动`.
+- Disabling the DNS override preserved `api.notion.com`; Clash then selected
+  `Notion -> 国内直连 -> DIRECT`.
+- A direct 20MiB part completed in `3.48s` (`5.75 MiB/s`). A seven-part
+  140MiB run measured `3.31-9.41 MiB/s`, averaging about `5.9 MiB/s`.
+- Production upload helpers now keep hostname routing by default. Their
+  `--resolve-ip` option is an explicit API-connectivity fallback, not the
+  normal large-file path.
+
 ## Resume Plan
 
 When the network is healthy, retry only the first 700MiB part:

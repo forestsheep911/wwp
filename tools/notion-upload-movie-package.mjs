@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -31,7 +32,9 @@ function parseArgs() {
     uploadMeta: false,
     initialGates: true,
     mediaAvailability: "",
-    developerMemo: ""
+    developerMemo: "",
+    resolveIp: "",
+    localAddress: ""
   };
 
   const args = process.argv.slice(2);
@@ -60,6 +63,8 @@ function parseArgs() {
     else if (arg === "--no-initial-gates") options.initialGates = false;
     else if (arg === "--media-availability") options.mediaAvailability = args[++index];
     else if (arg === "--developer-memo") options.developerMemo = args[++index];
+    else if (arg === "--resolve-ip") options.resolveIp = args[++index];
+    else if (arg === "--local-address") options.localAddress = args[++index];
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -96,6 +101,8 @@ Useful flags:
   --upload-videos --upload-meta --upload-source
   --media-availability <state>  initial work-page state for new pages
   --developer-memo <text>       initial Developer Memo for new pages
+  --resolve-ip <ip>              explicit api.notion.com DNS fallback; hostname routing is the default
+  --local-address <ip>           bind direct traffic to a physical interface; pair with --resolve-ip
   --no-initial-gates            do not set safety gates on newly created work pages
 `);
 }
@@ -110,8 +117,7 @@ function dotenv(name) {
   return process.env[name];
 }
 
-function installNotionDnsOverride() {
-  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+function installNotionDnsOverride(notionApiIp) {
   if (!notionApiIp) return;
   const originalLookup = dns.lookup.bind(dns);
   dns.lookup = (hostname, options, callback) => {
@@ -125,10 +131,14 @@ function installNotionDnsOverride() {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: 600000 };
-  if (proxyUrl) {
+  if (localAddress) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -565,11 +575,11 @@ function fileFromPath(filePath) {
 
 async function main() {
   const options = parseArgs();
-  installNotionDnsOverride();
+  installNotionDnsOverride(options.resolveIp);
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options.localAddress);
   const library = await findLibrary(notion);
   const page = options.pageId
     ? await notion.pages.retrieve({ page_id: options.pageId })

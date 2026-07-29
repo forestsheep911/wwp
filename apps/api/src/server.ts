@@ -116,6 +116,7 @@ const searchIndexResultLimit = Math.min(
 const searchResultCache = new Map<string, {
   expiresAt: number;
   lastUsedAt: number;
+  indexRevision?: string;
   results: SearchResult[];
 }>();
 const browseSnapshotCache = new BrowseSnapshotCache<SearchResult>(defaultBrowseSnapshotTtlMs);
@@ -923,13 +924,17 @@ async function loadSearchResults(query: string): Promise<{
   const now = Date.now();
   const cached = searchResultCache.get(key);
   if (cached && cached.expiresAt > now) {
-    cached.lastUsedAt = now;
-    const cachedResults = await refreshIndexedMediaAssetResults(query, cached.results);
-    cached.results = cloneSearchResults(cachedResults);
-    return {
-      results: cloneSearchResults(cachedResults),
-      cacheStatus: "hit"
-    };
+    const currentRevision = await searchIndex.getRevision();
+    if (currentRevision === cached.indexRevision) {
+      cached.lastUsedAt = now;
+      const cachedResults = await refreshIndexedMediaAssetResults(query, cached.results);
+      cached.results = cloneSearchResults(cachedResults);
+      return {
+        results: cloneSearchResults(cachedResults),
+        cacheStatus: "hit"
+      };
+    }
+    searchResultCache.delete(key);
   }
 
   const pending = pendingSearches.get(key);
@@ -942,10 +947,12 @@ async function loadSearchResults(query: string): Promise<{
   }
 
   const nextSearch = loadSearchResultsFromPersistentSources(query)
-    .then((searchLoad) => {
+    .then(async (searchLoad) => {
+      const indexRevision = await searchIndex.getRevision();
       searchResultCache.set(key, {
         expiresAt: Date.now() + searchResultCacheTtlMs,
         lastUsedAt: Date.now(),
+        indexRevision,
         results: cloneSearchResults(searchLoad.results)
       });
       pruneSearchResultCache();

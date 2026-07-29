@@ -29,6 +29,7 @@ Source/original-disc work is optional and guarded. It is different from playable
 - Do not remove operational prefixes such as download-only labels merely because source files exist.
 - Keep source/archive manifests under `.local-data/source-archives/` unless the user specifies another local state path.
 - For local disk cleanup, run `node tools/film-cleanup-candidates.mjs --output-root <directory> --json`. Treat only `eligible: true` rows as deletion candidates; the report is read-only and never substitutes for explicit deletion authorization.
+- After explicit cleanup authorization, move eligible finished outputs to the quarantine directory `E:\待人工删除` by default. This directory is intentionally outside `E:\video_made`; never create or use `E:\video_made\待人工删除`. Preserve filenames, report moved bytes, and leave final deletion to the user unless the user separately authorizes deletion.
 - Do not let source/archive reconciliation count as work metadata completion. Use the metadata workflow for the work page, then use source Media Assets only for file/archive evidence.
 
 ## Reference

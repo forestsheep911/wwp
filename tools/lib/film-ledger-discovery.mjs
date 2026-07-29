@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { normalizeLedgerPath } from "./film-ledger-repository.mjs";
 
@@ -70,9 +71,16 @@ export function importScan(repo, payload) {
   }
 
   for (const source of existing.values()) {
-    if (!seen.has(source.relative_path) && source.missing === 0) {
-      repo.markSourceMissing(source.id, true);
-      summary.missing += 1;
+    // Collection members are indexed below a scanned parent entry, so they do
+    // not appear in the top-level scan payload. Only mark a source missing when
+    // it is absent from both the scan and the filesystem.
+    if (!seen.has(source.relative_path)) {
+      if (existsSync(source.absolute_path)) {
+        if (source.missing === 1) repo.markSourceMissing(source.id, false);
+      } else if (source.missing === 0) {
+        repo.markSourceMissing(source.id, true);
+        summary.missing += 1;
+      }
     }
   }
   return { root, summary };

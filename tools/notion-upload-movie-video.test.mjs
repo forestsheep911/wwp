@@ -56,7 +56,7 @@ test("movie uploader refuses the historical default page id", () => {
   assert.match(result.stderr, /--page-id is required/);
 });
 
-test("movie uploader installs Notion DNS override before client work", () => {
+test("movie uploader installs an explicitly requested Notion DNS override before client work", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "wwp-movie-upload-"));
   try {
     const result = spawnSync(process.execPath, [
@@ -65,15 +65,16 @@ test("movie uploader installs Notion DNS override before client work", () => {
       "39720ac1-2f0a-8029-8d47-c61f4e32437d",
       "--target-title",
       "罪人 繁英 1.6GB",
-      "--prepare-only"
+      "--prepare-only",
+      "--resolve-ip",
+      "203.0.113.10"
     ], {
       cwd,
       encoding: "utf8",
       env: {
         ...process.env,
         NOTION_WRITE_TOKEN: "",
-        NOTION_TOKEN: "",
-        NOTION_API_RESOLVE_IP: "203.0.113.10"
+        NOTION_TOKEN: ""
       }
     });
 
@@ -82,6 +83,14 @@ test("movie uploader installs Notion DNS override before client work", () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("movie uploader documents physical-interface direct binding", () => {
+  const result = spawnSync(process.execPath, [scriptPath, "--help"], { encoding: "utf8" });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /--local-address <ip>/);
+  assert.match(result.stdout, /physical interface/i);
 });
 
 test("movie prepare-only preflight rejects a target that already contains video", () => {

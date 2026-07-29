@@ -101,6 +101,10 @@ function mediaFilename(block) {
   catch { return ""; }
 }
 
+function mediaCaption(block) {
+  return plainText(block?.[block?.type]?.caption).trim();
+}
+
 function parentPageId(page) {
   return page?.parent?.type === "page_id" ? page.parent.page_id : null;
 }
@@ -181,6 +185,32 @@ async function listRecordedPageChildren(client, pageId) {
   return results;
 }
 
+async function queryRecordedAssets(client, dataSourceId, { sourcePageId, mediaBlockId }) {
+  const responses = [];
+  if (mediaBlockId) {
+    const response = await client.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 20,
+      filter: { property: "Media Block ID", rich_text: { equals: mediaBlockId } }
+    });
+    responses.push(response);
+    if ((response.results ?? []).length > 0) return response.results;
+  }
+  if (sourcePageId) {
+    responses.push(await client.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 20,
+      filter: { property: "Source Page ID", rich_text: { equals: sourcePageId } }
+    }));
+  }
+  const seen = new Set();
+  return responses.flatMap(response => response.results ?? []).filter(page => {
+    if (seen.has(page.id)) return false;
+    seen.add(page.id);
+    return true;
+  });
+}
+
 export function createNotionTargetAdapter(client, {
   mediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID
 } = {}) {
@@ -192,22 +222,24 @@ export function createNotionTargetAdapter(client, {
       const pages = await Promise.all(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
-      const media = blocks.find(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block)
-        && (target.media_block_id
-          ? block.id === target.media_block_id
-          : (!target.expected_filename || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase())));
-      const traceFilters = [{ property: "Source Page ID", rich_text: { equals: contentPageId } }];
-      if (media?.id) traceFilters.push({ property: "Media Block ID", rich_text: { equals: media.id } });
-      const assets = await client.dataSources.query({
-        data_source_id: mediaAssetsDataSourceId,
-        page_size: 10,
-        filter: {
-          and: [
-            { property: "Work", relation: { contains: target.work_page_id } },
-            traceFilters.length === 1 ? traceFilters[0] : { or: traceFilters }
-          ]
-        }
-      });
+      const mediaBlocks = blocks.filter(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block));
+      const media = target.media_block_id
+        ? mediaBlocks.find(block => block.id === target.media_block_id)
+        : mediaBlocks.find(block => !target.expected_filename
+          || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase())
+          // Manual Notion uploads often omit captions and expose only an opaque S3 key.
+          // A sole unnamed block on the exact registered destination is still unambiguous.
+          ?? (target.expected_filename && mediaBlocks.length === 1 && !mediaCaption(mediaBlocks[0])
+            ? mediaBlocks[0]
+            : undefined);
+      const assets = {
+        results: media
+          ? await queryRecordedAssets(client, mediaAssetsDataSourceId, {
+            sourcePageId: contentPageId,
+            mediaBlockId: media.id
+          })
+          : []
+      };
       const asset = media ? (assets.results ?? []).find(page => matchesRecordedAssetEvidence(page, {
         workPageId: target.work_page_id,
         sourcePageId: contentPageId,

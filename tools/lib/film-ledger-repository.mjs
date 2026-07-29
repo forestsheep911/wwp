@@ -16,6 +16,21 @@ export function normalizeLedgerPath(value) {
   return normalized.replace(/(?<!^[a-z]:)\\+$/i, "").toLowerCase();
 }
 
+function preserveProbeEvidence(existingJson, incomingJson) {
+  if (!incomingJson) return existingJson ?? null;
+  if (!existingJson) return incomingJson;
+  try {
+    const existing = JSON.parse(existingJson);
+    const incoming = JSON.parse(incomingJson);
+    if (incoming?.internalProbeState === "not_run" && existing?.internalProbeState && existing.internalProbeState !== "not_run") {
+      return existingJson;
+    }
+  } catch {
+    // Keep the incoming value when either side is not structured JSON.
+  }
+  return incomingJson;
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {
@@ -215,12 +230,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     const fingerprintMatch = db.prepare("SELECT id FROM sources WHERE input_root_id = ? AND fingerprint = ?")
       .get(input.inputRootId, input.fingerprint);
     if (fingerprintMatch) {
+      const current = db.prepare("SELECT * FROM sources WHERE id=?").get(fingerprintMatch.id);
       db.prepare(`UPDATE sources SET work_id=COALESCE(?, work_id), relative_path=?, absolute_path=?, source_kind=?,
-        probe_path=COALESCE(?, probe_path), quality_state=?, subtitle_evidence=COALESCE(?, subtitle_evidence),
-        audio_evidence=COALESCE(?, audio_evidence), color_risk=?, missing=?, updated_at=? WHERE id=?`)
+        probe_path=COALESCE(?, probe_path), quality_state=CASE WHEN ? = 'unknown' THEN quality_state ELSE ? END,
+        subtitle_evidence=?, audio_evidence=COALESCE(?, audio_evidence),
+        color_risk=CASE WHEN ? = 'unknown' THEN color_risk ELSE ? END, missing=?, updated_at=? WHERE id=?`)
         .run(input.workId ?? null, input.relativePath, input.absolutePath, input.sourceKind, input.probePath ?? null,
-          input.qualityState ?? "unknown", nullableJson(input.subtitleEvidence), nullableJson(input.audioEvidence),
-          input.colorRisk ?? "unknown", input.missing ? 1 : 0, at, fingerprintMatch.id);
+          input.qualityState ?? "unknown", input.qualityState ?? "unknown",
+          preserveProbeEvidence(current.subtitle_evidence, nullableJson(input.subtitleEvidence)),
+          nullableJson(input.audioEvidence), input.colorRisk ?? "unknown", input.colorRisk ?? "unknown",
+          input.missing ? 1 : 0, at, fingerprintMatch.id);
       const source = db.prepare("SELECT * FROM sources WHERE id = ?").get(fingerprintMatch.id);
       if (source.work_id) {
         completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
@@ -238,9 +257,14 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       ON CONFLICT(input_root_id, relative_path) DO UPDATE SET
         work_id=COALESCE(excluded.work_id, sources.work_id), absolute_path=excluded.absolute_path,
         fingerprint=excluded.fingerprint, source_kind=excluded.source_kind,
-        probe_path=COALESCE(excluded.probe_path, sources.probe_path), quality_state=excluded.quality_state,
-        subtitle_evidence=COALESCE(excluded.subtitle_evidence, sources.subtitle_evidence),
-        audio_evidence=COALESCE(excluded.audio_evidence, sources.audio_evidence), color_risk=excluded.color_risk,
+        probe_path=COALESCE(excluded.probe_path, sources.probe_path),
+        quality_state=CASE WHEN excluded.quality_state='unknown' THEN sources.quality_state ELSE excluded.quality_state END,
+        subtitle_evidence=CASE WHEN json_extract(excluded.subtitle_evidence, '$.internalProbeState')='not_run'
+          AND json_extract(sources.subtitle_evidence, '$.internalProbeState') IS NOT NULL
+          AND json_extract(sources.subtitle_evidence, '$.internalProbeState') <> 'not_run'
+          THEN sources.subtitle_evidence ELSE COALESCE(excluded.subtitle_evidence, sources.subtitle_evidence) END,
+        audio_evidence=COALESCE(excluded.audio_evidence, sources.audio_evidence),
+        color_risk=CASE WHEN excluded.color_risk='unknown' THEN sources.color_risk ELSE excluded.color_risk END,
         missing=excluded.missing, updated_at=excluded.updated_at`)
       .run(input.workId ?? null, input.inputRootId, input.relativePath, input.absolutePath, input.fingerprint,
         input.sourceKind, input.probePath ?? null, input.qualityState ?? "unknown", nullableJson(input.subtitleEvidence),

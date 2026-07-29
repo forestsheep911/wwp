@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openLedger } from "./film-ledger-schema.mjs";
@@ -51,6 +51,18 @@ test("importScan is idempotent, reopens changed evidence, marks missing, and nev
       externalHints: ["chs"],
       internalProbeState: "not_run"
     });
+    f.repo.updateSourceEvidence(source.id, {
+      qualityState: "bluray_1080p_h264",
+      subtitleEvidence: { internalProbeState: "completed", chineseCandidate: true },
+      audioEvidence: { audioTrackCount: 2 },
+      colorRisk: "low"
+    });
+    importScan(f.repo, payload);
+    const preserved = f.db.prepare("SELECT * FROM sources").get();
+    assert.equal(preserved.quality_state, "bluray_1080p_h264");
+    assert.deepEqual(JSON.parse(preserved.subtitle_evidence), { internalProbeState: "completed", chineseCandidate: true });
+    assert.deepEqual(JSON.parse(preserved.audio_evidence), { audioTrackCount: 2 });
+    assert.equal(preserved.color_risk, "low");
     const work = f.repo.ensureWork({ canonicalTitle: "Example Movie", year: 2025, workType: "movie" });
     f.repo.bindSourceToWork(source.id, work.id);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
@@ -80,6 +92,37 @@ test("importScan counts duplicate scan entries deterministically", () => {
     assert.deepEqual(result.summary, { inserted: 1, unchanged: 1, changed: 0, missing: 0 });
     assert.equal(f.db.prepare("SELECT count(*) count FROM sources").get().count, 1);
   } finally { f.close(); }
+});
+
+test("importScan does not mark an existing collection member missing", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-root-"));
+  try {
+    const member = path.join(root, "Collection", "member.mkv");
+    mkdirSync(path.dirname(member), { recursive: true });
+    writeFileSync(member, "fixture");
+    const sourceEntry = entry({
+      name: "Collection",
+      relativePath: "Collection",
+      fileCount: 1,
+      mediaCount: 1,
+      largestMedia: [{ relativePath: "Collection\\member.mkv", bytes: 7, extension: ".mkv" }]
+    });
+    const memberSource = f.repo.upsertDiscoveredSource({
+      inputRootId: f.repo.upsertInputRoot(root).id,
+      relativePath: "Collection\\member.mkv",
+      absolutePath: member,
+      fingerprint: "member",
+      sourceKind: "collection_member",
+      missing: true
+    });
+    const result = importScan(f.repo, { root, entries: [sourceEntry] });
+    assert.equal(result.summary.missing, 0);
+    assert.equal(f.db.prepare("SELECT missing FROM sources WHERE id=?").get(memberSource.id).missing, 0);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Windows input roots normalize drive case and trailing separators while POSIX remains case-sensitive", () => {

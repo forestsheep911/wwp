@@ -94,6 +94,7 @@ interface LibraryTabProps {
   detailAssetKey?: string;
   onOpenDetail: (result: ResultWithCache) => void;
   onCloseDetail: () => void;
+  onClearSearch: () => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -128,6 +129,7 @@ export function LibraryTab({
   detailAssetKey,
   onOpenDetail,
   onCloseDetail,
+  onClearSearch,
   onRefreshBrowse,
   onViewModeChange,
   onSelect,
@@ -238,6 +240,7 @@ export function LibraryTab({
           collectionEntry={collectionMarksByAssetKey.get(detailResult.assetKey)}
           trackedByAssetKey={trackedByAssetKey}
           onBack={onCloseDetail}
+          backLabel={hasQuery ? copy.library.backToSearchResults(query.trim()) : copy.library.backToList}
           onSummarize={openMovieSummary}
           onToggleFavorite={onToggleFavorite}
           onUpdateCollectionMark={onUpdateCollectionMark}
@@ -269,6 +272,18 @@ export function LibraryTab({
         />
       ) : (
         <>
+          {hasQuery ? (
+            <div className="flex flex-col gap-3 rounded-xl border border-emerald-300/20 bg-emerald-300/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-lg">
+              <div className="min-w-0">
+                <p className="text-xs font-bold tracking-wide text-emerald-200">搜索结果</p>
+                <p className="mt-1 truncate text-sm font-semibold text-slate-100">{copy.library.searchResults(query.trim(), results.length)}</p>
+              </div>
+              <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onClearSearch}>
+                {copy.library.clearSearch}
+              </Button>
+            </div>
+          ) : null}
+
           <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
             <Button
               className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
@@ -2517,6 +2532,7 @@ function MovieDetailView({
   collectionEntry,
   trackedByAssetKey,
   onBack,
+  backLabel,
   onSummarize,
   onToggleFavorite,
   onUpdateCollectionMark,
@@ -2531,6 +2547,7 @@ function MovieDetailView({
   collectionEntry?: FavoriteEntry;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   onBack: () => void;
+  backLabel: string;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
   onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
@@ -2549,7 +2566,7 @@ function MovieDetailView({
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
         <Button className="w-full justify-start sm:w-auto" type="button" variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft className="h-4 w-4" />
-          {copy.library.backToList}
+          {backLabel}
         </Button>
         <div className="grid grid-cols-4 items-center gap-2 sm:flex">
           <FavoriteButton

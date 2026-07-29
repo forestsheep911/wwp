@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
@@ -49,6 +49,7 @@ export interface SearchIndexStats {
 export interface SearchIndexStore {
   readonly backend: CacheBackend;
   readonly description: string;
+  getRevision(): Promise<string | undefined>;
   getHealth(): Promise<Record<string, unknown>>;
   getStats(): Promise<SearchIndexStats>;
   search(query: string, limit: number): Promise<SearchResult[]>;
@@ -547,6 +548,19 @@ export class LocalSearchIndexStore implements SearchIndexStore {
     this.description = `local:${statePath}`;
   }
 
+  async getRevision() {
+    try {
+      const state = await stat(this.statePath);
+      return `${state.mtimeMs}:${state.size}`;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async getHealth() {
     return {
       backend: this.backend,
@@ -699,6 +713,10 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   private snapshotRefresh?: Promise<SearchIndexEntry[]>;
   private snapshotRefreshedAt?: string;
   private snapshotRefreshError?: string;
+
+  async getRevision() {
+    return undefined;
+  }
 
   constructor() {
     this.tableClient = this.config.connectionString

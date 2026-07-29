@@ -844,10 +844,21 @@ function normalizeMetadataOverrides(manifestPath) {
   }));
 }
 
-function metadataOverrideMatches(candidate, override) {
+export function comparableUploadFileName(value = "") {
+  return cleanText(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+export function metadataOverrideMatches(candidate, override) {
   if (override.mediaBlockId && candidate.mediaBlockId === override.mediaBlockId) return true;
   if (override.sourcePageId && override.originalFileName) {
-    return candidate.sourcePageId === override.sourcePageId && candidate.originalFileName === override.originalFileName;
+    return candidate.sourcePageId === override.sourcePageId
+      && (
+        candidate.originalFileName === override.originalFileName
+        || comparableUploadFileName(candidate.originalFileName) === comparableUploadFileName(override.originalFileName)
+      );
   }
   if (override.originalFileName && candidate.originalFileName === override.originalFileName) return true;
   return false;

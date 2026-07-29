@@ -172,7 +172,7 @@ test("all four evidence gates advance legally to sync_ready while incomplete evi
   } finally { f.close(); }
 });
 
-test("adapter uses only recorded pages and a relation-constrained Media Assets query", async () => {
+test("adapter uses only recorded pages and an exact Media Assets trace query", async () => {
   const calls = [];
   const client = {
     pages: { async retrieve(input) { calls.push(["pages.retrieve", input]); return { id: input.page_id, parent: input.page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: input.page_id === "spec-1" ? "work-1" : "spec-1" } }; } },
@@ -195,14 +195,8 @@ test("adapter uses only recorded pages and a relation-constrained Media Assets q
     ["blocks.children.list", { block_id: "episode-1", page_size: 100 }]
   ]);
   assert.deepEqual(calls[4], ["dataSources.query", {
-    data_source_id: "assets-ds", page_size: 10,
-    filter: { and: [
-      { property: "Work", relation: { contains: "work-1" } },
-      { or: [
-        { property: "Source Page ID", rich_text: { equals: "episode-1" } },
-        { property: "Media Block ID", rich_text: { equals: "media-1" } }
-      ] }
-    ] }
+    data_source_id: "assets-ds", page_size: 20,
+    filter: { property: "Media Block ID", rich_text: { equals: "media-1" } }
   }]);
   assert.equal(result.mediaAssetPageId, "asset-1");
   assert.equal(calls.length, 5);
@@ -213,6 +207,40 @@ test("adapter rejects an arbitrary sibling media block when expected filename do
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
     blocks: { children: { async list() { return { results: [{ id: "sibling-media", type: "video", video: { caption: [{ plain_text: "Other.Movie.mp4" }], file: { url: "https://example.test/other.mp4" } } }] }; } } },
     dataSources: { async query() { return { results: [publishableAsset({ "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "spec-1" }] } })] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.Movie.mp4"
+  });
+  assert.equal(result.mediaVerified, false);
+  assert.equal(result.mediaBlockId, null);
+  assert.equal(result.assetsVerified, false);
+});
+
+test("adapter accepts one captionless media block on the exact registered destination", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
+    blocks: { children: { async list() { return { results: [{ id: "manual-media", type: "video", video: { caption: [], file: { url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/opaque-key" } } }] }; } } },
+    dataSources: { async query() { return { results: [publishableAsset({
+      "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "spec-1" }] },
+      "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "manual-media" }] }
+    })] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.Movie.mp4"
+  });
+  assert.equal(result.mediaVerified, true);
+  assert.equal(result.mediaBlockId, "manual-media");
+  assert.equal(result.assetsVerified, true);
+});
+
+test("adapter rejects multiple captionless media blocks without a recorded block id", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
+    blocks: { children: { async list() { return { results: [
+      { id: "manual-media-1", type: "video", video: { caption: [], file: { url: "https://example.test/opaque-1" } } },
+      { id: "manual-media-2", type: "video", video: { caption: [], file: { url: "https://example.test/opaque-2" } } }
+    ] }; } } },
+    dataSources: { async query() { return { results: [] }; } }
   };
   const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
     work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.Movie.mp4"

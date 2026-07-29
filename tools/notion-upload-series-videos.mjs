@@ -1,11 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
+import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
 
 const DEFAULT_PAGE_ID = "39120ac12f0a80e69374d19602a6e59b";
 const DEFAULT_SOURCE_DIR = "C:\\Users\\fores\\OneDrive\\13_新时期\\boccaro\\trans";
@@ -28,7 +31,10 @@ function parseArgs() {
     createSpec: false,
     createEpisodes: false,
     apply: false,
-    prepareOnly: false
+    prepareOnly: false,
+    allowCollections: false,
+    resolveIp: "",
+    localAddress: ""
   };
   let pageIdProvided = false;
 
@@ -54,6 +60,9 @@ function parseArgs() {
     else if (arg === "--create-episodes") options.createEpisodes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--prepare-only") options.prepareOnly = true;
+    else if (arg === "--allow-collections") options.allowCollections = true;
+    else if (arg === "--resolve-ip") options.resolveIp = args[++index];
+    else if (arg === "--local-address") options.localAddress = args[++index];
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -65,6 +74,9 @@ function parseArgs() {
   options.sourceDir = path.resolve(options.sourceDir);
   if (options.create && !pageIdProvided) options.pageId = "";
   if (options.create && !pageIdProvided && !options.title) throw new Error("--create requires --title.");
+  if (options.specTitle && !options.targetSpecPageId && !options.createSpec) {
+    throw new Error("--spec-title requires --target-spec-page-id or --create-spec; refusing implicit spec-page selection.");
+  }
   if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
   return options;
 }
@@ -73,7 +85,7 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-upload-series-videos.mjs [--apply] [--max-files 1]
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --create-episodes
-  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*-E*.mp4" --spec-title "辐射 第二季 繁英 4.7-4.85GB/合集" --create --create-episodes --prepare-only --apply
+  node tools/notion-upload-series-videos.mjs --page-id <series-page-id> --source-dir E:\\video_made --file-pattern "Fallout.S02E*.mp4" --spec-title "辐射 第二季 繁英 1.0-1.3GB/集" --create --create-episodes --prepare-only --apply
 
 Examples:
   node tools/notion-upload-series-videos.mjs
@@ -82,8 +94,15 @@ Examples:
   node tools/notion-upload-series-videos.mjs --create --title "摩登情爱 第一季 Modern Love Season 1 (2019)" --source-dir E:\\video_made --file-pattern "Modern.Love.2019.S01E02*.mp4" --spec-title "摩登情爱 第一季 繁 0.44GB/集" --create-episodes --apply
 
 Options:
-  --prepare-only  Create/reuse the spec and episode-range page structure before long encode or manual upload handoff, then skip file uploads.
+  --prepare-only  Create/reuse the spec and Episode page structure before long encode or upload, then skip file uploads.
   --create-spec   With --spec-title, create/reuse that exact spec page instead of renaming the first existing spec.
+                  When uploading into an existing spec, prefer --target-spec-page-id for an exact destination.
+  --allow-collections
+                  Explicitly permit multi-episode files and /合集 spec titles. Single-episode delivery is the default.
+  --resolve-ip <ip>
+                  Explicit api.notion.com DNS fallback; hostname routing is the default.
+  --local-address <ip>
+                  Bind direct traffic to a physical interface; pair with --resolve-ip.
 `);
 }
 
@@ -98,8 +117,7 @@ function dotenv(name) {
   return process.env[name];
 }
 
-function installNotionDnsOverride() {
-  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+function installNotionDnsOverride(notionApiIp) {
   if (!notionApiIp) return;
   const originalLookup = dns.lookup.bind(dns);
   dns.lookup = (hostname, options, callback) => {
@@ -113,10 +131,14 @@ function installNotionDnsOverride() {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: 600000 };
-  if (proxyUrl) {
+  if (localAddress) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -214,6 +236,16 @@ export function validateSeriesSpecTitle(title) {
     throw new Error(`Series spec size must be marked as per-episode or per-collection (/集 or /合集): ${value}`);
   }
   return value;
+}
+
+export function validateCollectionOptIn(files, specTitle, allowCollections = false) {
+  const collectionFiles = files.filter(file => Number(file.episodeEnd) > Number(file.episode));
+  const collectionTitle = /\/\s*合集|per\s*collection/iu.test(String(specTitle ?? ""));
+  if (!allowCollections && (collectionFiles.length > 0 || collectionTitle)) {
+    const names = collectionFiles.map(file => file.name).join(", ");
+    throw new Error(`Series collections require explicit --allow-collections${names ? `: ${names}` : ""}`);
+  }
+  return true;
 }
 
 function specLabelFromFiles(files) {
@@ -515,10 +547,14 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
 
   if (record.mode === "single_part") {
     const data = await readChunk(file.path, 0, file.size);
-    await notion.fileUploads.send({
-      file_upload_id: record.fileUploadId,
-      file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-    });
+    await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+        file_upload_id: record.fileUploadId,
+        file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+      }), {
+        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+          `retry ${file.name} single part attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+        )
+      });
     record.sentParts = 1;
   } else {
     for (let part = (record.sentParts ?? 0) + 1; part <= record.partCount; part += 1) {
@@ -527,11 +563,15 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       const data = await readChunk(file.path, offset, length);
       const startedAt = Date.now();
       console.log(`send ${file.name} part ${part}/${record.partCount}`);
-      await notion.fileUploads.send({
-        file_upload_id: record.fileUploadId,
-        part_number: String(part),
-        file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-      });
+      await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+          file_upload_id: record.fileUploadId,
+          part_number: String(part),
+          file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+        }), {
+          onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+            `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+          )
+        });
       record.sentParts = part;
       record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
@@ -539,7 +579,14 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       await sleep(250);
     }
     console.log(`complete ${file.name}`);
-    await notion.fileUploads.complete({ file_upload_id: record.fileUploadId });
+    await withTransientNotionUploadRetry(
+      () => notion.fileUploads.complete({ file_upload_id: record.fileUploadId }),
+      {
+        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+          `retry complete ${file.name} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+        )
+      }
+    );
   }
 
   record.status = "uploaded";
@@ -575,14 +622,19 @@ async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply
 
 async function main() {
   const options = parseArgs();
-  installNotionDnsOverride();
+  installNotionDnsOverride(options.resolveIp);
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
   const files = collectSourceFiles(options);
   if (files.length === 0) throw new Error(`No matching files found: ${path.join(options.sourceDir, options.filePattern)}`);
   const selectedFiles = files.slice(0, options.maxFiles);
-  const notion = createNotionClient(token);
+  validateCollectionOptIn(selectedFiles, options.specTitle, options.allowCollections);
+  for (const file of selectedFiles) {
+    const qc = probePlayableUpload(file.path);
+    console.log(`upload probe: ${file.name} ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
+  }
+  const notion = createNotionClient(token, options.localAddress);
   const library = options.create ? await findLibrary(notion) : undefined;
   const page = options.pageId
     ? await notion.pages.retrieve({ page_id: options.pageId })

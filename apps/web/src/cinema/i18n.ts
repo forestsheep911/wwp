@@ -168,6 +168,9 @@ export const zhCN = {
       low: "低置信"
     },
     backToList: "返回列表",
+    backToSearchResults: (query: string) => `返回“${query}”的搜索结果`,
+    searchResults: (query: string, count: number) => `“${query}”的搜索结果 · ${count} 部`,
+    clearSearch: "清除搜索",
     intro: "简介",
     allVariants: "全部规格",
     browseLoadingLabel: "正在加载浏览目录",

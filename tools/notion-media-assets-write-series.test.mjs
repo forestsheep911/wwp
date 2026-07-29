@@ -6,10 +6,35 @@ import {
   buildMissingProperties,
   buildReplacementProperties,
   candidatesFromOrganizerPage,
+  comparableUploadFileName,
+  metadataOverrideMatches,
   parseAssetMetadata,
   playablePlacementIssue,
   selectablePages
 } from "./notion-media-assets-write-series.mjs";
+
+test("metadata overrides survive Notion filename punctuation cleanup on the exact episode page", () => {
+  const localName = "【AGE】[JOJO&UHA-WING&Kamigami][180253][01][720P][CHS] AVC.mp4";
+  const notionName = "【AGE】JOJOUHA-WINGKamigami18025301720PCHS_AVC.mp4";
+
+  assert.equal(comparableUploadFileName(localName), comparableUploadFileName(notionName));
+  assert.equal(metadataOverrideMatches({
+    sourcePageId: "episode-01",
+    mediaBlockId: "media-01",
+    originalFileName: notionName
+  }, {
+    sourcePageId: "episode-01",
+    originalFileName: localName
+  }), true);
+  assert.equal(metadataOverrideMatches({
+    sourcePageId: "episode-02",
+    mediaBlockId: "media-02",
+    originalFileName: notionName
+  }, {
+    sourcePageId: "episode-01",
+    originalFileName: localName
+  }), false);
+});
 
 const mediaAssetsDataSource = {
   properties: {

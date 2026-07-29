@@ -603,6 +603,20 @@ function CinemaApp() {
     }), "replace");
   }
 
+  function clearSearchResults() {
+    setError("");
+    setDetailAssetKey(undefined);
+    setFocusedLibraryAssetKey(undefined);
+    setQuery("");
+    setResults([]);
+    writeRoute(routeForCurrentView({
+      tab: "library",
+      query: "",
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }), "push");
+  }
+
   function mergeTrackedItem(currentItem: TrackedCacheItem, nextItem: TrackedCacheItem): TrackedCacheItem {
     return {
       ...nextItem,
@@ -2966,6 +2980,7 @@ function CinemaApp() {
             detailAssetKey={detailAssetKey}
             onOpenDetail={openLibraryDetail}
             onCloseDetail={closeLibraryDetail}
+            onClearSearch={clearSearchResults}
             onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
             onViewModeChange={setLibraryViewMode}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}

@@ -1,11 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 import { assertPreparedMovieTargetIsEmpty, notionVideoName } from "./lib/notion-movie-target.mjs";
+import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
+import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
 
 const DEFAULT_PART_MIB = 20;
 
@@ -18,6 +21,7 @@ function parseArgs() {
     partMiB: DEFAULT_PART_MIB,
     prepareOnly: false,
     resolveIp: "",
+    localAddress: "",
     apply: false
   };
   let pageIdProvided = false;
@@ -35,6 +39,7 @@ function parseArgs() {
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--prepare-only") options.prepareOnly = true;
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
+    else if (arg === "--local-address") options.localAddress = args[++index];
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -66,7 +71,10 @@ Examples:
 
 Options:
   --prepare-only  Create/reuse an empty target spec child page before long encode or manual upload handoff, then skip upload. Fails when the target already contains video so an existing playable spec cannot be mistaken for a new destination.
-  --resolve-ip     Override api.notion.com DNS for route-specific Notion API failures.
+  --resolve-ip <ip>
+                   Override api.notion.com DNS for route-specific Notion API failures.
+  --local-address <ip>
+                   Bind direct traffic to a physical interface. Pair with --resolve-ip when Clash fake-IP routing is unhealthy.
 `);
 }
 
@@ -82,7 +90,7 @@ function dotenv(name) {
 }
 
 function installNotionDnsOverride(resolveIp) {
-  const notionApiIp = resolveIp || dotenv("NOTION_API_RESOLVE_IP");
+  const notionApiIp = resolveIp;
   if (!notionApiIp) return;
   const originalLookup = dns.lookup.bind(dns);
   dns.lookup = (hostname, options, callback) => {
@@ -96,10 +104,14 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: 600000 };
-  if (proxyUrl) {
+  if (localAddress) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -320,10 +332,14 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
 
   if (record.mode === "single_part") {
     const data = await readChunk(file.path, 0, file.size);
-    await notion.fileUploads.send({
-      file_upload_id: record.fileUploadId,
-      file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-    });
+    await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+        file_upload_id: record.fileUploadId,
+        file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+      }), {
+        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+          `retry ${file.name} single part attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+        )
+      });
     record.sentParts = 1;
   } else {
     for (let part = (record.sentParts ?? 0) + 1; part <= record.partCount; part += 1) {
@@ -332,11 +348,15 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       const data = await readChunk(file.path, offset, length);
       const startedAt = Date.now();
       console.log(`send ${file.name} part ${part}/${record.partCount}`);
-      await notion.fileUploads.send({
-        file_upload_id: record.fileUploadId,
-        part_number: String(part),
-        file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-      });
+      await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+          file_upload_id: record.fileUploadId,
+          part_number: String(part),
+          file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+        }), {
+          onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+            `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+          )
+        });
       record.sentParts = part;
       record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
@@ -344,7 +364,14 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       await sleep(250);
     }
     console.log(`complete ${file.name}`);
-    await notion.fileUploads.complete({ file_upload_id: record.fileUploadId });
+    await withTransientNotionUploadRetry(
+      () => notion.fileUploads.complete({ file_upload_id: record.fileUploadId }),
+      {
+        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+          `retry complete ${file.name} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+        )
+      }
+    );
   }
 
   record.status = "uploaded";
@@ -392,7 +419,11 @@ async function main() {
         size: fs.statSync(options.file).size
       }
     : null;
-  const notion = createNotionClient(token);
+  if (file) {
+    const qc = probePlayableUpload(file.path);
+    console.log(`upload probe: ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
+  }
+  const notion = createNotionClient(token, options.localAddress);
   const page = await notion.pages.retrieve({ page_id: options.pageId });
   const inferredTargetTitle = file
     ? `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`

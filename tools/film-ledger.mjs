@@ -164,6 +164,17 @@ async function main() {
         throw new Error("production retry requires qc_failed or deferred state");
       }
       output(repo.transitionProduction(id, "selected", { failureDetail: options.failure_detail ?? "Production retry selected" }), options.json, `variant ${id}: selected`);
+    } else if (command === "retire-variant") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      const variant = variantRecord(db, id);
+      if (variant.production_state !== "qc_passed") {
+        throw new Error("variant retirement requires qc_passed state");
+      }
+      const failureDetail = requireOption(options, "failure_detail", "--failure-detail");
+      output(repo.transitionProduction(id, "rejected", {
+        failureCode: options.failure_code ?? "publication_cancelled",
+        failureDetail
+      }), options.json, `variant ${id}: rejected`);
     } else if (command === "route-intake") {
       const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
       const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");
