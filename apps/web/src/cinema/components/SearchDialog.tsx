@@ -75,7 +75,7 @@ export function SearchDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="inset-0 h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden rounded-none border-0 p-0 sm:inset-auto sm:h-auto sm:max-h-[86vh] sm:w-[min(96vw,1040px)] sm:rounded-lg sm:border"
+        className="inset-0 h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden rounded-none border-0 p-0 sm:left-1/2 sm:top-1/2 sm:right-auto sm:bottom-auto sm:h-auto sm:max-h-[86vh] sm:w-[min(96vw,1040px)] sm:rounded-lg sm:border"
         hideCloseButton
       >
         <DialogHeader className="sr-only">
