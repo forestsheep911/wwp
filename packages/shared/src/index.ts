@@ -8,7 +8,6 @@ export type CacheStatus =
   | "failed";
 
 export type PlaybackLine = "domestic" | "international";
-export type PlaybackLinePreference = "auto" | PlaybackLine;
 
 export type ResolverLayer = "official_api" | "rule" | "browser" | "ai";
 

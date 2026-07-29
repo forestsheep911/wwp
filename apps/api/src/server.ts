@@ -2117,7 +2117,7 @@ async function handleEnsureCache(
   if (line === "domestic") {
     if (!aliyunFcPrepare.enabled || !aliyunOssStorage.enabled) {
       sendJson(response, 503, {
-        error: "国内线路暂时不可用，请切换到国际 Azure 线路后重试。"
+        error: "国内线路暂时不可用，请切换到国际线路后重试。"
       });
       return;
     }
@@ -2177,7 +2177,7 @@ async function handleEnsureCache(
       line,
       trigger: {
         status: output.created ? "started" : "skipped",
-        message: output.created ? "国内 OSS 准备任务已启动。" : "国内 OSS 已有准备任务。"
+        message: output.created ? "国内线路准备任务已启动。" : "国内线路已有准备任务。"
       },
       charge: charge?.ok ? charge.charge : undefined,
       memberCredits: charge?.ok ? charge.code.credits : undefined
@@ -2531,7 +2531,7 @@ async function handlePlayback(
         durationMs: durationMs(startedAt)
       });
       sendJson(response, 409, {
-        error: "国内线路尚未准备好；可以先准备，或切换到国际 Azure 线路。"
+        error: "国内线路尚未准备好；可以先准备，或切换到国际线路。"
       });
       return;
     }
@@ -4003,7 +4003,7 @@ async function handleSearchIndexStats(response: http.ServerResponse, context: Re
 }
 
 function ossPreparationError(value: unknown) {
-  const text = value instanceof Error ? value.message : String(value ?? "OSS preparation failed.");
+  const text = value instanceof Error ? value.message : String(value ?? "Domestic playback preparation failed.");
   return text
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[private source]")
     .replace(/[A-Za-z]:\\[^\s"'<>]+/g, "[local path]")
@@ -4095,7 +4095,7 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
   if (task.status === "Enqueued") {
     next = { ...next, status: "queued", progress: 5, message: "正在排队，轮到后会自动开始。" };
   } else if (["Running", "Retrying"].includes(task.status)) {
-    next = { ...next, status: "running", progress: 50, message: "正在从 Notion 准备到国内 OSS。" };
+    next = { ...next, status: "running", progress: 50, message: "正在准备国内线路。" };
   } else if (task.status === "Succeeded") {
     const object = await aliyunOssStorage.head(job.objectKey);
     if (!object) {
@@ -4103,8 +4103,8 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
         ...next,
         status: "failed",
         progress: 100,
-        message: "任务已结束，但 OSS 文件没有生成。",
-        error: "OSS object was not found after FC task completion.",
+        message: "任务已结束，但国内线路文件没有生成。",
+        error: "Prepared object was not found after task completion.",
         completedAt: now
       };
     } else {
@@ -4161,7 +4161,7 @@ async function handleCreateOssPreparation(
   }
   if (!aliyunFcPrepare.enabled || !aliyunOssStorage.enabled) {
     sendJson(response, 503, {
-      error: aliyunFcPrepare.reason ?? aliyunOssStorage.reason ?? "国内 OSS 准备尚未配置。"
+      error: aliyunFcPrepare.reason ?? aliyunOssStorage.reason ?? "国内线路准备尚未配置。"
     });
     return;
   }
@@ -4624,7 +4624,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         await handleOssPreparationSignedUrl(jobId, response);
       } else {
         sendJson(response, 409, {
-          error: "OSS media requests require the browser playback adapter."
+          error: "国内线路播放请求需要浏览器播放适配器。"
         });
       }
       return;
@@ -4645,7 +4645,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc/media") {
       if (!requireAdmin(identity, response, context)) return;
       sendJson(response, 409, {
-        error: "OSS media requests require the browser playback adapter."
+        error: "Domestic playback requests require the browser playback adapter."
       });
       return;
     }
@@ -4694,7 +4694,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     if (request.method === "GET" && ossPreparationMediaMatch) {
       if (!requireAdmin(identity, response, context)) return;
       sendJson(response, 409, {
-        error: "OSS media requests require the browser playback adapter."
+        error: "Domestic playback requests require the browser playback adapter."
       });
       return;
     }

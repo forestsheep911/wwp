@@ -107,9 +107,9 @@ export function OssPlaybackPocPanel() {
     try {
       const next = await getAdminOssPlaybackPocStatus();
       setStatus(next);
-      setMessage(next.enabled ? "测试视频已经就绪。" : next.reason ?? "OSS 测试尚未启用。");
+      setMessage(next.enabled ? "测试视频已经就绪。" : next.reason ?? "国内线路测试尚未启用。");
     } catch (nextError) {
-      setError(errorMessage(nextError, "无法读取 OSS 测试配置。"));
+      setError(errorMessage(nextError, "无法读取国内线路测试配置。"));
     } finally {
       setLoading(false);
     }
@@ -164,13 +164,13 @@ export function OssPlaybackPocPanel() {
       const currentStatus = status?.enabled ? status : await getAdminOssPlaybackPocStatus();
       setStatus(currentStatus);
       if (!currentStatus.enabled || !currentStatus.mediaUrl) {
-        throw new Error(currentStatus.reason ?? "OSS 测试尚未配置完成。");
+        throw new Error(currentStatus.reason ?? "国内线路测试尚未配置完成。");
       }
       await ensureOssPlaybackServiceWorker();
-      setMessage("正在向 OSS 请求视频数据…");
+      setMessage("正在向国内线路请求视频数据…");
       setMediaUrl(`${currentStatus.mediaUrl}?run=${Date.now()}`);
     } catch (nextError) {
-      setError(errorMessage(nextError, "OSS 播放测试启动失败。"));
+      setError(errorMessage(nextError, "国内线路播放测试启动失败。"));
       setMessage("测试未启动。");
     } finally {
       setStarting(false);
@@ -185,7 +185,7 @@ export function OssPlaybackPocPanel() {
       setPreparationsEnabled(response.enabled);
       setPreparationConcurrency(response.concurrency);
     } catch (nextError) {
-      setError(errorMessage(nextError, "无法读取国内 OSS 准备任务。"));
+      setError(errorMessage(nextError, "无法读取国内线路准备任务。"));
     } finally {
       if (showLoading) setLoadingPreparations(false);
     }
@@ -215,7 +215,7 @@ export function OssPlaybackPocPanel() {
       setMessage(`“${choice.title} / ${choice.label}”已进入准备队列。`);
       await refreshPreparations(false);
     } catch (nextError) {
-      setError(errorMessage(nextError, "无法创建 OSS 准备任务。"));
+      setError(errorMessage(nextError, "无法创建国内线路准备任务。"));
     } finally {
       setActionId("");
     }
@@ -246,7 +246,7 @@ export function OssPlaybackPocPanel() {
       }
       await refreshPreparations(false);
     } catch (nextError) {
-      setError(errorMessage(nextError, "无法删除 OSS 文件。"));
+      setError(errorMessage(nextError, "无法删除国内线路文件。"));
     } finally {
       setActionId("");
     }
@@ -255,14 +255,14 @@ export function OssPlaybackPocPanel() {
   async function playPreparation(job: AdminOssPreparationJob) {
     setActionId(job.id);
     setError("");
-    setMessage("正在启动国内 OSS 播放…");
+    setMessage("正在启动国内线路播放…");
     setDiagnostic(undefined);
     setRequestCount(0);
     try {
       await ensureOssPlaybackServiceWorker();
       setMediaUrl(`/api/admin/oss-preparations/${encodeURIComponent(job.id)}/media?run=${Date.now()}`);
     } catch (nextError) {
-      setError(errorMessage(nextError, "无法启动 OSS 播放。"));
+      setError(errorMessage(nextError, "无法启动国内线路播放。"));
     } finally {
       setActionId("");
     }
@@ -278,7 +278,7 @@ export function OssPlaybackPocPanel() {
               实际片源灰度准备
             </CardTitle>
             <CardDescription>
-              仅管理员可见。片源直接从 Notion 进入国内 OSS；最多 {preparationConcurrency} 路同时准备，超出的任务会显示“排队中”并自动接续。
+              仅管理员可见。片源直接从 Notion 进入国内线路；最多 {preparationConcurrency} 路同时准备，超出的任务会显示“排队中”并自动接续。
             </CardDescription>
           </div>
           <Button
@@ -325,7 +325,7 @@ export function OssPlaybackPocPanel() {
                     disabled={!preparationsEnabled || Boolean(actionId)}
                   >
                     {actionId === choice.assetKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
-                    准备到 OSS
+                    准备到国内线路
                   </Button>
                 </div>
               ))}
@@ -385,10 +385,10 @@ export function OssPlaybackPocPanel() {
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2">
               <Cloud className="h-5 w-5 text-emerald-300" />
-              国内 OSS 播放验证
+              国内线路播放验证
             </CardTitle>
             <CardDescription>
-              管理员专用小视频。验证默认 OSS 域名经过浏览器响应适配后能否播放和拖动，不影响现有 Blob 线路。
+              管理员专用小视频。验证国内线路经过浏览器响应适配后能否播放和拖动，不影响现有国际线路。
             </CardDescription>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={() => void refreshStatus()} disabled={loading || starting}>
@@ -405,7 +405,7 @@ export function OssPlaybackPocPanel() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <Button type="button" onClick={() => void startTest()} disabled={loading || starting || !status?.enabled}>
               {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              开始 OSS 测试
+              开始国内线路测试
             </Button>
             <p className="text-sm text-slate-400" role="status">{message}</p>
           </div>
@@ -420,7 +420,7 @@ export function OssPlaybackPocPanel() {
       <Card className="rounded-xl sm:rounded-lg">
         <CardHeader>
           <CardTitle>实际播放器</CardTitle>
-          <CardDescription>可直接拖动进度条；拖动后继续播放即表示 OSS Range 链路成立。</CardDescription>
+          <CardDescription>可直接拖动进度条；拖动后继续播放即表示国内线路的分段读取链路成立。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <video
@@ -438,12 +438,12 @@ export function OssPlaybackPocPanel() {
               setDuration(event.currentTarget.duration);
               setMessage(`已读取视频，时长 ${event.currentTarget.duration.toFixed(1)} 秒。`);
             }}
-            onPlaying={() => setMessage("正在通过 OSS Range 请求播放。")}
+            onPlaying={() => setMessage("正在通过国内线路分段请求播放。")}
             onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
           />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Metric label="播放位置" value={`${currentTime.toFixed(1)} / ${duration.toFixed(1)} 秒`} />
-            <Metric label="OSS 请求数" value={String(requestCount)} />
+            <Metric label="国内线路请求数" value={String(requestCount)} />
             <Metric label="上游状态" value={diagnostic?.status ? String(diagnostic.status) : "—"} />
             <Metric label="原始强制下载" value={diagnostic?.forceDownload === "true" ? "是（已移除）" : "否/未返回"} />
           </div>

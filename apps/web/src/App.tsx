@@ -17,7 +17,6 @@ import type {
   MovieRequestStatus,
   PlaybackAdmissionResponse,
   PlaybackLine,
-  PlaybackLinePreference,
   PlaybackResponse,
   SearchResponse,
   SearchResult
@@ -93,7 +92,6 @@ import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
 import { Player } from "./cinema/components/Player";
 import { PlaybackOpening } from "./cinema/components/PlaybackOpening";
 import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
-import { PlaybackLineSwitch } from "./cinema/components/PlaybackLineSwitch";
 import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { ProfilePage } from "./cinema/components/ProfilePage";
@@ -144,10 +142,8 @@ import { serviceWakeProbeEnabled } from "./cinema/service-wake";
 import { variantVideoCodec } from "./cinema/media-compatibility";
 import { directDownloadUrl, directPlaybackUrl, triggerDirectDownload } from "./cinema/download";
 import {
-  readPlaybackLinePreference,
-  resolvePlaybackLine,
-  suggestedPlaybackLine,
-  writePlaybackLinePreference
+  readPlaybackLine,
+  writePlaybackLine
 } from "./cinema/playback-line";
 import { ensureOssPlaybackServiceWorker } from "./oss-playback-service-worker";
 import type {
@@ -250,11 +246,7 @@ function CinemaApp() {
   const [browseChannel, setBrowseChannel] = useState<BrowseChannel>(initialRoute.browseChannel);
   const [browseView, setBrowseView] = useState<BrowseViewId>(initialRoute.browseView);
   const [theme, setTheme] = useState<AppTheme>(() => readStoredTheme());
-  const [playbackLineSuggestion] = useState<PlaybackLine>(() => suggestedPlaybackLine());
-  const [playbackLinePreference, setPlaybackLinePreference] = useState<PlaybackLinePreference>(
-    () => readPlaybackLinePreference()
-  );
-  const resolvedPlaybackLine = resolvePlaybackLine(playbackLinePreference, playbackLineSuggestion);
+  const [resolvedPlaybackLine, setResolvedPlaybackLine] = useState<PlaybackLine>(() => readPlaybackLine());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
   const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
@@ -466,9 +458,9 @@ function CinemaApp() {
     }
   }, [resolvedPlaybackLine]);
 
-  function changePlaybackLine(preference: PlaybackLinePreference) {
-    writePlaybackLinePreference(preference);
-    setPlaybackLinePreference(preference);
+  function changePlaybackLine(line: PlaybackLine) {
+    writePlaybackLine(line);
+    setResolvedPlaybackLine(line);
   }
 
   function permittedRoute(route: CinemaRoute): CinemaRoute {
@@ -2892,6 +2884,7 @@ function CinemaApp() {
       <CinemaLayout
         activeTab={activeTab}
         activeBrowseChannel={browseChannel}
+        playbackLine={resolvedPlaybackLine}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
@@ -2901,6 +2894,7 @@ function CinemaApp() {
         theme={theme}
         onActiveTabChange={navigateToTab}
         onBrowseChannelChange={openBrowseChannel}
+        onPlaybackLineChange={changePlaybackLine}
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
         onOpenForum={() => navigateToTab("forum")}
@@ -3108,11 +3102,6 @@ function CinemaApp() {
             onRevoke={revokeMemberCode}
           />
         ) : undefined}
-      />
-      <PlaybackLineSwitch
-        preference={playbackLinePreference}
-        resolvedLine={resolvedPlaybackLine}
-        onChange={changePlaybackLine}
       />
       {activeTab !== "tasks" ? (
         <TaskDock

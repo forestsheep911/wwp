@@ -73,7 +73,7 @@ self.addEventListener("fetch", (event) => {
 
       if (!upstream.ok) {
         await notifyClients({
-          error: `OSS 返回 ${upstream.status}`,
+          error: `国内线路返回 ${upstream.status}`,
           originalDisposition,
           phase: "error"
         });
@@ -84,7 +84,7 @@ self.addEventListener("fetch", (event) => {
         statusText: upstream.statusText
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "OSS 播放适配失败";
+      const message = error instanceof Error ? error.message : "国内线路播放适配失败";
       await notifyClients({ error: message, phase: "error", range });
       return new Response(message, {
         headers: {

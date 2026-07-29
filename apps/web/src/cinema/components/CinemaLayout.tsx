@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import type { PlaybackLine } from "@wwpdw/shared";
 import {
   Bell,
   ChevronDown,
@@ -36,6 +37,7 @@ import {
 import { Tabs, TabsContent } from "../../components/ui/tabs";
 import { copy } from "../i18n";
 import type { AppTab, AppTheme, BrowseChannel } from "../types";
+import { PlaybackLineSwitch } from "./PlaybackLineSwitch";
 
 const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
   { id: "recommended", label: copy.layout.browseChannels.recommended },
@@ -47,6 +49,7 @@ const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
 interface CinemaLayoutProps {
   activeTab: AppTab;
   activeBrowseChannel: BrowseChannel;
+  playbackLine: PlaybackLine;
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
@@ -67,6 +70,7 @@ interface CinemaLayoutProps {
   showAdmin: boolean;
   onActiveTabChange: (value: AppTab) => void;
   onBrowseChannelChange: (value: BrowseChannel) => void;
+  onPlaybackLineChange: (value: PlaybackLine) => void;
   onLock: () => void;
   onOpenHome: () => void;
   onOpenHelp: () => void;
@@ -87,6 +91,7 @@ interface CinemaLayoutProps {
 export function CinemaLayout({
   activeTab,
   activeBrowseChannel,
+  playbackLine,
   accountLabel,
   accountDetail,
   canChangePasscode,
@@ -107,6 +112,7 @@ export function CinemaLayout({
   showAdmin,
   onActiveTabChange,
   onBrowseChannelChange,
+  onPlaybackLineChange,
   onLock,
   onOpenHome,
   onOpenHelp,
@@ -174,6 +180,7 @@ export function CinemaLayout({
             </nav> : <div className="hidden lg:block" />}
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
+              <PlaybackLineSwitch line={playbackLine} onChange={onPlaybackLineChange} />
               <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
                 <HelpCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.help}</span>

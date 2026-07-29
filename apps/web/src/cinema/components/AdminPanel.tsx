@@ -254,7 +254,7 @@ export function AdminPanel({
           </TabsTrigger>
           <TabsTrigger value="oss-poc">
             <Cloud className="h-4 w-4" />
-            OSS 测试
+            国内线路测试
           </TabsTrigger>
         </TabsList>
 
