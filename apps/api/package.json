@@ -25,6 +25,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@alicloud/fc20230330": "^4.7.9",
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/tea-util": "^1.4.11",
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.13.1",
     "@notionhq/client": "^5.22.0",

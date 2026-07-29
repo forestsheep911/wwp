@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Cloud, Loader2, Play, RefreshCw } from "lucide-react";
+import { Cloud, Loader2, Play, RefreshCw, Search, Square, Trash2 } from "lucide-react";
+import type { SearchResult } from "@wwpdw/shared";
 
 import {
+  cancelAdminOssPreparation,
+  createAdminOssPreparation,
+  deleteAdminOssPreparation,
   errorMessage,
   getAdminOssPlaybackPocStatus,
+  listAdminOssPreparations,
+  searchAssets,
+  type AdminOssPreparationJob,
   type AdminOssPlaybackPocStatus
 } from "../../api";
 import { Button } from "../../components/ui/button";
@@ -32,6 +39,47 @@ function isOssPlaybackDiagnostic(value: unknown): value is OssPlaybackDiagnostic
   );
 }
 
+interface PreparationChoice {
+  assetKey: string;
+  label: string;
+  size?: number;
+  title: string;
+}
+
+function preparationChoices(results: SearchResult[]): PreparationChoice[] {
+  return results.flatMap((result) => {
+    if (result.variants?.length) {
+      return result.variants.map((variant) => ({
+        assetKey: variant.assetKey,
+        label: variant.label,
+        size: variant.metadata?.exactByteSize,
+        title: result.title
+      }));
+    }
+    return [{
+      assetKey: result.assetKey,
+      label: result.durationLabel || "默认片源",
+      title: result.title
+    }];
+  });
+}
+
+function bytesLabel(value?: number) {
+  if (!value) return "大小未知";
+  return `${(value / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function preparationStatusLabel(status: AdminOssPreparationJob["status"]) {
+  return {
+    queued: "排队中",
+    running: "准备中",
+    ready: "已完成",
+    failed: "失败",
+    cancelling: "取消中",
+    cancelled: "已取消"
+  }[status];
+}
+
 export function OssPlaybackPocPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<AdminOssPlaybackPocStatus>();
@@ -44,6 +92,14 @@ export function OssPlaybackPocPanel() {
   const [currentTime, setCurrentTime] = useState(0);
   const [requestCount, setRequestCount] = useState(0);
   const [diagnostic, setDiagnostic] = useState<OssPlaybackDiagnostic>();
+  const [query, setQuery] = useState("");
+  const [choices, setChoices] = useState<PreparationChoice[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [preparations, setPreparations] = useState<AdminOssPreparationJob[]>([]);
+  const [preparationsEnabled, setPreparationsEnabled] = useState(false);
+  const [preparationConcurrency, setPreparationConcurrency] = useState(2);
+  const [loadingPreparations, setLoadingPreparations] = useState(true);
+  const [actionId, setActionId] = useState("");
 
   async function refreshStatus() {
     setLoading(true);
@@ -61,7 +117,16 @@ export function OssPlaybackPocPanel() {
 
   useEffect(() => {
     void refreshStatus();
+    void refreshPreparations();
   }, []);
+
+  useEffect(() => {
+    if (!preparations.some((job) => ["queued", "running", "cancelling"].includes(job.status))) {
+      return;
+    }
+    const timer = window.setInterval(() => void refreshPreparations(false), 5_000);
+    return () => window.clearInterval(timer);
+  }, [preparations]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>) {
@@ -112,8 +177,209 @@ export function OssPlaybackPocPanel() {
     }
   }
 
+  async function refreshPreparations(showLoading = true) {
+    if (showLoading) setLoadingPreparations(true);
+    try {
+      const response = await listAdminOssPreparations();
+      setPreparations(response.jobs);
+      setPreparationsEnabled(response.enabled);
+      setPreparationConcurrency(response.concurrency);
+    } catch (nextError) {
+      setError(errorMessage(nextError, "无法读取国内 OSS 准备任务。"));
+    } finally {
+      if (showLoading) setLoadingPreparations(false);
+    }
+  }
+
+  async function runSearch(event: React.FormEvent) {
+    event.preventDefault();
+    if (!query.trim()) return;
+    setSearching(true);
+    setError("");
+    try {
+      const response = await searchAssets(query.trim());
+      setChoices(preparationChoices(response.results));
+      if (response.results.length === 0) setMessage("没有找到可准备的片源。");
+    } catch (nextError) {
+      setError(errorMessage(nextError, "搜索片源失败。"));
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function prepare(choice: PreparationChoice) {
+    setActionId(choice.assetKey);
+    setError("");
+    try {
+      await createAdminOssPreparation(choice.assetKey);
+      setMessage(`“${choice.title} / ${choice.label}”已进入准备队列。`);
+      await refreshPreparations(false);
+    } catch (nextError) {
+      setError(errorMessage(nextError, "无法创建 OSS 准备任务。"));
+    } finally {
+      setActionId("");
+    }
+  }
+
+  async function cancelPreparation(job: AdminOssPreparationJob) {
+    setActionId(job.id);
+    setError("");
+    try {
+      await cancelAdminOssPreparation(job.id);
+      await refreshPreparations(false);
+    } catch (nextError) {
+      setError(errorMessage(nextError, "无法取消准备任务。"));
+    } finally {
+      setActionId("");
+    }
+  }
+
+  async function deletePreparation(job: AdminOssPreparationJob) {
+    setActionId(job.id);
+    setError("");
+    try {
+      await deleteAdminOssPreparation(job.id);
+      if (mediaUrl.includes(job.id)) {
+        setMediaUrl("");
+        videoRef.current?.removeAttribute("src");
+        videoRef.current?.load();
+      }
+      await refreshPreparations(false);
+    } catch (nextError) {
+      setError(errorMessage(nextError, "无法删除 OSS 文件。"));
+    } finally {
+      setActionId("");
+    }
+  }
+
+  async function playPreparation(job: AdminOssPreparationJob) {
+    setActionId(job.id);
+    setError("");
+    setMessage("正在启动国内 OSS 播放…");
+    setDiagnostic(undefined);
+    setRequestCount(0);
+    try {
+      await ensureOssPlaybackServiceWorker();
+      setMediaUrl(`/api/admin/oss-preparations/${encodeURIComponent(job.id)}/media?run=${Date.now()}`);
+    } catch (nextError) {
+      setError(errorMessage(nextError, "无法启动 OSS 播放。"));
+    } finally {
+      setActionId("");
+    }
+  }
+
   return (
     <div className="grid gap-4">
+      <Card className="rounded-xl border-cyan-400/20 sm:rounded-lg">
+        <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2">
+              <Cloud className="h-5 w-5 text-cyan-300" />
+              实际片源灰度准备
+            </CardTitle>
+            <CardDescription>
+              仅管理员可见。片源直接从 Notion 进入国内 OSS；最多 {preparationConcurrency} 路同时准备，超出的任务会显示“排队中”并自动接续。
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void refreshPreparations()}
+            disabled={loadingPreparations}
+          >
+            <RefreshCw className={`h-4 w-4 ${loadingPreparations ? "animate-spin" : ""}`} />
+            刷新任务
+          </Button>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <form className="flex flex-col gap-2 sm:flex-row" onSubmit={runSearch}>
+            <input
+              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索一部片，例如：冲出宁静号"
+              aria-label="搜索实际片源"
+            />
+            <Button type="submit" disabled={searching || !query.trim()}>
+              {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              搜索片源
+            </Button>
+          </form>
+
+          {choices.length > 0 ? (
+            <div className="grid gap-2">
+              {choices.map((choice) => (
+                <div
+                  className="flex flex-col justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3 sm:flex-row sm:items-center"
+                  key={choice.assetKey}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-100">{choice.title}</p>
+                    <p className="text-xs text-slate-400">{choice.label} · {bytesLabel(choice.size)}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void prepare(choice)}
+                    disabled={!preparationsEnabled || Boolean(actionId)}
+                  >
+                    {actionId === choice.assetKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
+                    准备到 OSS
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="grid gap-2">
+            {preparations.length === 0 && !loadingPreparations ? (
+              <p className="rounded-lg border border-dashed border-slate-800 p-4 text-sm text-slate-400">
+                还没有实际片源准备任务。
+              </p>
+            ) : preparations.map((job) => (
+              <div className="grid gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" key={job.id}>
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-100">{job.title}</p>
+                    <p className="text-xs text-slate-400">
+                      {preparationStatusLabel(job.status)} · {bytesLabel(job.contentLength ?? job.expectedBytes)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {job.status === "ready" ? (
+                      <Button type="button" size="sm" onClick={() => void playPreparation(job)} disabled={Boolean(actionId)}>
+                        <Play className="h-4 w-4" />
+                        播放
+                      </Button>
+                    ) : null}
+                    {["queued", "running"].includes(job.status) ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => void cancelPreparation(job)} disabled={Boolean(actionId)}>
+                        <Square className="h-4 w-4" />
+                        取消
+                      </Button>
+                    ) : null}
+                    {["ready", "failed", "cancelled"].includes(job.status) ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => void deletePreparation(job)} disabled={Boolean(actionId)}>
+                        <Trash2 className="h-4 w-4" />
+                        删除
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className={`h-full rounded-full ${job.status === "failed" ? "bg-rose-400" : "bg-cyan-400"}`}
+                    style={{ width: `${job.progress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-slate-400" role="status">{job.error || job.message}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="rounded-xl sm:rounded-lg">
         <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div className="min-w-0">

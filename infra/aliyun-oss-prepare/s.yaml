@@ -1,0 +1,32 @@
+edition: 3.0.0
+name: wwpdw-oss-prepare
+access: wwpdw-fc-deploy
+resources:
+  prepare:
+    component: fc3
+    props:
+      region: cn-shanghai
+      functionName: wwpdw-oss-prepare
+      description: Prepare Notion video assets into OSS for WWPDW domestic playback.
+      runtime: nodejs20
+      code: ./code
+      handler: index.handler
+      cpu: 1
+      memorySize: 2048
+      diskSize: 512
+      timeout: 21600
+      internetAccess: true
+      role: acs:ram::1812145568680204:role/wwpdwfcosspreparerole
+      environmentVariables:
+        ALIYUN_OSS_REGION: oss-cn-shanghai
+        ALIYUN_OSS_BUCKET: bxu-dev-001
+        ALIYUN_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+        ALIYUN_OSS_OBJECT_PREFIX: wwpdw/prepared
+        OSS_MULTIPART_PART_BYTES: "67108864"
+      asyncInvokeConfig:
+        maxAsyncEventAgeInSeconds: 86400
+        maxAsyncRetryAttempts: 1
+        asyncTask: true
+        qualifier: LATEST
+      concurrencyConfig:
+        reservedConcurrency: 2

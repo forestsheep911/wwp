@@ -1,5 +1,6 @@
 const virtualMediaPath = "/api/admin/oss-playback-poc/media";
 const signedUrlPath = "/api/admin/oss-playback-poc/signed-url";
+const preparationMediaPattern = /^\/api\/admin\/oss-preparations\/([^/]+)\/media$/;
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -13,18 +14,22 @@ async function notifyClients(payload) {
 
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
+  const preparationMatch = requestUrl.pathname.match(preparationMediaPattern);
   if (
     event.request.method !== "GET"
     || requestUrl.origin !== self.location.origin
-    || requestUrl.pathname !== virtualMediaPath
+    || (requestUrl.pathname !== virtualMediaPath && !preparationMatch)
   ) {
     return;
   }
 
   event.respondWith((async () => {
     const range = event.request.headers.get("range");
+    const currentSignedUrlPath = preparationMatch
+      ? `/api/admin/oss-preparations/${preparationMatch[1]}/signed-url`
+      : signedUrlPath;
     try {
-      const signedResponse = await fetch(signedUrlPath, {
+      const signedResponse = await fetch(currentSignedUrlPath, {
         cache: "no-store",
         credentials: "include",
         headers: { Accept: "application/json" }

@@ -29,6 +29,9 @@ param(
     [string]$AliyunOssEndpoint = $env:ALIYUN_OSS_ENDPOINT,
     [string]$AliyunOssPocObjectKey = $env:ALIYUN_OSS_POC_OBJECT_KEY,
     [string]$AliyunOssSignedUrlMinutes = $env:ALIYUN_OSS_SIGNED_URL_MINUTES,
+    [string]$AliyunOssObjectPrefix = $(if ($env:ALIYUN_OSS_OBJECT_PREFIX) { $env:ALIYUN_OSS_OBJECT_PREFIX } else { "wwpdw/prepared" }),
+    [string]$AliyunFcRegion = $(if ($env:ALIYUN_FC_REGION) { $env:ALIYUN_FC_REGION } else { "cn-shanghai" }),
+    [string]$AliyunFcFunctionName = $(if ($env:ALIYUN_FC_FUNCTION_NAME) { $env:ALIYUN_FC_FUNCTION_NAME } else { "wwpdw-oss-prepare" }),
     [string]$AiSummaryModelPreset = $env:WWPDW_AI_SUMMARY_MODEL_PRESET,
     [string]$AiSummaryModel = $env:WWPDW_AI_SUMMARY_MODEL,
     [string]$BailianBaseUrl = $env:BAILIAN_BASE_URL,
@@ -42,6 +45,7 @@ param(
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
+    [string]$OssPreparationTable = "osspreparejobs",
     [string]$MemberTable = "membercodes",
     [string]$SearchIndexTable = "movieindex",
     [string]$TspdtBrowseTable = "tspdtbrowse",
@@ -246,6 +250,7 @@ $envVars = @(
     "AZURE_STORAGE_QUEUE_NAME=$QueueName",
     "AZURE_STORAGE_ASSET_TABLE=$AssetTable",
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
+    "AZURE_STORAGE_OSS_PREPARATION_TABLE=$OssPreparationTable",
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
     "AZURE_STORAGE_TSPDT_BROWSE_TABLE=$TspdtBrowseTable",
@@ -326,6 +331,11 @@ if ($AliyunOssPocObjectKey) {
 if ($AliyunOssSignedUrlMinutes) {
     $envVars += "ALIYUN_OSS_SIGNED_URL_MINUTES=$AliyunOssSignedUrlMinutes"
 }
+
+$envVars += "ALIYUN_OSS_OBJECT_PREFIX=$AliyunOssObjectPrefix"
+$envVars += "ALIYUN_FC_REGION=$AliyunFcRegion"
+$envVars += "ALIYUN_FC_FUNCTION_NAME=$AliyunFcFunctionName"
+$envVars += "ALIYUN_FC_PREPARE_CONCURRENCY=2"
 
 $existingAppName = & $AzCli containerapp list `
     --resource-group $ResourceGroup `

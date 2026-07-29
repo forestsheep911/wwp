@@ -1,5 +1,5 @@
 import "./env.js";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import http from "node:http";
@@ -71,6 +71,12 @@ import { refreshAssetInputFromJob, refreshAssetInputFromResult } from "./cache-s
 import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, sessionCookie } from "./auth-http.js";
 import { internalServerErrorPayload } from "./api-error.js";
 import { AliyunOssPocUnavailableError, createAliyunOssPoc } from "./aliyun-oss-poc.js";
+import { AliyunFcPrepare } from "./aliyun-fc-prepare.js";
+import { AliyunOssStorage } from "./aliyun-oss-storage.js";
+import {
+  createOssPreparationStore,
+  type OssPreparationJob
+} from "./oss-preparation-store.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 import { PlaybackAdmissionQueue } from "./playback-admission.js";
@@ -84,6 +90,9 @@ const accessStore = createAccessStore();
 const sessionStore = createSessionStore();
 const workerTrigger = new CacheWorkerTrigger();
 const aliyunOssPoc = createAliyunOssPoc();
+const aliyunFcPrepare = new AliyunFcPrepare();
+const aliyunOssStorage = new AliyunOssStorage();
+const ossPreparationStore = createOssPreparationStore();
 const searchSource = createSearchSource();
 const recentResults = new Map<string, SearchResult>();
 const recentResultLimit = 200;
@@ -3709,6 +3718,271 @@ async function handleSearchIndexStats(response: http.ServerResponse, context: Re
   sendJson(response, 200, { stats });
 }
 
+function ossPreparationError(value: unknown) {
+  const text = value instanceof Error ? value.message : String(value ?? "OSS preparation failed.");
+  return text
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[private source]")
+    .replace(/[A-Za-z]:\\[^\s"'<>]+/g, "[local path]")
+    .slice(0, 500);
+}
+
+function ossObjectExtension(result: SearchResult) {
+  const metadata = result.metadata as Record<string, unknown> | undefined;
+  const fileName = String(metadata?.fileName ?? metadata?.originalFileName ?? result.sourceUrl ?? "");
+  const match = /\.([A-Za-z0-9]{2,5})(?:$|[?#])/i.exec(fileName);
+  const extension = match?.[1]?.toLowerCase();
+  return extension && ["mp4", "m4v", "mov", "webm"].includes(extension) ? extension : "mp4";
+}
+
+function ossPreparationObjectKey(result: SearchResult) {
+  const digest = createHash("sha256").update(result.assetKey, "utf8").digest("hex").slice(0, 32);
+  const prefix = (process.env.ALIYUN_OSS_OBJECT_PREFIX ?? "wwpdw/prepared").replace(/^\/+|\/+$/g, "");
+  return `${prefix}/${digest}.${ossObjectExtension(result)}`;
+}
+
+function ossExpectedBytes(result: SearchResult) {
+  const value = Number((result.metadata as Record<string, unknown> | undefined)?.exactByteSize);
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+async function syncOssPreparationJob(job: OssPreparationJob) {
+  if (["ready", "failed", "cancelled"].includes(job.status)) return job;
+  const task = await aliyunFcPrepare.getTask(job.taskId);
+  const now = new Date().toISOString();
+  let next: OssPreparationJob = { ...job, updatedAt: now };
+  if (task.status === "Enqueued") {
+    next = { ...next, status: "queued", progress: 5, message: "正在排队，轮到后会自动开始。" };
+  } else if (["Running", "Retrying"].includes(task.status)) {
+    next = { ...next, status: "running", progress: 50, message: "正在从 Notion 准备到国内 OSS。" };
+  } else if (task.status === "Succeeded") {
+    const object = await aliyunOssStorage.head(job.objectKey);
+    if (!object) {
+      next = {
+        ...next,
+        status: "failed",
+        progress: 100,
+        message: "任务已结束，但 OSS 文件没有生成。",
+        error: "OSS object was not found after FC task completion.",
+        completedAt: now
+      };
+    } else {
+      next = {
+        ...next,
+        status: "ready",
+        progress: 100,
+        message: "准备完成，可以播放。",
+        contentLength: object.contentLength,
+        contentType: object.contentType,
+        completedAt: now,
+        error: undefined
+      };
+    }
+  } else if (["Stopped", "Stopping"].includes(task.status)) {
+    next = {
+      ...next,
+      status: task.status === "Stopped" ? "cancelled" : "cancelling",
+      progress: task.status === "Stopped" ? 100 : next.progress,
+      message: task.status === "Stopped" ? "已取消。" : "正在取消…",
+      completedAt: task.status === "Stopped" ? now : undefined
+    };
+  } else if (["Failed", "Invalid", "Expired"].includes(task.status)) {
+    next = {
+      ...next,
+      status: "failed",
+      progress: 100,
+      message: "准备失败。",
+      error: ossPreparationError(task.error ?? task.status),
+      completedAt: now
+    };
+  }
+  if (
+    next.status !== job.status
+    || next.progress !== job.progress
+    || next.message !== job.message
+    || next.error !== job.error
+  ) {
+    await ossPreparationStore.put(next);
+  }
+  return next;
+}
+
+async function handleCreateOssPreparation(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const body = await readBody<{ assetKey?: string }>(request);
+  const assetKey = body.assetKey?.trim();
+  if (!assetKey) {
+    sendJson(response, 400, { error: "请选择要准备的片源。" });
+    return;
+  }
+  if (!aliyunFcPrepare.enabled || !aliyunOssStorage.enabled) {
+    sendJson(response, 503, {
+      error: aliyunFcPrepare.reason ?? aliyunOssStorage.reason ?? "国内 OSS 准备尚未配置。"
+    });
+    return;
+  }
+  const existing = await ossPreparationStore.findByAssetKey(assetKey);
+  if (existing && !["failed", "cancelled"].includes(existing.status)) {
+    sendJson(response, 200, { job: ossPreparationStore.toPublic(await syncOssPreparationJob(existing)) });
+    return;
+  }
+
+  let candidate = recentResults.get(assetKey);
+  if (!candidate) {
+    candidate = findSearchResultByAssetKey(await searchIndex.search(assetKey, 8), assetKey);
+  }
+  if (!candidate) {
+    sendJson(response, 404, { error: "没有找到这个片源，请先在本页重新搜索。" });
+    return;
+  }
+  const result = await refreshResultBeforeCache(candidate, context);
+  if (!result.sourceUrl?.startsWith("https://")) {
+    sendJson(response, 422, { error: "这个片源暂时没有可用的 HTTPS 来源。" });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const taskId = `wwpdw-${id}`;
+  const job: OssPreparationJob = {
+    id,
+    taskId,
+    assetKey: result.assetKey,
+    title: result.title,
+    sourceUrl: result.sourceUrl,
+    objectKey: ossPreparationObjectKey(result),
+    status: "queued",
+    progress: 5,
+    message: "正在排队，轮到后会自动开始。",
+    expectedBytes: ossExpectedBytes(result),
+    createdAt: now,
+    updatedAt: now
+  };
+  await ossPreparationStore.put(job);
+  try {
+    await aliyunFcPrepare.invoke({
+      jobId: job.id,
+      objectKey: job.objectKey,
+      sourceUrl: job.sourceUrl,
+      title: job.title,
+      contentType: "video/mp4",
+      expectedBytes: job.expectedBytes
+    });
+    logInfo("api.admin.oss_preparation.created", {
+      requestId: context.requestId,
+      jobId: job.id,
+      assetKey: job.assetKey,
+      objectKey: job.objectKey,
+      expectedBytes: job.expectedBytes
+    });
+    sendJson(response, 202, { job: ossPreparationStore.toPublic(job) });
+  } catch (error) {
+    const failed: OssPreparationJob = {
+      ...job,
+      status: "failed",
+      progress: 100,
+      message: "准备任务未能启动。",
+      error: ossPreparationError(error),
+      updatedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    };
+    await ossPreparationStore.put(failed);
+    throw error;
+  }
+}
+
+async function handleListOssPreparations(
+  url: URL,
+  response: http.ServerResponse,
+  context: RequestContext
+) {
+  const jobs = await ossPreparationStore.list(requestLimit(url, 20, 100));
+  const synced = await Promise.all(jobs.map(async (job) => {
+    try {
+      return await syncOssPreparationJob(job);
+    } catch (error) {
+      logWarn("api.admin.oss_preparation.sync_failed", {
+        requestId: context.requestId,
+        jobId: job.id,
+        ...errorLogFields(error)
+      });
+      return job;
+    }
+  }));
+  sendJson(response, 200, {
+    enabled: aliyunFcPrepare.enabled && aliyunOssStorage.enabled,
+    concurrency: 2,
+    jobs: synced.map((job) => ossPreparationStore.toPublic(job))
+  }, { "Cache-Control": "no-store" });
+}
+
+async function handleGetOssPreparation(
+  id: string,
+  response: http.ServerResponse
+) {
+  const job = await ossPreparationStore.get(id);
+  if (!job) {
+    sendJson(response, 404, { error: "准备任务不存在。" });
+    return;
+  }
+  sendJson(response, 200, {
+    job: ossPreparationStore.toPublic(await syncOssPreparationJob(job))
+  }, { "Cache-Control": "no-store" });
+}
+
+async function handleCancelOssPreparation(id: string, response: http.ServerResponse) {
+  const job = await ossPreparationStore.get(id);
+  if (!job) {
+    sendJson(response, 404, { error: "准备任务不存在。" });
+    return;
+  }
+  if (!["queued", "running", "cancelling"].includes(job.status)) {
+    sendJson(response, 409, { error: "这个任务已经结束，不能再取消。" });
+    return;
+  }
+  await aliyunFcPrepare.stop(job.taskId);
+  const next: OssPreparationJob = {
+    ...job,
+    status: "cancelling",
+    message: "正在取消…",
+    updatedAt: new Date().toISOString()
+  };
+  await ossPreparationStore.put(next);
+  sendJson(response, 202, { job: ossPreparationStore.toPublic(next) });
+}
+
+async function handleDeleteOssPreparation(id: string, response: http.ServerResponse) {
+  const job = await ossPreparationStore.get(id);
+  if (!job) {
+    sendJson(response, 404, { error: "准备任务不存在。" });
+    return;
+  }
+  if (["queued", "running", "cancelling"].includes(job.status)) {
+    sendJson(response, 409, { error: "请先取消任务，确认停止后再删除。" });
+    return;
+  }
+  await aliyunOssStorage.delete(job.objectKey).catch((error) => {
+    const status = (error as { status?: number; statusCode?: number }).status
+      ?? (error as { statusCode?: number }).statusCode;
+    if (status !== 404) throw error;
+  });
+  await ossPreparationStore.delete(id);
+  sendJson(response, 200, { ok: true });
+}
+
+async function handleOssPreparationSignedUrl(id: string, response: http.ServerResponse) {
+  const job = await ossPreparationStore.get(id);
+  if (!job || job.status !== "ready") {
+    sendJson(response, 409, { error: "片源尚未准备完成。" });
+    return;
+  }
+  sendJson(response, 200, aliyunOssStorage.createSignedUrl(job.objectKey), {
+    "Cache-Control": "no-store"
+  });
+}
+
 function handleAliyunOssPocStatus(response: http.ServerResponse, context: RequestContext) {
   const status = aliyunOssPoc.status();
   logInfo("api.admin.oss_playback_poc.status", {
@@ -4064,6 +4338,55 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "GET" && pathname === "/api/admin/oss-playback-poc/media") {
+      if (!requireAdmin(identity, response, context)) return;
+      sendJson(response, 409, {
+        error: "OSS media requests require the browser playback adapter."
+      });
+      return;
+    }
+
+    if (pathname === "/api/admin/oss-preparations") {
+      if (!requireAdmin(identity, response, context)) return;
+      if (request.method === "GET") {
+        await handleListOssPreparations(url, response, context);
+        return;
+      }
+      if (request.method === "POST") {
+        await handleCreateOssPreparation(request, response, context);
+        return;
+      }
+    }
+
+    const ossPreparationMatch = pathname.match(/^\/api\/admin\/oss-preparations\/([^/]+)$/);
+    if (ossPreparationMatch) {
+      if (!requireAdmin(identity, response, context)) return;
+      const jobId = decodeURIComponent(ossPreparationMatch[1]);
+      if (request.method === "GET") {
+        await handleGetOssPreparation(jobId, response);
+        return;
+      }
+      if (request.method === "DELETE") {
+        await handleDeleteOssPreparation(jobId, response);
+        return;
+      }
+    }
+
+    const ossPreparationCancelMatch = pathname.match(/^\/api\/admin\/oss-preparations\/([^/]+)\/cancel$/);
+    if (request.method === "POST" && ossPreparationCancelMatch) {
+      if (!requireAdmin(identity, response, context)) return;
+      await handleCancelOssPreparation(decodeURIComponent(ossPreparationCancelMatch[1]), response);
+      return;
+    }
+
+    const ossPreparationSignedUrlMatch = pathname.match(/^\/api\/admin\/oss-preparations\/([^/]+)\/signed-url$/);
+    if (request.method === "GET" && ossPreparationSignedUrlMatch) {
+      if (!requireAdmin(identity, response, context)) return;
+      await handleOssPreparationSignedUrl(decodeURIComponent(ossPreparationSignedUrlMatch[1]), response);
+      return;
+    }
+
+    const ossPreparationMediaMatch = pathname.match(/^\/api\/admin\/oss-preparations\/([^/]+)\/media$/);
+    if (request.method === "GET" && ossPreparationMediaMatch) {
       if (!requireAdmin(identity, response, context)) return;
       sendJson(response, 409, {
         error: "OSS media requests require the browser playback adapter."

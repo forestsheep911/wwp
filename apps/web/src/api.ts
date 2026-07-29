@@ -512,6 +512,62 @@ export function getAdminOssPlaybackPocStatus() {
   return request<AdminOssPlaybackPocStatus>(apiUrl("/api/admin/oss-playback-poc"));
 }
 
+export type AdminOssPreparationStatus =
+  | "queued"
+  | "running"
+  | "ready"
+  | "failed"
+  | "cancelling"
+  | "cancelled";
+
+export interface AdminOssPreparationJob {
+  id: string;
+  assetKey: string;
+  title: string;
+  objectKey: string;
+  taskId: string;
+  status: AdminOssPreparationStatus;
+  progress: number;
+  message: string;
+  expectedBytes?: number;
+  contentLength?: number;
+  contentType?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export function listAdminOssPreparations(limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request<{
+    enabled: boolean;
+    concurrency: number;
+    jobs: AdminOssPreparationJob[];
+  }>(apiUrl(`/api/admin/oss-preparations?${params.toString()}`));
+}
+
+export function createAdminOssPreparation(assetKey: string) {
+  return request<{ job: AdminOssPreparationJob }>(apiUrl("/api/admin/oss-preparations"), {
+    method: "POST",
+    body: JSON.stringify({ assetKey })
+  });
+}
+
+export function cancelAdminOssPreparation(id: string) {
+  return request<{ job: AdminOssPreparationJob }>(
+    apiUrl(`/api/admin/oss-preparations/${encodeURIComponent(id)}/cancel`),
+    { method: "POST" }
+  );
+}
+
+export function deleteAdminOssPreparation(id: string) {
+  return request<{ ok: true }>(
+    apiUrl(`/api/admin/oss-preparations/${encodeURIComponent(id)}`),
+    { method: "DELETE" }
+  );
+}
+
 export function listMovieRequests(limit = 100) {
   const params = new URLSearchParams({ limit: String(limit) });
   return request<MovieRequestsResponse>(apiUrl(`/api/admin/movie-requests?${params.toString()}`));

@@ -53,5 +53,10 @@
   "dependencies": {
     "https-proxy-agent": "^7.0.6",
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/ram20150501": "^1.2.1",
+    "@alicloud/tea-util": "^1.4.11"
   }
 }
