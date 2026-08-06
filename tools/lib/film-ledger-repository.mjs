@@ -22,7 +22,19 @@ function preserveProbeEvidence(existingJson, incomingJson) {
   try {
     const existing = JSON.parse(existingJson);
     const incoming = JSON.parse(incomingJson);
-    if (incoming?.internalProbeState === "not_run" && existing?.internalProbeState && existing.internalProbeState !== "not_run") {
+    const incomingIsScanPlaceholder = incoming?.internalProbeState === "not_run";
+    const existingHasProbeResult = existing?.internalProbeState && existing.internalProbeState !== "not_run";
+    const existingHasManualEvidence = [
+      "verifiedChinese",
+      "verifiedChineseText",
+      "verifiedVisibleSubtitle",
+      "visibleWatermark",
+      "productionGate",
+      "sampleTimes",
+      "observedLanguages",
+      "verifiedVisibleSamples"
+    ].some((key) => Object.hasOwn(existing ?? {}, key));
+    if (incomingIsScanPlaceholder && (existingHasProbeResult || existingHasManualEvidence)) {
       return existingJson;
     }
   } catch {
@@ -160,6 +172,15 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         last_scan_at=COALESCE(excluded.last_scan_at, input_roots.last_scan_at), updated_at=excluded.updated_at`)
       .run(rootPath, options.enabled === false ? 0 : 1, options.lastScanAt ?? null, at, at);
     return db.prepare("SELECT * FROM input_roots WHERE path = ?").get(rootPath);
+  }
+
+  function setInputRootEnabled(rootPath, enabled) {
+    const normalized = normalizeLedgerPath(rootPath);
+    const at = timestamp();
+    const result = db.prepare("UPDATE input_roots SET enabled=?, updated_at=? WHERE path=?")
+      .run(enabled ? 1 : 0, at, normalized);
+    if (result.changes === 0) throw new Error(`input root not found: ${normalized}`);
+    return db.prepare("SELECT * FROM input_roots WHERE path=?").get(normalized);
   }
 
   function ensureWork(input) {
@@ -300,7 +321,27 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
     ensureWorkflowTask({ taskKey: `metadata:work:${workId}`, taskType: "metadata_backfill", workId,
       priorityScore: work.priority_score, reason: "Work-level metadata should be checked independently of playable media readiness" });
+    reconcileDeferredCollectionParents(source.input_root_id);
     return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+  }
+
+  function reconcileDeferredCollectionParents(inputRootId) {
+    const allSources = db.prepare("SELECT id, relative_path, work_id FROM sources WHERE input_root_id=?").all(inputRootId);
+    const parents = db.prepare(`SELECT workflow_tasks.id, workflow_tasks.task_key, sources.id AS source_id, sources.relative_path
+      FROM workflow_tasks JOIN sources ON sources.id=workflow_tasks.source_id
+      WHERE workflow_tasks.task_type='intake' AND workflow_tasks.status='deferred' AND sources.input_root_id=?`).all(inputRootId);
+    for (const parent of parents) {
+      const prefix = `${parent.relative_path}\\`.toLowerCase();
+      const descendants = allSources.filter((source) => source.id !== parent.source_id && source.relative_path.toLowerCase().startsWith(prefix));
+      const leaves = descendants.filter((source) => !descendants.some((other) => other.id !== source.id
+        && other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())));
+      if (leaves.length > 0 && leaves.every((source) => source.work_id != null)) {
+        completeWorkflowTaskByKey(parent.task_key, {
+          sourceId: parent.source_id,
+          reason: `All ${leaves.length} collection member source(s) have verified work identities`
+        });
+      }
+    }
   }
 
   function updateSourceEvidence(sourceId, details = {}) {
@@ -338,12 +379,17 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     const unbound = childSources.filter((source) => source.work_id == null);
     const parentTask = !unbound.length
       ? completeWorkflowTaskByKey(`intake:source:${sourceId}`, { sourceId, reason: details.reason ?? "Collection split into identified member sources" })
-      : db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`);
+      : transitionWorkflowTask(
+        db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`)?.id,
+        "deferred",
+        { reason: `Collection split into ${childSources.length} member source(s); waiting for ${unbound.length} member identity decision(s)` }
+      );
     insertEvent.run("source", sourceId, "source_collection_split", stableJson({
       memberSourceIds: childSources.map((source) => source.id),
       unboundMemberSourceIds: unbound.map((source) => source.id),
       reason: details.reason
     }), timestamp());
+    reconcileDeferredCollectionParents(parent.input_root_id);
     return { parent: db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId), members: childSources, parentTask };
   }
 
@@ -385,6 +431,28 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       insertEvent.run("variant", variantId, "variant_source_attached", stableJson({
         sourceId,
         reason: details.reason ?? "Linked legacy production evidence to its verified source"
+      }), at);
+      return getVariant.get(variantId);
+    });
+  }
+
+  function correctVariantSource(variantId, sourceId, details = {}) {
+    return withTransaction(db, () => {
+      const variant = getVariant.get(variantId);
+      if (!variant) throw new Error(`variant not found: ${variantId}`);
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      if (source.work_id !== variant.work_id) {
+        throw new Error(`source ${sourceId} belongs to work ${source.work_id}, not variant work ${variant.work_id}`);
+      }
+      if (variant.source_id === sourceId) return variant;
+
+      const at = timestamp();
+      db.prepare("UPDATE variants SET source_id=?, updated_at=? WHERE id=?").run(sourceId, at, variantId);
+      insertEvent.run("variant", variantId, "variant_source_corrected", stableJson({
+        previousSourceId: variant.source_id,
+        sourceId,
+        reason: details.reason ?? "Corrected the recorded source to the actual encode input"
       }), at);
       return getVariant.get(variantId);
     });
@@ -447,14 +515,31 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function registerNotionTarget(variantId, input) {
     const at = timestamp();
     return withTransaction(db, () => {
-      if (!getVariant.get(variantId)) throw new Error(`variant not found: ${variantId}`);
-      db.prepare(`INSERT INTO notion_targets (variant_id, work_page_id, spec_page_id, episode_page_id, expected_filename,
+      const variant = getVariant.get(variantId);
+      if (!variant) throw new Error(`variant not found: ${variantId}`);
+      const existingTarget = db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variantId);
+      const finalExpectedFilename = input.replaceExpectedFilename === true
+        ? input.expectedFilename ?? null
+        : input.expectedFilename ?? existingTarget?.expected_filename ?? null;
+      const finalMediaBlockId = input.clearMediaBlock === true
+        ? null
+        : input.mediaBlockId ?? existingTarget?.media_block_id ?? null;
+      const targetChanged = Boolean(existingTarget) && (
+        existingTarget.work_page_id !== input.workPageId
+        || (input.seasonPageId != null && existingTarget.season_page_id !== input.seasonPageId)
+        || existingTarget.spec_page_id !== input.specPageId
+        || (input.episodePageId != null && existingTarget.episode_page_id !== input.episodePageId)
+        || existingTarget.expected_filename !== finalExpectedFilename
+        || existingTarget.media_block_id !== finalMediaBlockId
+      );
+      db.prepare(`INSERT INTO notion_targets (variant_id, work_page_id, season_page_id, spec_page_id, episode_page_id, expected_filename,
           media_block_id, media_asset_page_id, structure_verified_at, media_verified_at, assets_verified_at,
           next_check_at, attempt_count, last_error_code, last_error_detail, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(variant_id) DO UPDATE SET work_page_id=excluded.work_page_id, spec_page_id=excluded.spec_page_id,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(variant_id) DO UPDATE SET work_page_id=excluded.work_page_id,
+          season_page_id=COALESCE(excluded.season_page_id, notion_targets.season_page_id), spec_page_id=excluded.spec_page_id,
           episode_page_id=COALESCE(excluded.episode_page_id, notion_targets.episode_page_id),
-          expected_filename=COALESCE(excluded.expected_filename, notion_targets.expected_filename),
+          expected_filename=CASE WHEN ? THEN excluded.expected_filename ELSE COALESCE(excluded.expected_filename, notion_targets.expected_filename) END,
           media_block_id=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.media_block_id, notion_targets.media_block_id) END,
           media_asset_page_id=COALESCE(excluded.media_asset_page_id, notion_targets.media_asset_page_id),
           structure_verified_at=COALESCE(excluded.structure_verified_at, notion_targets.structure_verified_at),
@@ -463,18 +548,40 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
           next_check_at=COALESCE(excluded.next_check_at, notion_targets.next_check_at),
           attempt_count=excluded.attempt_count, last_error_code=excluded.last_error_code,
           last_error_detail=excluded.last_error_detail, updated_at=excluded.updated_at`)
-        .run(variantId, input.workPageId, input.specPageId, input.episodePageId ?? null, input.expectedFilename ?? null,
+        .run(variantId, input.workPageId, input.seasonPageId ?? null, input.specPageId, input.episodePageId ?? null, input.expectedFilename ?? null,
           input.mediaBlockId ?? null, input.mediaAssetPageId ?? null, input.structureVerifiedAt ?? null,
           input.mediaVerifiedAt ?? null, input.assetsVerifiedAt ?? null, input.nextCheckAt ?? null,
           input.attemptCount ?? 0, input.lastErrorCode ?? null, input.lastErrorDetail ?? null, at,
-        input.clearMediaBlock === true ? 1 : 0);
+        input.replaceExpectedFilename === true ? 1 : 0, input.clearMediaBlock === true ? 1 : 0);
+      if (targetChanged) resetNotionTargetEvidence(variantId, {
+        reason: "Recorded Notion target identity changed; previous structure, media, and asset verification is stale.",
+        at
+      });
       insertEvent.run("variant", variantId, "notion_target_registered", stableJson(input), at);
       return db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variantId);
     });
   }
 
+  function resetNotionTargetEvidence(variantId, { reason = "Recorded Notion target was replaced and requires exact revalidation.", at = timestamp() } = {}) {
+    const variant = getVariant.get(variantId);
+    if (!variant) throw new Error(`variant not found: ${variantId}`);
+    const target = db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variantId);
+    if (!target) throw new Error(`Notion target not found for variant ${variantId}`);
+    db.prepare(`UPDATE notion_targets SET media_asset_page_id=NULL, structure_verified_at=NULL, media_verified_at=NULL,
+      assets_verified_at=NULL, next_check_at=?, attempt_count=0, last_error_code=NULL, last_error_detail=NULL, updated_at=?
+      WHERE variant_id=?`).run(at, at, variantId);
+    if (variant.publication_state === "sync_ready") {
+      db.prepare("UPDATE variants SET publication_state='structure_pending', updated_at=? WHERE id=?").run(at, variantId);
+      insertEvent.run("variant", variantId, "publication_state_changed", stableJson({
+        from: "sync_ready", to: "structure_pending", source: "notion_target_replacement"
+      }), at);
+    }
+    insertEvent.run("variant", variantId, "notion_target_evidence_invalidated", stableJson({ reason }), at);
+    return db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variantId);
+  }
+
   function listProductionCandidates({ limit } = {}) {
-    return db.prepare(`SELECT variants.*, works.priority_score, works.canonical_title
+    return db.prepare(`SELECT 'variant' AS candidate_type, variants.*, works.priority_score, works.canonical_title
       FROM variants JOIN works ON works.id=variants.work_id
       WHERE (
         (variants.production_state NOT IN ('qc_passed','rejected','deferred')
@@ -486,6 +593,54 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       )
       ORDER BY works.priority_score DESC, variants.created_at ASC LIMIT ?`)
       .all(timestamp(), timestamp(), timestamp(), timestamp(), normalizeLimit(limit, 5, 50));
+  }
+
+  function listProductionSourceCandidates({ limit } = {}) {
+    return db.prepare(`SELECT 'source_selection' AS candidate_type, sources.id AS source_id,
+        sources.work_id, sources.relative_path, sources.absolute_path, sources.source_kind,
+        sources.probe_path, sources.quality_state, sources.subtitle_evidence, sources.audio_evidence,
+        sources.color_risk, sources.discovered_at, sources.updated_at,
+        works.priority_score, works.canonical_title, works.year, works.work_type,
+        'needs_selection' AS production_state,
+        'Bound source has no selected production variant yet' AS selection_reason
+      FROM sources
+      JOIN works ON works.id=sources.work_id
+      JOIN input_roots ON input_roots.id=sources.input_root_id
+      WHERE sources.missing=0
+        AND sources.work_id IS NOT NULL
+        AND input_roots.enabled=1
+        AND sources.relative_path NOT LIKE '@flat/%'
+        AND sources.quality_state NOT IN ('unacceptable', 'rejected')
+        AND (works.next_review_at IS NULL OR works.next_review_at <= ?)
+        AND (
+          COALESCE(works.workflow_status, '') NOT IN ('暂缓', '已完成')
+          OR (
+            works.workflow_status='已完成'
+            AND EXISTS (
+              SELECT 1 FROM workflow_tasks AS pending_intake
+              WHERE pending_intake.source_id=sources.id
+                AND pending_intake.task_type='intake'
+                AND pending_intake.status='pending'
+            )
+          )
+        )
+        AND NOT EXISTS (SELECT 1 FROM variants WHERE variants.source_id=sources.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM variants AS pending_variants
+          WHERE pending_variants.work_id=sources.work_id
+            AND pending_variants.production_state='qc_passed'
+            AND pending_variants.publication_state IN ('structure_pending','upload_pending','upload_seen','assets_pending','verification_pending')
+        )
+      ORDER BY works.priority_score DESC, sources.discovered_at ASC LIMIT ?`)
+      .all(timestamp(), normalizeLimit(limit, 5, 50));
+  }
+
+  function listProductionQueue({ limit } = {}) {
+    const capped = normalizeLimit(limit, 5, 50);
+    return [...listProductionSourceCandidates({ limit: capped }), ...listProductionCandidates({ limit: capped })]
+      .sort((left, right) => Number(right.priority_score) - Number(left.priority_score)
+        || String(left.discovered_at ?? left.created_at).localeCompare(String(right.discovered_at ?? right.created_at)))
+      .slice(0, capped);
   }
 
   function listPublicationCandidates({ limit } = {}) {
@@ -760,9 +915,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, transitionProduction,
+  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction,
     refreshProductionEvidence,
-    transitionPublication, registerNotionTarget, listProductionCandidates, listPublicationCandidates, listManualUploadHandoffs,
+    transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
     findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection,

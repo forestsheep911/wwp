@@ -21,8 +21,23 @@ interface CreditConfirmDialogProps {
   onConfirm: () => void;
 }
 
-function actionLabel(action?: CreditPreviewResponse["action"]) {
-  return action === "cache" ? copy.credit.cacheAction : copy.credit.playbackAction;
+function actionLabel(preview?: CreditPreviewResponse) {
+  if (preview?.action === "cache") {
+    return copy.credit.cacheAction;
+  }
+  if (preview?.line === "domestic") {
+    return copy.credit.domesticPlaybackAction;
+  }
+  if (preview?.line === "international") {
+    return copy.credit.internationalPlaybackAction;
+  }
+  return copy.credit.playbackAction;
+}
+
+function formatReplayWindow(hours: number) {
+  return hours % 24 === 0
+    ? copy.credit.replayWindow.days(hours / 24)
+    : copy.credit.replayWindow.hours(hours);
 }
 
 function formatRemainingTime(expiresAt?: string) {
@@ -72,7 +87,11 @@ function explanation(preview: CreditPreviewResponse, policy: CreditPolicyRespons
   if (preview.freeReason === "admin") {
     return copy.credit.explanations.adminPlayback;
   }
-  return copy.credit.explanations.playbackCharge(credits, policy.playbackReplayFreeHours);
+  return copy.credit.explanations.playbackCharge(
+    credits,
+    preview.line ?? "international",
+    formatReplayWindow(policy.playbackReplayFreeHours)
+  );
 }
 
 export function CreditConfirmDialog({
@@ -100,7 +119,7 @@ export function CreditConfirmDialog({
             {copy.credit.confirmTitle}
           </DialogTitle>
           <DialogDescription>
-            {preview ? actionLabel(preview.action) : copy.credit.confirming}
+            {preview ? actionLabel(preview) : copy.credit.confirming}
           </DialogDescription>
         </DialogHeader>
 

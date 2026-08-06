@@ -75,6 +75,54 @@ function titleProperty(dataSource) {
   return Object.entries(dataSource.properties ?? {}).find(([, value]) => value.type === "title")?.[0] ?? "Title";
 }
 
+function expectedMediaType(type) {
+  return type === "series" ? "TV Series" : "Movie";
+}
+
+function selectValue(page, property) {
+  return page.properties?.[property]?.select?.name;
+}
+
+async function reconcileMediaType(notion, library, pageId, type, apply) {
+  if (!propertyName(library.dataSource, "影别", "select")) return { expected: undefined, actual: undefined, corrected: false };
+
+  const expected = expectedMediaType(type);
+  let page = await notion.pages.retrieve({ page_id: pageId });
+  let actual = selectValue(page, "影别");
+  if (actual === expected) return { expected, actual, corrected: false };
+
+  if (!apply) return { expected, actual, corrected: false, wouldCorrect: true };
+
+  await notion.pages.update({
+    page_id: pageId,
+    properties: { "影别": { select: { name: expected } } }
+  });
+  page = await notion.pages.retrieve({ page_id: pageId });
+  actual = selectValue(page, "影别");
+  if (actual !== expected) throw new Error(`Work page ${pageId} has 影别=${actual ?? "(empty)"}; expected ${expected}`);
+  return { expected, actual, corrected: true };
+}
+
+async function findExistingIdentity(notion, library, options) {
+  const candidates = [
+    ["Douban Subject ID", options.doubanId],
+    ["IMDb ID", options.imdbId],
+    ["imdb", options.imdbId]
+  ].filter(([name, value]) => value && propertyName(library.dataSource, name, "rich_text"));
+
+  for (const [property, value] of candidates) {
+    const response = await notion.dataSources.query({
+      data_source_id: library.dataSourceId,
+      page_size: 5,
+      filter: { property, rich_text: { equals: value } }
+    });
+    if (response.results?.[0]) {
+      return { page: response.results[0], property, value };
+    }
+  }
+  return undefined;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   installDnsOverride();
@@ -88,7 +136,21 @@ async function main() {
     filter: { property: titleProperty(library.dataSource), title: { equals: options.title } }
   });
   if (existing.results?.[0]) {
-    console.log(JSON.stringify({ status: "existing", pageId: existing.results[0].id, title: options.title }));
+    const mediaType = await reconcileMediaType(notion, library, existing.results[0].id, options.type, options.apply);
+    console.log(JSON.stringify({ status: "existing", pageId: existing.results[0].id, title: options.title, mediaType }));
+    return;
+  }
+  const identityMatch = await findExistingIdentity(notion, library, options);
+  if (identityMatch) {
+    const mediaType = await reconcileMediaType(notion, library, identityMatch.page.id, options.type, options.apply);
+    console.log(JSON.stringify({
+      status: "existing_identity",
+      pageId: identityMatch.page.id,
+      title: options.title,
+      matchedProperty: identityMatch.property,
+      matchedValue: identityMatch.value,
+      mediaType
+    }));
     return;
   }
 
@@ -108,21 +170,22 @@ async function main() {
     console.log(JSON.stringify({ status: "would_create", title: options.title, type: options.type, properties }, null, 2));
     return;
   }
+  let page;
   try {
-    const page = await notion.pages.create({
+    page = await notion.pages.create({
       parent: { data_source_id: library.dataSourceId },
       properties
     });
-    console.log(JSON.stringify({ status: "created", pageId: page.id, title: options.title }));
   } catch (error) {
     if (!library.databaseId) throw error;
     console.log(`data_source parent create failed; retry with database parent: ${error.message}`);
-    const page = await notion.pages.create({
+    page = await notion.pages.create({
       parent: { database_id: library.databaseId },
       properties
     });
-    console.log(JSON.stringify({ status: "created", pageId: page.id, title: options.title }));
   }
+  const mediaType = await reconcileMediaType(notion, library, page.id, options.type, true);
+  console.log(JSON.stringify({ status: "created", pageId: page.id, title: options.title, mediaType }));
 }
 
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

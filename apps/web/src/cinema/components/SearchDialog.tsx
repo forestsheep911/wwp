@@ -75,14 +75,14 @@ export function SearchDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="inset-0 h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden rounded-none border-0 p-0 sm:left-1/2 sm:top-1/2 sm:right-auto sm:bottom-auto sm:h-auto sm:max-h-[86vh] sm:w-[min(96vw,1040px)] sm:rounded-lg sm:border"
+        className="inset-0 h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden rounded-none border-0 p-0 sm:left-1/2 sm:top-1/2 sm:right-auto sm:bottom-auto sm:h-[min(86vh,780px)] sm:w-[min(96vw,1040px)] sm:rounded-lg sm:border"
         hideCloseButton
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{copy.search.title}</DialogTitle>
           <DialogDescription>{copy.search.description}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit}>
+        <form className="grid min-h-0 sm:h-full sm:grid-rows-[auto_auto_minmax(0,1fr)]" onSubmit={submit}>
           <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-950/95 px-2 pt-[env(safe-area-inset-top)] sm:gap-3 sm:px-4 sm:pt-0 sm:pr-14">
             <DialogClose className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-300 active:bg-slate-800 sm:hidden">
               <ArrowLeft className="h-5 w-5" />
@@ -98,7 +98,9 @@ export function SearchDialog({
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
             />
-            {loading ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-emerald-300" /> : null}
+            <span className="grid h-5 w-5 shrink-0 place-items-center" aria-hidden={!loading}>
+              {loading ? <Loader2 className="h-5 w-5 animate-spin text-emerald-300" /> : null}
+            </span>
           </div>
 
           <div className="scrollbar-none flex min-h-13 items-center gap-2 overflow-x-auto border-b border-slate-900 bg-slate-950 px-3 py-2 sm:px-4">
@@ -136,7 +138,7 @@ export function SearchDialog({
                 ) : null}
               </div>
 
-              <div className="max-h-[calc(100dvh-8rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 overflow-y-auto overscroll-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:max-h-[calc(86vh-10.25rem)] sm:min-h-[368px] sm:pb-2">
+              <div className="max-h-[calc(100dvh-8rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 overflow-y-auto overscroll-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:h-full sm:max-h-none sm:min-h-0 sm:pb-2 sm:[scrollbar-gutter:stable]">
                 {error ? (
                   <div className="m-2 rounded-md border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm font-semibold text-rose-200">
                     {error}
@@ -267,7 +269,7 @@ function SearchPreview({ result }: { result: ResultWithCache }) {
   const playableVariantCount = result.variants?.filter((variant) => variant.cache?.status === "ready").length ?? 0;
 
   return (
-    <div className="grid max-h-[calc(86vh-4rem)] gap-4 overflow-y-auto p-4">
+    <div className="grid max-h-full gap-4 overflow-y-auto p-4 [scrollbar-gutter:stable]">
       <div className="overflow-hidden rounded-md border border-slate-800 bg-slate-900">
         <Poster result={result} />
       </div>

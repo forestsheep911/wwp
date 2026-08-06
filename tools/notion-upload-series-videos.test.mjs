@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   episodeNumber,
   episodeRange,
+  filterEpisodeRange,
   validateCollectionOptIn,
   validateSeriesSpecTitle
 } from "./notion-upload-series-videos.mjs";
@@ -83,6 +84,20 @@ test("episodeRange parses a series collection filename", () => {
     { start: 1, end: 5 }
   );
   assert.equal(episodeNumber("Teach.You.a.Lesson.S01E01-E05.2026.1080p.h265.cht.mp4"), 1);
+});
+
+test("series uploader filters an explicit inclusive episode range", () => {
+  const files = [
+    { name: "E058.mp4", episode: 58, episodeEnd: 58 },
+    { name: "E059.mp4", episode: 59, episodeEnd: 59 },
+    { name: "E060.mp4", episode: 60, episodeEnd: 60 },
+    { name: "E061-E063.mp4", episode: 61, episodeEnd: 63 },
+    { name: "unmapped.mp4" }
+  ];
+  assert.deepEqual(
+    filterEpisodeRange(files, 59, 60).map((file) => file.name),
+    ["E059.mp4", "E060.mp4"]
+  );
 });
 
 test("series collection spec titles may use aggregate size per collection", () => {

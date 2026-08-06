@@ -63,6 +63,22 @@ test("importScan is idempotent, reopens changed evidence, marks missing, and nev
     assert.deepEqual(JSON.parse(preserved.subtitle_evidence), { internalProbeState: "completed", chineseCandidate: true });
     assert.deepEqual(JSON.parse(preserved.audio_evidence), { audioTrackCount: 2 });
     assert.equal(preserved.color_risk, "low");
+    f.repo.updateSourceEvidence(source.id, {
+      subtitleEvidence: {
+        codec: "hdmv_pgs_subtitle",
+        verifiedChinese: false,
+        observedLanguages: ["English", "Persian"],
+        productionGate: "defer_until_chinese_track_is_visually_verified"
+      }
+    });
+    importScan(f.repo, payload);
+    const preservedManualEvidence = f.db.prepare("SELECT * FROM sources").get();
+    assert.deepEqual(JSON.parse(preservedManualEvidence.subtitle_evidence), {
+      codec: "hdmv_pgs_subtitle",
+      verifiedChinese: false,
+      observedLanguages: ["English", "Persian"],
+      productionGate: "defer_until_chinese_track_is_visually_verified"
+    });
     const work = f.repo.ensureWork({ canonicalTitle: "Example Movie", year: 2025, workType: "movie" });
     f.repo.bindSourceToWork(source.id, work.id);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
@@ -94,6 +110,26 @@ test("importScan counts duplicate scan entries deterministically", () => {
   } finally { f.close(); }
 });
 
+test("importScan classifies subtitle-only directories as companion bundles", () => {
+  const f = fixture();
+  try {
+    importScan(f.repo, {
+      root: "X:\\queue",
+      entries: [entry({
+        name: "Example.Series.Subtitles",
+        relativePath: "Example.Series.Subtitles",
+        fileCount: 12,
+        mediaCount: 0,
+        subtitleCount: 12,
+        totalBytes: 2048,
+        largestMedia: [],
+        flags: { looksSeries: true, looksDv: false, looksHdr: false }
+      })]
+    });
+    assert.equal(f.db.prepare("SELECT source_kind FROM sources").get().source_kind, "subtitle_bundle");
+  } finally { f.close(); }
+});
+
 test("importScan does not mark an existing collection member missing", () => {
   const f = fixture();
   const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-root-"));
@@ -119,6 +155,53 @@ test("importScan does not mark an existing collection member missing", () => {
     const result = importScan(f.repo, { root, entries: [sourceEntry] });
     assert.equal(result.summary.missing, 0);
     assert.equal(f.db.prepare("SELECT missing FROM sources WHERE id=?").get(memberSource.id).missing, 0);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importScan does not reopen a resolved collection parent when a bound member is removed for cleanup", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-collection-cleanup-"));
+  try {
+    const member = path.join(root, "Collection", "member.mkv");
+    mkdirSync(path.dirname(member), { recursive: true });
+    writeFileSync(member, "fixture");
+    const collection = entry({
+      name: "Collection",
+      relativePath: "Collection",
+      fileCount: 1,
+      mediaCount: 1,
+      totalBytes: 7,
+      largestMedia: [{ relativePath: "Collection\\member.mkv", bytes: 7, extension: ".mkv" }]
+    });
+    importScan(f.repo, { root, entries: [collection] });
+    const parent = f.db.prepare("SELECT * FROM sources WHERE relative_path='Collection'").get();
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: parent.input_root_id,
+      relativePath: "Collection\\member.mkv",
+      absolutePath: member,
+      fingerprint: "member",
+      sourceKind: "collection_member",
+      missing: false
+    });
+    const work = f.repo.ensureWork({ canonicalTitle: "Resolved Movie", year: 2026, workType: "movie" });
+    f.repo.bindSourceToWork(child.id, work.id);
+    f.repo.transitionWorkflowTask(
+      f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`).id,
+      "done",
+      { reason: "Collection members resolved" }
+    );
+
+    rmSync(member);
+    importScan(f.repo, {
+      root,
+      entries: [{ ...collection, fileCount: 0, mediaCount: 0, totalBytes: 0, largestMedia: [] }]
+    });
+
+    const parentTask = f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`);
+    assert.equal(parentTask.status, "done");
   } finally {
     f.close();
     rmSync(root, { recursive: true, force: true });

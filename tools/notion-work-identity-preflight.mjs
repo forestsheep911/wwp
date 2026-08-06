@@ -60,7 +60,7 @@ function propertyValue(property) {
   return "";
 }
 
-function pageRow(page) {
+export function pageRow(page) {
   const properties = page.properties ?? {};
   const title = propertyValue(Object.values(properties).find((property) => property.type === "title"));
   return {
@@ -79,7 +79,20 @@ function pageRow(page) {
   };
 }
 
-async function loadLiveWorks() {
+export function searchTerms(options) {
+  return [...new Set([
+    options.title,
+    options.chineseTitle,
+    options.englishTitle,
+    options.originalTitle,
+    ...(options.aliases ?? []),
+    options.doubanId,
+    options.imdbId,
+    options.tmdbId
+  ].map((value) => String(value ?? "").trim()).filter(Boolean))].slice(0, 8);
+}
+
+async function loadLiveWorks(options) {
   const env = readEnv();
   installDnsOverride(env);
   const notion = new Client({ auth: env.NOTION_WRITE_TOKEN || env.NOTION_TOKEN, timeoutMs: 120000 });
@@ -89,13 +102,46 @@ async function loadLiveWorks() {
     dataSourceId = database.data_sources?.[0]?.id;
   }
   if (!dataSourceId) throw new Error("Set the Notion library data source or database ID.");
-  const pages = [];
-  let cursor;
-  do {
-    const response = await notion.dataSources.query({ data_source_id: dataSourceId, page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) });
-    pages.push(...response.results);
-    cursor = response.has_more ? response.next_cursor : undefined;
-  } while (cursor);
+  const dataSource = await notion.dataSources.retrieve({ data_source_id: dataSourceId });
+  const pageIds = new Set();
+  const titleName = Object.entries(dataSource.properties ?? {}).find(([, property]) => property.type === "title")?.[0];
+  if (titleName && options.title) {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 5,
+      filter: { property: titleName, title: { equals: options.title } }
+    });
+    for (const page of response.results) pageIds.add(page.id);
+  }
+  for (const [property, value] of [
+    ["Simplified Chinese Title", options.chineseTitle],
+    ["English Title", options.englishTitle],
+    ["Original Title", options.originalTitle],
+    ["Traditional Chinese Title (Taiwan)", options.traditionalTaiwanTitle],
+    ["Traditional Chinese Title (Hong Kong)", options.traditionalHongKongTitle],
+    ["Douban Subject ID", options.doubanId],
+    ["IMDb ID", options.imdbId],
+    ["TMDB ID", options.tmdbId]
+  ]) {
+    if (!value || dataSource.properties?.[property]?.type !== "rich_text") continue;
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 5,
+      filter: { property, rich_text: { equals: value } }
+    });
+    for (const page of response.results) pageIds.add(page.id);
+  }
+  for (const query of searchTerms(options)) {
+    const response = await notion.search({
+      query,
+      page_size: 20,
+      filter: { property: "object", value: "page" }
+    });
+    for (const page of response.results) {
+      if (page.parent?.type === "data_source_id" && page.parent.data_source_id === dataSourceId) pageIds.add(page.id);
+    }
+  }
+  const pages = await Promise.all([...pageIds].map((pageId) => notion.pages.retrieve({ page_id: pageId })));
   return pages.map(pageRow);
 }
 
@@ -103,7 +149,7 @@ export async function runPreflight(options) {
   const snapshot = options.snapshot ? JSON.parse(fs.readFileSync(options.snapshot, "utf8")) : undefined;
   const existingWorks = snapshot
     ? (snapshot.rows ?? snapshot).map((row) => ({ ...row, year: row.year ?? row.releaseYear }))
-    : await loadLiveWorks();
+    : await loadLiveWorks(options);
   const candidate = { ...options };
   const matches = findExistingWorkMatches(candidate, existingWorks);
   return {

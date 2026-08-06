@@ -9,13 +9,19 @@ interface OssStorageOptions {
   region?: string;
   objectPrefix?: string;
   signedUrlMinutes?: number;
-  client?: Pick<OSS, "delete" | "head" | "signatureUrl">;
+  client?: Pick<OSS, "delete" | "head" | "listParts" | "listUploads" | "signatureUrl">;
 }
 
 export interface OssObjectInfo {
   contentLength?: number;
   contentType?: string;
   etag?: string;
+}
+
+export interface OssMultipartProgress {
+  transferredBytes: number;
+  partCount: number;
+  lastProgressAt?: string;
 }
 
 function value(input: string | undefined) {
@@ -41,7 +47,7 @@ export class AliyunOssStorageUnavailableError extends Error {
 }
 
 export class AliyunOssStorage {
-  private readonly client?: Pick<OSS, "delete" | "head" | "signatureUrl">;
+  private readonly client?: Pick<OSS, "delete" | "head" | "listParts" | "listUploads" | "signatureUrl">;
   private readonly prefix: string;
   private readonly signedUrlSeconds: number;
   readonly enabled: boolean;
@@ -56,8 +62,8 @@ export class AliyunOssStorage {
     const endpoint = value(options.endpoint ?? process.env.ALIYUN_OSS_ENDPOINT);
     this.prefix = `${value(options.objectPrefix ?? process.env.ALIYUN_OSS_OBJECT_PREFIX) ?? "wwpdw/prepared"}/`;
     this.signedUrlSeconds = Math.min(
-      3600,
-      positiveInteger(options.signedUrlMinutes ?? process.env.ALIYUN_OSS_SIGNED_URL_MINUTES, 10) * 60
+      6 * 60 * 60,
+      positiveInteger(options.signedUrlMinutes ?? process.env.ALIYUN_OSS_SIGNED_URL_MINUTES, 360) * 60
     );
     const missing = [
       !accessKeyId ? "ALIBABA_CLOUD_ACCESS_KEY_ID" : undefined,
@@ -110,6 +116,33 @@ export class AliyunOssStorage {
 
   async delete(objectKey: string) {
     await this.requireClient().delete(this.checkedObjectKey(objectKey));
+  }
+
+  async multipartProgress(objectKey: string): Promise<OssMultipartProgress | undefined> {
+    const checkedObjectKey = this.checkedObjectKey(objectKey);
+    const uploads = await this.requireClient().listUploads({
+      prefix: checkedObjectKey,
+      "max-uploads": 100
+    });
+    const upload = uploads.uploads
+      .filter((item) => item.name === checkedObjectKey)
+      .sort((left, right) => String(right.initiated).localeCompare(String(left.initiated)))[0];
+    if (!upload) return undefined;
+
+    const result = await this.requireClient().listParts(
+      checkedObjectKey,
+      upload.uploadId,
+      { "max-parts": 1000, "part-number-marker": 0, "encoding-type": "url" }
+    );
+    const parts = result.parts.map((part) => ({
+      size: positiveInteger((part as { Size?: unknown }).Size, 0),
+      lastModified: String((part as { LastModified?: unknown }).LastModified ?? "")
+    }));
+    return {
+      transferredBytes: parts.reduce((total, part) => total + part.size, 0),
+      partCount: parts.length,
+      lastProgressAt: parts.map((part) => part.lastModified).filter(Boolean).sort().at(-1)
+    };
   }
 
   createSignedUrl(objectKey: string) {

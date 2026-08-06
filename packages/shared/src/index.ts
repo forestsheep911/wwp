@@ -479,6 +479,11 @@ export interface CacheJob {
   lastRequestedAt?: string;
   status: CacheStatus;
   progress: number;
+  progressDeterminate?: boolean;
+  transferredBytes?: number;
+  expectedBytes?: number;
+  partCount?: number;
+  lastProgressAt?: string;
   message: string;
   queuePosition?: number;
   queueLength?: number;
@@ -655,6 +660,7 @@ export interface MemberCreditCharge {
   assetKey: string;
   title: string;
   chargedAt: string;
+  line?: PlaybackLine;
   windowExpiresAt?: string;
 }
 
@@ -693,6 +699,7 @@ export interface CreditPreviewResponse {
   action: CreditPreviewAction;
   assetKey: string;
   title: string;
+  line?: PlaybackLine;
   credits: number;
   unitSymbol: string;
   chargeable: boolean;
@@ -708,16 +715,20 @@ export interface CreditPolicyResponse {
   billingEnabled: boolean;
   unitSymbol: string;
   cacheCredits: number;
-  playbackCreditBytes: number;
+  cacheCreditBytes: number;
+  domesticPlaybackCreditBytes: number;
+  internationalPlaybackCreditBytes: number;
   playbackReplayFreeHours: number;
 }
 
 export const defaultCreditPolicy: CreditPolicyResponse = {
   billingEnabled: true,
   unitSymbol: "🍀",
-  cacheCredits: 10,
-  playbackCreditBytes: 100 * 1000 * 1000,
-  playbackReplayFreeHours: 24
+  cacheCredits: 2,
+  cacheCreditBytes: 2 * 1000 * 1000 * 1000,
+  domesticPlaybackCreditBytes: 200 * 1000 * 1000,
+  internationalPlaybackCreditBytes: 100 * 1000 * 1000,
+  playbackReplayFreeHours: 7 * 24
 };
 
 export function hasBillablePlaybackSize(contentLength: number | undefined): contentLength is number {
@@ -726,8 +737,9 @@ export function hasBillablePlaybackSize(contentLength: number | undefined): cont
 
 export function playbackCreditCost(
   contentLength: number | undefined,
-  policy: Pick<CreditPolicyResponse, "playbackCreditBytes"> &
-    Partial<Pick<CreditPolicyResponse, "billingEnabled">>
+  policy: Pick<CreditPolicyResponse, "domesticPlaybackCreditBytes" | "internationalPlaybackCreditBytes"> &
+    Partial<Pick<CreditPolicyResponse, "billingEnabled">>,
+  line: PlaybackLine = "international"
 ) {
   if (policy.billingEnabled === false) {
     return 0;
@@ -737,7 +749,26 @@ export function playbackCreditCost(
     return undefined;
   }
 
-  return Math.max(1, Math.ceil(contentLength / policy.playbackCreditBytes));
+  const creditBytes = line === "domestic"
+    ? policy.domesticPlaybackCreditBytes
+    : policy.internationalPlaybackCreditBytes;
+  return Math.max(1, Math.ceil(contentLength / creditBytes));
+}
+
+export function cacheCreditCost(
+  contentLength: number | undefined,
+  policy: Pick<CreditPolicyResponse, "cacheCredits" | "cacheCreditBytes"> &
+    Partial<Pick<CreditPolicyResponse, "billingEnabled">>
+) {
+  if (policy.billingEnabled === false) {
+    return 0;
+  }
+
+  if (!hasBillablePlaybackSize(contentLength)) {
+    return policy.cacheCredits;
+  }
+
+  return Math.max(policy.cacheCredits, Math.ceil(contentLength / policy.cacheCreditBytes));
 }
 
 export type MovieRequestStatus = "new" | "planned" | "fulfilled" | "dismissed";
@@ -989,6 +1020,26 @@ export interface MemberCodeListResponse {
 
 export type MemberInvitationType = "signup" | "reset";
 export type MemberInvitationStatus = "unused" | "used" | "expired" | "revoked";
+
+export function invitationCodeFromInput(input: string, type: MemberInvitationType) {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+
+  try {
+    const url = new URL(trimmed, "https://wwpdw.invalid");
+    const parameterNames = type === "reset"
+      ? ["reset", "resetInvite"]
+      : ["invite", "signup", "signupInvite"];
+    for (const name of parameterNames) {
+      const code = url.searchParams.get(name)?.trim();
+      if (code) return code;
+    }
+  } catch {
+    // Plain invitation codes are intentionally accepted as-is below.
+  }
+
+  return trimmed;
+}
 
 export interface MemberInvitation {
   id: string;

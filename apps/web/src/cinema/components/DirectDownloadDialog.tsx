@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { AlertCircle, Download, Loader2, Play } from "lucide-react";
+import { AlertCircle, Download, Loader2 } from "lucide-react";
 import type { SearchResult } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
 import {
@@ -27,13 +27,11 @@ export interface DirectDownloadDialogState {
 export function DirectDownloadDialog({
   state,
   onOpenChange,
-  onDownloadAgain,
-  onPlayback
+  onDownloadAgain
 }: {
   state?: DirectDownloadDialogState;
   onOpenChange: (open: boolean) => void;
   onDownloadAgain: () => void;
-  onPlayback: () => void;
 }) {
   const triggeredDownloadRef = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -98,10 +96,6 @@ export function DirectDownloadDialog({
             <Button className="w-full" size="lg" type="button" onClick={onDownloadAgain}>
               <Download className="h-5 w-5" />
               {copy.download.freeDownload}
-            </Button>
-            <Button className="w-full" size="lg" variant="outline" type="button" onClick={onPlayback}>
-              <Play className="h-5 w-5" />
-              {copy.download.freePlayback}
             </Button>
             <p className="text-xs leading-5 text-slate-500">
               {copy.download.directFallback}

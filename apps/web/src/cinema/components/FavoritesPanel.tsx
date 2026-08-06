@@ -17,7 +17,6 @@ import {
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import type { CollectionMark, FavoriteEntry, ResultWithCache } from "../types";
-import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
 import { PosterImage } from "./PosterImage";
 
@@ -264,13 +263,7 @@ function FavoriteCard({
         {variant ? (
           <Button className="w-full justify-center sm:w-auto sm:justify-self-end" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
             <Play className="h-4 w-4" />
-            {creditPolicy.billingEnabled
-              ? ready
-                ? formatCreditAmount(playbackCreditCost(variant.cache?.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                : `${copy.watchlist.prepare} ${formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)}`
-              : ready
-                ? copy.watchlist.play
-                : copy.watchlist.prepare}
+            {ready ? copy.watchlist.play : copy.watchlist.prepare}
           </Button>
         ) : (
           <Badge className="justify-self-end" variant="danger">

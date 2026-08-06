@@ -80,6 +80,13 @@ function preparationStatusLabel(status: AdminOssPreparationJob["status"]) {
   }[status];
 }
 
+function preparationProgressLabel(job: AdminOssPreparationJob) {
+  if (job.progressDeterminate === false && !["ready", "failed", "cancelled"].includes(job.status)) {
+    return job.status === "queued" ? "等待开始" : "正在传输";
+  }
+  return `${job.progress}%`;
+}
+
 export function OssPlaybackPocPanel() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<AdminOssPlaybackPocStatus>();
@@ -343,7 +350,7 @@ export function OssPlaybackPocPanel() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-100">{job.title}</p>
                     <p className="text-xs text-slate-400">
-                      {preparationStatusLabel(job.status)} · {bytesLabel(job.contentLength ?? job.expectedBytes)}
+                      {preparationStatusLabel(job.status)} · {preparationProgressLabel(job)} · {bytesLabel(job.contentLength ?? job.expectedBytes)}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -369,8 +376,8 @@ export function OssPlaybackPocPanel() {
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
                   <div
-                    className={`h-full rounded-full ${job.status === "failed" ? "bg-rose-400" : "bg-cyan-400"}`}
-                    style={{ width: `${job.progress}%` }}
+                    className={`h-full rounded-full ${job.status === "failed" ? "bg-rose-400" : "bg-cyan-400"} ${job.progressDeterminate === false ? "animate-pulse opacity-70" : ""}`}
+                    style={{ width: `${job.progressDeterminate === false ? 35 : job.progress}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-400" role="status">{job.error || job.message}</p>

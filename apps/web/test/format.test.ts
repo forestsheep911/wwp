@@ -115,6 +115,8 @@ test("variantSpecLabels formats Media Assets metadata as structured tags", () =>
       resolution: "1080p",
       videoCodec: "HEVC",
       container: "mp4",
+      edition: "Director's Cut",
+      durationSeconds: 7_920,
       approximateSizeGb: 1.72,
       subtitleLanguages: ["zh-Hans", "en"],
       sourceLineage: ["encode"]
@@ -122,10 +124,13 @@ test("variantSpecLabels formats Media Assets metadata as structured tags", () =>
   };
 
   assert.deepEqual(variantSpecLabels(variant), [
+    "导演剪辑版",
+    "1080p",
+    "2小时12分",
     "简英",
     "1.72G"
   ]);
-  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "简英 / 1.72G");
+  assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "导演剪辑版 / 1080p / 2小时12分 / 简英 / 1.72G");
   assert.equal(variantHasSizeMetadata(variant), true);
 });
 
@@ -208,10 +213,33 @@ test("groupEpisodeVariantsBySpec keeps each spec together and orders its episode
       episodes: group.variants.map((variant) => variant.metadata?.episodeNumber)
     })),
     [
-      { labels: ["繁", "1080p"], episodes: [1, 2] },
-      { labels: ["繁", "0.35G"], episodes: [1, 2] }
+      { labels: ["1080p", "繁"], episodes: [1, 2] },
+      { labels: ["1080p", "繁", "0.35G"], episodes: [1, 2] }
     ]
   );
+});
+
+test("groupEpisodeVariantsBySpec merges episode rows with matching displayed specs", () => {
+  const variants: MediaVariant[] = [5, 6, 7].map((episodeNumber) => ({
+    assetKey: `episode-${episodeNumber}`,
+    label: `示例剧集 第${episodeNumber}集 1080p 繁 0.7GB`,
+    sourceUrl: `https://example.local/${episodeNumber}.mp4`,
+    sourcePageId: `episode-page-${episodeNumber}`,
+    kind: "file",
+    summary: "Structured Media Assets row.",
+    metadata: {
+      mediaAssetPageId: `media-asset-${episodeNumber}`,
+      episodeNumber,
+      resolution: "1080p",
+      subtitleLanguages: ["zh-Hant"],
+      approximateSizeGb: 0.7
+    }
+  }));
+
+  const [group] = groupEpisodeVariantsBySpec("示例剧集", variants);
+  assert.equal(groupEpisodeVariantsBySpec("示例剧集", variants).length, 1);
+  assert.deepEqual(group.labels, ["1080p", "繁", "0.7G"]);
+  assert.deepEqual(group.variants.map((variant) => variant.metadata?.episodeNumber), [5, 6, 7]);
 });
 
 test("groupEpisodeVariantsBySpec counts and labels collection coverage", () => {

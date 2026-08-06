@@ -17,3 +17,16 @@ test("CinemaApp shows an authentication restore quiz before the login form", () 
   assert.match(dialogSource, /title\?: string/);
   assert.match(dialogSource, /\{title \?\? copy\.access\.wake\.title\}/);
 });
+
+test("authentication restoration exits the wake dialog after a non-auth server failure", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const restoreEffect = appSource.match(
+    /checkAccess\(\)([\s\S]*?)return \(\) => \{\s*cancelled = true;/,
+  )?.[1];
+
+  assert.ok(restoreEffect);
+  assert.match(
+    restoreEffect,
+    /\.catch\(\(authError\) => \{[\s\S]*?setAuthRestoring\(false\);[\s\S]*?handleRequestError\(authError,/,
+  );
+});

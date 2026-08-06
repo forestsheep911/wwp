@@ -8,6 +8,7 @@ import {
 test("recognizes transient Notion and network failures", () => {
   assert.equal(isTransientNotionUploadError({ status: 502 }), true);
   assert.equal(isTransientNotionUploadError({ status: 524 }), true);
+  assert.equal(isTransientNotionUploadError({ status: 409, message: "Failed to upload file. Please try again later." }), true);
   assert.equal(isTransientNotionUploadError({ code: "ECONNRESET" }), true);
   assert.equal(isTransientNotionUploadError(new Error("fetch failed")), true);
   assert.equal(isTransientNotionUploadError({ status: 400 }), false);
@@ -40,4 +41,8 @@ test("does not retry permanent errors", async () => {
     /bad request/
   );
   assert.equal(calls, 1);
+});
+
+test("does not classify an ordinary Notion conflict as transient", () => {
+  assert.equal(isTransientNotionUploadError({ status: 409, message: "Conflict editing this page." }), false);
 });

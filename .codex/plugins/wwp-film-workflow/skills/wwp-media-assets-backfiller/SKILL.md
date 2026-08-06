@@ -17,11 +17,12 @@ Use this when the external Notion files already exist and the task is to reconci
 
 ## Workflow
 
-1. Accept an explicit chat upload-complete statement or `Workflow Status=已上传待 AI 收尾` as the handoff signal. Claim the work as `AI 处理中` before inspection. Never claim `人工上传中`.
+1. Accept an explicit chat upload-complete statement or `Workflow Status=已上传待 AI 收尾` as the handoff signal. Read `Human Issue` for scoped human context, then claim the work as `AI 处理中` before inspection. Never claim `人工上传中`.
 2. Register the exact work/spec/episode page IDs for an unknown manual upload. Use `tools/notion-manual-upload-organizer.mjs` only as an explicit one-shot diagnostic for a user-specified page set; never run a full/recent-page background watcher.
    If the uploaded filename differs from the local production filename, also record the exact Notion Media Block ID with `register-target --media-block-id`. A Media Block ID is an explicit operator confirmation, not a fuzzy match.
 3. Record the target in the local ledger. An explicit registration remains `not_ready`; it does not prove media or Media Assets evidence.
-4. Run `node tools/film-ledger.mjs reconcile-notion --limit 3 --json`. The reconciler checks at most three due targets and accesses only page IDs already stored in the ledger.
+4. For a series, use `tools/notion-media-assets-write-series.mjs` with the exact series-structure audit and `--media-root` when local finals remain available. It must populate the numeric `Episode Number` for every Episode asset before release. Do not use the generic `notion-media-assets-write.mjs` as the final series writer: it cannot infer an Episode number from a generic batch item.
+5. Run `node tools/film-ledger.mjs reconcile-notion --limit 3 --json`. The reconciler checks at most three due targets and accesses only page IDs already stored in the ledger.
 5. Identify video/file blocks and classify them as playable, episode playable, source archive, original disc, root landing media, or unknown.
 6. Treat root-level playable uploads as incomplete structure: movie media belongs under a spec child page; series media belongs under episode pages inside the spec page.
 7. Treat a playable MP4/MKV under an explicitly source/original-disc spec as a placement error too, even when it is inside a correctly named episode page. Do not write a playable or source Media Assets row from that block; report the exact block and existing playable spec that should receive a manual reupload.

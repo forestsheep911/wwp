@@ -7,26 +7,33 @@ import { spawnSync } from "node:child_process";
 function usage() {
   console.log(`Usage:
   node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none>
-    [--subtitle-file <ass|ssa>] [--audio-stream <ordinal>] [--audio-channels <count>]
+    [--subtitle-file <ass|ssa|srt>] [--audio-stream <ordinal>] [--audio-channels <count>]
     [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
     [--max-bytes <bytes>] [--scale <width>x<height>] [--tone-map-sdr]
+    [--tone-map-libplacebo]
 
 The subtitle ordinal is relative to subtitle streams (0:s:0, 0:s:1, ...), not the
 absolute ffprobe stream index. Use "none" when subtitles are already burned into
-the source video. Use --subtitle-file for ASS/SSA subtitles; this routes through
-libass instead of the bitmap-subtitle overlay path. The encoder writes an MKV work
+the source video. Use --subtitle-file for ASS/SSA/SRT text subtitles; this routes through
+the text-subtitle filter instead of the bitmap-subtitle overlay path. The encoder writes an MKV work
 file first, then stream-copy remuxes it to MP4 with hvc1 after the encode succeeds.
 Use --tone-map-sdr only for a source confirmed to be HDR or Dolby Vision. It converts
 the video to BT.709 before NVENC encoding; ordinary SDR sources must not use it.
+Use --tone-map-libplacebo with a libplacebo-enabled FFmpeg build for Dolby Vision
+Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
 `);
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, audioStream: 0, audioChannels: null, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, scale: null, toneMapSdr: false };
+  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, audioStream: 0, audioChannels: null, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, scale: null, toneMapSdr: false, toneMapLibplacebo: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--tone-map-sdr") options.toneMapSdr = true;
+    else if (arg === "--tone-map-libplacebo") {
+      options.toneMapSdr = true;
+      options.toneMapLibplacebo = true;
+    }
     else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--audio-stream", "--audio-channels", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
@@ -74,6 +81,59 @@ function run(ffmpeg, args, label) {
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status}`);
 }
 
+function probeVideoDimensions(input) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-of", "json",
+    input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe failed with exit code ${result.status}`);
+  const stream = JSON.parse(result.stdout).streams?.[0];
+  if (!Number.isInteger(stream?.width) || !Number.isInteger(stream?.height)) {
+    throw new Error("ffprobe could not determine input video dimensions");
+  }
+  return { width: stream.width, height: stream.height };
+}
+
+function probeSubtitleCodec(input, subtitleStream) {
+  if (subtitleStream === null) return null;
+  const result = spawnSync("ffprobe", [
+    "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "json", input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe subtitle probe failed with exit code ${result.status}`);
+  const stream = JSON.parse(result.stdout).streams?.[subtitleStream];
+  if (!stream?.codec_name) throw new Error(`subtitle stream ${subtitleStream} is unavailable`);
+  return stream.codec_name.toLowerCase();
+}
+
+function assertBrowserPlayableMp4(output) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries",
+    "stream=codec_type,codec_name,codec_tag_string,channels,channel_layout",
+    "-of", "json", output
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe final output failed with exit code ${result.status}`);
+  const streams = JSON.parse(result.stdout).streams ?? [];
+  const video = streams.find((stream) => stream.codec_type === "video");
+  if (video?.codec_name === "hevc" && video.codec_tag_string !== "hvc1") {
+    throw new Error("final HEVC MP4 is missing the required hvc1 sample entry");
+  }
+  for (const audio of streams.filter((stream) => stream.codec_type === "audio" && stream.codec_name === "aac")) {
+    if ((audio.channels ?? 0) > 2 && !audio.channel_layout) {
+      throw new Error("final multichannel AAC track is missing channel_layout; browser playback is not safe");
+    }
+  }
+}
+
+function escapedSubtitlePath(value) {
+  return value.replaceAll("\\", "/").replaceAll(":", "\\:").replaceAll("'", "\\'");
+}
+
 function availableBytes(directory) {
   const stats = fs.statfsSync(directory);
   return Number(stats.bavail) * Number(stats.bsize);
@@ -108,19 +168,39 @@ function main() {
   const base = output.slice(0, -4);
   const work = `${base}.work.mkv`;
   const part = `${base}.part.mp4`;
-  for (const file of [work, part]) fs.rmSync(file, { force: true });
+  const extractedSubtitle = `${base}.embedded-subtitle.srt`;
+  for (const file of [work, part, extractedSubtitle]) fs.rmSync(file, { force: true });
   assertOutputSpace(output, options.maxBytes, options.duration);
 
   const durationArgs = options.duration == null ? [] : ["-t", String(options.duration)];
+  const sourceDimensions = probeVideoDimensions(input);
+  const subtitleCodec = probeSubtitleCodec(input, options.subtitleStream);
+  const embeddedTextSubtitle = options.subtitleStream !== null
+    && new Set(["ass", "mov_text", "srt", "ssa", "subrip", "text", "webvtt"]).has(subtitleCodec);
+  if (embeddedTextSubtitle) {
+    // A bounded smoke test must not extract subtitles for the entire episode first.
+    run(options.ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostats", "-y", "-i", input, ...durationArgs, "-map", `0:s:${options.subtitleStream}`, "-f", "srt", extractedSubtitle], "extract-text-subtitle");
+  }
   const scaleFilter = options.scale == null
     ? null
     : `scale=${options.scale.width}:${options.scale.height}:force_original_aspect_ratio=decrease,pad=${options.scale.width}:${options.scale.height}:(ow-iw)/2:(oh-ih)/2:color=black`;
-  const baseVideo = options.toneMapSdr
+  const libplaceboDimensions = options.scale == null
+    ? "w=iw:h=ih"
+    : `w=${options.scale.width}:h=${options.scale.height}:fillcolor=black`;
+  const baseVideo = options.toneMapLibplacebo
+    ? `[0:v:0]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p[base]`
+    : options.toneMapSdr
     ? `[0:v:0]zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,${scaleFilter ?? "null"},format=yuv420p[base]`
     : `[0:v:0]${scaleFilter ?? "null"}[base]`;
-  const subtitleFilePath = options.subtitleFile == null ? null
-    : options.subtitleFile.replaceAll("\\", "/").replaceAll(":", "\\:").replaceAll("'", "\\'");
+  const effectiveSubtitleFile = options.subtitleFile ?? (embeddedTextSubtitle ? extractedSubtitle : null);
+  const subtitleFilePath = effectiveSubtitleFile == null ? null : escapedSubtitlePath(effectiveSubtitleFile);
   const subtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'`;
+  // PGS subtitle canvases are often 16:9 even when the movie image is wider.
+  // Resize only the subtitle canvas: subtitles may live in the source letterbox,
+  // while the video itself must keep its original aspect ratio.
+  const bitmapSubtitleFilter = options.subtitleStream === null || embeddedTextSubtitle
+    ? null
+    : `[0:s:${options.subtitleStream}]scale=${options.scale?.width ?? sourceDimensions.width}:${options.scale?.height ?? sourceDimensions.height}[subs]`;
   const videoArgs = subtitleFileFilter != null && !options.toneMapSdr && scaleFilter === null
     ? ["-vf", subtitleFileFilter, "-map", "0:v:0"]
     : subtitleFileFilter != null
@@ -131,7 +211,7 @@ function main() {
       ? ["-filter_complex", `${baseVideo};[base]null[video]`, "-map", "[video]"]
       : [
           "-filter_complex",
-          `${baseVideo};[0:s:${options.subtitleStream}][base]scale2ref=w=iw:h=ih[subs][vid];[vid][subs]overlay=shortest=1:format=auto[v]`,
+          `${baseVideo};${bitmapSubtitleFilter};[base][subs]overlay=shortest=1:format=auto[v]`,
           "-map", "[v]"
         ];
   const rateArgs = options.videoBitrate == null
@@ -139,15 +219,18 @@ function main() {
     : ["-b:v", options.videoBitrate, "-maxrate", options.videoBitrate, "-bufsize", options.videoBitrate];
   const audioArgs = options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)];
   run(options.ffmpeg, [
-    "-hide_banner", "-y", "-i", input,
+    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
+    ...(options.toneMapLibplacebo ? ["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"] : []),
+    "-i", input,
     ...durationArgs,
     ...videoArgs, "-map", `0:a:${options.audioStream}`,
     "-c:v", "hevc_nvenc", "-preset", "p5", ...rateArgs,
-    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", ...audioArgs, work
+    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", ...audioArgs,
+    "-shortest", work
   ], "encode-mkv");
 
   run(options.ffmpeg, [
-    "-hide_banner", "-y", "-i", work,
+    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y", "-i", work,
     "-map", "0", "-c", "copy", "-tag:v", "hvc1", "-movflags", "+faststart", part
   ], "remux-mp4");
 
@@ -158,7 +241,9 @@ function main() {
   }
   fs.renameSync(part, output);
   fs.rmSync(work, { force: true });
-  console.log(JSON.stringify({ output, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr }));
+  fs.rmSync(extractedSubtitle, { force: true });
+  assertBrowserPlayableMp4(output);
+  console.log(JSON.stringify({ output, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
 }
 
 try {

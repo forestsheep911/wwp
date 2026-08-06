@@ -24,6 +24,7 @@ import type {
   MemberInvitation,
   MemberInvitationStatus,
   MemberNoticeEntry,
+  PlaybackLine,
   ResetMemberPasscodeRequest,
   RegisterMemberRequest,
   UpdateMemberProfileRequest
@@ -64,6 +65,7 @@ interface StoredMemberCreditUsage {
   assetKey: string;
   title: string;
   requestId?: string;
+  line?: PlaybackLine;
   windowExpiresAt?: string;
 }
 
@@ -322,6 +324,7 @@ function creditUsageList(code: StoredMemberCode, limit: number): MemberCreditUsa
       title: event.title,
       chargedAt: event.at,
       requestId: event.requestId,
+      line: event.line,
       windowExpiresAt: event.windowExpiresAt
     }));
   return {
@@ -587,6 +590,7 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     assetKey: input.assetKey,
     title: input.title,
     chargedAt: now.toISOString(),
+    line: input.line,
     windowExpiresAt: input.windowExpiresAt
   };
   const usage: StoredMemberCreditUsage = {
@@ -597,6 +601,7 @@ function chargeStoredCode(code: StoredMemberCode, input: ChargeMemberCreditsInpu
     assetKey: input.assetKey,
     title: input.title,
     requestId: input.requestId,
+    line: input.line,
     windowExpiresAt: input.windowExpiresAt
   };
   code.usage = [usage, ...usageEvents(code)];
@@ -629,6 +634,7 @@ function recentPlaybackCharge(
   const cutoff = now.getTime() - windowMs;
   return usageEvents(code)
     .filter((event) => event.reason === "playback_stream" && event.assetKey === input.assetKey)
+    .filter((event) => !event.line || event.line === input.line)
     .filter((event) => {
       const at = new Date(event.at).getTime();
       return Number.isFinite(at) && at >= cutoff;
@@ -656,6 +662,7 @@ function chargeStoredPlayback(code: StoredMemberCode, input: ChargeMemberPlaybac
     assetKey: input.assetKey,
     title: input.title,
     requestId: input.requestId,
+    line: input.line,
     windowExpiresAt
   });
   if (!result.ok) {
@@ -870,6 +877,7 @@ export interface ChargeMemberCreditsInput {
   title: string;
   requestId?: string;
   reason?: MemberCreditChargeReason;
+  line?: PlaybackLine;
   windowExpiresAt?: string;
 }
 
@@ -878,6 +886,7 @@ export interface ChargeMemberPlaybackInput {
   assetKey: string;
   title: string;
   requestId?: string;
+  line: PlaybackLine;
   windowHours: number;
 }
 

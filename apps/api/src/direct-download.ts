@@ -22,3 +22,29 @@ export function notionPublicPageUrl(
     return undefined;
   }
 }
+
+export function isDirectMediaDownloadUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "file.notion.so") {
+      return true;
+    }
+
+    const isNotionPageHost = hostname === "notion.so" ||
+      hostname.endsWith(".notion.so") ||
+      hostname === "notion.site" ||
+      hostname.endsWith(".notion.site");
+    if (isNotionPageHost) {
+      return url.pathname.startsWith("/signed/");
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}

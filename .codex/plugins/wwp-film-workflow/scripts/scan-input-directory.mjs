@@ -146,7 +146,15 @@ function summarizeEntry(entryPath, root, maxSamples) {
 }
 
 function rootFileKey(filePath) {
-  return path.basename(filePath, path.extname(filePath))
+  const stem = path.basename(filePath, path.extname(filePath));
+  const seasonEpisode = stem.match(/^(.*?)[._ -]+s(\d{1,2})e\d{1,3}\b/iu);
+  if (seasonEpisode) {
+    return `${seasonEpisode[1]}.s${seasonEpisode[2].padStart(2, "0")}`.toLocaleLowerCase();
+  }
+  const episodeOnly = stem.match(/^(.*?)[._ -]+e\d{1,3}\b/iu);
+  if (episodeOnly) return episodeOnly[1].toLocaleLowerCase();
+
+  return stem
     .replace(/(?:[._ -](?:2160p|1080p|720p|480p|4k|uhd|web[- ]?dl|bluray|blu[- ]?ray|remux|webrip|hdtv)).*$/iu, "")
     .replace(/[._ -](?:chseng|chteng|chs|cht|gb|big5|eng|中文|简英|繁英|简体|繁体)$/iu, "")
     .toLocaleLowerCase();
@@ -188,12 +196,14 @@ function main() {
     group.push(mediaFile);
     rootMediaGroups.set(key, group);
   }
-  for (const mediaFiles of rootMediaGroups.values()) {
+  for (const [key, mediaFiles] of rootMediaGroups) {
     const mediaFile = mediaFiles[0];
-    const key = rootFileKey(mediaFile);
     const relatedFiles = rootFiles.filter((file) => rootFileKey(file) === key);
-    const name = path.basename(mediaFile, path.extname(mediaFile));
-    entries.push(summarizeFiles(name, mediaFiles.map((file) => path.basename(file)).join(";"), relatedFiles, root, options.maxSamples));
+    const summary = summarizeFiles(key, `@flat/${key}`, relatedFiles, root, options.maxSamples);
+    // Flat output directories use a logical group key; the physical root remains the source location.
+    summary.absolutePath = root;
+    summary.memberRelativePaths = relatedFiles.map((file) => path.relative(root, file));
+    entries.push(summary);
   }
 
   entries.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));

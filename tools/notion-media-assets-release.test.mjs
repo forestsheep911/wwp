@@ -57,6 +57,31 @@ test("is idempotent for an already released asset", () => {
   assert.equal(result.action, "already_released");
 });
 
+test("accepts compact Notion IDs when API evidence uses hyphenated UUIDs", () => {
+  const compactItem = {
+    ...item,
+    pageId: "3b420ac12f0a812db827dc3c43cf4150",
+    expectedWorkPageId: "39120ac12f0a80e69374d19602a6e59b",
+    expectedSourcePageId: "39120ac12f0a8037b168e4f64a879392",
+    expectedMediaBlockId: "3b420ac12f0a8137ac20e7b8a4560018"
+  };
+  const hyphenated = page(true);
+  hyphenated.id = "3b420ac1-2f0a-812d-b827-dc3c43cf4150";
+  hyphenated.properties.Work = property("relation", ["39120ac1-2f0a-80e6-9374-d19602a6e59b"]);
+  hyphenated.properties["Source Page ID"] = property("rich_text", "39120ac1-2f0a-8037-b168-e4f64a879392");
+  hyphenated.properties["Media Block ID"] = property("rich_text", "3b420ac1-2f0a-8137-ac20-e7b8a4560018");
+  const result = validateReleaseCandidate(hyphenated, compactItem);
+  assert.equal(result.ok, true);
+});
+
+test("accepts one-decimal display rounding for approximate size", () => {
+  const rounded = page(true);
+  rounded.properties["Approx Size GB"] = property("number", 0.3);
+  const result = validateReleaseCandidate(rounded, item);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "release");
+});
+
 test("blocks release when technical evidence does not match", () => {
   const changed = page(true);
   changed.properties["Media Block ID"] = property("rich_text", "wrong-block");

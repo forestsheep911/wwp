@@ -57,13 +57,16 @@ import {
   type SetMemberCreditsRequest,
   type UpdateMovieRequestStatusRequest,
   type UpdateMemberProfileRequest,
+  cacheCreditCost,
   defaultCreditPolicy,
+  invitationCodeFromInput,
   playbackCreditCost,
   validateMemberPasscode
 } from "@wwpdw/shared";
 import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
+import { isDirectMediaDownloadUrl } from "./direct-download.js";
 import { stableBrowseTie } from "./browse-order.js";
 import { BrowseSnapshotCache, defaultBrowseSnapshotTtlMs } from "./browse-snapshot.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
@@ -74,14 +77,15 @@ import { applyCors, clearSessionCookie, csrfValid, readCookie, requestOrigin, se
 import { internalServerErrorPayload } from "./api-error.js";
 import { AliyunOssPocUnavailableError, createAliyunOssPoc } from "./aliyun-oss-poc.js";
 import { AliyunFcPrepare } from "./aliyun-fc-prepare.js";
-import { AliyunOssStorage } from "./aliyun-oss-storage.js";
+import { AliyunOssStorage, type OssMultipartProgress } from "./aliyun-oss-storage.js";
 import {
   createOssPreparationStore,
+  OssPreparationCleanupClaimedError,
   type OssPreparationJob
 } from "./oss-preparation-store.js";
 import { createSessionStore, type AuthenticatedSession, type SessionSubject } from "./session-store.js";
 import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
-import { PlaybackAdmissionQueue } from "./playback-admission.js";
+import { PlaybackAdmissionQueue, playbackRequiresLocalAdmission } from "./playback-admission.js";
 import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
 
@@ -151,11 +155,27 @@ const pendingSearches = new Map<string, Promise<{
   cacheStatus: SearchLoadStatus;
 }>>();
 const omdbCache = new Map<string, Promise<RatingValue[]>>();
+const ossSourceSizeCache = new Map<string, Promise<number | undefined>>();
+const ossMultipartProgressCache = new Map<string, {
+  expiresAt: number;
+  value: Promise<OssMultipartProgress | undefined>;
+}>();
+const ossMultipartProgressCacheMs = 10_000;
+const ossCleanupIdleTtlDays = (() => {
+  const configured = Number(process.env.CACHE_ASSET_IDLE_TTL_DAYS ?? 7);
+  return Number.isFinite(configured) && configured > 0 ? configured : 7;
+})();
 const requestIdHeaderName = "x-request-id";
 const terminalJobStatuses: CacheStatus[] = ["ready", "failed"];
-const cacheCreditCost = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? defaultCreditPolicy.cacheCredits)));
+const cacheMinimumCredits = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_COST ?? defaultCreditPolicy.cacheCredits)));
+const cacheCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_CACHE_CREDIT_BYTES ?? defaultCreditPolicy.cacheCreditBytes)));
 const playbackReplayFreeHours = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_REPLAY_FREE_HOURS ?? defaultCreditPolicy.playbackReplayFreeHours)));
-const playbackCreditBytes = Math.max(1, Math.floor(Number(process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? defaultCreditPolicy.playbackCreditBytes)));
+const internationalPlaybackCreditBytes = Math.max(1, Math.floor(Number(
+  process.env.MEMBER_PLAYBACK_CREDIT_BYTES ?? defaultCreditPolicy.internationalPlaybackCreditBytes
+)));
+const domesticPlaybackCreditBytes = Math.max(1, Math.floor(Number(
+  process.env.MEMBER_DOMESTIC_PLAYBACK_CREDIT_BYTES ?? defaultCreditPolicy.domesticPlaybackCreditBytes
+)));
 const creditBillingEnabled = !["0", "false", "no", "off"].includes(
   (process.env.WWPDW_CREDIT_BILLING_ENABLED ?? "true").toLowerCase()
 );
@@ -1004,29 +1024,32 @@ function isCachedBlobPoster(poster: MoviePoster) {
 
 function mergeCachedPosters(existing: SearchResult, refreshed: SearchResult) {
   const existingPosters = existing.metadata?.posters ?? [];
-  const cachedPosters = existingPosters.filter(isCachedBlobPoster);
-  if (cachedPosters.length === 0) {
+  const cachedPostersByKey = new Map(
+    existingPosters
+      .filter(isCachedBlobPoster)
+      .map((poster) => [posterStableKey(poster), poster] as const)
+      .filter(([key]) => Boolean(key))
+  );
+  if (cachedPostersByKey.size === 0) {
     return refreshed;
   }
 
   const seen = new Set<string>();
   const posters: MoviePoster[] = [];
-  for (const poster of [...cachedPosters, ...(refreshed.metadata?.posters ?? [])]) {
+  for (const poster of refreshed.metadata?.posters ?? []) {
     const key = posterStableKey(poster);
     if (!key || seen.has(key)) {
       continue;
     }
     seen.add(key);
-    posters.push(poster);
+    posters.push(cachedPostersByKey.get(key) ?? poster);
   }
 
   return {
     ...refreshed,
     metadata: {
       ...refreshed.metadata,
-      posterUrl: existing.metadata?.posterUrl?.includes(".blob.core.windows.net")
-        ? existing.metadata.posterUrl
-        : refreshed.metadata?.posterUrl,
+      posterUrl: posters.find(isCachedBlobPoster)?.url ?? refreshed.metadata?.posterUrl,
       posters
     }
   };
@@ -1343,6 +1366,8 @@ function ossJobToCacheAsset(job: OssPreparationJob): CacheAsset {
     jobId: job.id,
     playbackUrl: status === "ready" ? `/api/oss-playback/${encodeURIComponent(job.id)}/media` : undefined,
     cachedAt: job.completedAt,
+    lastPlayedAt: job.lastPlayedAt,
+    expiresAt: job.expiresAt,
     lastRequestedAt: job.updatedAt,
     media: {
       checkedAt: job.updatedAt,
@@ -1354,6 +1379,19 @@ function ossJobToCacheAsset(job: OssPreparationJob): CacheAsset {
   };
 }
 
+function ossIdleExpiresAt(reference: string) {
+  const expiresAt = new Date(reference);
+  expiresAt.setUTCDate(expiresAt.getUTCDate() + ossCleanupIdleTtlDays);
+  return expiresAt.toISOString();
+}
+
+async function markOssPlayback(job: OssPreparationJob) {
+  const playedAt = new Date().toISOString();
+  const updated = await ossPreparationStore.markPlayed(job.id, playedAt, ossIdleExpiresAt(playedAt));
+  if (!updated) throw new Error("OSS preparation no longer exists.");
+  return updated;
+}
+
 function ossJobToCacheJob(job: OssPreparationJob): CacheJob {
   return {
     id: job.id,
@@ -1362,6 +1400,11 @@ function ossJobToCacheJob(job: OssPreparationJob): CacheJob {
     source: "notion",
     status: ossCacheStatus(job),
     progress: job.progress,
+    progressDeterminate: job.progressDeterminate,
+    transferredBytes: job.transferredBytes,
+    expectedBytes: job.expectedBytes,
+    partCount: job.partCount,
+    lastProgressAt: job.lastProgressAt,
     message: job.message,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -1975,16 +2018,42 @@ function creditPolicyPayload(): CreditPolicyResponse {
   return {
     billingEnabled: creditBillingEnabled,
     unitSymbol: defaultCreditPolicy.unitSymbol,
-    cacheCredits: creditBillingEnabled ? cacheCreditCost : 0,
-    playbackCreditBytes,
+    cacheCredits: creditBillingEnabled ? cacheMinimumCredits : 0,
+    cacheCreditBytes,
+    domesticPlaybackCreditBytes,
+    internationalPlaybackCreditBytes,
     playbackReplayFreeHours
   };
+}
+
+function positiveCreditContentLength(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function resultCreditContentLength(result: SearchResult) {
+  const matchingVariant = result.variants?.find((variant) => variant.assetKey === result.assetKey)
+    ?? result.variants?.[0];
+  const exactBytes = positiveCreditContentLength(matchingVariant?.metadata?.exactByteSize)
+    ?? positiveCreditContentLength((result.metadata as Record<string, unknown> | undefined)?.exactByteSize);
+  if (exactBytes) {
+    return exactBytes;
+  }
+
+  const approximateSizeGb = positiveCreditContentLength(matchingVariant?.metadata?.approximateSizeGb)
+    ?? positiveCreditContentLength((result.metadata as Record<string, unknown> | undefined)?.approximateSizeGb);
+  return approximateSizeGb ? approximateSizeGb * 1_000_000_000 : undefined;
+}
+
+function resultCacheCreditCost(result: SearchResult) {
+  return cacheCreditCost(resultCreditContentLength(result), creditPolicyPayload());
 }
 
 function previewPayload(input: {
   action: CreditPreviewResponse["action"];
   assetKey: string;
   title: string;
+  line?: PlaybackLine;
   credits: number;
   identity: AccessIdentity;
   freeReason?: CreditPreviewFreeReason;
@@ -2000,6 +2069,7 @@ function previewPayload(input: {
     action: input.action,
     assetKey: input.assetKey,
     title: input.title,
+    line: input.line,
     credits: chargeable ? input.credits : 0,
     unitSymbol: input.identity.credits?.unitSymbol ?? "🍀",
     chargeable,
@@ -2068,7 +2138,8 @@ async function handleCreditPreview(
       action: "cache",
       assetKey,
       title: candidate.title,
-      credits: cacheCreditCost,
+      line,
+      credits: resultCacheCreditCost(candidate),
       identity: usage?.code
         ? { ...identity, credits: usage.code.credits }
         : identity,
@@ -2101,7 +2172,7 @@ async function handleCreditPreview(
     return;
   }
 
-  const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload());
+  const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload(), line);
   if (identity.role === "member" && playbackCredits === undefined) {
     logWarn("api.credit.preview_playback_size_missing", {
       requestId: context.requestId,
@@ -2116,7 +2187,11 @@ async function handleCreditPreview(
   const usage = await memberCreditUsage(identity, 200);
   const now = Date.now();
   const recentPlayback = usage?.entries.find((entry) => {
-    if (entry.reason !== "playback_stream" || entry.assetKey !== assetKey) {
+    if (
+      entry.reason !== "playback_stream"
+      || entry.assetKey !== assetKey
+      || (entry.line && entry.line !== line)
+    ) {
       return false;
     }
 
@@ -2127,6 +2202,7 @@ async function handleCreditPreview(
     action: "playback",
     assetKey,
     title: asset.title,
+    line,
     credits: playbackCredits ?? 0,
     identity: usage?.code
       ? { ...identity, credits: usage.code.credits }
@@ -2176,6 +2252,7 @@ async function handleEnsureCache(
 
   const result = await refreshResultBeforeCache(candidate, context);
   const line = requestPlaybackLine(body.line);
+  const cacheCredits = resultCacheCreditCost(result);
 
   if (line === "domestic") {
     if (!aliyunFcPrepare.enabled || !aliyunOssStorage.enabled) {
@@ -2199,7 +2276,7 @@ async function handleEnsureCache(
       !activeHit;
     const charge = shouldChargeMember
       ? await accessStore.chargeMemberCredits(identity.memberId!, {
-        credits: cacheCreditCost,
+        credits: cacheCredits,
         assetKey: result.assetKey,
         title: result.title,
         requestId: context.requestId
@@ -2259,7 +2336,7 @@ async function handleEnsureCache(
     !activeAssetJobHit;
   const charge = shouldChargeMember
     ? await accessStore.chargeMemberCredits(identity.memberId!, {
-      credits: cacheCreditCost,
+      credits: cacheCredits,
       assetKey: result.assetKey,
       title: result.title,
       requestId: context.requestId
@@ -2447,14 +2524,14 @@ async function handleDirectDownload(
     indexReason: "direct_download_source_refresh"
   });
   const result = refreshed.result;
-  if (!/^https?:\/\//i.test(result.sourceUrl)) {
+  if (!isDirectMediaDownloadUrl(result.sourceUrl)) {
     logWarn("api.direct_download.invalid_url", {
       requestId: context.requestId,
       assetKey: result.assetKey,
       sourceUrl: result.sourceUrl,
       durationMs: durationMs(startedAt)
     });
-    sendJson(response, 409, { error: "This asset does not have a direct download URL." });
+    sendJson(response, 409, { error: "这个规格暂时没有可下载的媒体文件地址。" });
     return;
   }
 
@@ -2577,14 +2654,14 @@ async function handlePlayback(
 ) {
   const startedAt = Date.now();
   if (
-    localPlaybackAdmissionEnabled
+    playbackRequiresLocalAdmission(line, localPlaybackAdmissionEnabled)
     && !playbackAdmissionQueue.admitted(admissionTicketId ?? undefined, context.session!.id, assetKey)
   ) {
     sendJson(response, 409, { error: "A playback seat is required before opening local media." });
     return;
   }
   if (line === "domestic") {
-    const job = await syncedOssJobByAssetKey(assetKey);
+    let job = await syncedOssJobByAssetKey(assetKey);
     if (!job || job.status !== "ready") {
       logWarn("api.playback.not_ready", {
         requestId: context.requestId,
@@ -2598,9 +2675,18 @@ async function handlePlayback(
       });
       return;
     }
+    try {
+      job = await markOssPlayback(job);
+    } catch (error) {
+      if (error instanceof OssPreparationCleanupClaimedError) {
+        sendJson(response, 409, { error: "国内线路资源正在过期清理，请重新准备后播放。" });
+        return;
+      }
+      throw error;
+    }
     const asset = ossJobToCacheAsset(job);
     const shouldChargeMember = creditBillingEnabled && identity.role === "member" && Boolean(identity.memberId);
-    const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload());
+    const playbackCredits = playbackCreditCost(asset.media?.contentLength, creditPolicyPayload(), line);
     if (shouldChargeMember && playbackCredits === undefined) {
       sendJson(response, 409, { error: playbackSizeMissingErrorMessage() });
       return;
@@ -2611,6 +2697,7 @@ async function handlePlayback(
         assetKey,
         title: job.title,
         requestId: context.requestId,
+        line,
         windowHours: playbackReplayFreeHours
       })
       : undefined;
@@ -2644,7 +2731,7 @@ async function handlePlayback(
     sendJson(response, 200, {
       assetKey,
       title: job.title,
-      playbackUrl: `/api/oss-playback/${encodeURIComponent(job.id)}/media`,
+      playbackUrl: signed.url,
       expiresAt: signed.expiresAt,
       media: asset.media,
       videoCodec,
@@ -2674,7 +2761,7 @@ async function handlePlayback(
   }
 
   const shouldChargeMember = creditBillingEnabled && identity.role === "member" && Boolean(identity.memberId);
-  const playbackCredits = playbackCreditCost(asset?.media?.contentLength, creditPolicyPayload());
+  const playbackCredits = playbackCreditCost(asset?.media?.contentLength, creditPolicyPayload(), line);
   if (shouldChargeMember && playbackCredits === undefined) {
     logWarn("api.playback.credit_size_missing", {
       requestId: context.requestId,
@@ -2693,6 +2780,7 @@ async function handlePlayback(
       assetKey: asset.assetKey,
       title: asset.title,
       requestId: context.requestId,
+      line,
       windowHours: playbackReplayFreeHours
     })
     : undefined;
@@ -2846,22 +2934,23 @@ async function handlePlaybackDiagnostic(
 async function handlePlaybackAdmission(
   assetKey: string,
   ticketId: string | null,
+  line: PlaybackLine,
   response: http.ServerResponse,
   context: RequestContext
 ) {
-  const asset = await store.getAsset(assetKey, { fresh: true });
-  if (!asset || !isFreshReady(asset)) {
-    sendJson(response, 409, { error: "Asset is not ready for playback." });
-    return;
-  }
-
-  if (!localPlaybackAdmissionEnabled) {
+  if (!playbackRequiresLocalAdmission(line, localPlaybackAdmissionEnabled)) {
     sendJson(response, 200, {
       assetKey,
-      title: asset.title,
+      title: assetKey,
       status: "admitted",
       capacity: playbackCapacity()
     });
+    return;
+  }
+
+  const asset = await store.getAsset(assetKey, { fresh: true });
+  if (!asset || !isFreshReady(asset)) {
+    sendJson(response, 409, { error: "Asset is not ready for playback." });
     return;
   }
 
@@ -3368,7 +3457,7 @@ async function handleRegisterMember(
 ) {
   const startedAt = Date.now();
   const body = await readBody<RegisterMemberRequest>(request);
-  const inviteCode = body.inviteCode?.trim() ?? "";
+  const inviteCode = invitationCodeFromInput(body.inviteCode ?? "", "signup");
   const name = body.name?.trim() ?? "";
   const passcode = body.passcode ?? "";
 
@@ -3541,7 +3630,7 @@ async function handleResetMemberPasscode(
 ) {
   const startedAt = Date.now();
   const body = await readBody<ResetMemberPasscodeRequest>(request);
-  const inviteCode = body.inviteCode?.trim() ?? "";
+  const inviteCode = invitationCodeFromInput(body.inviteCode ?? "", "reset");
   const newPasscode = body.newPasscode ?? "";
   const passcodeError = passcodeValidationError(newPasscode);
 
@@ -4124,8 +4213,79 @@ function ossPreparationObjectKey(result: SearchResult) {
 }
 
 function ossExpectedBytes(result: SearchResult) {
-  const value = Number((result.metadata as Record<string, unknown> | undefined)?.exactByteSize);
-  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  const variant = result.variants?.find((item) => item.assetKey === result.assetKey);
+  const exact = Number(
+    variant?.metadata?.exactByteSize
+      ?? (result.metadata as Record<string, unknown> | undefined)?.exactByteSize
+  );
+  return Number.isSafeInteger(exact) && exact > 0 ? exact : undefined;
+}
+
+function ossApproximateBytes(result: SearchResult) {
+  const variant = result.variants?.find((item) => item.assetKey === result.assetKey);
+  const approximateSizeGb = Number(
+    variant?.metadata?.approximateSizeGb
+      ?? (result.metadata as Record<string, unknown> | undefined)?.approximateSizeGb
+  );
+  return Number.isFinite(approximateSizeGb) && approximateSizeGb > 0
+    ? Math.round(approximateSizeGb * 1_000_000_000)
+    : undefined;
+}
+
+function sourceBytesFromContentRange(value: string | null) {
+  const match = /\/([0-9]+)$/.exec(value ?? "");
+  const parsed = Number(match?.[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function probeOssSourceBytes(sourceUrl: string) {
+  let pending = ossSourceSizeCache.get(sourceUrl);
+  if (!pending) {
+    pending = (async () => {
+      const response = await fetch(sourceUrl, {
+        headers: { Range: "bytes=0-0" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(30_000)
+      });
+      try {
+        if (response.status !== 206 && response.status !== 200) return undefined;
+        return sourceBytesFromContentRange(response.headers.get("content-range"))
+          ?? (response.status === 200 ? Number(response.headers.get("content-length")) || undefined : undefined);
+      } finally {
+        await response.body?.cancel().catch(() => undefined);
+      }
+    })().catch(() => undefined);
+    ossSourceSizeCache.set(sourceUrl, pending);
+  }
+  return pending;
+}
+
+async function resolvedOssExpectedBytes(result: SearchResult) {
+  return ossExpectedBytes(result)
+    ?? await probeOssSourceBytes(result.sourceUrl)
+    ?? ossApproximateBytes(result);
+}
+
+async function cachedOssMultipartProgress(objectKey: string) {
+  const cached = ossMultipartProgressCache.get(objectKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = aliyunOssStorage.multipartProgress(objectKey).catch(() => undefined);
+  ossMultipartProgressCache.set(objectKey, {
+    expiresAt: Date.now() + ossMultipartProgressCacheMs,
+    value
+  });
+  return value;
+}
+
+function ossTransferProgress(transferredBytes: number, expectedBytes: number | undefined) {
+  if (!expectedBytes || expectedBytes <= 0) return 0;
+  return Math.min(99, Math.max(transferredBytes > 0 ? 1 : 0, Math.floor((transferredBytes / expectedBytes) * 100)));
+}
+
+function ossTransferSizeLabel(value: number) {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${Math.round(value / 1024 ** 2)} MB`;
+  return `${Math.round(value / 1024)} KB`;
 }
 
 async function ensureOssPreparationForResult(result: SearchResult, context: RequestContext) {
@@ -4147,9 +4307,10 @@ async function ensureOssPreparationForResult(result: SearchResult, context: Requ
     sourceUrl: result.sourceUrl,
     objectKey: ossPreparationObjectKey(result),
     status: "queued",
-    progress: 5,
+    progress: 0,
+    progressDeterminate: false,
     message: "正在排队，轮到后会自动开始。",
-    expectedBytes: ossExpectedBytes(result),
+    expectedBytes: await resolvedOssExpectedBytes(result),
     createdAt: now,
     updatedAt: now
   };
@@ -4176,6 +4337,7 @@ async function ensureOssPreparationForResult(result: SearchResult, context: Requ
       ...job,
       status: "failed",
       progress: 100,
+      progressDeterminate: true,
       message: "准备任务未能启动。",
       error: ossPreparationError(error),
       updatedAt: new Date().toISOString(),
@@ -4192,9 +4354,31 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
   const now = new Date().toISOString();
   let next: OssPreparationJob = { ...job, updatedAt: now };
   if (task.status === "Enqueued") {
-    next = { ...next, status: "queued", progress: 5, message: "正在排队，轮到后会自动开始。" };
+    next = {
+      ...next,
+      status: "queued",
+      progress: 0,
+      progressDeterminate: false,
+      message: "正在排队，轮到后会自动开始。"
+    };
   } else if (["Running", "Retrying"].includes(task.status)) {
-    next = { ...next, status: "running", progress: 50, message: "正在准备国内线路。" };
+    const expectedBytes = job.expectedBytes ?? await probeOssSourceBytes(job.sourceUrl);
+    const transfer = await cachedOssMultipartProgress(job.objectKey);
+    const transferredBytes = transfer?.transferredBytes ?? job.transferredBytes ?? 0;
+    const progressDeterminate = Boolean(expectedBytes && transfer);
+    next = {
+      ...next,
+      status: "running",
+      progress: progressDeterminate ? ossTransferProgress(transferredBytes, expectedBytes) : 0,
+      progressDeterminate,
+      expectedBytes,
+      transferredBytes,
+      partCount: transfer?.partCount ?? job.partCount,
+      lastProgressAt: transfer?.lastProgressAt ?? job.lastProgressAt,
+      message: progressDeterminate
+        ? `正在准备国内线路，已完成 ${ossTransferSizeLabel(transferredBytes)} / ${ossTransferSizeLabel(expectedBytes!)}。`
+        : "正在准备国内线路，等待首个分片完成。"
+    };
   } else if (task.status === "Succeeded") {
     const object = await aliyunOssStorage.head(job.objectKey);
     if (!object) {
@@ -4202,6 +4386,7 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
         ...next,
         status: "failed",
         progress: 100,
+        progressDeterminate: true,
         message: "任务已结束，但国内线路文件没有生成。",
         error: "Prepared object was not found after task completion.",
         completedAt: now
@@ -4211,10 +4396,14 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
         ...next,
         status: "ready",
         progress: 100,
+        progressDeterminate: true,
         message: "准备完成，可以播放。",
         contentLength: object.contentLength,
         contentType: object.contentType,
-        completedAt: now,
+        completedAt: job.completedAt ?? now,
+        // Existing OSS rows predate idle tracking. Start their first retention
+        // window now instead of deleting them from an old completion timestamp.
+        expiresAt: job.expiresAt ?? ossIdleExpiresAt(now),
         error: undefined
       };
     }
@@ -4223,6 +4412,7 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
       ...next,
       status: task.status === "Stopped" ? "cancelled" : "cancelling",
       progress: task.status === "Stopped" ? 100 : next.progress,
+      progressDeterminate: task.status === "Stopped" ? true : next.progressDeterminate,
       message: task.status === "Stopped" ? "已取消。" : "正在取消…",
       completedAt: task.status === "Stopped" ? now : undefined
     };
@@ -4231,6 +4421,7 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
       ...next,
       status: "failed",
       progress: 100,
+      progressDeterminate: true,
       message: "准备失败。",
       error: ossPreparationError(task.error ?? task.status),
       completedAt: now
@@ -4239,6 +4430,11 @@ async function syncOssPreparationJob(job: OssPreparationJob) {
   if (
     next.status !== job.status
     || next.progress !== job.progress
+    || next.progressDeterminate !== job.progressDeterminate
+    || next.expectedBytes !== job.expectedBytes
+    || next.transferredBytes !== job.transferredBytes
+    || next.partCount !== job.partCount
+    || next.lastProgressAt !== job.lastProgressAt
     || next.message !== job.message
     || next.error !== job.error
   ) {
@@ -4364,10 +4560,19 @@ async function handleDeleteOssPreparation(id: string, response: http.ServerRespo
 }
 
 async function handleOssPreparationSignedUrl(id: string, response: http.ServerResponse) {
-  const job = await ossPreparationStore.get(id);
+  let job = await ossPreparationStore.get(id);
   if (!job || job.status !== "ready") {
     sendJson(response, 409, { error: "片源尚未准备完成。" });
     return;
+  }
+  try {
+    job = await markOssPlayback(job);
+  } catch (error) {
+    if (error instanceof OssPreparationCleanupClaimedError) {
+      sendJson(response, 409, { error: "国内线路资源正在过期清理。" });
+      return;
+    }
+    throw error;
   }
   sendJson(response, 200, aliyunOssStorage.createSignedUrl(job.objectKey), {
     "Cache-Control": "no-store"
@@ -5126,6 +5331,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       await handlePlaybackAdmission(
         decodeURIComponent(playbackAdmissionMatch[1]),
         url.searchParams.get("ticket"),
+        requestPlaybackLine(url.searchParams.get("line")),
         response,
         context
       );

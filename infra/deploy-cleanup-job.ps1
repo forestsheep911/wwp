@@ -6,12 +6,23 @@ param(
     [string]$ImageName = "wwpdw/worker",
     [string]$ImageTag = "latest",
     [string]$IdentityName = "id-ww-player-cache-dev",
+    [string]$KeyVaultName = "kv-wwcache-e9219db7",
+    [string]$AliyunAccessKeyIdKeyVaultSecretName = "ALIBABA-CLOUD-ACCESS-KEY-ID",
+    [string]$AliyunAccessKeyIdContainerSecretName = "alibaba-cloud-access-key-id",
+    [string]$AliyunAccessKeySecretKeyVaultSecretName = "ALIBABA-CLOUD-ACCESS-KEY-SECRET",
+    [string]$AliyunAccessKeySecretContainerSecretName = "alibaba-cloud-access-key-secret",
     [string]$CronExpression = "0 19 * * *",
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$BlobContainer = "cached-videos",
     [string]$QueueName = "cache-jobs",
     [string]$AssetTable = "cacheindex",
     [string]$JobTable = "cachejobs",
+    [string]$OssPreparationTable = "osspreparejobs",
+    [string]$AliyunOssRegion = "oss-cn-shanghai",
+    [string]$AliyunOssBucket = "bxu-dev-001",
+    [string]$AliyunOssEndpoint = "https://oss-cn-shanghai.aliyuncs.com",
+    [string]$AliyunOssObjectPrefix = "wwpdw/prepared",
+    [string]$AliyunOssCleanupDryRun = "true",
     [int]$CacheAssetIdleTtlDays = 7,
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
@@ -43,6 +54,14 @@ $envVars = @(
     "AZURE_STORAGE_QUEUE_NAME=$QueueName",
     "AZURE_STORAGE_ASSET_TABLE=$AssetTable",
     "AZURE_STORAGE_JOB_TABLE=$JobTable",
+    "AZURE_STORAGE_OSS_PREPARATION_TABLE=$OssPreparationTable",
+    "ALIYUN_OSS_CLEANUP_ENABLED=true",
+    "ALIYUN_OSS_CLEANUP_DRY_RUN=$AliyunOssCleanupDryRun",
+    "ALIYUN_OSS_CLEANUP_IDLE_TTL_DAYS=$CacheAssetIdleTtlDays",
+    "ALIYUN_OSS_REGION=$AliyunOssRegion",
+    "ALIYUN_OSS_BUCKET=$AliyunOssBucket",
+    "ALIYUN_OSS_ENDPOINT=$AliyunOssEndpoint",
+    "ALIYUN_OSS_OBJECT_PREFIX=$AliyunOssObjectPrefix",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=720"
 )
 
@@ -93,6 +112,45 @@ if (-not $exists) {
 
 if ($LASTEXITCODE -ne 0) {
     throw "Cleanup Container Apps Job deployment failed."
+}
+
+$aliyunAccessKeyIdSecretId = & $AzCli keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $AliyunAccessKeyIdKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+$aliyunAccessKeySecretSecretId = & $AzCli keyvault secret show `
+    --vault-name $KeyVaultName `
+    --name $AliyunAccessKeySecretKeyVaultSecretName `
+    --query id `
+    --output tsv 2>$null
+
+if (-not $aliyunAccessKeyIdSecretId -or -not $aliyunAccessKeySecretSecretId) {
+    throw "Alibaba Cloud access key references were not found in Key Vault."
+}
+
+$aliyunAccessKeyIdSecretUri = $aliyunAccessKeyIdSecretId -replace "/[0-9a-fA-F]{32}$", ""
+$aliyunAccessKeySecretSecretUri = $aliyunAccessKeySecretSecretId -replace "/[0-9a-fA-F]{32}$", ""
+& $AzCli containerapp job secret set `
+    --name $JobName `
+    --resource-group $ResourceGroup `
+    --secrets `
+        "$AliyunAccessKeyIdContainerSecretName=keyvaultref:$aliyunAccessKeyIdSecretUri,identityref:$($identity.id)" `
+        "$AliyunAccessKeySecretContainerSecretName=keyvaultref:$aliyunAccessKeySecretSecretUri,identityref:$($identity.id)" `
+    --output none
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not attach Alibaba Cloud access key references to the cleanup job."
+}
+
+& $AzCli containerapp job update `
+    --name $JobName `
+    --resource-group $ResourceGroup `
+    --set-env-vars `
+        "ALIBABA_CLOUD_ACCESS_KEY_ID=secretref:$AliyunAccessKeyIdContainerSecretName" `
+        "ALIBABA_CLOUD_ACCESS_KEY_SECRET=secretref:$AliyunAccessKeySecretContainerSecretName" `
+    --output none
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not configure Alibaba Cloud access key environment variables on the cleanup job."
 }
 
 & $AzCli containerapp job show `

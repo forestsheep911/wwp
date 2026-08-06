@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 function usage() {
   console.log(`Usage:
-  node scripts/probe-media.mjs --input <media-file> [--output <probe.json>] [--ffprobe <path>]
+  node scripts/probe-media.mjs --input <media-file> [--output <probe.json>] [--ffprobe <path>] [--clip-info <file.clpi>]
 
 Runs ffprobe and emits JSON with format, streams, file size, and probe timestamp.
+For a BDMV stream, it also reads matching CLPI PGS language descriptors when available.
 `);
 }
 
@@ -19,6 +20,7 @@ function parseArgs(argv) {
     else if (arg === "--input" || arg === "-i") options.input = argv[++i];
     else if (arg === "--output" || arg === "-o") options.output = argv[++i];
     else if (arg === "--ffprobe") options.ffprobe = argv[++i];
+    else if (arg === "--clip-info") options.clipInfo = argv[++i];
     else throw new Error(`Unknown argument: ${arg}`);
   }
   return options;
@@ -27,6 +29,38 @@ function parseArgs(argv) {
 function ensureParent(filePath) {
   const parent = path.dirname(path.resolve(filePath));
   mkdirSync(parent, { recursive: true });
+}
+
+function plausibleLanguage(value) {
+  return /^[a-z]{3}$/iu.test(value) ? value.toLowerCase() : undefined;
+}
+
+export function parseClipInfoPgsTracks(clipInfoPath) {
+  if (!clipInfoPath || !existsSync(clipInfoPath)) return undefined;
+  const data = readFileSync(clipInfoPath);
+  const tracks = [];
+  for (let offset = 0; offset + 7 <= data.length; offset += 1) {
+    const pid = data.readUInt16BE(offset);
+    const descriptorLength = data[offset + 2];
+    const codingType = data[offset + 3];
+    const language = plausibleLanguage(data.subarray(offset + 4, offset + 7).toString("ascii"));
+    if (pid < 0x1200 || pid > 0x12ff || descriptorLength !== 0x15 || codingType !== 0x90 || !language) continue;
+    const record = { pid: `0x${pid.toString(16)}`, language };
+    if (!tracks.some((track) => track.pid === record.pid && track.language === record.language)) tracks.push(record);
+  }
+  return {
+    path: clipInfoPath,
+    pgsTracks: tracks,
+    hasChineseSubtitle: tracks.some((track) => ["zho", "chi"].includes(track.language))
+  };
+}
+
+export function inferredClipInfoPath(inputPath) {
+  const resolved = path.resolve(inputPath);
+  const streamDirectory = path.dirname(resolved);
+  const bdmvDirectory = path.dirname(streamDirectory);
+  if (path.basename(streamDirectory).toLowerCase() !== "stream" || path.basename(bdmvDirectory).toLowerCase() !== "bdmv") return undefined;
+  return path.join(bdmvDirectory, "CLIPINF", `${path.basename(resolved, path.extname(resolved))}.clpi`);
 }
 
 function main() {
@@ -63,11 +97,13 @@ function main() {
 
   const parsed = JSON.parse(result.stdout || "{}");
   const stats = statSync(inputPath);
+  const clipInfoPath = options.clipInfo ? path.resolve(options.clipInfo) : inferredClipInfoPath(inputPath);
   const payload = {
     input: inputPath,
     sizeBytes: stats.size,
     probedAt: new Date().toISOString(),
-    ffprobe: parsed
+    ffprobe: parsed,
+    ...(parseClipInfoPgsTracks(clipInfoPath) ? { bluRayClipInfo: parseClipInfoPgsTracks(clipInfoPath) } : {})
   };
   const json = `${JSON.stringify(payload, null, 2)}\n`;
 
@@ -79,9 +115,11 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1].replaceAll("\\", "/")}`).href) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

@@ -6,7 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
-import { assertPreparedMovieTargetIsEmpty, notionVideoName } from "./lib/notion-movie-target.mjs";
+import { assertPreparedMovieTargetIsEmpty, notionVideoName, selectExplicitChildTarget } from "./lib/notion-movie-target.mjs";
 import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
 import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
 
@@ -19,7 +19,9 @@ function parseArgs() {
     targetPageId: "",
     targetTitle: "",
     partMiB: DEFAULT_PART_MIB,
+    uploadConcurrency: 1,
     prepareOnly: false,
+    replaceExistingVideo: false,
     resolveIp: "",
     localAddress: "",
     apply: false
@@ -37,7 +39,9 @@ function parseArgs() {
     else if (arg === "--target-page-id") options.targetPageId = args[++index];
     else if (arg === "--target-title") options.targetTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
+    else if (arg === "--upload-concurrency") options.uploadConcurrency = Math.max(1, Number(args[++index]) || 1);
     else if (arg === "--prepare-only") options.prepareOnly = true;
+    else if (arg === "--replace-existing-video") options.replaceExistingVideo = true;
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
     else if (arg === "--apply") options.apply = true;
@@ -68,13 +72,18 @@ function printHelp() {
 Examples:
   node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie.mp4
   node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie.mp4 --target-page-id <id> --apply
+  node tools/notion-upload-movie-video.mjs --page-id <movie-page-id> --file E:\\video_made\\movie-fixed.mp4 --target-page-id <id> --replace-existing-video --apply
 
 Options:
   --prepare-only  Create/reuse an empty target spec child page before long encode or manual upload handoff, then skip upload. Fails when the target already contains video so an existing playable spec cannot be mistaken for a new destination.
+  --replace-existing-video
+                  Explicitly replace all video blocks on the selected spec page. The replacement file is uploaded completely before old blocks are deleted.
   --resolve-ip <ip>
                    Override api.notion.com DNS for route-specific Notion API failures.
   --local-address <ip>
                    Bind direct traffic to a physical interface. Pair with --resolve-ip when Clash fake-IP routing is unhealthy.
+  --upload-concurrency <n>
+                   Send multipart chunks with bounded concurrency (default: 1). Raise only on a route that tolerates parallel requests.
 `);
 }
 
@@ -210,8 +219,9 @@ async function listChildren(notion, blockId) {
 
 async function targetCandidate(notion, childPageBlock) {
   const grandChildren = await listChildren(notion, childPageBlock.id);
-  const videoNames = grandChildren.filter((block) => block.type === "video").map(blockTitle);
-  return { id: childPageBlock.id, title: blockTitle(childPageBlock), videoNames };
+  const videoBlocks = grandChildren.filter((block) => block.type === "video");
+  const videoNames = videoBlocks.map(blockTitle);
+  return { id: childPageBlock.id, title: blockTitle(childPageBlock), videoNames, videoCount: videoBlocks.length };
 }
 
 async function createTargetPage(notion, rootPageId, title, apply) {
@@ -227,11 +237,6 @@ async function createTargetPage(notion, rootPageId, title, apply) {
 }
 
 async function findTargetPage(notion, rootPageId, options, filename, plannedTitle) {
-  if (options.targetPageId) {
-    const targetPage = await notion.pages.retrieve({ page_id: options.targetPageId });
-    return { id: targetPage.id, title: pageTitle(targetPage) };
-  }
-
   const mainChildren = await listChildren(notion, rootPageId);
   const nestedCandidates = [];
   const directCandidates = [];
@@ -245,6 +250,17 @@ async function findTargetPage(notion, rootPageId, options, filename, plannedTitl
     }
   }
   const candidates = [...nestedCandidates, ...directCandidates];
+
+  if (options.targetPageId) {
+    const target = selectExplicitChildTarget(candidates, options.targetPageId);
+    const comparable = comparableFilename(filename);
+    return {
+      ...target,
+      alreadyExists: Boolean(filename) && target.videoNames.some((name) => (
+        comparableFilename(name).includes(comparable)
+      ))
+    };
+  }
 
   if (plannedTitle && (options.targetTitle || options.prepareOnly)) {
     const exact = candidates.find((candidate) => candidate.title === plannedTitle);
@@ -302,7 +318,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
   const partCount = Math.ceil(file.size / partBytes);
   const mode = partCount === 1 ? "single_part" : "multi_part";
   const contentType = "video/mp4";
-  const record = manifest.uploads[file.name] ?? {
+  let record = manifest.uploads[file.name] ?? {
     filename: file.name,
     size: file.size,
     mode,
@@ -313,6 +329,19 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
   if (record.status === "uploaded" && record.fileUploadId) {
     console.log(`reuse uploaded ${file.name} ${record.fileUploadId}`);
     return record.fileUploadId;
+  }
+
+  if (record.fileUploadId && record.expiryTime && Date.parse(record.expiryTime) <= Date.now()) {
+    console.warn(`discard expired upload session ${record.fileUploadId} for ${file.name}`);
+    record = {
+      filename: file.name,
+      size: file.size,
+      mode,
+      partCount,
+      sentParts: 0
+    };
+    manifest.uploads[file.name] = record;
+    writeManifest(manifestPath, manifest);
   }
 
   if (!record.fileUploadId) {
@@ -342,23 +371,30 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       });
     record.sentParts = 1;
   } else {
-    for (let part = (record.sentParts ?? 0) + 1; part <= record.partCount; part += 1) {
-      const offset = (part - 1) * partBytes;
-      const length = Math.min(partBytes, file.size - offset);
-      const data = await readChunk(file.path, offset, length);
+    const concurrency = Math.min(options.uploadConcurrency, record.partCount);
+    for (let firstPart = (record.sentParts ?? 0) + 1; firstPart <= record.partCount; firstPart += concurrency) {
+      const parts = Array.from(
+        { length: Math.min(concurrency, record.partCount - firstPart + 1) },
+        (_, index) => firstPart + index
+      );
       const startedAt = Date.now();
-      console.log(`send ${file.name} part ${part}/${record.partCount}`);
-      await withTransientNotionUploadRetry(() => notion.fileUploads.send({
-          file_upload_id: record.fileUploadId,
-          part_number: String(part),
-          file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-        }), {
-          onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
-            `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
-          )
-        });
-      record.sentParts = part;
-      record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
+      await Promise.all(parts.map(async (part) => {
+        const offset = (part - 1) * partBytes;
+        const length = Math.min(partBytes, file.size - offset);
+        const data = await readChunk(file.path, offset, length);
+        console.log(`send ${file.name} part ${part}/${record.partCount}`);
+        await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+            file_upload_id: record.fileUploadId,
+            part_number: String(part),
+            file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+          }), {
+            onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+              `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+            )
+          });
+      }));
+      record.sentParts = parts.at(-1);
+      record.lastBatchSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
       writeManifest(manifestPath, manifest);
       await sleep(250);
@@ -389,8 +425,8 @@ async function appendVideo(notion, targetPageId, fileName, fileUploadId, apply) 
   }
 
   console.log(`${apply ? "append" : "would append"} video block to ${targetPageId}: ${fileName}`);
-  if (!apply) return;
-  await notion.blocks.children.append({
+  if (!apply) return null;
+  const result = await notion.blocks.children.append({
     block_id: targetPageId,
     children: [
       {
@@ -398,11 +434,25 @@ async function appendVideo(notion, targetPageId, fileName, fileUploadId, apply) 
         video: {
           type: "file_upload",
           file_upload: { id: fileUploadId },
-          caption: []
+          // Notion's signed file URL is often opaque after upload. Keep the
+          // original filename on the block so later Media Assets discovery can
+          // identify the container and media type without guessing.
+          caption: [{ type: "text", text: { content: fileName } }]
         }
       }
     ]
   });
+  return result.results?.find((block) => block.type === "video") ?? null;
+}
+
+async function replaceVideoBlocks(notion, targetPageId, apply) {
+  const existing = await listChildren(notion, targetPageId);
+  const videos = existing.filter((block) => block.type === "video");
+  if (!videos.length) return [];
+  console.log(`${apply ? "delete" : "would delete"} ${videos.length} existing video block(s) from ${targetPageId}`);
+  if (!apply) return videos;
+  for (const video of videos) await notion.blocks.delete({ block_id: video.id });
+  return videos;
 }
 
 async function main() {
@@ -444,11 +494,13 @@ async function main() {
     return;
   }
 
-  if (target.alreadyExists) {
+  if (target.alreadyExists && !options.replaceExistingVideo) {
     if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
     console.log("upload skipped; video block already exists on target page.");
     return;
   }
+
+  if (!target.alreadyExists && !options.replaceExistingVideo) assertPreparedMovieTargetIsEmpty(target);
 
   if (!options.apply) {
     if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
@@ -460,7 +512,9 @@ async function main() {
   const manifestPath = path.join(".local-data", `notion-movie-video-upload-${options.pageId.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
   const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);
-  await appendVideo(notion, target.id, file.name, fileUploadId, options.apply);
+  if (options.replaceExistingVideo) await replaceVideoBlocks(notion, target.id, options.apply);
+  const appended = await appendVideo(notion, target.id, file.name, fileUploadId, options.apply);
+  if (appended) console.log(`media block id: ${appended.id}`);
   console.log(`manifest written: ${manifestPath}`);
 }
 

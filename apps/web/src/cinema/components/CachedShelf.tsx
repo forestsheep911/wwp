@@ -5,13 +5,11 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { formatBytes, formatDateTime, mediaQuality } from "../format";
 import { copy } from "../i18n";
-import { formatCreditAmount, playbackCreditCost } from "../types";
 import { EmptyState } from "./EmptyState";
 import { PreparedLineBadges, preparedLinesForAsset } from "./PreparedLineBadges";
 
 export function CachedShelf({
   cachedAssets,
-  creditPolicy,
   loading,
   onOpen,
   onRefresh
@@ -87,13 +85,7 @@ export function CachedShelf({
                 <PreparedLineBadges asset={asset} />
               </div>
               <div className="flex flex-col gap-2 border-t border-slate-800 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                {creditPolicy.billingEnabled ? (
-                  <Badge variant="warning">
-                    {formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)}
-                  </Badge>
-                ) : (
-                  <span className="text-xs font-semibold text-slate-500">在线播放不收费</span>
-                )}
+                <span className="text-xs font-semibold text-slate-500">选择线路后确认播放花费</span>
                 <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset)}>
                   <Route className="h-4 w-4" />
                   选择线路播放

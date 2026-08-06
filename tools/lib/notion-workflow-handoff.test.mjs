@@ -4,6 +4,7 @@ import {
   appendWorkflowNote,
   buildActionableWorkflowFilter,
   buildWorkflowUpdate,
+  pendingHumanWorkflowNote,
   richTextPayload
 } from "./notion-workflow-handoff.mjs";
 
@@ -27,11 +28,52 @@ test("actionable filter queries only explicit AI handoff states", () => {
   });
 });
 
-test("workflow note appends actor and timestamp without replacing prior context", () => {
+test("AI workflow note uses the machine-readable AI marker", () => {
   assert.equal(
     appendWorkflowNote("已有说明", { actor: "ai", note: "已领取。", at: "2026-07-25T00:00:00.000Z" }),
-    "已有说明\n[2026-07-25T00:00:00.000Z AI] 已领取。"
+    "已有说明\n【AI(^_^) 2026-07-25T00:00:00.000Z】 已领取。"
   );
+});
+
+test("pending human note is only the plain-text tail after the latest AI marker", () => {
+  const note = "先前人工说明\n【AI(^_^) 2026-07-25T00:00:00.000Z】 已完成。\n请补海报\n并同步网站";
+  assert.equal(pendingHumanWorkflowNote(note), "请补海报\n并同步网站");
+});
+
+test("an AI acknowledgement prevents a claimed human instruction from being claimed twice", () => {
+  const claimed = appendWorkflowNote("请补海报", {
+    actor: "ai",
+    note: "已认领补海报，开始处理。",
+    at: "2026-07-31T08:00:00.000Z"
+  });
+  assert.equal(pendingHumanWorkflowNote(claimed), "");
+  assert.equal(
+    pendingHumanWorkflowNote(`${claimed}\n请再核对标题。`),
+    "请再核对标题。"
+  );
+});
+
+test("legacy AI history is an acknowledgement boundary during protocol migration", () => {
+  const note = "旧人工说明\n[2026-07-28T12:46:38.677Z codex] 已处理。";
+  assert.equal(pendingHumanWorkflowNote(note), "");
+});
+
+test("date-only legacy AI history is an acknowledgement boundary", () => {
+  const note = "旧人工说明\n[2026-07-29 AI] 自动上传和资产发布已完成。";
+  assert.equal(pendingHumanWorkflowNote(note), "");
+});
+
+test("unbracketed legacy machine completion record is not treated as human input", () => {
+  const note = "旧人工说明\n2026-07-29 自动上传、Media Assets、网站发布闸门和现场读回均已完成。";
+  assert.equal(pendingHumanWorkflowNote(note), "");
+});
+
+test("a dated human note without machine vocabulary remains actionable", () => {
+  assert.equal(pendingHumanWorkflowNote("2026-07-29 我只想保留低配。"), "2026-07-29 我只想保留低配。");
+});
+
+test("human note stays as plain text", () => {
+  assert.equal(appendWorkflowNote("旧记录", { actor: "human", note: "我已上传。" }), "旧记录\n我已上传。");
 });
 
 test("workflow update claims an uploaded handoff and preserves the note", () => {

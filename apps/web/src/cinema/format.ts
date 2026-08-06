@@ -402,7 +402,7 @@ export function variantHasSizeMetadata(variant?: MediaVariant) {
   );
 }
 
-function variantSizeLabel(variant: MediaVariant) {
+export function variantSizeLabel(variant: MediaVariant) {
   const metadata = variant.metadata;
   if (!metadata) {
     return undefined;
@@ -417,6 +417,60 @@ function variantSizeLabel(variant: MediaVariant) {
   }
 
   return undefined;
+}
+
+function normalizedEditionLabel(value: string) {
+  if (/director(?:'s)?[\s._-]*cut|导演剪辑|導演剪輯/i.test(value)) {
+    return "导演剪辑版";
+  }
+  if (/extended|加长|加長/i.test(value)) {
+    return "加长版";
+  }
+  if (/theatrical|院线|院線|剧场|劇場/i.test(value)) {
+    return "院线版";
+  }
+  if (/unrated|未分级|未分級/i.test(value)) {
+    return "未分级版";
+  }
+  if (/uncut|未删减|未刪減/i.test(value)) {
+    return "未删减版";
+  }
+  if (/remaster|重制|重製/i.test(value)) {
+    return "重制版";
+  }
+  if (/restored|修复|修復/i.test(value)) {
+    return "修复版";
+  }
+  return "";
+}
+
+function variantEditionLabel(variant: MediaVariant) {
+  const metadata = variant.metadata;
+  const explicitEdition = metadata?.edition?.trim();
+  if (explicitEdition) {
+    return normalizedEditionLabel(explicitEdition) || explicitEdition;
+  }
+
+  return normalizedEditionLabel([
+    metadata?.sourceLabel,
+    variant.sourceBreadcrumb?.[1],
+    variant.label
+  ].filter(Boolean).join(" "));
+}
+
+function variantDurationLabel(variant: MediaVariant) {
+  const durationSeconds = variant.metadata?.durationSeconds;
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return undefined;
+  }
+
+  const totalMinutes = Math.max(1, Math.round(durationSeconds / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) {
+    return `${minutes}分钟`;
+  }
+  return minutes > 0 ? `${hours}小时${minutes}分` : `${hours}小时`;
 }
 
 function chineseEpisodeNumber(value: string) {
@@ -490,7 +544,7 @@ export function variantEpisodeNumber(variant: MediaVariant) {
   ].filter(Boolean).join(" "));
 }
 
-function variantEpisodeLabel(variant: MediaVariant) {
+export function variantEpisodeLabel(variant: MediaVariant) {
   const number = variantEpisodeNumber(variant);
   const endNumber = variant.metadata?.episodeEndNumber;
 
@@ -515,11 +569,14 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
     includeEpisode ? variantEpisodeLabel(variant) : undefined,
+    variantEditionLabel(variant),
+    metadata.resolution,
+    variantDurationLabel(variant),
     subtitles,
     includeSize ? variantSizeLabel(variant) : undefined
   ]);
 
-  return options.compact ? labels.slice(0, 3) : labels;
+  return options.compact ? labels.slice(0, 5) : labels;
 }
 
 export function variantSpecGroupLabels(variant: MediaVariant) {
@@ -538,11 +595,10 @@ export function variantSpecGroupLabels(variant: MediaVariant) {
   ].find(Boolean) ?? "";
   const sourceSize = sourceLabel.match(/\b(\d+(?:\.\d+)?)\s*(?:GB|G)\b/iu)?.[1];
   const sourceResolution = sourceLabel.match(/\b(\d{3,4}p)\b/iu)?.[1];
-  const spec = sourceSize
-    ? `${sourceSize}G`
-    : sourceResolution ?? metadata.resolution;
+  const resolution = metadata.resolution ?? sourceResolution;
+  const sourceProfile = sourceSize ? `${sourceSize}G` : undefined;
 
-  return uniqueDisplayLabels([subtitles, spec]);
+  return uniqueDisplayLabels([variantEditionLabel(variant), resolution, subtitles, sourceProfile]);
 }
 
 export function variantSpecGroupText(title: string, variant: MediaVariant) {
@@ -576,11 +632,22 @@ function compareVariantsByEpisode(left: MediaVariant, right: MediaVariant) {
   return 0;
 }
 
-function variantSpecGroupKey(variant: MediaVariant, fallbackIndex: number) {
-  return variant.sourceBreadcrumb?.[1] ??
-    variant.metadata?.mediaAssetPageId ??
-    variant.metadata?.sourceLabel ??
-    `variant-spec-${fallbackIndex}`;
+function variantSpecGroupKey(variant: MediaVariant) {
+  const labels = variantSpecGroupLabels(variant);
+  if (labels.length > 0) {
+    return labels.map((label) => label.toLocaleLowerCase()).join("\u001f");
+  }
+
+  const metadata = variant.metadata;
+  return [
+    metadata?.edition,
+    metadata?.resolution,
+    metadata?.videoCodec,
+    metadata?.videoDynamicRange,
+    metadata?.qualityTag,
+    ...(metadata?.subtitleLanguages ?? []),
+    ...(metadata?.audioLanguages ?? [])
+  ].map((value) => value?.trim().toLocaleLowerCase()).filter(Boolean).join("\u001f") || "default-spec";
 }
 
 export function groupEpisodeVariantsBySpec(title: string, variants: MediaVariant[]) {
@@ -592,8 +659,8 @@ export function groupEpisodeVariantsBySpec(title: string, variants: MediaVariant
   }
 
   const groups = new Map<string, { key: string; label: string; labels: string[]; variants: MediaVariant[] }>();
-  episodeVariants.forEach((variant, index) => {
-    const key = variantSpecGroupKey(variant, index);
+  episodeVariants.forEach((variant) => {
+    const key = variantSpecGroupKey(variant);
     const labels = variantSpecGroupLabels(variant);
     const label = variantSpecGroupText(title, variant);
     const group = groups.get(key) ?? { key, label, labels, variants: [] };
@@ -640,6 +707,15 @@ export function mediaQuality(media?: MediaDiagnostics) {
 
 export function jobStatusLabel(status: CacheStatus) {
   return cacheStatusLabel(status);
+}
+
+export function jobProgressIndeterminate(job: CacheJob) {
+  return job.progressDeterminate === false && !["ready", "failed"].includes(job.status);
+}
+
+export function jobProgressLabel(job: CacheJob) {
+  if (!jobProgressIndeterminate(job)) return `${job.progress}%`;
+  return job.status === "queued" ? "等待开始" : "正在传输";
 }
 
 export function jobMessageLabel(job: CacheJob) {

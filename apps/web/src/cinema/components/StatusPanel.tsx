@@ -8,15 +8,16 @@ import {
   cacheErrorLabel,
   formatDateTime,
   jobMessageLabel,
+  jobProgressIndeterminate,
+  jobProgressLabel,
   jobStatusLabel,
   jobVariant
 } from "../format";
 import { copy } from "../i18n";
-import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
+import { type TrackedCacheItem } from "../types";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 
 export function StatusPanel({
-  creditPolicy,
   items,
   onOpenPlayer
 }: {
@@ -57,9 +58,9 @@ export function StatusPanel({
               </div>
               <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
             </div>
-            <Progress value={job.progress} />
+            <Progress value={job.progress} indeterminate={jobProgressIndeterminate(job)} />
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span className="font-semibold text-slate-200">{job.progress}%</span>
+              <span className="font-semibold text-slate-200">{jobProgressLabel(job)}</span>
               {job.resolve ? (
                 <span className="text-slate-500">{job.resolve.layer} / {job.resolve.kind}</span>
               ) : (
@@ -71,9 +72,7 @@ export function StatusPanel({
             {asset?.status === "ready" ? (
               <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
-                {creditPolicy.billingEnabled
-                  ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                  : copy.watchlist.play}
+                {copy.watchlist.play}
               </Button>
             ) : null}
           </div>

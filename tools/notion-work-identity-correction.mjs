@@ -16,7 +16,7 @@ function readEnv() {
 }
 
 function parseArgs() {
-  const options = { apply: false, pageId: "", expectedCurrent: "" };
+  const options = { apply: false, pageId: "", expectedCurrent: "", expectedImdbId: "" };
   const args = process.argv.slice(2);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -26,12 +26,14 @@ function parseArgs() {
     else if (arg === "--chinese-title") options.chineseTitle = value();
     else if (arg === "--english-title") options.englishTitle = value();
     else if (arg === "--original-title") options.originalTitle = value();
+    else if (arg === "--imdb-id") options.imdbId = value();
+    else if (arg === "--expected-imdb-id") options.expectedImdbId = value();
     else if (arg === "--expected-current") options.expectedCurrent = value();
     else if (arg === "--apply") options.apply = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pageId) throw new Error("--page-id is required.");
-  if (!options.title && !options.chineseTitle && !options.englishTitle && !options.originalTitle) {
+  if (!options.title && !options.chineseTitle && !options.englishTitle && !options.originalTitle && !options.imdbId) {
     throw new Error("Provide at least one identity field.");
   }
   return options;
@@ -66,6 +68,10 @@ const currentTitle = titleEntry ? text(titleEntry[1].title) : "";
 if (options.expectedCurrent && currentTitle !== options.expectedCurrent) {
   throw new Error(`Current title mismatch: expected ${options.expectedCurrent}, got ${currentTitle}`);
 }
+const currentImdbId = text(page.properties?.["IMDb ID"]?.rich_text);
+if (options.expectedImdbId && currentImdbId !== options.expectedImdbId) {
+  throw new Error(`Current IMDb ID mismatch: expected ${options.expectedImdbId}, got ${currentImdbId}`);
+}
 
 const proposed = {};
 if (options.title && titleEntry) proposed[titleEntry[0]] = { title: richText(options.title) };
@@ -79,6 +85,9 @@ for (const [name, value] of [
   if (!property) continue;
   if (property.type !== "rich_text") throw new Error(`${name} is not a rich_text property.`);
   proposed[name] = { rich_text: richText(value) };
+}
+if (options.imdbId !== undefined && page.properties?.["IMDb ID"]?.type === "rich_text") {
+  proposed["IMDb ID"] = { rich_text: richText(options.imdbId) };
 }
 
 const result = { mode: options.apply ? "apply" : "dry_run", pageId: options.pageId, currentTitle, updates: proposed };

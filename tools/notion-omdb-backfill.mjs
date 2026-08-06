@@ -95,42 +95,80 @@ function ratingValue(payload, source) {
   return match ? Number(match[0]) : undefined;
 }
 function parseDate(value) {
-  const date = new Date(value);
+  const source = text(value);
+  const omdbDate = source.match(/^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/u);
+  if (omdbDate) {
+    const months = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+    return `${omdbDate[3]}-${months[omdbDate[2]]}-${omdbDate[1].padStart(2, "0")}`;
+  }
+  const date = new Date(source);
   return Number.isNaN(date.valueOf()) ? undefined : date.toISOString().slice(0, 10);
 }
 function parseRuntime(value) {
   const match = text(value).match(/(\d+)/u);
   return match ? Number(match[1]) : undefined;
 }
-function buildBasicInfo(payload) {
+function parseBoxOffice(value) {
+  const raw = text(value);
+  if (!useful(raw)) return undefined;
+  const match = raw.match(/^([^\d\s]+)\s*([\d,]+(?:\.\d+)?)$/u);
+  if (!match) return { display: raw };
+  const amount = Number(match[2].replaceAll(",", ""));
+  const currencyBySymbol = { "$": "USD", "£": "GBP", "€": "EUR", "¥": "JPY", "￥": "CNY" };
+  return {
+    display: raw,
+    amount: Number.isFinite(amount) ? amount : undefined,
+    currency: currencyBySymbol[match[1]]
+  };
+}
+function useful(value) { return text(value).toUpperCase() !== "N/A" && text(value).length > 0; }
+function buildBasicInfo(payload, options = {}) {
+  const released = Object.hasOwn(options, "released") ? options.released : payload.Released;
+  const runtime = Object.hasOwn(options, "runtime") ? options.runtime : payload.Runtime;
   return [
     ["导演", payload.Director], ["编剧", payload.Writer], ["主演", payload.Actors],
     ["类型", payload.Genre], ["制片国家/地区", payload.Country], ["语言", payload.Language],
-    ["上映日期", payload.Released], ["片长", payload.Runtime], ["分级", payload.Rated], ["IMDb", payload.imdbID]
-  ].filter(([, value]) => text(value)).map(([label, value]) => `${label}：${value}`).join("\n");
+    ["上映日期", released], ["片长", runtime], ["分级", payload.Rated], ["IMDb", payload.imdbID]
+  ].filter(([, value]) => useful(value)).map(([label, value]) => `${label}：${value}`).join("\n");
 }
 function patchFor(page, payload) {
   const p = page.properties ?? {};
   const patch = {};
-  const setEmpty = (name, value, builder) => { if (p[name] && !has(p[name]) && value !== undefined && text(value)) patch[name] = builder(value); };
+  const setEmpty = (name, value, builder) => { if (p[name] && !has(p[name]) && value !== undefined && useful(value)) patch[name] = builder(value); };
+  const omdbReleaseDate = parseDate(payload.Released);
+  const confirmedYear = Number(propText(p, "Release Year"));
+  const releaseDateMatchesConfirmedYear = !Number.isInteger(confirmedYear)
+    || !omdbReleaseDate || Number(omdbReleaseDate.slice(0, 4)) === confirmedYear;
+  const runtimeMinutes = parseRuntime(payload.Runtime);
+  const runtimeIsPlausible = runtimeMinutes === undefined || runtimeMinutes >= 5;
+  const boxOffice = parseBoxOffice(payload.BoxOffice);
   const imdbRating = Number(payload.imdbRating);
   if (p["IMDB评分"] && !has(p["IMDB评分"]) && Number.isFinite(imdbRating)) patch["IMDB评分"] = number(imdbRating);
   const metascore = Number(payload.Metascore);
   if (p.Metascore && !has(p.Metascore) && Number.isFinite(metascore)) patch.Metascore = number(metascore);
   const rotten = ratingValue(payload, "Rotten Tomatoes");
   if (p["烂番茄新鲜度"] && !has(p["烂番茄新鲜度"]) && rotten !== undefined) patch["烂番茄新鲜度"] = number(rotten);
-  setEmpty("Runtime Minutes", parseRuntime(payload.Runtime), number);
+  if (runtimeIsPlausible) setEmpty("Runtime Minutes", runtimeMinutes, number);
   if (p.Countries && !has(p.Countries)) patch.Countries = multiSelect(split(payload.Country));
   if (p.Languages && !has(p.Languages)) patch.Languages = multiSelect(split(payload.Language));
   setEmpty("Directors", payload.Director, richText);
   setEmpty("Writers", payload.Writer, richText);
   setEmpty("Cast", payload.Actors, richText);
   setEmpty("简介", payload.Plot, richText);
-  setEmpty("基本信息", buildBasicInfo(payload), richText);
-  setEmpty("上映日期", parseDate(payload.Released), value => ({ date: { start: value } }));
+  setEmpty("基本信息", buildBasicInfo(payload, {
+    released: releaseDateMatchesConfirmedYear ? payload.Released : undefined,
+    runtime: runtimeIsPlausible ? payload.Runtime : undefined
+  }), richText);
+  if (releaseDateMatchesConfirmedYear) setEmpty("上映日期", omdbReleaseDate, value => ({ date: { start: value } }));
   setEmpty("Poster URL", payload.Poster, value => ({ url: value }));
   setEmpty("Original Title", payload.Title, richText);
   if (p["分级"] && !has(p["分级"]) && text(payload.Rated) && payload.Rated !== "N/A") patch["分级"] = multiSelect([payload.Rated]);
+  if (boxOffice) {
+    setEmpty("Box Office", boxOffice.display, richText);
+    if (boxOffice.amount !== undefined) setEmpty("Box Office Amount", boxOffice.amount, number);
+    setEmpty("Box Office Currency", boxOffice.currency, richText);
+    setEmpty("Box Office Source", "omdb", richText);
+  }
   if (p["Metadata Source"]) {
     const current = p["Metadata Source"].multi_select?.map(item => item.name) ?? [];
     if (!current.includes("omdb")) patch["Metadata Source"] = multiSelect([...current, "omdb"]);

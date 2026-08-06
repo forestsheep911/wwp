@@ -546,6 +546,27 @@ function canonicalEpisodeLabel(value: string) {
   return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
 }
 
+export function sortMediaAssetVariants(variants: MediaVariant[]) {
+  return [...variants].sort((left, right) => {
+    const leftEpisode = left.metadata?.episodeNumber;
+    const rightEpisode = right.metadata?.episodeNumber;
+    const leftHasEpisode = typeof leftEpisode === "number" && Number.isFinite(leftEpisode);
+    const rightHasEpisode = typeof rightEpisode === "number" && Number.isFinite(rightEpisode);
+
+    if (leftHasEpisode && rightHasEpisode && leftEpisode !== rightEpisode) {
+      return leftEpisode - rightEpisode;
+    }
+    if (leftHasEpisode !== rightHasEpisode) {
+      return leftHasEpisode ? -1 : 1;
+    }
+
+    const leftSpec = left.metadata?.sourceLabel ?? left.sourceBreadcrumb?.[1] ?? left.label;
+    const rightSpec = right.metadata?.sourceLabel ?? right.sourceBreadcrumb?.[1] ?? right.label;
+    return leftSpec.localeCompare(rightSpec, "zh-CN", { numeric: true }) ||
+      left.assetKey.localeCompare(right.assetKey);
+  });
+}
+
 function pushUnique(target: string[], value: string | undefined) {
   if (value && !target.includes(value)) {
     target.push(value);
@@ -1146,13 +1167,12 @@ function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | und
   });
 }
 
-function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
+export function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
   const posters: MoviePoster[] = [];
   const seen = new Set<string>();
   const coverUrl = mediaUrlFromObject(page.cover);
   const fileUrls: string[] = [];
   const textUrls: string[] = [];
-  pushPoster(posters, seen, coverUrl);
 
   for (const [name, rawProperty] of Object.entries(properties)) {
     if (!posterPropertyPattern.test(name)) {
@@ -1185,8 +1205,11 @@ function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
     }
   }
 
+  // A maintained poster property is explicit metadata. A Notion page cover is
+  // only a legacy fallback and must not override a corrected poster.
   fileUrls.forEach((url) => pushPoster(posters, seen, url));
   textUrls.forEach((url) => pushPoster(posters, seen, url));
+  pushPoster(posters, seen, coverUrl);
 
   return posters;
 }
@@ -2410,8 +2433,9 @@ export class NotionSearchSource {
       Math.min(4, Math.max(1, Math.floor(this.options.mediaAssetConcurrency))),
       ({ page, index }) => this.mediaAssetPageToVariant(page, index, workTitle, workPageId)
     );
-    return resolved
-      .filter((variant): variant is MediaVariant => Boolean(variant))
+    return sortMediaAssetVariants(
+      resolved.filter((variant): variant is MediaVariant => Boolean(variant))
+    )
       .slice(0, this.options.variantLimit);
   }
 

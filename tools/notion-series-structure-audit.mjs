@@ -280,6 +280,7 @@ async function auditSeriesPage(notion, target) {
   const title = pageTitle(page) || target.title;
   const children = await listChildren(notion, page.id);
   const specPages = [];
+  const legacyWrappers = [];
 
   for (const block of children) {
     if (block.type === "callout") {
@@ -288,7 +289,26 @@ async function auditSeriesPage(notion, target) {
         specPages.push({ id: child.id, title: blockTitle(child), parentLabel: blockTitle(block), parentType: block.type });
       }
     } else if (block.type === "child_page") {
-      specPages.push({ id: block.id, title: blockTitle(block), parentLabel: "root", parentType: block.type });
+      const childTitle = blockTitle(block);
+      // A manually moved legacy season container has the same title as the new
+      // season work page. Flatten it for read-only auditing so its actual
+      // specification pages are not mistaken for episode pages.
+      if (cleanText(childTitle) === cleanText(title)) {
+        legacyWrappers.push({ id: block.id, title: childTitle });
+        const nested = await listChildren(notion, block.id).catch(() => []);
+        for (const nestedBlock of nested) {
+          if (nestedBlock.type === "child_page") {
+            specPages.push({ id: nestedBlock.id, title: blockTitle(nestedBlock), parentLabel: childTitle, parentType: "legacy_wrapper" });
+          } else if (nestedBlock.type === "callout") {
+            const calloutChildren = await listChildren(notion, nestedBlock.id).catch(() => []);
+            for (const child of calloutChildren.filter((item) => item.type === "child_page")) {
+              specPages.push({ id: child.id, title: blockTitle(child), parentLabel: blockTitle(nestedBlock), parentType: "legacy_wrapper_callout" });
+            }
+          }
+        }
+      } else {
+        specPages.push({ id: block.id, title: childTitle, parentLabel: "root", parentType: block.type });
+      }
     }
   }
 
@@ -312,6 +332,7 @@ async function auditSeriesPage(notion, target) {
     title,
     reasons: target.reasons ?? [],
     mediaKind: selectName(page.properties?.["影别"]),
+    legacyWrappers,
     summary: {
       specPageCount: auditedSpecs.length,
       episodePageCount,

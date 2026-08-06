@@ -130,7 +130,7 @@ export function CinemaLayout({
     <main className="min-h-[100dvh]">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
         <header className="sticky top-0 z-[100] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
-          <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-5 sm:py-3 md:px-8 lg:grid-cols-[auto_minmax(0,1fr)_auto]">
+          <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-5 sm:py-3 md:px-8 xl:px-10">
             <button
               className="group flex min-h-11 min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               type="button"
@@ -145,16 +145,16 @@ export function CinemaLayout({
 
             {activeTab === "library" ? <nav
               aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 -mx-1 hidden min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 sm:flex lg:order-2 lg:col-span-1 lg:mx-0 lg:w-full lg:justify-center lg:gap-5 lg:overflow-visible"
+              className="scrollbar-none order-3 col-span-2 -mx-1 hidden min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 sm:flex lg:hidden"
             >
               {browseChannels.map((channel) => {
                 const active = activeTab === "library" && activeBrowseChannel === channel.id;
                 return (
                   <button
-                    className={`relative min-h-10 flex-none snap-start rounded-full border px-4 text-sm font-semibold transition-colors lg:h-9 lg:min-h-0 lg:border-0 lg:px-0.5 ${
+                    className={`relative min-h-10 flex-none snap-start rounded-full border px-4 text-sm font-semibold transition-colors ${
                       active
-                        ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100 lg:bg-transparent lg:text-emerald-200"
-                        : "border-slate-800 bg-slate-950/75 text-slate-300 hover:border-slate-700 hover:text-slate-100 lg:bg-transparent lg:text-slate-400"
+                        ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100"
+                        : "border-slate-800 bg-slate-950/75 text-slate-300 hover:border-slate-700 hover:text-slate-100"
                     }`}
                     key={channel.id}
                     type="button"
@@ -164,16 +164,16 @@ export function CinemaLayout({
                     {channel.label}
                     <span
                       aria-hidden="true"
-                      className={`absolute inset-x-4 -bottom-0.5 h-0.5 rounded-full transition-colors lg:inset-x-0 lg:-bottom-1 ${
+                      className={`absolute inset-x-4 -bottom-0.5 h-0.5 rounded-full transition-colors ${
                         active ? "bg-emerald-300" : "bg-transparent"
                       }`}
                     />
                   </button>
                 );
               })}
-            </nav> : <div className="hidden lg:block" />}
+            </nav> : null}
 
-            <div className="order-2 flex min-w-0 items-center justify-end gap-2 lg:order-3">
+            <div className="order-2 flex min-w-0 items-center justify-end gap-2">
               <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
                 <HelpCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.help}</span>
@@ -248,7 +248,7 @@ export function CinemaLayout({
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8">
+        <div className="grid w-full gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8 xl:px-10">
           <div className="min-w-0 overflow-hidden">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
@@ -364,7 +364,7 @@ function AccountMenu({
   onLock: () => void;
 }) {
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button className="px-3" type="button" variant="outline" title={copy.layout.account}>
           <UserCircle className="h-4 w-4" />

@@ -238,7 +238,7 @@ function parseAssetMetadata(label, fileName, options = {}) {
       /加长版/u,
       /蓝光加长版/u
     ]),
-    resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    resolution: firstMatch(combined, [/\b(?:2160p|1080p|960p|720p|576p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
     videoCodec: normalizeVideoCodec(combined),
     container: extensionFromFileName(cleanedFileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,

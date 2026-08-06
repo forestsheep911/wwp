@@ -10,12 +10,14 @@ import {
   formatBytes,
   formatDateTime,
   jobMessageLabel,
+  jobProgressIndeterminate,
+  jobProgressLabel,
   jobStatusLabel,
   jobVariant,
   mediaQuality
 } from "../format";
 import { copy } from "../i18n";
-import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
+import { type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 import { MediaDiagnosticsView } from "./MediaDiagnosticsView";
 import { PreparedLineBadges } from "./PreparedLineBadges";
@@ -25,7 +27,6 @@ type ReadyTab = "mine" | "public";
 
 export function CacheTasksPanel({
   cachedAssets,
-  creditPolicy,
   currentMemberId,
   loadingCached,
   preparingItems,
@@ -84,7 +85,6 @@ export function CacheTasksPanel({
 
       {mainTab === "preparing" ? (
         <PreparingList
-          creditPolicy={creditPolicy}
           items={preparingItems}
           onOpenPlayer={onOpenPlayer}
         />
@@ -102,7 +102,6 @@ export function CacheTasksPanel({
           </div>
           <ReadyAssetList
             assets={shownReadyAssets}
-            creditPolicy={creditPolicy}
             loading={loadingCached}
             onOpen={onOpenPlayer}
           />
@@ -135,11 +134,9 @@ function TaskTabButton({
 }
 
 function PreparingList({
-  creditPolicy,
   items,
   onOpenPlayer
 }: {
-  creditPolicy: CreditPolicyResponse;
   items: TrackedCacheItem[];
   onOpenPlayer: (assetKey: string, result?: SearchResult) => void;
 }) {
@@ -164,9 +161,9 @@ function PreparingList({
                 <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
               </div>
             </div>
-            <Progress value={job.progress} />
+            <Progress value={job.progress} indeterminate={jobProgressIndeterminate(job)} />
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span className="font-semibold text-slate-200">{job.progress}%</span>
+              <span className="font-semibold text-slate-200">{jobProgressLabel(job)}</span>
               <span className="text-slate-500">{formatDateTime(job.lastRequestedAt ?? job.createdAt)}</span>
             </div>
             {job.error ? <p className="text-xs font-semibold text-rose-300">{cacheErrorLabel(job.error)}</p> : null}
@@ -174,9 +171,7 @@ function PreparingList({
             {asset?.status === "ready" ? (
               <Button className="w-full sm:w-auto" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                 <Play className="h-4 w-4" />
-                {creditPolicy.billingEnabled
-                  ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                  : copy.watchlist.play}
+                {copy.watchlist.play}
               </Button>
             ) : null}
           </CardContent>
@@ -188,12 +183,10 @@ function PreparingList({
 
 function ReadyAssetList({
   assets,
-  creditPolicy,
   loading,
   onOpen
 }: {
   assets: CacheAsset[];
-  creditPolicy: CreditPolicyResponse;
   loading: boolean;
   onOpen: (assetKey: string) => void;
 }) {
@@ -224,9 +217,7 @@ function ReadyAssetList({
             </div>
             <Button className="w-full shrink-0 sm:w-auto" type="button" onClick={() => onOpen(asset.assetKey)}>
               <Route className="h-4 w-4" />
-              {creditPolicy.billingEnabled
-                ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                : "选择线路播放"}
+              选择线路播放
             </Button>
           </CardContent>
         </Card>

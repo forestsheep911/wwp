@@ -6,6 +6,8 @@ import {
 
 export const WORKFLOW_STATUS_PROPERTY = "Workflow Status";
 export const WORKFLOW_NOTE_PROPERTY = "Workflow Note";
+export const HUMAN_ISSUE_PROPERTY = "Human Issue";
+export const AI_NOTE_PREFIX = "【AI(^_^)";
 
 export const WORKFLOW_STATUS_OPTIONS = Object.freeze([
   { name: "待 AI 处理", color: "blue" },
@@ -42,6 +44,37 @@ export function workflowNoteFromPage(page) {
   return propertyText(page?.properties?.[WORKFLOW_NOTE_PROPERTY]);
 }
 
+export function isAiWorkflowNoteLine(line) {
+  const value = String(line ?? "").trimStart();
+  return value.startsWith(AI_NOTE_PREFIX)
+    // Pre-protocol history used timestamped actor labels. Treat only machine
+    // labels as an acknowledgement boundary; old human entries stay human text.
+    || /^\[\d{4}-\d{2}-\d{2}(?:T[^\]]+)?\s(?:AI|codex|系统)\]/u.test(value)
+    // A short period before the shared-note protocol used unbracketed
+    // date-prefixed machine completion records. Match only their distinctive
+    // operational vocabulary so dated human notes remain actionable.
+    || /^\d{4}-\d{2}-\d{2}\s.*(?:自动上传|Media Assets|网站发布|现场读回|账本\s*sync_ready|hvc1)/iu.test(value);
+}
+
+// Human instructions are the plain-text tail after the most recent AI marker.
+// This preserves the full shared history without relying on a second issue field.
+export function pendingHumanWorkflowNote(value) {
+  const lines = String(value ?? "").replaceAll("\r\n", "\n").split("\n");
+  let lastAiLine = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (isAiWorkflowNoteLine(lines[index])) lastAiLine = index;
+  }
+  return lines.slice(lastAiLine + 1).join("\n").trim();
+}
+
+export function pendingHumanWorkflowNoteFromPage(page) {
+  return pendingHumanWorkflowNote(workflowNoteFromPage(page));
+}
+
+export function humanIssueFromPage(page) {
+  return propertyText(page?.properties?.[HUMAN_ISSUE_PROPERTY]);
+}
+
 export function buildActionableWorkflowFilter(statuses = AI_ACTIONABLE_WORKFLOW_STATES) {
   const unique = [...new Set(statuses)];
   for (const status of unique) assertWorkflowHandoffState(status);
@@ -56,8 +89,9 @@ export function buildActionableWorkflowFilter(statuses = AI_ACTIONABLE_WORKFLOW_
 export function appendWorkflowNote(current, { actor, note, at = new Date().toISOString() }) {
   const normalizedNote = String(note ?? "").trim();
   if (!normalizedNote) return String(current ?? "");
-  const actorLabel = actor === "human" ? "人" : actor === "ai" ? "AI" : String(actor ?? "系统");
-  const entry = `[${at} ${actorLabel}] ${normalizedNote}`;
+  const entry = actor === "ai"
+    ? `${AI_NOTE_PREFIX} ${at}】 ${normalizedNote}`
+    : normalizedNote;
   const combined = [String(current ?? "").trim(), entry].filter(Boolean).join("\n");
   return combined.length <= 8000 ? combined : combined.slice(combined.length - 8000);
 }
@@ -88,4 +122,3 @@ export function buildWorkflowUpdate(page, { status, note, actor = "ai", at, enfo
     }
   };
 }
-

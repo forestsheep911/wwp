@@ -104,7 +104,7 @@ import { ServiceWakeDialog } from "./cinema/components/ServiceWakeDialog";
 import { TaskDock } from "./cinema/components/TaskDock";
 import { WatchlistPanel } from "./cinema/components/WatchlistPanel";
 import { ToastProvider, useToast } from "./components/ui/toast";
-import { cacheErrorLabel } from "./cinema/format";
+import { cacheErrorLabel, variantSpecText } from "./cinema/format";
 import { copy } from "./cinema/i18n";
 import {
   mergeCacheAssetIntoResults,
@@ -143,12 +143,15 @@ import {
 import { useColdStartWakeDialog } from "./cinema/use-service-wake";
 import { serviceWakeProbeEnabled } from "./cinema/service-wake";
 import { variantVideoCodec } from "./cinema/media-compatibility";
-import { directDownloadUrl, directPlaybackUrl, triggerDirectDownload } from "./cinema/download";
+import { directDownloadUrl, triggerDirectDownload } from "./cinema/download";
 import {
   readPlaybackLine,
   writePlaybackLine
 } from "./cinema/playback-line";
-import { ensureOssPlaybackServiceWorker } from "./oss-playback-service-worker";
+import {
+  libraryScrollRouteKey,
+  libraryScrollTarget
+} from "./cinema/library-scroll";
 import type {
   AppTab,
   AppTheme,
@@ -268,6 +271,7 @@ function CinemaApp() {
   );
   const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
   const [browseRetryVersion, setBrowseRetryVersion] = useState(0);
+  const [libraryScrollRestoreVersion, setLibraryScrollRestoreVersion] = useState(0);
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
   const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
@@ -358,6 +362,8 @@ function CinemaApp() {
   const movieRequestLimit = 100;
   const forumThreadLimit = 80;
   const historyInitializedRef = useRef(false);
+  const libraryScrollPositionsRef = useRef(new Map<string, number>());
+  const pendingLibraryScrollRestoreRef = useRef<{ key: string; top: number } | undefined>(undefined);
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
@@ -424,6 +430,74 @@ function CinemaApp() {
     writeJsonStorage(themeStorageKey, theme);
   }, [theme]);
 
+  useEffect(() => {
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    return () => {
+      window.history.scrollRestoration = previous;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "library" || !detailAssetKey) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, detailAssetKey]);
+
+  useEffect(() => {
+    if (activeTab !== "library" || detailAssetKey) {
+      return;
+    }
+
+    const pending = pendingLibraryScrollRestoreRef.current;
+    if (!pending || pending.key !== libraryScrollKey({ browseChannel, browseView, query })) {
+      return;
+    }
+
+    let frame = 0;
+    let attempts = 0;
+    const restore = () => {
+      const documentHeight = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+      const maximumTop = Math.max(0, documentHeight - window.innerHeight);
+      const target = libraryScrollTarget(pending.top, documentHeight, window.innerHeight);
+      window.scrollTo({ top: target, left: 0, behavior: "auto" });
+      attempts += 1;
+
+      const reachedSavedHeight = maximumTop + 1 >= pending.top;
+      const reachedTarget = Math.abs(window.scrollY - target) <= 2;
+      if ((reachedSavedHeight && reachedTarget) || attempts >= 24) {
+        pendingLibraryScrollRestoreRef.current = undefined;
+        return;
+      }
+
+      frame = window.requestAnimationFrame(restore);
+    };
+
+    frame = window.requestAnimationFrame(() => {
+      frame = window.requestAnimationFrame(restore);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeTab,
+    browseChannel,
+    browseLoading,
+    browseLoadingMore,
+    browseResults.length,
+    browseView,
+    detailAssetKey,
+    libraryScrollRestoreVersion,
+    query,
+    results.length
+  ]);
+
   function rememberPlaybackLine(line: PlaybackLine) {
     writePlaybackLine(line);
     setPreferredPlaybackLine(line);
@@ -465,6 +539,26 @@ function CinemaApp() {
     };
   }
 
+  function libraryScrollKey(route: Pick<CinemaRoute, "browseChannel" | "browseView" | "query">) {
+    return libraryScrollRouteKey(route);
+  }
+
+  function rememberLibraryScrollPosition() {
+    const key = libraryScrollKey({ browseChannel, browseView, query });
+    libraryScrollPositionsRef.current.set(key, window.scrollY);
+  }
+
+  function queueLibraryScrollRestore(route: Pick<CinemaRoute, "browseChannel" | "browseView" | "query">) {
+    const key = libraryScrollKey(route);
+    const top = libraryScrollPositionsRef.current.get(key);
+    if (top === undefined) {
+      return;
+    }
+
+    pendingLibraryScrollRestoreRef.current = { key, top };
+    setLibraryScrollRestoreVersion((version) => version + 1);
+  }
+
   function navigateToTab(nextTab: AppTab) {
     const nextRoute = permittedRoute(routeForCurrentView({
       tab: nextTab,
@@ -475,10 +569,13 @@ function CinemaApp() {
     setDetailAssetKey(undefined);
     setActiveTab(nextRoute.tab);
     writeRoute(nextRoute, "push");
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }
 
-  function openBrowseChannel(nextChannel: BrowseChannel) {
-    const nextBrowseView = defaultBrowseView(nextChannel);
+  function openBrowsePreset(nextChannel: BrowseChannel, nextBrowseView: BrowseViewId, options: { refresh?: boolean } = {}) {
+    const routeMode = options.refresh && nextChannel === browseChannel && nextBrowseView === browseView
+      ? "replace"
+      : "push";
     setBrowseChannel(nextChannel);
     setBrowseView(nextBrowseView);
     setDetailAssetKey(undefined);
@@ -494,13 +591,19 @@ function CinemaApp() {
       query: "",
       detailAssetKey: undefined,
       playerAssetKey: undefined
-    }, "push");
+    }, routeMode);
     scheduleCurrentBrowseRoute({
       tab: "library",
       browseChannel: nextChannel,
       browseView: nextBrowseView,
       query: ""
+    }, {
+      force: options.refresh === true
     });
+  }
+
+  function openBrowseChannel(nextChannel: BrowseChannel) {
+    openBrowsePreset(nextChannel, defaultBrowseView(nextChannel));
   }
 
   function browseRouteLoadKey(channel: BrowseChannel, view: BrowseViewId) {
@@ -562,29 +665,11 @@ function CinemaApp() {
   }
 
   function openBrowseView(nextView: BrowseViewId, options: { refresh?: boolean } = {}) {
-    const routeMode = options.refresh && nextView === browseView ? "replace" : "push";
-    setBrowseView(nextView);
-    setDetailAssetKey(undefined);
-    setPlayback(undefined);
-    writeRoute({
-      tab: "library",
-      browseChannel,
-      browseView: nextView,
-      query: "",
-      detailAssetKey: undefined,
-      playerAssetKey: undefined
-    }, routeMode);
-    scheduleCurrentBrowseRoute({
-      tab: "library",
-      browseChannel,
-      browseView: nextView,
-      query: ""
-    }, {
-      force: options.refresh === true
-    });
+    openBrowsePreset(browseChannel, nextView, options);
   }
 
   function openLibraryDetail(result: ResultWithCache) {
+    rememberLibraryScrollPosition();
     setDetailAssetKey(result.assetKey);
     setFocusedLibraryAssetKey(result.assetKey);
     setPlayback(undefined);
@@ -596,6 +681,7 @@ function CinemaApp() {
   }
 
   function closeLibraryDetail() {
+    queueLibraryScrollRestore({ browseChannel, browseView, query });
     setDetailAssetKey(undefined);
     writeRoute(routeForCurrentView({
       detailAssetKey: undefined,
@@ -906,9 +992,11 @@ function CinemaApp() {
       syncHistory?: boolean;
       target?: "newTab" | "currentTab";
       after?: "historyRecache";
+      title?: string;
     } = {}
   ) {
-    const title = result?.title
+    const title = options.title
+      ?? result?.title
       ?? cachedAssets.find((item) => item.assetKey === assetKey)?.title
       ?? history.find((item) => item.assetKey === assetKey)?.title
       ?? "在线播放";
@@ -922,6 +1010,7 @@ function CinemaApp() {
         target: options.target
       },
       canPrepare: Boolean(result),
+      canDownload: Boolean(result),
       loading: true
     });
 
@@ -976,17 +1065,33 @@ function CinemaApp() {
 
   async function selectResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToCacheTarget(result, variant);
-    await openPlaybackLineDialog(variant.assetKey, target);
+    await openPlaybackLineDialog(variant.assetKey, target, {
+      title: `${result.title} / ${variantSpecText(result.title, variant)}`
+    });
   }
 
   async function downloadResult(result: ResultWithCache, variant: MediaVariant) {
     const target = variantToCacheTarget(result, variant);
+    await startDirectDownload(target);
+  }
+
+  async function startDirectDownload(target: SearchResult) {
     setError("");
     const downloadWindow = window.open("about:blank", "_blank");
     if (downloadWindow) {
       downloadWindow.opener = null;
     }
     await requestDirectDownload(target, { autoDownload: true, downloadWindow });
+  }
+
+  async function downloadPlaybackLineChoice() {
+    const target = playbackLineChoice?.result;
+    if (!target) {
+      return;
+    }
+
+    setPlaybackLineChoice(undefined);
+    await startDirectDownload(target);
   }
 
   async function requestDirectDownload(
@@ -1052,28 +1157,6 @@ function CinemaApp() {
       downloadWindow.opener = null;
     }
     await requestDirectDownload(target, { autoDownload: true, downloadWindow });
-  }
-
-  async function playbackCurrentDialog() {
-    const target = directDownloadDialog?.target;
-    if (!target) return;
-    setError("");
-    const playbackWindow = window.open("about:blank", "_blank");
-    if (playbackWindow) {
-      playbackWindow.opener = null;
-    }
-    const response = await requestDirectDownload(target, { autoDownload: false });
-    if (!response) {
-      playbackWindow?.close();
-      return;
-    }
-
-    const playbackUrl = directPlaybackUrl(response.downloadUrl);
-    if (playbackWindow) {
-      playbackWindow.location.replace(playbackUrl);
-    } else {
-      window.open(playbackUrl, "_blank", "noopener,noreferrer");
-    }
   }
 
   async function executeCache(target: SearchResult, line: PlaybackLine, after?: "historyRecache") {
@@ -1167,10 +1250,7 @@ function CinemaApp() {
 
     setPlaybackOpening(true);
     try {
-      if (line === "domestic") {
-        await ensureOssPlaybackServiceWorker();
-      }
-      const admission = await requestPlaybackAdmission(assetKey);
+      const admission = await requestPlaybackAdmission(assetKey, undefined, line);
       if (admission.status === "queued") {
         setPlaybackOpening(false);
         setPlaybackQueue({ admission, line, result, options });
@@ -1181,6 +1261,7 @@ function CinemaApp() {
       }
       await enterAdmittedPlayback(admission, line, result, options);
     } catch (playbackError) {
+      setPlaybackOpening(false);
       handleRequestError(playbackError, copy.fallbackErrors.playbackNotReady);
     }
   }
@@ -1270,7 +1351,7 @@ function CinemaApp() {
     const ticketId = playback?.admission?.ticketId;
     if (!ticketId) return;
     const keepAlive = () => {
-      void requestPlaybackAdmission(playback.assetKey, ticketId).catch(() => undefined);
+      void requestPlaybackAdmission(playback.assetKey, ticketId, playback.line).catch(() => undefined);
     };
     const timer = window.setInterval(keepAlive, 20_000);
     const handleVisibility = () => {
@@ -1281,7 +1362,7 @@ function CinemaApp() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [playback?.admission?.ticketId, playback?.assetKey]);
+  }, [playback?.admission?.ticketId, playback?.assetKey, playback?.line]);
 
   function clearHistory() {
     setHistory([]);
@@ -2535,6 +2616,9 @@ function CinemaApp() {
         if (cancelled) {
           return;
         }
+        // A server-side configuration or network failure must not leave the
+        // non-dismissible session-restoration dialog open forever.
+        setAuthRestoring(false);
         handleRequestError(authError, copy.access.errors.passcodeMismatch);
       });
 
@@ -2592,6 +2676,10 @@ function CinemaApp() {
 
       if (!sameRoute(requestedRoute, nextRoute)) {
         writeRoute(nextRoute, "replace");
+      }
+
+      if (nextRoute.tab === "library" && !nextRoute.detailAssetKey) {
+        queueLibraryScrollRestore(nextRoute);
       }
 
       setError("");
@@ -2857,7 +2945,6 @@ function CinemaApp() {
           if (!open) setDirectDownloadDialog(undefined);
         }}
         onDownloadAgain={() => void redownloadCurrentDialog()}
-        onPlayback={() => void playbackCurrentDialog()}
       />
       <ProfileDialog
         error={profileError}
@@ -2893,6 +2980,7 @@ function CinemaApp() {
         choice={playbackLineChoice}
         preferredLine={preferredPlaybackLine}
         onClose={() => setPlaybackLineChoice(undefined)}
+        onDownload={() => void downloadPlaybackLineChoice()}
         onSelect={(line) => void choosePlaybackLine(line)}
       />
       <MovieRequestDialog
@@ -2976,6 +3064,7 @@ function CinemaApp() {
             onFocusedAssetHandled={() => setFocusedLibraryAssetKey(undefined)}
             onToggleFavorite={toggleFavorite}
             onUpdateCollectionMark={updateCollectionMark}
+            onBrowsePresetChange={openBrowsePreset}
             onBrowseViewChange={openBrowseView}
             detailAssetKey={detailAssetKey}
             onOpenDetail={openLibraryDetail}

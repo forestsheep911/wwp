@@ -365,9 +365,10 @@ export function getCacheStatus(jobId: string) {
   return request<EnsureCacheResponse>(apiUrl(`/api/cache/${encodeURIComponent(jobId)}`));
 }
 
-export function requestPlaybackAdmission(assetKey: string, ticketId?: string) {
+export function requestPlaybackAdmission(assetKey: string, ticketId?: string, line?: PlaybackLine) {
   const params = new URLSearchParams();
   if (ticketId) params.set("ticket", ticketId);
+  if (line) params.set("line", line);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return request<PlaybackAdmissionResponse>(
     apiUrl(`/api/playback-admission/${encodeURIComponent(assetKey)}${suffix}`)
@@ -539,8 +540,12 @@ export interface AdminOssPreparationJob {
   taskId: string;
   status: AdminOssPreparationStatus;
   progress: number;
+  progressDeterminate?: boolean;
   message: string;
   expectedBytes?: number;
+  transferredBytes?: number;
+  partCount?: number;
+  lastProgressAt?: string;
   contentLength?: number;
   contentType?: string;
   error?: string;

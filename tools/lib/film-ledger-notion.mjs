@@ -105,35 +105,51 @@ function mediaCaption(block) {
   return plainText(block?.[block?.type]?.caption).trim();
 }
 
+function sameNotionId(left, right) {
+  return String(left ?? "").replaceAll("-", "").toLowerCase()
+    === String(right ?? "").replaceAll("-", "").toLowerCase();
+}
+
+function notionIdForms(value) {
+  const compact = String(value ?? "").replaceAll("-", "").toLowerCase();
+  if (!compact) return [];
+  const canonical = /^[0-9a-f]{32}$/u.test(compact)
+    ? `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`
+    : compact;
+  return [...new Set([String(value), compact, canonical])];
+}
+
 function parentPageId(page) {
   return page?.parent?.type === "page_id" ? page.parent.page_id : null;
 }
 
 function recordedStructureMatches(pages, target) {
-  const expectedIds = [target.work_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
-  if (pages.some((page, index) => page?.id !== expectedIds[index])) return false;
-  const spec = pages.find(page => page.id === target.spec_page_id);
-  if (parentPageId(spec) !== target.work_page_id) return false;
+  const expectedIds = [target.work_page_id, target.season_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
+  if (pages.some((page, index) => !sameNotionId(page?.id, expectedIds[index]))) return false;
+  const season = target.season_page_id ? pages.find(page => sameNotionId(page.id, target.season_page_id)) : null;
+  const spec = pages.find(page => sameNotionId(page.id, target.spec_page_id));
+  if (season && !sameNotionId(parentPageId(season), target.work_page_id)) return false;
+  if (!sameNotionId(parentPageId(spec), target.season_page_id || target.work_page_id)) return false;
   if (target.episode_page_id) {
-    const episode = pages.find(page => page.id === target.episode_page_id);
-    if (parentPageId(episode) !== target.spec_page_id) return false;
+    const episode = pages.find(page => sameNotionId(page.id, target.episode_page_id));
+    if (!sameNotionId(parentPageId(episode), target.spec_page_id)) return false;
   }
   return true;
 }
 
 async function recordedLegacyStructureMatches(client, pages, target) {
-  const spec = pages.find(page => page.id === target.spec_page_id);
+  const spec = pages.find(page => sameNotionId(page.id, target.spec_page_id));
   if (spec?.parent?.type !== "block_id") return false;
   const workChildren = await listRecordedPageChildren(client, target.work_page_id);
   const containers = workChildren.filter(block => ["callout", "toggle"].includes(block.type));
   for (const container of containers) {
     const children = await listRecordedPageChildren(client, container.id);
-    if (!children.some(child => child.type === "child_page" && child.id === target.spec_page_id)) continue;
+    if (!children.some(child => child.type === "child_page" && sameNotionId(child.id, target.spec_page_id))) continue;
     if (!target.episode_page_id) return true;
-    const episode = pages.find(page => page.id === target.episode_page_id);
-    if (parentPageId(episode) === target.spec_page_id) return true;
+    const episode = pages.find(page => sameNotionId(page.id, target.episode_page_id));
+    if (sameNotionId(parentPageId(episode), target.spec_page_id)) return true;
     const specChildren = await listRecordedPageChildren(client, target.spec_page_id);
-    return specChildren.some(child => child.type === "child_page" && child.id === target.episode_page_id);
+    return specChildren.some(child => child.type === "child_page" && sameNotionId(child.id, target.episode_page_id));
   }
   return false;
 }
@@ -166,9 +182,9 @@ function playbackAssetGate(page) {
 
 function matchesRecordedAssetEvidence(page, { workPageId, sourcePageId, mediaBlockId }) {
   const properties = page?.properties ?? {};
-  if (!relationIds(properties.Work).includes(workPageId)) return false;
-  const sourceMatches = propertyPlainText(properties["Source Page ID"]) === sourcePageId;
-  const mediaMatches = Boolean(mediaBlockId) && propertyPlainText(properties["Media Block ID"]) === mediaBlockId;
+  if (!relationIds(properties.Work).some(id => sameNotionId(id, workPageId))) return false;
+  const sourceMatches = sameNotionId(propertyPlainText(properties["Source Page ID"]), sourcePageId);
+  const mediaMatches = Boolean(mediaBlockId) && sameNotionId(propertyPlainText(properties["Media Block ID"]), mediaBlockId);
   return sourceMatches || mediaMatches;
 }
 
@@ -188,20 +204,24 @@ async function listRecordedPageChildren(client, pageId) {
 async function queryRecordedAssets(client, dataSourceId, { sourcePageId, mediaBlockId }) {
   const responses = [];
   if (mediaBlockId) {
-    const response = await client.dataSources.query({
-      data_source_id: dataSourceId,
-      page_size: 20,
-      filter: { property: "Media Block ID", rich_text: { equals: mediaBlockId } }
-    });
-    responses.push(response);
-    if ((response.results ?? []).length > 0) return response.results;
+    for (const value of notionIdForms(mediaBlockId)) {
+      const response = await client.dataSources.query({
+        data_source_id: dataSourceId,
+        page_size: 20,
+        filter: { property: "Media Block ID", rich_text: { equals: value } }
+      });
+      responses.push(response);
+      if ((response.results ?? []).length > 0) return response.results;
+    }
   }
   if (sourcePageId) {
-    responses.push(await client.dataSources.query({
-      data_source_id: dataSourceId,
-      page_size: 20,
-      filter: { property: "Source Page ID", rich_text: { equals: sourcePageId } }
-    }));
+    for (const value of notionIdForms(sourcePageId)) {
+      responses.push(await client.dataSources.query({
+        data_source_id: dataSourceId,
+        page_size: 20,
+        filter: { property: "Source Page ID", rich_text: { equals: value } }
+      }));
+    }
   }
   const seen = new Set();
   return responses.flatMap(response => response.results ?? []).filter(page => {
@@ -218,13 +238,13 @@ export function createNotionTargetAdapter(client, {
   if (!mediaAssetsDataSourceId) throw new Error("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID is required");
   return {
     async inspectTarget(target) {
-      const recordedIds = [target.work_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
+      const recordedIds = [target.work_page_id, target.season_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
       const pages = await Promise.all(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
       const mediaBlocks = blocks.filter(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block));
       const media = target.media_block_id
-        ? mediaBlocks.find(block => block.id === target.media_block_id)
+        ? mediaBlocks.find(block => sameNotionId(block.id, target.media_block_id))
         : mediaBlocks.find(block => !target.expected_filename
           || mediaFilename(block).toLowerCase() === target.expected_filename.toLowerCase())
           // Manual Notion uploads often omit captions and expose only an opaque S3 key.

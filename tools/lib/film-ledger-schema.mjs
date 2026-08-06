@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const SCHEMA_SQL = `
 CREATE TABLE schema_meta (version INTEGER NOT NULL);
@@ -78,6 +78,7 @@ CREATE TABLE variants (
 CREATE TABLE notion_targets (
   variant_id INTEGER PRIMARY KEY REFERENCES variants(id) ON DELETE CASCADE,
   work_page_id TEXT NOT NULL,
+  season_page_id TEXT,
   spec_page_id TEXT NOT NULL,
   episode_page_id TEXT,
   expected_filename TEXT,
@@ -172,6 +173,14 @@ function migrateV2ToV3(db) {
   db.prepare("UPDATE schema_meta SET version=?").run(3);
 }
 
+function migrateV3ToV4(db) {
+  const targetTable = db.prepare(
+    "SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='notion_targets'"
+  ).get();
+  if (targetTable?.present) db.exec("ALTER TABLE notion_targets ADD COLUMN season_page_id TEXT;");
+  db.prepare("UPDATE schema_meta SET version=?").run(4);
+}
+
 export function withTransaction(db, fn) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -212,6 +221,10 @@ export function openLedger(filePath) {
       if (version === 2) {
         migrateV2ToV3(db);
         version = 3;
+      }
+      if (version === 3) {
+        migrateV3ToV4(db);
+        version = 4;
       }
       if (version !== SCHEMA_VERSION) throw new Error(`unsupported film ledger schema version: ${version ?? "missing"}`);
     }

@@ -76,6 +76,22 @@ test("attachVariantSource repairs legacy links only within the same work", () =>
   } finally { f.close(); }
 });
 
+test("correctVariantSource records the actual encode input without losing source history", () => {
+  const f = fixture();
+  try {
+    const { root, work, source, variant } = seed(f.repo);
+    const actual = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Actual", absolutePath: "X:\\queue\\Actual",
+      fingerprint: "actual", sourceKind: "file"
+    });
+    const corrected = f.repo.correctVariantSource(variant.id, actual.id, { reason: "encode probe confirmed actual input" });
+    assert.equal(corrected.source_id, actual.id);
+    const event = f.repo.getEvents({ entityType: "variant", entityId: variant.id }).at(-1);
+    assert.equal(event.event_type, "variant_source_corrected");
+    assert.match(event.payload_json, new RegExp(`"previousSourceId":${source.id}`));
+  } finally { f.close(); }
+});
+
 test("Notion page identity wins when a manifest uses a renamed canonical title", () => {
   const f = fixture();
   try {
@@ -266,6 +282,32 @@ test("collection sources fan out into member sources and close the parent intake
   } finally { f.close(); }
 });
 
+test("collection parents defer instead of obscuring unbound member intake", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const parent = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection", absolutePath: "X:\\queue\\Collection", fingerprint: "collection", sourceKind: "collection" });
+    const result = f.repo.splitSourceCollection(parent.id, [{ relativePath: "Collection\\Member.iso", absolutePath: "X:\\queue\\Collection\\Member.iso", fingerprint: "member" }]);
+    assert.equal(result.parentTask.status, "deferred");
+    assert.equal(f.repo.listWorkflowTasks({ taskType: "intake", limit: 10 }).some(task => task.source_id === parent.id), false);
+    assert.equal(f.repo.listWorkflowTasks({ taskType: "intake", limit: 10 }).some(task => task.source_id === result.members[0].id), true);
+  } finally { f.close(); }
+});
+
+test("nested collection parents close after every leaf source is identified", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const parent = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection", absolutePath: "X:\\queue\\Collection", fingerprint: "collection", sourceKind: "collection" });
+    const nested = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection\\Nested", absolutePath: "X:\\queue\\Collection\\Nested", fingerprint: "nested", sourceKind: "collection_member" });
+    f.repo.splitSourceCollection(parent.id, [{ relativePath: nested.relative_path, absolutePath: nested.absolute_path, fingerprint: nested.fingerprint }]);
+    const movie = f.repo.ensureWork({ canonicalTitle: "Leaf", year: 2025, workType: "movie" });
+    f.repo.splitSourceCollection(nested.id, [{ relativePath: "Collection\\Nested\\Leaf.mkv", absolutePath: "X:\\queue\\Collection\\Nested\\Leaf.mkv", fingerprint: "leaf", workId: movie.id }]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${nested.id}`).status, "done");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`).status, "done");
+  } finally { f.close(); }
+});
+
 test("source reconciliation lists one root and can mark missing then reopen", () => {
   const f = fixture();
   try {
@@ -354,6 +396,78 @@ test("candidate queries honor due dates, exclusions, priority, and bounds", () =
   } finally { f.close(); }
 });
 
+test("production queue keeps a bound source visible until a variant is selected", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Selection Needed", year: 2025, priorityScore: 70 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Selection Needed",
+      absolutePath: "X:\\queue\\Selection Needed", fingerprint: "selection-needed", sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+    const queued = f.repo.listProductionQueue({ limit: 5 });
+    assert.equal(queued.length, 1);
+    assert.equal(queued[0].candidate_type, "source_selection");
+    assert.equal(queued[0].source_id, source.id);
+    assert.equal(queued[0].production_state, "needs_selection");
+
+    f.repo.ensureVariant({ workId: work.id, sourceId: source.id, specKey: "high", displayTitle: "Selection Needed 高配" });
+    assert.equal(f.repo.listProductionQueue({ limit: 5 })[0].candidate_type, "variant");
+
+    const flat = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "@flat/Selection Needed",
+      absolutePath: "E:\\video_made", fingerprint: "selection-flat", sourceKind: "folder", qualityState: "acceptable"
+    });
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === flat.id), false);
+    f.repo.setInputRootEnabled("X:\\queue", false);
+    assert.deepEqual(f.repo.listProductionSourceCandidates({ limit: 5 }), []);
+  } finally { f.close(); }
+});
+
+test("completed work re-enters source selection only after its intake is explicitly requeued", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Completed but updated", year: 2025, priorityScore: 70 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Completed but updated",
+      absolutePath: "X:\\queue\\Completed but updated", fingerprint: "completed-but-updated", sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+    f.db.prepare("UPDATE works SET workflow_status='已完成', workflow_status_observed_at=?, updated_at=? WHERE id=?")
+      .run("2026-07-12T01:00:00.000Z", "2026-07-12T01:00:00.000Z", work.id);
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === source.id), false);
+
+    f.repo.requeueIntakeTask(source.id, { reason: "Source fingerprint changed" });
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === source.id), true);
+  } finally { f.close(); }
+});
+
+test("production source queue waits while the same work has a completed variant pending publication", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Pending publication", year: 2025, priorityScore: 70 });
+    const pendingSource = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Pending publication final",
+      absolutePath: "X:\\queue\\Pending publication final", fingerprint: "pending-publication-final", sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+    const laterSource = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Pending publication supplemental",
+      absolutePath: "X:\\queue\\Pending publication supplemental", fingerprint: "pending-publication-supplemental", sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+    const variant = f.repo.ensureVariant({ workId: work.id, sourceId: pendingSource.id, specKey: "primary", displayTitle: "Pending publication primary" });
+    for (const state of ["evaluated", "selected", "encoding"]) f.repo.transitionProduction(variant.id, state);
+    f.repo.transitionProduction(variant.id, "qc_passed", { outputPath: "E:\\video_made\\pending.mp4", outputSizeBytes: 1_000_000 });
+    f.repo.transitionPublication(variant.id, "structure_pending");
+
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === laterSource.id), false);
+  } finally { f.close(); }
+});
+
 test("deferred production candidates stay out until an explicit review time is due", () => {
   const f = fixture();
   try {
@@ -366,18 +480,21 @@ test("deferred production candidates stay out until an explicit review time is d
   } finally { f.close(); }
 });
 
-test("Notion target upsert preserves verified timestamps and publication due dates", () => {
+test("Notion target upsert preserves verification for the same target and invalidates it after a target replacement", () => {
   const f = fixture();
   try {
     const { variant } = seed(f.repo);
     for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) f.repo.transitionProduction(variant.id, state);
     f.repo.registerNotionTarget(variant.id, { workPageId: "w", specPageId: "s", structureVerifiedAt: "2026-07-11T00:00:00.000Z", nextCheckAt: "2026-07-13T00:00:00.000Z" });
-    f.repo.registerNotionTarget(variant.id, { workPageId: "w2", specPageId: "s2" });
+    f.repo.registerNotionTarget(variant.id, { workPageId: "w", specPageId: "s" });
     const target = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variant.id);
-    assert.equal(target.work_page_id, "w2");
+    assert.equal(target.work_page_id, "w");
     assert.equal(target.structure_verified_at, "2026-07-11T00:00:00.000Z");
     assert.deepEqual(f.repo.listPublicationCandidates({ limit: 3 }), []);
-    f.repo.registerNotionTarget(variant.id, { workPageId: "w2", specPageId: "s2", nextCheckAt: "2026-07-11T00:00:00.000Z" });
+    f.repo.registerNotionTarget(variant.id, { workPageId: "w2", specPageId: "s2" });
+    const replaced = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variant.id);
+    assert.equal(replaced.structure_verified_at, null);
+    assert.equal(replaced.next_check_at, "2026-07-12T00:00:00.000Z");
     assert.equal(f.repo.listPublicationCandidates({ limit: 3 })[0].id, variant.id);
   } finally { f.close(); }
 });

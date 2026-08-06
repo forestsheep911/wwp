@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
+  applyLocalFileSizes,
   buildAssetProperties,
   buildMissingProperties,
   buildReplacementProperties,
@@ -9,10 +13,35 @@ import {
   candidatesFromOrganizerPage,
   comparableUploadFileName,
   metadataOverrideMatches,
+  episodeWithinRange,
   parseAssetMetadata,
   playablePlacementIssue,
   selectablePages
 } from "./notion-media-assets-write-series.mjs";
+
+test("local media root overrides inferred spec size with decimal file bytes", () => {
+  const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-media-assets-"));
+  fs.writeFileSync(path.join(mediaRoot, "sample.mp4"), Buffer.alloc(6_000_000));
+  const candidates = [{
+    originalFileName: "sample.mp4",
+    metadata: { approximateSizeGb: 9.9 }
+  }];
+  try {
+    const [sized] = applyLocalFileSizes(candidates, mediaRoot);
+    assert.notEqual(sized, candidates[0]);
+    assert.equal(sized.metadata.approximateSizeGb, 0.01);
+    assert.equal(candidates[0].metadata.approximateSizeGb, 9.9);
+  } finally {
+    fs.rmSync(mediaRoot, { recursive: true, force: true });
+  }
+});
+
+test("episodeWithinRange bounds series asset work before child-page reads", () => {
+  assert.equal(episodeWithinRange(123, 123, 130), true);
+  assert.equal(episodeWithinRange(122, 123, 130), false);
+  assert.equal(episodeWithinRange(131, 123, 130), false);
+  assert.equal(episodeWithinRange(7, undefined, undefined), true);
+});
 
 test("series asset writer default batch covers a 110-episode season", () => {
   assert.equal(DEFAULT_MAX_ASSETS, 200);
@@ -54,6 +83,8 @@ const mediaAssetsDataSource = {
     "Video Codec": { type: "select" },
     Container: { type: "select" },
     "Approx Size GB": { type: "number" },
+    "Audio Codec": { type: "select" },
+    "Audio Channel Layout": { type: "rich_text" },
     "Audio Languages": { type: "multi_select" },
     "Subtitle Languages": { type: "multi_select" },
     "Source Lineage": { type: "multi_select" },
@@ -77,6 +108,45 @@ test("parseAssetMetadata recognizes Korean audio tags in series filenames", () =
   assert.deepEqual(metadata.subtitleLanguages, ["zh-Hant"]);
   assert.equal(metadata.videoCodec, "hevc");
   assert.equal(metadata.container, "mp4");
+});
+
+test("parseAssetMetadata recognizes common Japanese and English filename audio tags", () => {
+  const japanese = parseAssetMetadata(
+    "赛博朋克：边缘行者 第一季 日语繁 H.265 / Episode 01",
+    "Cyberpunk.Edgerunners.2022.S01E01.1080p.hevc.jpn.cht.mp4",
+    1
+  );
+  const english = parseAssetMetadata(
+    "火线 第一季 简英 H.265 / Episode 01",
+    "The.Wire.2002.S01E01.1080p.hevc.eng.chseng.mp4",
+    1
+  );
+
+  assert.deepEqual(japanese.audioLanguages, ["ja"]);
+  assert.deepEqual(english.audioLanguages, ["en"]);
+});
+
+test("parseAssetMetadata recognizes 960p legacy series files", () => {
+  const metadata = parseAssetMetadata(
+    "北斗神拳 日语 简 H.265 0.13GB/集 / Episode 40",
+    "Hokuto.no.Ken.E040.960p.h265.cht.low.mp4",
+    40
+  );
+
+  assert.equal(metadata.resolution, "960p");
+  assert.equal(metadata.videoCodec, "hevc");
+  assert.equal(metadata.container, "mp4");
+  assert.deepEqual(metadata.subtitleLanguages, ["zh-Hans"]);
+});
+
+test("verified spec subtitle label overrides a conflicting filename marker", () => {
+  const metadata = parseAssetMetadata(
+    "北斗神拳 日语 简 H.265 0.13GB/集 / Episode 40",
+    "Hokuto.no.Ken.E040.960p.h265.cht.low.mp4",
+    40
+  );
+
+  assert.deepEqual(metadata.subtitleLanguages, ["zh-Hans"]);
 });
 
 test("series collection metadata preserves the inclusive episode range", () => {
@@ -202,6 +272,23 @@ test("buildReplacementProperties changes only explicitly allowed technical field
   assert.equal(patch.Work, undefined);
   assert.equal(patch["Playback Verified"], undefined);
   assert.equal(patch["Hide from Website"], undefined);
+});
+
+test("buildReplacementProperties supports explicit audio compatibility corrections", () => {
+  const patch = buildReplacementProperties(mediaAssetsDataSource, {
+    properties: {
+      "Audio Codec": { type: "select", select: { name: "aac" } },
+      "Audio Channel Layout": { type: "rich_text", rich_text: [{ plain_text: "5.1" }] }
+    }
+  }, {
+    name: "铁拳教育 第一季 / Episode 01",
+    replaceExistingFields: ["Audio Codec", "Audio Channel Layout"],
+    metadata: { audioCodec: "aac", audioChannelLayout: "2.0" }
+  });
+
+  assert.deepEqual(patch, {
+    "Audio Channel Layout": { rich_text: [{ text: { content: "2.0" } }] }
+  });
 });
 
 test("buildReplacementProperties rejects protected fields", () => {

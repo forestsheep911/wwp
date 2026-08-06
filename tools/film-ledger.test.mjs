@@ -17,7 +17,7 @@ test("CLI initializes and reports a clean JSON status", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), {
       production: {}, publication: {}, handoff: {}, totals: { variants: 0, syncReady: 0 },
-      workflowTasks: {}, queues: { collaboration: 0, intake: 0, metadata: 0, production: 0, publication: 0 }
+      workflowTasks: {}, queues: { collaboration: 0, intake: 0, metadata: 0, production: 0, publication: 0, cleanup: 0 }
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -67,6 +67,28 @@ test("CLI exposes intake and metadata queues separately from playable publicatio
     const scheduled = run(["--db", dbPath, "schedule-metadata", "--work-id", String(work.id), "--failure-detail", "refresh stale ratings", "--json"], dir);
     assert.equal(scheduled.status, 0, scheduled.stderr);
     assert.equal(JSON.parse(scheduled.stdout).status, "pending");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI production queue exposes bound sources before a variant is selected", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-production-selection-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "X:\\queue", scannedAt: "2026-07-20T00:00:00.000Z", entries: [{
+      name: "Selection Film", relativePath: "Selection Film", fileCount: 1, mediaCount: 1, subtitleCount: 1,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", dbPath, "discover", "--scan", scan, "--json"], dir).status, 0);
+    const routed = run([
+      "--db", dbPath, "route-intake", "--source-id", "1", "--canonical-title", "Selection Film",
+      "--year", "2025", "--priority-score", "80", "--json"
+    ], dir);
+    assert.equal(routed.status, 0, routed.stderr);
+    const queue = JSON.parse(run(["--db", dbPath, "queue", "--stage", "production", "--json"], dir).stdout);
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].candidate_type, "source_selection");
+    assert.equal(queue[0].source_id, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -137,6 +159,22 @@ test("CLI records source probe and media evidence after intake routing", () => {
     assert.equal(source.probe_path, ".local-data/probe.json");
     assert.equal(source.quality_state, "4k_hevc");
     assert.equal(source.subtitle_evidence, '{"bakedChinese":true}');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI rejects placeholder Notion page IDs during intake routing", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-placeholder-page-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "X:\\queue", scannedAt: "2026-07-20T00:00:00.000Z", entries: [{
+      name: "Placeholder", relativePath: "Placeholder", fileCount: 1, mediaCount: 1, subtitleCount: 0,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", db, "discover", "--scan", scan, "--json"], dir).status, 0);
+    const result = run(["--db", db, "route-intake", "--source-id", "1", "--canonical-title", "Placeholder", "--year", "2025", "--notion-work-page", "PLACEHOLDER", "--json"], dir);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /actual Notion page ID/i);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -409,6 +447,51 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI select-variant records a pre-encode target without treating it as completed output", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-select-variant-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "I:\\source", scannedAt: "2026-07-31T00:00:00.000Z", entries: [{
+      name: "Selected Film", relativePath: "film.mkv", fileCount: 1, mediaCount: 1, subtitleCount: 1,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", dbPath, "discover", "--scan", scan], dir).status, 0);
+    const routed = run(["--db", dbPath, "route-intake", "--source-id", "1", "--canonical-title", "Selected Film", "--year", "2025", "--work-type", "movie", "--json"], dir);
+    assert.equal(routed.status, 0, routed.stderr);
+    const workId = JSON.parse(routed.stdout).work.id;
+
+    const selected = run(["--db", dbPath, "select-variant", "--work-id", String(workId), "--source-id", "1",
+      "--spec-key", "chs-1080p", "--output-spec", "简 1080p H.265 4.4GB", "--output-path", "E:\\video_made\\film.mp4", "--target-size", "4400000000",
+      "--compact-decision", "compact_deferred", "--compact-detail", "Current source quality supports only the requested high-bitrate version.", "--json"], dir);
+    assert.equal(selected.status, 0, selected.stderr);
+    const row = JSON.parse(selected.stdout);
+    assert.equal(row.production_state, "selected");
+    assert.equal(row.output_size_bytes, null);
+    assert.equal(row.target_size_bytes, 4400000000);
+    assert.match(row.failure_detail, /Compact coverage decision: compact_deferred/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI requires an auditable compact coverage decision before selecting a movie variant", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-compact-decision-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "I:\\source", scannedAt: "2026-07-31T00:00:00.000Z", entries: [{
+      name: "Compact Gate Film", relativePath: "film.mkv", fileCount: 1, mediaCount: 1, subtitleCount: 1,
+      nfoCount: 0, totalBytes: 100, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", dbPath, "discover", "--scan", scan], dir).status, 0);
+    const routed = run(["--db", dbPath, "route-intake", "--source-id", "1", "--canonical-title", "Compact Gate Film", "--year", "2025", "--work-type", "movie", "--json"], dir);
+    const workId = JSON.parse(routed.stdout).work.id;
+    const missing = run(["--db", dbPath, "select-variant", "--work-id", String(workId), "--source-id", "1",
+      "--spec-key", "main", "--output-spec", "简 1080p H.265 4.4GB", "--output-path", "E:\\video_made\\film.mp4", "--json"], dir);
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /requires --compact-decision/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI can reselect a failed production for a corrected retry", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-retry-"));
   try {
@@ -458,6 +541,7 @@ test("CLI retires a cancelled QC-passed variant from publication work", async ()
     assert.equal(retired.status, 0, retired.stderr);
     const row = JSON.parse(retired.stdout);
     assert.equal(row.production_state, "rejected");
+    assert.equal(row.publication_state, "cancelled");
     assert.equal(row.failure_code, "user_cancelled_optional_spec");
     assert.equal(row.failure_detail, "User declined this optional specification");
 

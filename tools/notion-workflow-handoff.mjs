@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import https from "node:https";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 import { AI_ACTIONABLE_WORKFLOW_STATES, normalizeLimit } from "./lib/film-ledger-domain.mjs";
@@ -12,7 +14,9 @@ import {
   WORKFLOW_STATUS_PROPERTY,
   buildActionableWorkflowFilter,
   buildWorkflowUpdate,
+  humanIssueFromPage,
   pageTitle,
+  pendingHumanWorkflowNoteFromPage,
   workflowNoteFromPage,
   workflowStateFromPage
 } from "./lib/notion-workflow-handoff.mjs";
@@ -28,7 +32,8 @@ function loadDotEnv() {
 }
 
 function parse(argv) {
-  const values = new Set(["--page-id", "--status", "--note", "--actor", "--limit", "--db"]);
+  const values = new Set(["--page-id", "--status", "--note", "--actor", "--limit", "--db", "--local-address"]);
+  const repeated = new Set(["--page-id"]);
   const booleans = new Set(["--apply", "--json"]);
   const options = { db: DEFAULT_DB, apply: false, json: false };
   const positionals = [];
@@ -36,7 +41,10 @@ function parse(argv) {
     const arg = argv[i];
     if (values.has(arg)) {
       if (argv[i + 1] == null || argv[i + 1].startsWith("--")) throw new Error(`${arg} requires a value`);
-      options[arg.slice(2).replaceAll("-", "_")] = argv[++i];
+      const key = arg.slice(2).replaceAll("-", "_");
+      const value = argv[++i];
+      if (repeated.has(arg)) (options[key] ??= []).push(value);
+      else options[key] = value;
     } else if (booleans.has(arg)) {
       options[arg.slice(2)] = true;
     } else if (arg.startsWith("--")) {
@@ -45,8 +53,8 @@ function parse(argv) {
       positionals.push(arg);
     }
   }
-  if (positionals.length !== 1 || !["schema", "scan", "claim", "set"].includes(positionals[0])) {
-    throw new Error("command must be schema|scan|claim|set");
+  if (positionals.length !== 1 || !["schema", "scan", "claim", "set", "reconcile"].includes(positionals[0])) {
+    throw new Error("command must be schema|scan|claim|set|reconcile");
   }
   const limit = normalizeLimit(options.limit, 3, 3);
   return { command: positionals[0], options: { ...options, limit } };
@@ -99,8 +107,12 @@ function openOptionalRepository(filePath) {
 
 function mirrorPage(repository, page, observedAt = new Date().toISOString()) {
   if (!repository) return { matched: false, reason: "ledger_missing" };
+  const status = workflowStateFromPage(page);
+  if (!status) {
+    return { matched: false, reason: "workflow_status_unset" };
+  }
   const result = repository.repo.recordWorkHandoffByNotionPage(page.id, {
-    status: workflowStateFromPage(page),
+    status,
     note: workflowNoteFromPage(page),
     actor: "notion",
     observedAt
@@ -115,7 +127,8 @@ function row(page, mirror) {
     pageId: page.id,
     title: pageTitle(page),
     status: workflowStateFromPage(page),
-    note: workflowNoteFromPage(page),
+    pendingHumanNote: pendingHumanWorkflowNoteFromPage(page),
+    workflowNote: workflowNoteFromPage(page),
     mirror
   };
 }
@@ -154,7 +167,13 @@ async function main() {
     : process.env.NOTION_READ_ONLY_TOKEN || process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN;
   if (!token) throw new Error(options.apply ? "NOTION_WRITE_TOKEN or NOTION_TOKEN is required" : "A Notion token is required");
   installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
-  const notion = new Client({ auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 120000) });
+  const clientOptions = { auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 120000) };
+  if (options.local_address) {
+    clientOptions.fetch = nodeFetch;
+    clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.local_address });
+    console.log(`direct local address: ${options.local_address}`);
+  }
+  const notion = new Client(clientOptions);
   const library = await loadLibrary(notion);
   const repository = openOptionalRepository(path.resolve(options.db));
   try {
@@ -177,8 +196,22 @@ async function main() {
       return;
     }
 
+    if (command === "reconcile") {
+      const pageIds = (options.page_id ?? []).map(extractId).filter(Boolean);
+      if (pageIds.length === 0 || pageIds.length > options.limit) {
+        throw new Error(`reconcile requires between 1 and ${options.limit} --page-id values`);
+      }
+      const rows = [];
+      for (const pageId of pageIds) {
+        const page = await notion.pages.retrieve({ page_id: pageId });
+        rows.push(row(page, mirrorPage(repository, page)));
+      }
+      output({ reconciled: rows.length, rows }, options.json);
+      return;
+    }
+
     if (command === "set") {
-      const pageId = extractId(options.page_id);
+      const pageId = extractId(options.page_id?.[0]);
       if (!pageId || !options.status) throw new Error("set requires --page-id and --status");
       const page = await notion.pages.retrieve({ page_id: pageId });
       const result = await applySet(notion, page, options);
@@ -202,7 +235,9 @@ async function main() {
         ...options,
         status: "AI 处理中",
         actor: "ai",
-        note: options.note ?? `已领取交接任务，原状态：${status}。`
+        note: pendingHumanWorkflowNoteFromPage(current)
+          ? "已认领上述人工说明，开始处理。"
+          : "已认领当前工作状态，开始处理。"
       });
       results.push(row(result.page, mirrorPage(repository, result.page)));
     }
@@ -216,4 +251,3 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
-

@@ -45,6 +45,8 @@ import {
   formatBytes,
   formatDateTime,
   jobMessageLabel,
+  jobProgressIndeterminate,
+  jobProgressLabel,
   jobStatusLabel,
   jobVariant,
   mediaQuality,
@@ -1112,11 +1114,11 @@ function AdminCacheJobsPanel({
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
-                    <Badge variant="secondary">{job.progress}%</Badge>
+                    <Badge variant="secondary">{jobProgressLabel(job)}</Badge>
                   </div>
                 </div>
 
-                <Progress value={job.progress} />
+                <Progress value={job.progress} indeterminate={jobProgressIndeterminate(job)} />
 
                 <div className="grid gap-3 text-sm md:grid-cols-4">
                   <Metric label={copy.admin.job} value={job.id} />

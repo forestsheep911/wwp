@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { KeyRound, Loader2, Moon, ShieldCheck, Sun, UserPlus } from "lucide-react";
-import { memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
+import { invitationCodeFromInput, memberPasscodeLength, memberPasscodeStrengthHint, type AuthCheckResponse, validateMemberPasscode } from "@wwpdw/shared";
 import {
   login,
   clearAccessKey,
@@ -84,7 +84,7 @@ export function AccessGate({
     setError("");
     try {
       if (mode === "register") {
-        const inviteValue = inviteCode.trim();
+        const inviteValue = invitationCodeFromInput(inviteCode, "signup");
         const nameValue = name.trim();
         const confirmCandidate = confirmValue.trim();
         const passcodeError = validateMemberPasscode(candidate);
@@ -115,7 +115,7 @@ export function AccessGate({
       }
 
       if (mode === "reset") {
-        const inviteValue = inviteCode.trim();
+        const inviteValue = invitationCodeFromInput(inviteCode, "reset");
         const confirmCandidate = confirmValue.trim();
         const passcodeError = validateMemberPasscode(candidate);
         if (!inviteValue) {
@@ -222,6 +222,7 @@ export function AccessGate({
                   id="invite-code"
                   autoFocus={mode === "register"}
                   autoComplete="one-time-code"
+                  placeholder={mode === "register" ? copy.access.invitationInputPlaceholder : copy.access.resetInputPlaceholder}
                   value={inviteCode}
                   onChange={(event) => {
                     setInviteCode(event.target.value);

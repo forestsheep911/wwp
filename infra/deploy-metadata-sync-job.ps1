@@ -151,6 +151,7 @@ $envVars = @(
     "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=$NotionScanPageParseTimeoutMs",
     "NOTION_SCAN_PAGE_PARSE_RETRIES=$NotionScanPageParseRetries",
     "NOTION_SCAN_PAGE_PARSE_RETRY_DELAY_MS=$NotionScanPageParseRetryDelayMs",
+    "NOTION_VARIANT_LIMIT=200",
     "AZURE_CLIENT_ID=$($identity.clientId)",
     "AZURE_STORAGE_ACCOUNT_NAME=$StorageAccount",
     "AZURE_STORAGE_BLOB_CONTAINER=$BlobContainer",

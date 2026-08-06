@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import type {
   PlaybackAdmissionResponse,
   PlaybackCapacity,
+  PlaybackLine,
   PlaybackLoadLevel
 } from "@wwpdw/shared";
 
 type AdmissionStatus = PlaybackAdmissionResponse["status"];
+
+export function playbackRequiresLocalAdmission(line: PlaybackLine, localMediaEnabled: boolean) {
+  return localMediaEnabled && line !== "domestic";
+}
 
 interface AdmissionTicket {
   id: string;

@@ -44,6 +44,8 @@ export const zhCN = {
     displayName: "显示名称",
     householdInvitation: "邀请码",
     resetInvitation: "重置码",
+    invitationInputPlaceholder: "可粘贴邀请码或完整邀请链接",
+    resetInputPlaceholder: "可粘贴重置码或完整重置链接",
     forgot: "忘记了？",
     resetHelp: "请输入管理员提供的重置码，然后设置新的通行码。如果你没有重置码，请先向管理员索要。",
     passcodeRule: "通行码为 6 位字符。",
@@ -127,7 +129,7 @@ export const zhCN = {
       lucky: { label: "幸运之星", detail: "页面刷新时随机换一组" },
       recent: { label: "最近更新", detail: "按目录更新时间排列" },
       newGood: { label: "近期佳片", detail: "新片优先，兼顾评分" },
-      popular: { label: "热门佳片", detail: "播放与评分综合排序" },
+      popular: { label: "热门佳片", detail: "按播放与评分排序" },
       topRated: { label: "评价最高", detail: "优先展示评分条目" },
       mostWatched: { label: "观看最高", detail: "按家庭播放记录排序" },
       tspdtRank: { label: "TSPDT 1000", detail: "按 TSPDT 影史榜顺序排列" },
@@ -402,7 +404,7 @@ export const zhCN = {
       },
       {
         title: "已经准备就少等待",
-        body: "如果别人已经准备过，或同一版本仍然可用，你可以直接播放，速度也更快。短时间内重看同一部片通常不会重复收取观看代币。"
+        body: "如果别人已经准备过，或同一版本仍然可用，你可以直接播放，速度也更快。同一线路首次播放后的 7 天内重看不会重复收取观看代币。"
       },
       {
         title: "不会开放充值",
@@ -451,7 +453,7 @@ export const zhCN = {
       {
         category: "credit",
         question: "为什么准备和播放可能分开扣？",
-        answer: "准备是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量，按约 100MB 计 1🍀。两件事消耗的资源不同，所以会分开确认。"
+        answer: "准备是在服务器侧搬运、保存和检查文件；播放是你真正在线观看时产生的网络流量。国内线路约每 200MB 计 1🍀，国际线路约每 100MB 计 1🍀，两件事会分开确认。"
       },
       {
         category: "cache",
@@ -461,7 +463,7 @@ export const zhCN = {
       {
         category: "playback",
         question: "为什么有免费重看窗口？",
-        answer: "短时间内重看同一部片，通常不应该反复收观看代币。免费重看窗口就是为了避免误触或中途退出后重新打开造成浪费。"
+        answer: "同一线路首次播放后的 7 天内重看免费，方便分几天看完，也避免误触或中途退出后重新打开造成浪费。切换线路会按新线路单独计费。"
       },
       {
         category: "playback",
@@ -665,6 +667,8 @@ export const zhCN = {
     confirming: "正在确认本次花费",
     cacheAction: "准备视频",
     playbackAction: "播放视频",
+    domesticPlaybackAction: "国内线路播放",
+    internationalPlaybackAction: "国际线路播放",
     balance: (amount: string) => `余额 ${amount}`,
     afterCharge: (amount: string) => `扣后 ${amount}`,
     insufficient: (unit: string) => `${unit} 不够了，请先找管理员补充。`,
@@ -673,6 +677,10 @@ export const zhCN = {
       hoursMinutes: (hours: number, minutes: number) => `${hours} 小时 ${minutes} 分钟`,
       hours: (hours: number) => `${hours} 小时`,
       minutes: (minutes: number) => `${minutes} 分钟`
+    },
+    replayWindow: {
+      days: (days: number) => `${days} 天`,
+      hours: (hours: number) => `${hours} 小时`
     },
     usageTitle: "消费记录",
     usageDescription: "这个通行码近期的代币消费。",
@@ -691,7 +699,7 @@ export const zhCN = {
       playbackReplay: "这个视频已经在免费重看窗口内，本次播放免费。",
       playbackReplayWithTime: (remaining: string) => `这个视频已经在免费重看窗口内，本次播放免费，还剩 ${remaining}。`,
       cacheCharge: (credits: string) => `让服务器准备这个视频，需要花费 ${credits}。准备完成后会再确认播放花费。`,
-      playbackCharge: (credits: string, hours: number) => `这个视频已经准备好，播放按约 100MB 计 1🍀，本次需要花费 ${credits}。首次点击后，${hours} 小时内重看同一视频免费。`
+      playbackCharge: (credits: string, line: "domestic" | "international", replayWindow: string) => `这个视频已经准备好，${line === "domestic" ? "国内线路按约 200MB 计 1🍀" : "国际线路按约 100MB 计 1🍀"}，本次需要花费 ${credits}。首次点击后，${replayWindow}内重看同一线路免费。`
     }
   },
   admin: {

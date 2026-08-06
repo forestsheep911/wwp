@@ -11,6 +11,7 @@ import {
 } from "@wwpdw/shared";
 import { createCacheStore } from "@wwpdw/cache-store";
 import { resolveJobSource } from "./resolver.js";
+import { cleanupExpiredOssPreparations } from "./oss-cleanup.js";
 
 const pollMs = Number(process.env.WORKER_POLL_MS ?? 900);
 const maxConcurrent = Number(process.env.WORKER_MAX_CONCURRENT ?? 2);
@@ -342,6 +343,7 @@ async function runCleanup() {
     workerRunId
   });
   const result = await store.cleanupExpired();
+  const ossResult = await cleanupExpiredOssPreparations();
   logInfo("worker.cleanup.summary", {
     workerRunId,
     scannedAssets: result.scannedAssets,
@@ -350,18 +352,29 @@ async function runCleanup() {
     deletedAssets: result.deletedAssets,
     deletedBlobs: result.deletedBlobs,
     deletedJobs: result.deletedJobs,
-    errorCount: result.errors.length,
+    ossCleanupEnabled: ossResult.enabled,
+    ossCleanupDryRun: ossResult.dryRun,
+    ossScannedJobs: ossResult.scannedJobs,
+    ossExpiredJobs: ossResult.expiredJobs,
+    ossUntrackedJobs: ossResult.untrackedJobs,
+    ossBackfilledJobs: ossResult.backfilledJobs,
+    ossClaimedJobs: ossResult.claimedJobs,
+    ossDeletedObjects: ossResult.deletedObjects,
+    ossDeletedJobs: ossResult.deletedJobs,
+    ossSkippedRaces: ossResult.skippedRaces,
+    errorCount: result.errors.length + ossResult.errors.length,
     durationMs: durationMs(startedAt)
   });
 
-  if (result.errors.length > 0) {
-    for (const error of result.errors) {
+  const errors = [...result.errors, ...ossResult.errors];
+  if (errors.length > 0) {
+    for (const error of errors) {
       logError("worker.cleanup.error", {
         workerRunId,
         errorMessage: error
       });
     }
-    throw new Error(`Cleanup completed with ${result.errors.length} error(s).`);
+    throw new Error(`Cleanup completed with ${errors.length} error(s).`);
   }
 }
 

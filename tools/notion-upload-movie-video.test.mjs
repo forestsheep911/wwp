@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertPreparedMovieTargetIsEmpty, notionVideoName } from "./lib/notion-movie-target.mjs";
+import { assertPreparedMovieTargetIsEmpty, notionVideoName, selectExplicitChildTarget } from "./lib/notion-movie-target.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-movie-video.mjs");
 
@@ -108,6 +108,34 @@ test("movie prepare-only preflight accepts an empty target", () => {
     id: "spec-page",
     videoNames: []
   }));
+});
+
+test("movie upload preflight rejects an unnamed existing Notion video", () => {
+  assert.throws(
+    () => assertPreparedMovieTargetIsEmpty({ id: "spec-page", videoNames: [""], videoCount: 1 }),
+    /already contains 1 video block.*unnamed Notion media/i
+  );
+});
+
+test("movie uploader refuses an explicit target outside the requested work page", () => {
+  assert.throws(
+    () => selectExplicitChildTarget([{ id: "spec-on-requested-work", title: "Example 繁 1.6GB" }], "other-work-spec"),
+    /not a spec child of the requested work page.*cross-work upload/i
+  );
+});
+
+test("movie uploader accepts an explicit target under the requested work page", () => {
+  assert.deepEqual(
+    selectExplicitChildTarget([{ id: "spec-on-requested-work", title: "Example 繁 1.6GB" }], "spec-on-requested-work"),
+    { id: "spec-on-requested-work", title: "Example 繁 1.6GB" }
+  );
+});
+
+test("movie uploader accepts a compact Notion ID for an explicit child target", () => {
+  assert.deepEqual(
+    selectExplicitChildTarget([{ id: "3b420ac1-2f0a-8182-8e66-fa5189c0b166", title: "Example 繁 4.4GB" }], "3b420ac12f0a81828e66fa5189c0b166"),
+    { id: "3b420ac1-2f0a-8182-8e66-fa5189c0b166", title: "Example 繁 4.4GB" }
+  );
 });
 
 test("movie target preflight reports a hosted video filename instead of its signed URL", () => {

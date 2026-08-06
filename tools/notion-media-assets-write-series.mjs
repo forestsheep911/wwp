@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -16,13 +17,17 @@ function parseArgs() {
     skipPages: 0,
     maxPages: 2,
     maxAssets: DEFAULT_MAX_ASSETS,
+    episodeFrom: undefined,
+    episodeTo: undefined,
     includeDirectSpec: false,
     allowPartialEpisodes: false,
     updateExistingMissing: false,
     correctExisting: false,
     ensureSchema: true,
+    mediaRoot: "",
     apply: false,
-    resolveIp: ""
+    resolveIp: "",
+    localAddress: ""
   };
 
   const args = process.argv.slice(2);
@@ -36,7 +41,11 @@ function parseArgs() {
     else if (name === "--skip-pages") options.skipPages = Number(value());
     else if (name === "--max-pages") options.maxPages = Number(value());
     else if (name === "--max-assets") options.maxAssets = Number(value());
+    else if (name === "--media-root") options.mediaRoot = value();
+    else if (name === "--episode-from") options.episodeFrom = Number(value());
+    else if (name === "--episode-to") options.episodeTo = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
     else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
     else if (arg === "--allow-partial-episodes") options.allowPartialEpisodes = true;
     else if (arg === "--update-existing-missing") options.updateExistingMissing = true;
@@ -59,6 +68,17 @@ function parseArgs() {
   if (!Number.isFinite(options.skipPages) || options.skipPages < 0) throw new Error("--skip-pages must be zero or a positive number.");
   if (!Number.isFinite(options.maxPages) || options.maxPages < 1) throw new Error("--max-pages must be a positive number.");
   if (!Number.isFinite(options.maxAssets) || options.maxAssets < 1) throw new Error("--max-assets must be a positive number.");
+  for (const [key, flag] of [["episodeFrom", "--episode-from"], ["episodeTo", "--episode-to"]]) {
+    if (options[key] !== undefined && (!Number.isInteger(options[key]) || options[key] < 1)) {
+      throw new Error(`${flag} must be a positive integer.`);
+    }
+  }
+  if ((options.episodeFrom === undefined) !== (options.episodeTo === undefined)) {
+    throw new Error("--episode-from and --episode-to must be supplied together.");
+  }
+  if (options.episodeFrom !== undefined && options.episodeFrom > options.episodeTo) {
+    throw new Error("--episode-from must not exceed --episode-to.");
+  }
   if (options.correctExisting && !options.metadataManifestPath) {
     throw new Error("--correct-existing requires --metadata-manifest.");
   }
@@ -74,10 +94,12 @@ function printHelp() {
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-metadata.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --apply --report .local-data/series-write-apply.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --skip-pages 12 --max-pages 6 --apply
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --episode-from 123 --episode-to 130 --apply
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --include-direct-spec --report .local-data/direct-spec-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --allow-partial-episodes --report .local-data/partial-series-preview.json
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-metadata.json --update-existing-missing --apply
   node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --metadata-manifest .local-data/series-corrections.json --correct-existing --apply
+  node tools/notion-media-assets-write-series.mjs --audit-report .local-data/series-audit.json --media-root E:\\video_made --apply
 
 This writer is episode-range-aware. It creates Media Assets rows for real media blocks
 found under episode-range child pages. Empty placeholders are reported but not
@@ -93,6 +115,16 @@ row. Name, Work, Playback Verified, and Hide from Website are never eligible.
 The writer ensures the numeric Media Assets property \`Episode End\` on apply so
 collection rows preserve an inclusive range. Use --no-ensure-schema only for a
 deliberately schema-read-only run.
+
+Use --episode-from/--episode-to together to process a bounded range without
+reading unrelated Episode child pages from the audit report.
+
+When --media-root is supplied and an uploaded file is still present below that
+directory, Approx Size GB is calculated from the actual local byte size rather
+than inferred from the spec-page title.
+
+Network workaround:
+  --resolve-ip <api-ip> --local-address <lan-ip>
 `);
 }
 
@@ -121,10 +153,14 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
-  if (proxyUrl) {
+  if (localAddress) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -292,10 +328,21 @@ function extensionFromFileName(value) {
   return value.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
 }
 
+function hasSubtitleLabel(value) {
+  return /繁简英|繁簡英|繁简|繁簡|简英|簡英|繁英|[简繁簡]|字幕/i.test(value);
+}
+
+function subtitleEvidenceText(labelText, fileText) {
+  // A prepared spec title reflects verified subtitle treatment. Filename tags
+  // remain a fallback only when the title says nothing about subtitles.
+  return hasSubtitleLabel(labelText) ? labelText : `${labelText} ${fileText}`.trim();
+}
+
 function parseAssetMetadata(label, fileName, episodeNumber, episodeEndNumber = episodeNumber) {
   const labelText = cleanText(label);
   const fileText = cleanText(fileName ?? "");
   const combined = `${labelText} ${fileText}`.trim();
+  const subtitleText = subtitleEvidenceText(labelText, fileText);
   const technicalText = fileText || labelText;
   const sizeText = `${fileText} ${labelText}`.trim();
   const audioLanguages = [];
@@ -306,32 +353,32 @@ function parseAssetMetadata(label, fileName, episodeNumber, episodeEndNumber = e
   if (/普通话|普通話|国语|國語|mandarin/i.test(combined)) pushUnique(audioLanguages, "zh-Mandarin");
   if (/粤语|粵語|cantonese/i.test(combined)) pushUnique(audioLanguages, "zh-Cantonese");
   if (/韩语|韓語|korean audio|\.korean\.|korean\.audio|\.kor\b|\bkor\b/i.test(combined)) pushUnique(audioLanguages, "ko");
-  if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio/i.test(combined)) pushUnique(audioLanguages, "ja");
-  if (/英语发音|英語發音|english audio|\.english\.|english\.audio/i.test(combined)) pushUnique(audioLanguages, "en");
+  if (/日语发音|日語發音|japanese audio|\.japanese\.|japanese\.audio|\bjpn\b/i.test(combined)) pushUnique(audioLanguages, "ja");
+  if (/英语发音|英語發音|english audio|\.english\.|english\.audio|\beng\b/i.test(combined)) pushUnique(audioLanguages, "en");
 
-  if (/繁简英|繁簡英|chtchseng|chschteng/i.test(combined)) {
+  if (/繁简英|繁簡英|chtchseng|chschteng/i.test(subtitleText)) {
     pushUnique(subtitleLanguages, "zh-Hant");
     pushUnique(subtitleLanguages, "zh-Hans");
     pushUnique(subtitleLanguages, "en");
-  } else if (/简英|簡英|chseng/i.test(combined)) {
+  } else if (/简英|簡英|chseng/i.test(subtitleText)) {
     pushUnique(subtitleLanguages, "zh-Hans");
     pushUnique(subtitleLanguages, "en");
-  } else if (/繁英|chteng/i.test(combined)) {
+  } else if (/繁英|chteng/i.test(subtitleText)) {
     pushUnique(subtitleLanguages, "zh-Hant");
     pushUnique(subtitleLanguages, "en");
   } else {
-    if (/简|簡|\bchs\b/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hans");
-    if (/繁|cht/i.test(combined)) pushUnique(subtitleLanguages, "zh-Hant");
+    if (/简|簡|\bchs\b/i.test(subtitleText)) pushUnique(subtitleLanguages, "zh-Hans");
+    if (/繁|cht/i.test(subtitleText)) pushUnique(subtitleLanguages, "zh-Hant");
   }
-  if (/繁港|chth/i.test(combined)) {
+  if (/繁港|chth/i.test(subtitleText)) {
     pushUnique(subtitleLanguages, "zh-Hant");
     pushUnique(subtitleRegions, "HK");
   }
-  if (/繁台|chtt/i.test(combined)) {
+  if (/繁台|chtt/i.test(subtitleText)) {
     pushUnique(subtitleLanguages, "zh-Hant");
     pushUnique(subtitleRegions, "TW");
   }
-  if (/英语字幕|英語字幕|\beng\b/i.test(combined)) pushUnique(subtitleLanguages, "en");
+  if (/英语字幕|英語字幕|\beng\b/i.test(subtitleText)) pushUnique(subtitleLanguages, "en");
 
   if (/WEB[- ]?DL/i.test(combined)) pushUnique(sourceLineage, "WEB-DL");
   if (/Blu[- ]?ray|Bluray/i.test(combined)) pushUnique(sourceLineage, "Blu-ray");
@@ -342,7 +389,7 @@ function parseAssetMetadata(label, fileName, episodeNumber, episodeEndNumber = e
     availability: "playable",
     episodeNumber,
     episodeEndNumber: episodeEndNumber > episodeNumber ? episodeEndNumber : undefined,
-    resolution: firstMatch(technicalText, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    resolution: firstMatch(technicalText, [/\b(?:2160p|1080p|960p|720p|576p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
     videoCodec: normalizeVideoCodec(technicalText),
     container: extensionFromFileName(fileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,
@@ -356,6 +403,33 @@ function parseAssetMetadata(label, fileName, episodeNumber, episodeEndNumber = e
     if (Array.isArray(value)) return value.length > 0;
     return value !== undefined && value !== "";
   }));
+}
+
+export function applyLocalFileSizes(candidates, mediaRoot = "") {
+  const root = String(mediaRoot ?? "").trim();
+  if (!root) return candidates;
+  const resolvedRoot = path.resolve(root);
+  const rootPrefix = `${resolvedRoot}${path.sep}`;
+
+  return candidates.map((candidate) => {
+    const fileName = String(candidate.originalFileName ?? "").trim();
+    if (!fileName || path.basename(fileName) !== fileName) return candidate;
+    const filePath = path.resolve(resolvedRoot, fileName);
+    if (!filePath.startsWith(rootPrefix)) return candidate;
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile() || stat.size <= 0) return candidate;
+      return {
+        ...candidate,
+        metadata: {
+          ...(candidate.metadata ?? {}),
+          approximateSizeGb: Number((stat.size / 1_000_000_000).toFixed(2))
+        }
+      };
+    } catch {
+      return candidate;
+    }
+  });
 }
 
 async function listChildren(notion, blockId) {
@@ -434,6 +508,8 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Container", asSelect(metadata.container));
   setIfProperty(properties, dataSource, "Approx Size GB", metadata.approximateSizeGb ? { number: metadata.approximateSizeGb } : undefined);
   setIfProperty(properties, dataSource, "Quality Tag", { rich_text: richText(metadata.qualityTag) });
+  setIfProperty(properties, dataSource, "Audio Codec", asSelect(metadata.audioCodec));
+  setIfProperty(properties, dataSource, "Audio Channel Layout", { rich_text: richText(metadata.audioChannelLayout) });
   setIfProperty(properties, dataSource, "Audio Languages", asMultiSelect(metadata.audioLanguages));
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
@@ -632,6 +708,8 @@ const SAFE_REPLACE_EXISTING_FIELDS = new Set([
   "Container",
   "Approx Size GB",
   "Quality Tag",
+  "Audio Codec",
+  "Audio Channel Layout",
   "Audio Languages",
   "Subtitle Languages",
   "Subtitle Regions",
@@ -834,6 +912,8 @@ function normalizeMetadataOverrides(manifestPath) {
     originalFileName: item.originalFileName,
     mediaBlockId: item.mediaBlockId,
     sourcePageId: item.sourcePageId,
+    workPageId: item.workPageId,
+    workTitle: item.workTitle,
     developerMemo: item.developerMemo ?? defaults.developerMemo,
     replaceExistingFields: normalizeReplaceExistingFields(
       item.replaceExistingFields ?? defaults.replaceExistingFields,
@@ -873,6 +953,8 @@ function applyMetadataOverrides(candidates, overrides) {
     if (!override) return candidate;
     return {
       ...candidate,
+      workPageId: override.workPageId ?? candidate.workPageId,
+      workTitle: override.workTitle ?? candidate.workTitle,
       developerMemo: override.developerMemo ?? candidate.developerMemo,
       replaceExistingFields: override.replaceExistingFields,
       metadata: {
@@ -881,6 +963,11 @@ function applyMetadataOverrides(candidates, overrides) {
       }
     };
   });
+}
+
+export function episodeWithinRange(episodeNumber, episodeFrom, episodeTo) {
+  if (episodeFrom === undefined || episodeTo === undefined) return true;
+  return Number.isInteger(episodeNumber) && episodeNumber >= episodeFrom && episodeNumber <= episodeTo;
 }
 
 async function candidatesForSeriesPage(notion, page, options = {}) {
@@ -904,6 +991,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
           const fileName = mediaBlockName(mediaBlock);
           const episodeRange = episodeRangeFromLabel(fileName);
           const episodeNumber = episodeRange?.start;
+          if (!episodeWithinRange(episodeNumber, options.episodeFrom, options.episodeTo)) continue;
           const workTitle = publicWorkTitle(page.title);
           if (!episodeNumber) {
             issues.push({
@@ -965,6 +1053,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         issues.push({ kind: "unparseable_episode_title", episodePageId: episode.pageId, title: episode.title });
         continue;
       }
+      if (!episodeWithinRange(episode.episodeNumber, options.episodeFrom, options.episodeTo)) continue;
       const children = await listChildren(notion, episode.pageId).catch(() => []);
       const playable = children.filter(isPlayableMedia);
       if (playable.length === 0) {
@@ -1085,7 +1174,7 @@ async function main() {
     options.includeDirectSpec,
     options.allowPartialEpisodes
   );
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options.localAddress);
   let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const schema = options.ensureSchema
     ? await ensureSeriesCollectionSchema(notion, mediaAssetsDataSource, options.apply)
@@ -1099,20 +1188,23 @@ async function main() {
     const { candidates, issues } = isOrganizerReportPage(page)
       ? candidatesFromOrganizerPage(page, metadataOverrides)
       : await candidatesForSeriesPage(notion, page, {
-          includeDirectSpec: options.includeDirectSpec,
-          metadataOverrides
+        includeDirectSpec: options.includeDirectSpec,
+          metadataOverrides,
+          episodeFrom: options.episodeFrom,
+          episodeTo: options.episodeTo
         });
-    const selected = candidates.slice(0, remainingAssets);
+    const candidatesWithLocalSizes = applyLocalFileSizes(candidates, options.mediaRoot);
+    const selected = candidatesWithLocalSizes.slice(0, remainingAssets);
     remainingAssets -= selected.length;
     const pageIssues = [...issues];
-    if (selected.length < candidates.length) {
+    if (selected.length < candidatesWithLocalSizes.length) {
       pageIssues.push({
         kind: "asset_limit_reached",
         pageId: page.pageId,
         title: page.title,
-        candidatesFound: candidates.length,
+        candidatesFound: candidatesWithLocalSizes.length,
         selected: selected.length,
-        remaining: candidates.length - selected.length
+        remaining: candidatesWithLocalSizes.length - selected.length
       });
     }
     const actions = [];
@@ -1131,7 +1223,7 @@ async function main() {
       pageId: page.pageId,
       title: page.title,
       mode: options.apply ? "apply" : "dry-run",
-      candidatesFound: candidates.length,
+      candidatesFound: candidatesWithLocalSizes.length,
       selected: selected.length,
       created: actions.filter((action) => action.action === "created").length,
       updatedExisting: actions.filter((action) => action.action === "updated_existing").length,
@@ -1153,6 +1245,8 @@ async function main() {
     auditReportPath: options.auditReportPath,
     metadataManifestPath: options.metadataManifestPath || undefined,
     skipPages: options.skipPages,
+    episodeFrom: options.episodeFrom,
+    episodeTo: options.episodeTo,
     includeDirectSpec: options.includeDirectSpec,
     allowPartialEpisodes: options.allowPartialEpisodes,
     updateExistingMissing: options.updateExistingMissing,

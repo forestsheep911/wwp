@@ -93,7 +93,8 @@ function parseArgs() {
     imdbTimeoutMs: 4000,
     dryRun: false,
     noExternal: false,
-    forceProcessed: false
+    forceProcessed: false,
+    forcePoster: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -110,6 +111,8 @@ function parseArgs() {
       options.noExternal = true;
     } else if (arg === "--force-processed") {
       options.forceProcessed = true;
+    } else if (arg === "--force-poster") {
+      options.forcePoster = true;
     } else if (arg === "--limit") {
       options.limit = Number(args[++index]);
     } else if (arg === "--delay-ms") {
@@ -364,13 +367,24 @@ function canonicalTitleFromStructuredIdentity(properties, metadata = {}) {
   );
   if (!hasIdentityEvidence) return undefined;
 
-  // A verified Douban display title is authoritative. Structured title fields
-  // may contain a subtitle or AKA copied from the source page and must not be
-  // concatenated into the library's primary title.
+  // A verified Douban display title is authoritative. Keep a separately
+  // structured foreign/original title when present, but never use a source
+  // subtitle or AKA as the primary Chinese title.
   const doubanDisplayTitle = cleanTitle(metadata.doubanDisplayTitle ?? "");
   const year = propText(properties["Release Year"]) || `${metadata.releaseYear ?? ""}`;
   if (metadata.subjectId && doubanDisplayTitle && /^\d{4}$/.test(year)) {
-    return `${titleWithoutYear(doubanDisplayTitle)} (${year})`;
+    const chineseTitle = titleWithoutMatchingReleaseYear(doubanDisplayTitle, year);
+    const foreignTitle = cleanTitle(
+      propText(properties["English Title"]) || propText(properties["Original Title"])
+    );
+    const parts = [chineseTitle];
+    const doubanHasLatinTitle = /[A-Za-z]/u.test(chineseTitle);
+    const doubanHasOriginalScript = /[\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/u.test(chineseTitle);
+    const foreignIsLatinTitle = /[A-Za-z]/u.test(foreignTitle);
+    if (foreignTitle && foreignIsLatinTitle && !doubanHasLatinTitle && !doubanHasOriginalScript && titleKey(chineseTitle) !== titleKey(foreignTitle)) {
+      parts.push(foreignTitle);
+    }
+    return `${parts.join(" ")} (${year})`;
   }
 
   const chineseTitle = cleanTitle(
@@ -402,6 +416,16 @@ function titleWithoutYear(title) {
   return cleanTitle(title)
     .replace(/\s*[\(（]\d{4}[\)）]\s*$/, "")
     .replace(/\s+\d{4}$/, "")
+    .trim();
+}
+
+function titleWithoutMatchingReleaseYear(title, releaseYear) {
+  const cleaned = cleanTitle(title);
+  const year = `${releaseYear ?? ""}`.match(/^\d{4}$/)?.[0];
+  if (!year) return titleWithoutYear(cleaned);
+  return cleaned
+    .replace(new RegExp(`\\s*[\\(（]${year}[\\)）]\\s*$`), "")
+    .replace(new RegExp(`\\s+${year}$`), "")
     .trim();
 }
 
@@ -632,6 +656,15 @@ async function fetchDoubanSuggestions(query, cookie) {
   });
 }
 
+export function candidateYearConflict(expectedYear, candidates = []) {
+  const expected = `${expectedYear ?? ""}`.match(/\d{4}/)?.[0];
+  if (!expected) return false;
+  const candidateYears = candidates
+    .map((candidate) => `${candidate?.year ?? ""}`.match(/\d{4}/)?.[0])
+    .filter(Boolean);
+  return candidateYears.length > 0 && !candidateYears.includes(expected);
+}
+
 async function findDoubanSubject(title, existingInfo, expectedType, cookie) {
   const query = cleanTitle(title);
   const queryWithoutYear = titleWithoutYear(title);
@@ -680,6 +713,18 @@ async function findDoubanSubject(title, existingInfo, expectedType, cookie) {
     if (yearMatched.length > 1) {
       candidates = yearMatched;
     }
+    if (yearMatched.length === 0 && candidateYearConflict(year, candidates)) {
+      return {
+        status: "skipped",
+        reason: "douban_year_mismatch",
+        suggestions: candidates.slice(0, 5).map((item) => ({
+          id: item.id,
+          title: item.title,
+          year: item.year,
+          subTitle: item.sub_title
+        }))
+      };
+    }
   }
 
   if (candidates.length === 0) {
@@ -724,6 +769,21 @@ async function findDoubanSubject(title, existingInfo, expectedType, cookie) {
   }
 
   return { status: "ok", subject: candidates[0] };
+}
+
+export function metadataIdentityConflict(properties = {}, metadata = {}) {
+  const existingImdbId = (propText(properties["IMDb ID"]) || propText(properties.imdb)).match(/tt\d+/i)?.[0]?.toLowerCase();
+  const metadataImdbId = `${metadata.imdbId ?? ""}`.match(/tt\d+/i)?.[0]?.toLowerCase();
+  if (existingImdbId && metadataImdbId && existingImdbId !== metadataImdbId) {
+    return { field: "IMDb ID", expected: existingImdbId, actual: metadataImdbId };
+  }
+
+  const expectedYear = `${propText(properties["Release Year"]) ?? ""}`.match(/\d{4}/)?.[0];
+  const metadataYear = `${metadata.releaseYear ?? ""}`.match(/\d{4}/)?.[0];
+  if (expectedYear && metadataYear && expectedYear !== metadataYear) {
+    return { field: "Release Year", expected: expectedYear, actual: metadataYear };
+  }
+  return null;
 }
 
 function parseJsonLd(html) {
@@ -892,6 +952,52 @@ async function fetchImdbRating(imdbId, timeoutMs, { omdbApiKey = dotenv("OMDB_AP
   return rating ? Number(rating) : undefined;
 }
 
+async function fetchOmdbMetadata(imdbId, timeoutMs, { omdbApiKey = dotenv("OMDB_API_KEY") } = {}) {
+  if (!imdbId || !omdbApiKey) return undefined;
+  const url = new URL("https://www.omdbapi.com/");
+  url.searchParams.set("apikey", omdbApiKey);
+  url.searchParams.set("i", imdbId);
+  url.searchParams.set("plot", "full");
+  const payload = await fetchJson(url.toString());
+  if (payload.Response !== "True" || `${payload.imdbID ?? ""}`.toLowerCase() !== imdbId.toLowerCase()) return undefined;
+
+  const list = (value) => `${value ?? ""}`.split(/\s*,\s*/u).filter(Boolean).filter((item) => item !== "N/A");
+  const runtimeMinutes = Number(`${payload.Runtime ?? ""}`.match(/\d+/u)?.[0]);
+  const genres = list(payload.Genre);
+  const countries = list(payload.Country);
+  const languages = list(payload.Language);
+  const directors = list(payload.Director);
+  const writers = list(payload.Writer);
+  const cast = list(payload.Actors);
+  const releaseYear = Number(`${payload.Year ?? ""}`.match(/\d{4}/u)?.[0]);
+  const basicInfoLines = [
+    ["导演", joinList(directors)],
+    ["编剧", joinList(writers)],
+    ["主演", joinList(cast)],
+    ["类型", joinList(genres)],
+    ["制片国家/地区", joinList(countries)],
+    ["语言", joinList(languages)],
+    ["片长", Number.isFinite(runtimeMinutes) ? `${runtimeMinutes}分钟` : ""],
+    ["IMDb", imdbId]
+  ].filter(([, value]) => value).map(([label, value]) => `${label}：${value}`);
+  return {
+    imdbId,
+    releaseYear: Number.isFinite(releaseYear) ? releaseYear : undefined,
+    posterUrl: payload.Poster && payload.Poster !== "N/A" ? payload.Poster : undefined,
+    genres,
+    externalGenreText: joinList(genres),
+    countries,
+    languages,
+    runtimeMinutes: Number.isFinite(runtimeMinutes) ? runtimeMinutes : undefined,
+    directors,
+    writers,
+    cast,
+    description: payload.Plot && payload.Plot !== "N/A" ? payload.Plot : undefined,
+    basicInfo: basicInfoLines.join("\n"),
+    metadataSource: "omdb"
+  };
+}
+
 async function fetchImage(url) {
   const response = await fetch(url, {
     headers: {
@@ -1028,7 +1134,7 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   if (!hasValue(properties, "Douban URL") && metadata.subjectUrl) {
     patch["Douban URL"] = { url: metadata.subjectUrl };
   }
-  if (!hasValue(properties, "Poster URL") && metadata.posterUrl) {
+  if ((options.forcePoster || !hasValue(properties, "Poster URL")) && metadata.posterUrl) {
     patch["Poster URL"] = { url: metadata.posterUrl };
   }
   const currentDescription = propText(properties["简介"]);
@@ -1038,7 +1144,7 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   if (!hasValue(properties, "基本信息") && metadata.basicInfo) {
     patch["基本信息"] = { rich_text: richText(metadata.basicInfo) };
   }
-  if (!hasValue(properties, "海报") && posterFile) {
+  if ((options.forcePoster || !hasValue(properties, "海报")) && posterFile) {
     patch["海报"] = { files: [posterFile] };
   }
   if (propertyExists(properties, "Match Status") && !hasValue(properties, "Match Status")) {
@@ -1049,7 +1155,7 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
     patch["Metadata Status"] = select("partial");
   }
   if (propertyExists(properties, "Metadata Source")) {
-    const nextSources = combinedMultiSelect(properties["Metadata Source"], ["douban"]);
+    const nextSources = combinedMultiSelect(properties["Metadata Source"], [metadata.metadataSource ?? "douban"]);
     const currentSources = currentMultiSelectNames(properties["Metadata Source"]);
     if (nextSources && nextSources.multi_select.length !== currentSources.length) {
       patch["Metadata Source"] = nextSources;
@@ -1152,6 +1258,39 @@ async function processPage(notion, pageRef, options, cookie) {
     : await findDoubanSubject(searchTitle, existingInfo, expectedType, cookie);
 
   if (subjectResult.status !== "ok") {
+    const existingImdbId = (propText(page.properties["IMDb ID"]) || propText(page.properties.imdb)).match(/tt\d+/i)?.[0];
+    const omdbMetadata = options.noExternal ? undefined : await fetchOmdbMetadata(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
+    if (omdbMetadata) {
+      const identityConflict = metadataIdentityConflict(page.properties, omdbMetadata);
+      if (identityConflict) {
+        return { pageId: page.id, title, status: "skipped", reason: "metadata_identity_conflict", identityConflict };
+      }
+      const imdbRating = await fetchImdbRating(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
+      const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && omdbMetadata.posterUrl;
+      const posterFile = needsPosterUpload && options.dryRun
+        ? { name: notionFileName(`${cleanTitle(title)} poster - OMDb.jpg`), type: "file_upload", file_upload: { id: "dry-run" } }
+        : needsPosterUpload
+          ? await uploadPoster(notion, omdbMetadata, title)
+          : undefined;
+      const patch = buildPatch(page, omdbMetadata, imdbRating, posterFile, options);
+      if (Object.keys(patch).length === 0) {
+        return { pageId: page.id, title, status: "skipped", reason: "nothing_to_update", source: "omdb" };
+      }
+      let readback;
+      if (!options.dryRun) {
+        await notion.pages.update({ page_id: page.id, properties: patch });
+        const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
+        readback = Object.fromEntries(Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])]));
+      }
+      return {
+        pageId: page.id,
+        title,
+        status: options.dryRun ? "dry_run" : "updated",
+        source: "omdb",
+        fields: Object.keys(patch),
+        ...(readback ? { readback } : {})
+      };
+    }
     return {
       pageId: page.id,
       title,
@@ -1163,12 +1302,23 @@ async function processPage(notion, pageRef, options, cookie) {
 
   await sleep(options.delayMs);
   const metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie, searchTitle);
+  const identityConflict = metadataIdentityConflict(page.properties, metadata);
+  if (identityConflict) {
+    return {
+      pageId: page.id,
+      title,
+      status: "skipped",
+      reason: "metadata_identity_conflict",
+      identityConflict,
+      subjectId: metadata.subjectId
+    };
+  }
   await sleep(options.delayMs);
   const imdbRating = options.noExternal
     ? undefined
     : await fetchImdbRating(metadata.imdbId, options.imdbTimeoutMs).catch(() => undefined);
   await sleep(options.delayMs);
-  const needsPosterUpload = !hasValue(page.properties, "海报") && metadata.posterUrl;
+  const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && metadata.posterUrl;
   const posterFile =
     needsPosterUpload && options.dryRun
       ? {
@@ -1181,7 +1331,7 @@ async function processPage(notion, pageRef, options, cookie) {
       : needsPosterUpload
         ? await uploadPoster(notion, metadata, title)
         : undefined;
-  const patch = buildPatch(page, metadata, imdbRating, posterFile);
+  const patch = buildPatch(page, metadata, imdbRating, posterFile, options);
 
   if (Object.keys(patch).length === 0) {
     return {

@@ -10,11 +10,15 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@azure/data-tables": "^13.3.2",
+    "@azure/identity": "^4.13.1",
     "@wwpdw/cache-store": "file:../../packages/cache-store",
     "@wwpdw/shared": "file:../../packages/shared",
+    "ali-oss": "^6.23.0",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
     "@types/node": "^24.0.4",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"

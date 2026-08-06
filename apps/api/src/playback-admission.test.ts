@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PlaybackAdmissionQueue, playbackLoadLevel } from "./playback-admission.js";
+import {
+  PlaybackAdmissionQueue,
+  playbackLoadLevel,
+  playbackRequiresLocalAdmission
+} from "./playback-admission.js";
+
+test("remote and domestic playback do not require a local-media seat", () => {
+  assert.equal(playbackRequiresLocalAdmission("domestic", true), false);
+  assert.equal(playbackRequiresLocalAdmission("domestic", false), false);
+  assert.equal(playbackRequiresLocalAdmission("international", false), false);
+  assert.equal(playbackRequiresLocalAdmission("international", true), true);
+});
 
 test("load levels map an eight-seat home server to low, medium, high, and full", () => {
   assert.equal(playbackLoadLevel(0, 8), "low");

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
@@ -14,6 +15,7 @@ function parseArgs() {
     maxAssets: 3,
     maxSpecsPerPage: 80,
     resolveIp: "",
+    localAddress: "",
     apply: false,
     ensureSchema: true
   };
@@ -30,6 +32,7 @@ function parseArgs() {
     else if (name === "--max-assets") options.maxAssets = Number(value());
     else if (name === "--max-specs-per-page") options.maxSpecsPerPage = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--no-ensure-schema") options.ensureSchema = false;
     else if (arg === "--help" || arg === "-h") {
@@ -59,10 +62,13 @@ Default mode is dry-run. The script creates Media Assets rows only with --apply.
 It writes a small representative sample, skips duplicates, and records source
 Notion page/block IDs for traceability. Batch manifests use page IDs and
 expected-title guards to avoid broad query mismatches. Batch item metadata can
-override values inferred from page labels and filenames.
+override values inferred from page labels and filenames. Existing rows remain
+unchanged unless a batch item explicitly lists safe metadata fields in
+replaceExistingFields.
 
 Network workaround:
   node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip 208.103.161.1
+  node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip <current-api-ip> --local-address <lan-ip>
 `);
 }
 
@@ -93,10 +99,14 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
-  if (proxyUrl) {
+  if (localAddress) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -245,7 +255,7 @@ function parseAssetMetadata(label, fileName, options = {}) {
       /加长版/u,
       /蓝光加长版/u
     ]),
-    resolution: firstMatch(combined, [/\b(?:2160p|1080p|720p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
+    resolution: firstMatch(combined, [/\b(?:2160p|1080p|960p|720p|576p|480p)\b/i, /\b4K\b/i])?.toLowerCase(),
     videoCodec: normalizeVideoCodec(combined),
     container: extensionFromFileName(cleanedFileName),
     approximateSizeGb: Number.isFinite(size) ? size : undefined,
@@ -348,7 +358,7 @@ async function queryPages(notion, dataSource, query, limit) {
   return response.results;
 }
 
-async function auditPage(notion, page, maxSpecsPerPage) {
+async function auditPage(notion, page, maxSpecsPerPage, sourcePageId = "", target = {}) {
   const title = pageTitle(page);
   const children = await listChildren(notion, page.id);
   const candidates = [];
@@ -356,31 +366,34 @@ async function auditPage(notion, page, maxSpecsPerPage) {
   let specCount = 0;
 
   const auditPlayableSpecPage = async (specPage) => {
+    if (sourcePageId && specPage.id !== sourcePageId) return;
     if (specCount >= maxSpecsPerPage) return;
     specCount += 1;
     const specTitle = blockTitle(specPage);
     const specChildren = await listChildren(notion, specPage.id).catch(() => []);
     const media = specChildren.filter(isPlayableMedia);
-    if (media.length === 0) {
-      issues.push({
-        kind: "playable_spec_without_media",
-        pageId: specPage.id,
-        label: specTitle,
-        titleConfidence: "untrusted_title_only",
-        recommendedAction: "Do not create a playable Media Assets row. Attach a real video/file, rename/delete the placeholder, or mark the work/asset as needs_processing/source_only."
-      });
-      return;
-    }
-    for (const mediaBlock of media) {
-      const fileName = mediaBlockName(mediaBlock);
+    // File-upload blocks can expose an opaque Notion URL and no caption. A
+    // manifest may still bind one exact block to a known local filename; use
+    // that explicit binding rather than discarding a real uploaded video.
+    const explicitlyBoundMedia = specChildren.filter((block) =>
+      (block.type === "video" || block.type === "file")
+      && block.id === target.mediaBlockId
+      && Boolean(target.expectedFilename)
+      && /\.(mp4|m4v|mov|webm|mkv)$/i.test(target.expectedFilename)
+      && !media.some((candidate) => candidate.id === block.id)
+    );
+    const appendPlayableCandidate = (mediaBlock, sourcePageId, episodeTitle = "", filenameOverride = "") => {
+      const fileName = filenameOverride || mediaBlockName(mediaBlock);
       const url = mediaUrl(mediaBlock);
-      const metadata = parseAssetMetadata(specTitle, fileName, { assetType: "playable_video" });
-      const displayLabel = normalizeAssetDisplayLabel(specTitle);
+      const metadata = parseAssetMetadata(`${specTitle} ${episodeTitle}`.trim(), fileName, { assetType: "playable_video" });
+      const displayLabel = episodeTitle
+        ? `${normalizeAssetDisplayLabel(specTitle)} ${episodeTitle}`
+        : normalizeAssetDisplayLabel(specTitle);
       candidates.push({
         assetType: "playable_video",
         workPageId: page.id,
         workTitle: title,
-        sourcePageId: specPage.id,
+        sourcePageId,
         mediaBlockId: mediaBlock.id,
         name: displayLabel,
         displayLabel,
@@ -389,6 +402,27 @@ async function auditPage(notion, page, maxSpecsPerPage) {
         assetUrl: isExternalMediaUrl(mediaBlock) ? url : undefined,
         assetUrlPresent: Boolean(url),
         metadata
+      });
+    };
+
+    for (const mediaBlock of media) appendPlayableCandidate(mediaBlock, specPage.id);
+    for (const mediaBlock of explicitlyBoundMedia) appendPlayableCandidate(mediaBlock, specPage.id, "", target.expectedFilename);
+
+    const episodePages = specChildren.filter((block) => block.type === "child_page");
+    for (const episodePage of episodePages) {
+      const episodeMedia = (await listChildren(notion, episodePage.id).catch(() => [])).filter(isPlayableMedia);
+      for (const mediaBlock of episodeMedia) {
+        appendPlayableCandidate(mediaBlock, episodePage.id, blockTitle(episodePage));
+      }
+    }
+
+    if (media.length === 0 && episodePages.length === 0) {
+      issues.push({
+        kind: "playable_spec_without_media",
+        pageId: specPage.id,
+        label: specTitle,
+        titleConfidence: "untrusted_title_only",
+        recommendedAction: "Do not create a playable Media Assets row. Attach a real video/file, rename/delete the placeholder, or mark the work/asset as needs_processing/source_only."
       });
     }
   };
@@ -545,6 +579,8 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Container", asSelect(metadata.container));
   setIfProperty(properties, dataSource, "Approx Size GB", metadata.approximateSizeGb ? { number: metadata.approximateSizeGb } : undefined);
   setIfProperty(properties, dataSource, "Quality Tag", { rich_text: richText(metadata.qualityTag) });
+  setIfProperty(properties, dataSource, "Audio Codec", asSelect(metadata.audioCodec));
+  setIfProperty(properties, dataSource, "Audio Channel Layout", { rich_text: richText(metadata.audioChannelLayout) });
   setIfProperty(properties, dataSource, "Audio Languages", asMultiSelect(metadata.audioLanguages));
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
@@ -625,13 +661,17 @@ async function findExistingAsset(notion, dataSource, candidate) {
     const properties = page.properties ?? {};
     const workMatches = relationIds(properties.Work).includes(candidate.workPageId);
     const titleMatches = propertyPlainText(properties[nameProperty]) === candidate.name;
+    const previousTitleMatches = candidate.previousDisplayLabel &&
+      propertyPlainText(properties[nameProperty]) === candidate.previousDisplayLabel;
     const sourcePageMatches = propertyPlainText(properties["Source Page ID"]) === candidate.sourcePageId;
     const mediaBlockMatches = propertyPlainText(properties["Media Block ID"]) === candidate.mediaBlockId;
     const fileNameMatches = !candidate.originalFileName ||
       propertyPlainText(properties["Original File Name"]) === candidate.originalFileName;
+    const previousFileNameMatches = candidate.previousOriginalFileName &&
+      propertyPlainText(properties["Original File Name"]) === candidate.previousOriginalFileName;
     return workMatches && (
       mediaBlockMatches ||
-      (sourcePageMatches && fileNameMatches && titleMatches) ||
+      (sourcePageMatches && (fileNameMatches || previousFileNameMatches) && (titleMatches || previousTitleMatches)) ||
       (titleMatches && fileNameMatches)
     );
   });
@@ -678,6 +718,61 @@ async function createAsset(notion, dataSource, candidate) {
   });
 }
 
+const SAFE_REPLACE_EXISTING_FIELDS = new Set([
+  "Display Label",
+  "Resolution",
+  "Video Codec",
+  "Container",
+  "Approx Size GB",
+  "Quality Tag",
+  "Audio Codec",
+  "Audio Channel Layout",
+  "Audio Languages",
+  "Subtitle Languages",
+  "Subtitle Regions",
+  "Source Lineage",
+  "Developer Memo",
+  "Original File Name",
+  "Media Block ID"
+]);
+
+function normalizeReplaceExistingFields(value, label = "metadata override") {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${label} replaceExistingFields must be an array.`);
+  const fields = [...new Set(value.map((field) => cleanText(String(field))).filter(Boolean))];
+  const disallowed = fields.filter((field) => !SAFE_REPLACE_EXISTING_FIELDS.has(field));
+  if (disallowed.length > 0) {
+    throw new Error(`${label} cannot replace protected or unknown fields: ${disallowed.join(", ")}`);
+  }
+  return fields;
+}
+
+function propertyMatchesPayload(existingProperty, payload) {
+  if (!existingProperty || !payload) return false;
+  if (existingProperty.type === "select") return (existingProperty.select?.name ?? "") === (payload.select?.name ?? "");
+  if (existingProperty.type === "multi_select") {
+    const current = (existingProperty.multi_select ?? []).map((item) => item.name).sort();
+    const next = (payload.multi_select ?? []).map((item) => item.name).sort();
+    return JSON.stringify(current) === JSON.stringify(next);
+  }
+  if (existingProperty.type === "number") return existingProperty.number === payload.number;
+  if (existingProperty.type === "rich_text") return propertyPlainText(existingProperty) === plainText(payload.rich_text ?? []);
+  return false;
+}
+
+function buildExistingCorrection(dataSource, existingPage, candidate) {
+  const fields = normalizeReplaceExistingFields(candidate.replaceExistingFields, candidate.name);
+  const candidateProperties = buildAssetProperties(dataSource, candidate);
+  const patch = {};
+  for (const name of fields) {
+    const value = candidateProperties[name];
+    if (!value || !dataSource.properties?.[name]) continue;
+    if (propertyMatchesPayload(existingPage.properties?.[name], value)) continue;
+    patch[name] = value;
+  }
+  return patch;
+}
+
 function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -715,7 +810,10 @@ function normalizeManifest(manifest, options) {
       label: item.label || item.expectedTitleContains || item.pageId,
       pageId: item.pageId,
       expectedTitleContains: item.expectedTitleContains,
+      sourcePageId: item.sourcePageId ?? defaults.sourcePageId,
       mediaBlockId: item.mediaBlockId,
+      previousOriginalFileName: item.previousOriginalFileName,
+      previousDisplayLabel: item.previousDisplayLabel,
       expectedFilename: item.expectedFilename,
       maxAssets: Number(item.maxAssets ?? defaults.maxAssets ?? options.maxAssets),
       maxSpecsPerPage: Number(item.maxSpecsPerPage ?? defaults.maxSpecsPerPage ?? options.maxSpecsPerPage),
@@ -723,6 +821,7 @@ function normalizeManifest(manifest, options) {
       mediaAvailability: item.mediaAvailability ?? defaults.mediaAvailability,
       hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
       developerMemo: item.developerMemo ?? defaults.developerMemo,
+      replaceExistingFields: item.replaceExistingFields ?? defaults.replaceExistingFields,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined
     };
   });
@@ -734,6 +833,9 @@ function applyManifestOverrides(candidate, item = {}) {
     item.mediaAvailability === undefined &&
     item.hideFromWebsite === undefined &&
     !item.developerMemo &&
+    item.replaceExistingFields === undefined &&
+    !item.previousOriginalFileName &&
+    !item.previousDisplayLabel &&
     Object.keys(metadataOverrides).length === 0
   ) {
     return candidate;
@@ -742,6 +844,9 @@ function applyManifestOverrides(candidate, item = {}) {
     ...candidate,
     hideFromWebsite: item.hideFromWebsite,
     developerMemo: item.developerMemo,
+    replaceExistingFields: item.replaceExistingFields,
+    previousOriginalFileName: item.previousOriginalFileName,
+    previousDisplayLabel: item.previousDisplayLabel,
     metadata: {
       ...(candidate.metadata ?? {}),
       ...metadataOverrides,
@@ -751,7 +856,7 @@ function applyManifestOverrides(candidate, item = {}) {
 }
 
 async function processWorkPage(notion, mediaAssetsDataSource, options, workPage, item = {}) {
-  const audited = await auditPage(notion, workPage, item.maxSpecsPerPage ?? options.maxSpecsPerPage);
+  const audited = await auditPage(notion, workPage, item.maxSpecsPerPage ?? options.maxSpecsPerPage, item.sourcePageId, item);
   const titleMatches = titleContainsExpected(audited.title, item.expectedTitleContains);
   if (!titleMatches) {
     return {
@@ -764,6 +869,7 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
         candidatesFound: audited.candidates.length,
         selected: 0,
         created: 0,
+        correctedExisting: 0,
         skippedExisting: 0,
         wouldCreate: 0,
         issues: audited.issues.length,
@@ -802,6 +908,17 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
   for (const candidate of selected) {
     const existing = await findExistingAsset(notion, mediaAssetsDataSource, candidate);
     if (existing) {
+      const patch = buildExistingCorrection(mediaAssetsDataSource, existing, candidate);
+      const fields = Object.keys(patch);
+      if (fields.length > 0) {
+        if (options.apply) {
+          await notion.pages.update({ page_id: existing.id, properties: patch });
+          actions.push({ action: "corrected_existing", pageId: existing.id, candidate, fields });
+        } else {
+          actions.push({ action: "would_correct_existing", pageId: existing.id, candidate, fields, properties: patch });
+        }
+        continue;
+      }
       actions.push({
         action: "skip_existing",
         pageId: existing.id,
@@ -838,6 +955,7 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
       candidatesFound: audited.candidates.length,
       selected: selected.length,
       created: actions.filter((action) => action.action === "created").length,
+      correctedExisting: actions.filter((action) => action.action === "corrected_existing").length,
       skippedExisting: actions.filter((action) => action.action === "skip_existing").length,
       wouldCreate: actions.filter((action) => action.action === "would_create").length,
       issues: audited.issues.length + targetIssues.length,
@@ -855,6 +973,7 @@ function summarizeReports(reports) {
     candidatesFound: summary.candidatesFound + report.summary.candidatesFound,
     selected: summary.selected + report.summary.selected,
     created: summary.created + report.summary.created,
+    correctedExisting: summary.correctedExisting + (report.summary.correctedExisting ?? 0),
     skippedExisting: summary.skippedExisting + report.summary.skippedExisting,
     wouldCreate: summary.wouldCreate + report.summary.wouldCreate,
     issues: summary.issues + report.summary.issues,
@@ -864,6 +983,7 @@ function summarizeReports(reports) {
     candidatesFound: 0,
     selected: 0,
     created: 0,
+    correctedExisting: 0,
     skippedExisting: 0,
     wouldCreate: 0,
     issues: 0,
@@ -877,7 +997,7 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options.localAddress);
   const mainDataSource = await loadMainDataSource(notion);
   let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const schemaResult = options.ensureSchema && options.apply

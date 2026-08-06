@@ -5,12 +5,11 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
 import { trackedCacheNeedsStatusRefresh } from "../cache-flow";
-import { jobMessageLabel, jobStatusLabel, jobVariant } from "../format";
+import { jobMessageLabel, jobProgressIndeterminate, jobStatusLabel, jobVariant } from "../format";
 import { copy } from "../i18n";
-import { formatCreditAmount, playbackCreditCost, type TrackedCacheItem } from "../types";
+import { type TrackedCacheItem } from "../types";
 
 export function TaskDock({
-  creditPolicy,
   items,
   onOpenPlayer,
   onOpenTasks
@@ -58,13 +57,11 @@ export function TaskDock({
                   </div>
                   <Badge variant={jobVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
                 </div>
-                <Progress value={job.progress} />
+                <Progress value={job.progress} indeterminate={jobProgressIndeterminate(job)} />
                 {asset?.status === "ready" ? (
                   <Button className="w-full" type="button" size="sm" onClick={() => onOpenPlayer(asset.assetKey, result)}>
                     <Play className="h-4 w-4" />
-                    {creditPolicy.billingEnabled
-                      ? formatCreditAmount(playbackCreditCost(asset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-                      : copy.watchlist.play}
+                    {copy.watchlist.play}
                   </Button>
                 ) : null}
               </div>

@@ -82,6 +82,26 @@ function run(ffmpeg, args) {
   if (result.status !== 0) throw new Error(`ffmpeg failed with exit code ${result.status}`);
 }
 
+function assertBrowserPlayableMp4(output) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries",
+    "stream=codec_type,codec_name,codec_tag_string,channels,channel_layout",
+    "-of", "json", output
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe final output failed with exit code ${result.status}`);
+  const streams = JSON.parse(result.stdout).streams ?? [];
+  const video = streams.find((stream) => stream.codec_type === "video");
+  if (video?.codec_name === "hevc" && video.codec_tag_string !== "hvc1") {
+    throw new Error("final HEVC MP4 is missing the required hvc1 sample entry");
+  }
+  for (const audio of streams.filter((stream) => stream.codec_type === "audio" && stream.codec_name === "aac")) {
+    if ((audio.channels ?? 0) > 2 && !audio.channel_layout) {
+      throw new Error("final multichannel AAC track is missing channel_layout; browser playback is not safe");
+    }
+  }
+}
+
 function availableBytes(directory) {
   const stats = fs.statfsSync(directory);
   return Number(stats.bavail) * Number(stats.bsize);
@@ -134,6 +154,7 @@ function main() {
     throw new Error(`output exceeds max-bytes: ${size} > ${options.maxBytes}`);
   }
   fs.renameSync(part, output);
+  assertBrowserPlayableMp4(output);
   console.log(JSON.stringify({
     output,
     bytes: size,

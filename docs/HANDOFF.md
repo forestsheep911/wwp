@@ -86,16 +86,20 @@ The API still uses `x-wwpdw-access-key` internally.
 Default pass allowance settings:
 
 - `MEMBER_DEFAULT_CREDITS=200`
-- `MEMBER_CACHE_CREDIT_COST=10`
-- `MEMBER_PLAYBACK_REPLAY_FREE_HOURS=24`
+- `MEMBER_CACHE_CREDIT_COST=2`
+- `MEMBER_CACHE_CREDIT_BYTES=2000000000`
+- `MEMBER_DOMESTIC_PLAYBACK_CREDIT_BYTES=200000000`
+- `MEMBER_PLAYBACK_REPLAY_FREE_HOURS=168`
 - `MEMBER_PLAYBACK_CREDIT_BYTES=100000000`
 
 Search, cache hits, and joining an already-running cache job are free. Creating
-a new cache job with a member pass spends `MEMBER_CACHE_CREDIT_COST` 🍀.
-Playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` 🍀, currently
-1🍀 per started 100MB, but the
-same member can replay the same asset within `MEMBER_PLAYBACK_REPLAY_FREE_HOURS`
-without another playback charge. Admin keys bypass member allowance checks. A
+a new cache job spends the greater of `MEMBER_CACHE_CREDIT_COST` and
+`ceil(contentLength / MEMBER_CACHE_CREDIT_BYTES)` 🍀. Domestic playback spends
+`ceil(contentLength / MEMBER_DOMESTIC_PLAYBACK_CREDIT_BYTES)` 🍀; international
+playback spends `ceil(contentLength / MEMBER_PLAYBACK_CREDIT_BYTES)` 🍀. The
+same member can replay the same asset on the same line within
+`MEMBER_PLAYBACK_REPLAY_FREE_HOURS` without another playback charge. Admin keys
+bypass member allowance checks. A
 member request that exceeds the remaining balance returns HTTP 429 before it
 creates a cache job or issues a playback URL.
 
@@ -117,6 +121,16 @@ lifetime cap.
 The cleanup job deletes Blob media and cache state when the video has not been
 played for `CACHE_ASSET_IDLE_TTL_DAYS` days. The default is 7 days; never-played
 videos use `cachedAt` as the idle reference.
+
+Prepared OSS videos use the same idle policy. The API updates `lastPlayedAt`
+and `expiresAt` in `osspreparejobs` before issuing an OSS signed playback URL.
+The Azure cleanup Job conditionally claims the Table row with its ETag, deletes
+only objects under `ALIYUN_OSS_OBJECT_PREFIX`, and then removes the preparation
+row. This prevents a playback touch and cleanup from winning at the same time.
+Legacy ready rows without `expiresAt` are never deleted from their historical
+completion time; the first active cleanup run backfills a fresh idle window.
+Deploy OSS cleanup in dry-run first, inspect the execution summary, and only
+then pass `-AliyunOssCleanupDryRun false` to `deploy-cleanup-job.ps1`.
 
 The application-level cleanup job is authoritative because it updates Table
 state and deletes the matching cache job record. Azure Storage lifecycle rules

@@ -1,6 +1,7 @@
 param(
     [string]$ResourceGroup = "rg-ww-player-cache-dev",
     [string]$ApiAppName = "ca-ww-player-api",
+    [string]$StaticAppName = "stapp-ww-player-dev",
     [string]$ContainerEnv = "cae-ww-player-cache-dev",
     [string]$RegistryName = "acrwwcachee9219db7",
     [string]$ImageName = "wwpdw/api",
@@ -214,6 +215,7 @@ $image = "$loginServer/$ImageName`:$ImageTag"
 $envVars = @(
     "API_PORT=8787",
     "CACHE_BACKEND=azure",
+    "CACHE_ASSET_IDLE_TTL_DAYS=7",
     "WWPDW_SEARCH_SOURCE=auto",
     "SEARCH_RESULT_CACHE_TTL_SECONDS=600",
     "SEARCH_RESULT_CACHE_LIMIT=100",
@@ -231,8 +233,10 @@ $envVars = @(
     "POSTER_CACHE_MAX_BYTES=8388608",
     "POSTER_CACHE_MAX_PER_MOVIE=0",
     "MEMBER_DEFAULT_CREDITS=200",
-    "MEMBER_CACHE_CREDIT_COST=10",
-    "MEMBER_PLAYBACK_REPLAY_FREE_HOURS=24",
+    "MEMBER_CACHE_CREDIT_COST=2",
+    "MEMBER_CACHE_CREDIT_BYTES=2000000000",
+    "MEMBER_DOMESTIC_PLAYBACK_CREDIT_BYTES=200000000",
+    "MEMBER_PLAYBACK_REPLAY_FREE_HOURS=168",
     "MEMBER_PLAYBACK_CREDIT_BYTES=100000000",
     "NOTION_SEARCH_PAGE_SIZE=8",
     "NOTION_PARSE_MAX_PAGES=6",
@@ -241,7 +245,7 @@ $envVars = @(
     "NOTION_TITLE_SCAN_LIMIT=120",
     "NOTION_TITLE_MATCH_LIMIT=6",
     "NOTION_LIBRARY_QUERY_LIMIT=300",
-    "NOTION_VARIANT_LIMIT=8",
+    "NOTION_VARIANT_LIMIT=200",
     "NOTION_REQUEST_TIMEOUT_MS=30000",
     "NOTION_SCAN_PAGE_PARSE_TIMEOUT_MS=60000",
     "AZURE_CLIENT_ID=$($identity.clientId)",
@@ -285,6 +289,19 @@ if ($NotionMediaAssetsDataSourceId) {
 
 if ($OmdbApiKey) {
     $envVars += "OMDB_API_KEY=$OmdbApiKey"
+}
+
+if (-not $AllowedWebOrigins) {
+    $staticAppHostname = & $AzCli staticwebapp show `
+        --name $StaticAppName `
+        --resource-group $ResourceGroup `
+        --query "defaultHostname" `
+        --output tsv 2>$null
+
+    if ($LASTEXITCODE -eq 0 -and $staticAppHostname) {
+        $AllowedWebOrigins = "https://$staticAppHostname"
+        Write-Host "Using Static Web App origin for API allowlist: $AllowedWebOrigins"
+    }
 }
 
 if ($AllowedWebOrigins) {
@@ -343,6 +360,53 @@ $existingAppName = & $AzCli containerapp list `
     --output tsv
 
 $exists = [bool]$existingAppName
+
+if ($exists) {
+    $existingAppJson = & $AzCli containerapp show `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --output json
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not read the existing API Container App configuration."
+    }
+
+    $existingApp = $existingAppJson | ConvertFrom-Json
+    $existingEnvironment = @($existingApp.properties.template.containers[0].env)
+    $existingContainerSecretNames = @($existingApp.properties.configuration.secrets | ForEach-Object { $_.name })
+
+    # --replace-env-vars removes every omitted variable. Carry all existing secret
+    # references into the same revision so authentication and integrations never
+    # disappear while the follow-up Key Vault reconciliation runs.
+    foreach ($entry in $existingEnvironment) {
+        if (-not $entry.secretRef) {
+            continue
+        }
+
+        $hasBinding = @($envVars | Where-Object { $_ -like "$($entry.name)=*" }).Count -gt 0
+        if (-not $hasBinding) {
+            $envVars += "$($entry.name)=secretref:$($entry.secretRef)"
+        }
+    }
+
+    $requiredSecretBindings = @{
+        $NotionContainerSecretName = "NOTION_READ_ONLY_TOKEN"
+        $AdminContainerSecretName = "WWPDW_ADMIN_KEY"
+        $BailianContainerSecretName = "BAILIAN_API_KEY"
+        $AliyunAccessKeyIdContainerSecretName = "ALIBABA_CLOUD_ACCESS_KEY_ID"
+        $AliyunAccessKeySecretContainerSecretName = "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+    }
+    foreach ($containerSecretName in $requiredSecretBindings.Keys) {
+        if ($existingContainerSecretNames -notcontains $containerSecretName) {
+            continue
+        }
+
+        $environmentName = $requiredSecretBindings[$containerSecretName]
+        $hasBinding = @($envVars | Where-Object { $_ -like "$environmentName=*" }).Count -gt 0
+        if (-not $hasBinding) {
+            $envVars += "$environmentName=secretref:$containerSecretName"
+        }
+    }
+}
 
 if (-not $exists) {
     Write-Host "Creating API Container App: $ApiAppName"

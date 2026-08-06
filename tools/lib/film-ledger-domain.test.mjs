@@ -30,10 +30,11 @@ test("production transitions enforce legal adjacency", () => {
 });
 
 test("publication transitions enforce legal adjacency", () => {
-  assert.deepEqual(PUBLICATION_STATES, ["not_ready", "structure_pending", "upload_pending", "upload_seen", "assets_pending", "verification_pending", "sync_ready"]);
+  assert.deepEqual(PUBLICATION_STATES, ["not_ready", "structure_pending", "upload_pending", "upload_seen", "assets_pending", "verification_pending", "sync_ready", "cancelled"]);
   assert.equal(assertPublicationTransition("not_ready", "structure_pending"), true);
   assert.equal(assertPublicationTransition("verification_pending", "assets_pending"), true);
   assert.equal(assertPublicationTransition("verification_pending", "structure_pending"), true);
+  assert.equal(assertPublicationTransition("assets_pending", "cancelled"), true);
   assert.throws(() => assertPublicationTransition("upload_pending", "sync_ready"), /illegal publication transition/);
 });
 
@@ -46,6 +47,7 @@ test("workflow handoff states provide an explicit human and AI exchange", () => 
   assert.equal(assertWorkflowHandoffState("人工上传中"), true);
   assert.equal(assertWorkflowHandoffTransition("已上传待 AI 收尾", "AI 处理中"), true);
   assert.equal(assertWorkflowHandoffTransition("已完成", "待 AI 处理"), true);
+  assert.equal(assertWorkflowHandoffTransition("已完成", "待人工上传"), true);
   assert.equal(assertWorkflowHandoffTransition(null, "待人工上传"), true);
   assert.equal(assertWorkflowHandoffTransition("待人工上传", "待人工上传"), true);
   assert.throws(() => assertWorkflowHandoffState("unknown"), /unsupported workflow handoff state/);

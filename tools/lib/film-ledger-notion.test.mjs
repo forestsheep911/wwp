@@ -253,15 +253,15 @@ test("adapter rejects multiple captionless media blocks without a recorded block
 test("adapter accepts an explicitly recorded media block when its filename differs", async () => {
   const client = {
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: page_id === "spec-1" ? "work-1" : "spec-1" } }; } },
-    blocks: { children: { async list() { return { results: [{ id: "recorded-media", type: "video", video: { caption: [{ plain_text: "Older.Name.mp4" }], file: { url: "https://example.test/older.mp4" } } }] }; } } },
-    dataSources: { async query() { return { results: [publishableAsset({ "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "recorded-media" }] } })] }; } }
+    blocks: { children: { async list() { return { results: [{ id: "3b420ac1-2f0a-813e-a0f2-c4646ee80b7c", type: "video", video: { caption: [{ plain_text: "Older.Name.mp4" }], file: { url: "https://example.test/older.mp4" } } }] }; } } },
+    dataSources: { async query() { return { results: [publishableAsset({ "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "3b420ac1-2f0a-813e-a0f2-c4646ee80b7c" }] } })] }; } }
   };
   const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
     work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1",
-    expected_filename: "New.Local.Output.mp4", media_block_id: "recorded-media"
+    expected_filename: "New.Local.Output.mp4", media_block_id: "3b420ac12f0a813ea0f2c4646ee80b7c"
   });
   assert.equal(result.mediaVerified, true);
-  assert.equal(result.mediaBlockId, "recorded-media");
+  assert.equal(result.mediaBlockId, "3b420ac1-2f0a-813e-a0f2-c4646ee80b7c");
   assert.equal(result.assetsVerified, true);
 });
 
@@ -281,17 +281,17 @@ test("adapter accepts an existing spec nested under a legacy callout without all
   const client = {
     pages: { async retrieve({ page_id }) {
       if (page_id === "work-1") return { id: page_id, parent: { type: "workspace", workspace: true } };
-      return { id: page_id, parent: { type: "block_id", block_id: "callout-1" } };
+      return { id: "3b420ac1-2f0a-8002-8e66-fa5189c0b166", parent: { type: "block_id", block_id: "callout-1" } };
     } },
     blocks: { children: { async list({ block_id }) {
       if (block_id === "work-1") return { results: [{ id: "callout-1", type: "callout", callout: { rich_text: [] } }] };
-      if (block_id === "callout-1") return { results: [{ id: "spec-1", type: "child_page", child_page: { title: "Legacy spec" } }] };
+      if (block_id === "callout-1") return { results: [{ id: "3b420ac1-2f0a-8002-8e66-fa5189c0b166", type: "child_page", child_page: { title: "Legacy spec" } }] };
       return { results: [] };
     } } },
     dataSources: { async query() { return { results: [] }; } }
   };
   const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
-    work_page_id: "work-1", spec_page_id: "spec-1"
+    work_page_id: "work-1", spec_page_id: "3b420ac12f0a80028e66fa5189c0b166"
   });
   assert.equal(result.structureVerified, true);
 });

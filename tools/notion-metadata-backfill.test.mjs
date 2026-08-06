@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPatch, fetchImdbRating, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
+import { buildPatch, candidateYearConflict, fetchImdbRating, metadataIdentityConflict, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
 
 test("fetchImdbRating falls back to IMDb when OMDb has no rating", async () => {
   const originalFetch = globalThis.fetch;
@@ -177,6 +177,17 @@ test("buildPatch preserves a season page label when Douban returns the series ti
   assert.equal(patch.Title, undefined);
 });
 
+test("buildPatch preserves a title-ending number that differs from the release year", () => {
+  const patch = buildPatch(pageWithProperties({
+    Title: { type: "title", title: [{ plain_text: "请回答1988 응答하라 (2015)" }] },
+    "Release Year": { type: "number", number: 2015 },
+    "Simplified Chinese Title": filledRichText("请回答1988"),
+    "English Title": filledRichText("Reply 1988"),
+    "IMDb ID": filledRichText("tt5182866")
+  }), { subjectId: "26302614", doubanDisplayTitle: "请回答1988 응答하라 1988", releaseYear: "2015" }, undefined, undefined, { now: "2026-08-01" });
+  assert.equal(patch.Title.title[0].text.content, "请回答1988 응答하라 1988 (2015)");
+});
+
 test("buildPatch places a preserved season label before a Japanese original title", () => {
   const patch = buildPatch(
     pageWithProperties({
@@ -277,6 +288,19 @@ test("preferredDoubanSubjectId allows explicit CLI subject override", () => {
   );
 
   assert.equal(subjectId, "26761325");
+});
+
+test("candidateYearConflict rejects same-title Douban candidates from another year", () => {
+  assert.equal(candidateYearConflict("1974", [{ id: "26336757", title: "Deadly Weapons", year: "1994" }]), true);
+  assert.equal(candidateYearConflict("1974", [{ id: "x", title: "Deadly Weapons", year: "1974" }]), false);
+});
+
+test("metadataIdentityConflict rejects a candidate that disagrees with an existing IMDb ID", () => {
+  const conflict = metadataIdentityConflict(
+    { "IMDb ID": filledRichText("tt0069952"), "Release Year": { type: "number", number: 1974 } },
+    { imdbId: "tt0129027", releaseYear: "1994" }
+  );
+  assert.deepEqual(conflict, { field: "IMDb ID", expected: "tt0069952", actual: "tt0129027" });
 });
 
 test("parseInfoPairs handles compact Douban info labels", () => {

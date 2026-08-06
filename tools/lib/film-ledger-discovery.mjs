@@ -31,6 +31,25 @@ function validatePayload(payload) {
   }
 }
 
+function sourceKindFor(entry) {
+  // Subtitle-only directories are reusable companion evidence, never encode inputs.
+  if ((entry.mediaCount ?? 0) === 0 && (entry.subtitleCount ?? 0) > 0) return "subtitle_bundle";
+  return entry.flags?.looksSeries ? "series_folder" : "folder";
+}
+
+function isResolvedCollectionShrink(repo, inputRootId, parentSource) {
+  const prefix = `${parentSource.relative_path}\\`.toLowerCase();
+  const descendants = repo.listSourcesForRoot(inputRootId)
+    .filter((source) => source.id !== parentSource.id
+      && source.relative_path.toLowerCase().startsWith(prefix));
+  const leaves = descendants.filter((source) => !descendants.some((other) => other.id !== source.id
+    && other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())));
+
+  return leaves.length > 0
+    && leaves.every((source) => source.work_id != null)
+    && leaves.some((source) => !existsSync(source.absolute_path));
+}
+
 export function importScan(repo, payload) {
   validatePayload(payload);
   const normalizedRoot = normalizeLedgerPath(payload.root);
@@ -48,11 +67,13 @@ export function importScan(repo, payload) {
     const source = repo.upsertDiscoveredSource({
       inputRootId: root.id,
       relativePath: entry.relativePath,
-      absolutePath: /^[a-z]:[\\/]/i.test(normalizedRoot)
+      absolutePath: entry.absolutePath
+        ? normalizeLedgerPath(entry.absolutePath)
+        : /^[a-z]:[\\/]/i.test(normalizedRoot)
         ? normalizeLedgerPath(path.win32.resolve(normalizedRoot, entry.relativePath))
         : path.resolve(normalizedRoot, entry.relativePath),
       fingerprint,
-      sourceKind: entry.flags?.looksSeries ? "series_folder" : "folder",
+      sourceKind: sourceKindFor(entry),
       subtitleEvidence: {
         externalCount: entry.subtitleCount ?? 0,
         externalHints: entry.subtitleHints ?? [],
@@ -62,7 +83,7 @@ export function importScan(repo, payload) {
       missing: false,
       discoveredAt: payload.scannedAt
     });
-    if (state === "changed") {
+    if (state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
       repo.requeueIntakeTask(source.id, {
         reason: "Source contents changed; inspect added, replaced, or removed media before continuing"
       });

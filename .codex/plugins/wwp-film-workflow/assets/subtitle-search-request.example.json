@@ -1,0 +1,22 @@
+{
+  "work": {
+    "title": "盗梦空间",
+    "originalTitle": "Inception",
+    "year": 2010,
+    "imdbId": "tt1375666",
+    "type": "movie"
+  },
+  "source": {
+    "fileName": "Inception.2010.1080p.BluRay.REMUX.mkv",
+    "durationSeconds": 8880.5,
+    "fps": "23.976",
+    "release": "BluRay REMUX"
+  },
+  "languages": [
+    "zh-Hant",
+    "zh-Hans"
+  ],
+  "providers": [
+    "subhd"
+  ]
+}

@@ -7,6 +7,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { selectExplicitChildTarget } from "./lib/notion-movie-target.mjs";
+import { assertEpisodeTargetIsEmpty } from "./lib/notion-series-target.mjs";
 import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
 import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
 
@@ -27,11 +29,14 @@ function parseArgs() {
     specTitle: "",
     partMiB: DEFAULT_PART_MIB,
     maxFiles: Infinity,
+    episodeFrom: undefined,
+    episodeTo: undefined,
     create: false,
     createSpec: false,
     createEpisodes: false,
     apply: false,
     prepareOnly: false,
+    replaceExistingVideo: false,
     allowCollections: false,
     resolveIp: "",
     localAddress: ""
@@ -55,11 +60,14 @@ function parseArgs() {
     else if (arg === "--spec-title") options.specTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--max-files") options.maxFiles = Number(args[++index]);
+    else if (arg === "--episode-from") options.episodeFrom = Number(args[++index]);
+    else if (arg === "--episode-to") options.episodeTo = Number(args[++index]);
     else if (arg === "--create") options.create = true;
     else if (arg === "--create-spec") options.createSpec = true;
     else if (arg === "--create-episodes") options.createEpisodes = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--prepare-only") options.prepareOnly = true;
+    else if (arg === "--replace-existing-video") options.replaceExistingVideo = true;
     else if (arg === "--allow-collections") options.allowCollections = true;
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
@@ -78,6 +86,15 @@ function parseArgs() {
     throw new Error("--spec-title requires --target-spec-page-id or --create-spec; refusing implicit spec-page selection.");
   }
   if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
+  if (options.episodeFrom != null && (!Number.isInteger(options.episodeFrom) || options.episodeFrom < 1)) {
+    throw new Error("--episode-from must be a positive integer.");
+  }
+  if (options.episodeTo != null && (!Number.isInteger(options.episodeTo) || options.episodeTo < 1)) {
+    throw new Error("--episode-to must be a positive integer.");
+  }
+  if (options.episodeFrom != null && options.episodeTo != null && options.episodeTo < options.episodeFrom) {
+    throw new Error("--episode-to must be greater than or equal to --episode-from.");
+  }
   return options;
 }
 
@@ -95,10 +112,15 @@ Examples:
 
 Options:
   --prepare-only  Create/reuse the spec and Episode page structure before long encode or upload, then skip file uploads.
+  --replace-existing-video
+                  Append the new uploaded video first, then delete existing episode video blocks only after the append succeeds.
   --create-spec   With --spec-title, create/reuse that exact spec page instead of renaming the first existing spec.
                   When uploading into an existing spec, prefer --target-spec-page-id for an exact destination.
   --allow-collections
                   Explicitly permit multi-episode files and /合集 spec titles. Single-episode delivery is the default.
+  --episode-from <number>
+  --episode-to <number>
+                  Select an inclusive single-episode range, useful when resuming a partially uploaded season.
   --resolve-ip <ip>
                   Explicit api.notion.com DNS fallback; hostname routing is the default.
   --local-address <ip>
@@ -221,6 +243,8 @@ export function episodeRange(fileName) {
   }
   const match =
     fileName.match(/S\d+E(\d+)/i) ??
+    // Some older complete-season releases use S0401 for S04E01.
+    fileName.match(/S\d{2}(\d{2,3})(?=[._\s-]|$)/i) ??
     fileName.match(/E(?:pisode)?\s*(\d+)/i) ??
     fileName.match(/\[(\d{1,3})[)\]]/) ??
     baseName.match(/(?:^|[-_\s])(?:ep(?:isode)?[-_\s]*)?(\d{1,3})$/i) ??
@@ -248,20 +272,15 @@ export function validateCollectionOptIn(files, specTitle, allowCollections = fal
   return true;
 }
 
-function specLabelFromFiles(files) {
-  const labels = new Set();
-  for (const file of files) {
-    const normalized = file.name.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    if (normalized.includes("chschteng") || normalized.includes("chtchseng")) labels.add("繁简英");
-    else if (normalized.includes("chscht") || normalized.includes("chtchs")) labels.add("繁简");
-    else if (normalized.includes("chseng")) labels.add("简英");
-    else if (normalized.includes("chteng")) labels.add("繁英");
-    else if (normalized.includes("chs")) labels.add("简");
-    else if (normalized.includes("cht")) labels.add("繁");
-  }
-  if (labels.size === 1) return [...labels][0];
-  if (labels.size > 1) return [...labels].join("/");
-  return "";
+export function filterEpisodeRange(files, episodeFrom, episodeTo) {
+  return files.filter((file) => {
+    const start = Number(file.episode);
+    const end = Number(file.episodeEnd ?? file.episode);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) return false;
+    if (episodeFrom != null && start < episodeFrom) return false;
+    if (episodeTo != null && end > episodeTo) return false;
+    return true;
+  });
 }
 
 function collectSourceFiles(options) {
@@ -383,11 +402,6 @@ async function findSpecPage(notion, pageId, options) {
     return { id: "(dry-run)", title: options.specTitle || "待制作" };
   }
 
-  if (options.targetSpecPageId) {
-    const page = await notion.pages.retrieve({ page_id: options.targetSpecPageId });
-    return { id: page.id, title: pageTitle(page) };
-  }
-
   const children = await listChildren(notion, pageId);
   const calloutSpecPages = [];
   for (const callout of children.filter((block) => block.type === "callout")) {
@@ -397,12 +411,18 @@ async function findSpecPage(notion, pageId, options) {
 
   const rootSpecPages = children.filter((block) => block.type === "child_page");
   const allSpecPages = [...calloutSpecPages, ...rootSpecPages];
+  if (options.targetSpecPageId) {
+    return selectExplicitChildTarget(
+      allSpecPages.map((block) => ({ id: block.id, title: blockTitle(block) })),
+      options.targetSpecPageId,
+      "requested series page"
+    );
+  }
   if (options.createSpec) {
     if (!options.specTitle) throw new Error("--create-spec requires --spec-title.");
     const exactSpec = allSpecPages.find((block) => blockTitle(block) === options.specTitle);
     if (exactSpec) return { id: exactSpec.id, title: blockTitle(exactSpec) };
-    if (options.create) return await ensureChildPage(notion, pageId, options.specTitle, options.apply);
-    throw new Error(`Spec page not found for --spec-title: ${options.specTitle}`);
+    return await ensureChildPage(notion, pageId, options.specTitle, options.apply);
   }
 
   if (calloutSpecPages.length > 0) return { id: calloutSpecPages[0].id, title: blockTitle(calloutSpecPages[0]) };
@@ -515,16 +535,16 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
     sentParts: 0
   };
 
-  if (record.status === "uploaded" && record.fileUploadId) {
-    console.log(`reuse uploaded ${file.name} ${record.fileUploadId}`);
-    return record.fileUploadId;
-  }
-
   if (record.fileUploadId && isExpired(record)) {
     console.log(`discard expired upload ${file.name} ${record.fileUploadId}`);
     record = { filename: file.name, size: file.size, sentParts: 0 };
     manifest.uploads[file.name] = record;
     writeManifest(manifestPath, manifest);
+  }
+
+  if (record.status === "uploaded" && record.fileUploadId) {
+    console.log(`reuse uploaded ${file.name} ${record.fileUploadId}`);
+    return record.fileUploadId;
   }
 
   if (!record.fileUploadId) {
@@ -595,15 +615,19 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
   return record.fileUploadId;
 }
 
-async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply) {
+async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply, replaceExistingVideo = false) {
   const existing = await listChildren(notion, episodePage.id);
   const comparable = comparableName(file.name);
   if (existing.some((block) => block.type === "video" && comparableName(blockTitle(block)).includes(comparable))) {
     console.log(`video block already exists: ${episodePage.title} ${file.name}`);
     return;
   }
+  const existingVideos = existing.filter((block) => block.type === "video");
+  if (!replaceExistingVideo) {
+    assertEpisodeTargetIsEmpty({ id: episodePage.id, videoCount: existingVideos.length });
+  }
 
-  console.log(`${apply ? "append" : "would append"} ${file.name} to ${episodePage.title}`);
+  console.log(`${apply ? "append" : "would append"} ${file.name} to ${episodePage.title}${replaceExistingVideo ? `, then replace ${existingVideos.length} old video block(s)` : ""}`);
   if (!apply) return;
   await notion.blocks.children.append({
     block_id: episodePage.id,
@@ -618,6 +642,26 @@ async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply
       }
     ]
   });
+  if (replaceExistingVideo) {
+    for (const block of existingVideos) {
+      await notion.blocks.delete({ block_id: block.id });
+      console.log(`deleted replaced video block ${block.id} from ${episodePage.title}`);
+    }
+  }
+}
+
+async function assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, replaceExistingVideo = false) {
+  for (const file of selectedFiles) {
+    const episodePage = episodePages.get(episodeRangeKey(file.episode, file.episodeEnd));
+    if (!episodePage) throw new Error(`Missing episode target for ${file.name}`);
+    const blocks = await listChildren(notion, episodePage.id);
+    if (!replaceExistingVideo) {
+      assertEpisodeTargetIsEmpty({
+        id: episodePage.id,
+        videoCount: blocks.filter((block) => block.type === "video").length
+      });
+    }
+  }
 }
 
 async function main() {
@@ -626,13 +670,19 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
-  const files = collectSourceFiles(options);
+  const files = filterEpisodeRange(
+    collectSourceFiles(options),
+    options.episodeFrom,
+    options.episodeTo
+  );
   if (files.length === 0) throw new Error(`No matching files found: ${path.join(options.sourceDir, options.filePattern)}`);
   const selectedFiles = files.slice(0, options.maxFiles);
   validateCollectionOptIn(selectedFiles, options.specTitle, options.allowCollections);
-  for (const file of selectedFiles) {
-    const qc = probePlayableUpload(file.path);
-    console.log(`upload probe: ${file.name} ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
+  if (!options.prepareOnly) {
+    for (const file of selectedFiles) {
+      const qc = probePlayableUpload(file.path);
+      console.log(`upload probe: ${file.name} ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
+    }
   }
   const notion = createNotionClient(token, options.localAddress);
   const library = options.create ? await findLibrary(notion) : undefined;
@@ -641,7 +691,9 @@ async function main() {
     : await createSeriesPage(notion, library, options);
   const specPage = await findSpecPage(notion, page.id, options);
   let episodePages = specPage.id === "(dry-run)" ? new Map() : await collectEpisodePages(notion, specPage.id);
-  const specTitle = options.specTitle || specLabelFromFiles(files) || specPage.title;
+  // Filename tags are hints only. They must not rename a prepared spec because
+  // burned-in subtitle language can differ from tags inherited from a source.
+  const specTitle = options.specTitle || specPage.title;
   validateSeriesSpecTitle(specTitle);
   episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes);
 
@@ -669,6 +721,8 @@ async function main() {
     return;
   }
 
+  await assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, options.replaceExistingVideo);
+
   const manifestPath = path.join(".local-data", `notion-series-video-upload-${page.id.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
   for (const file of selectedFiles) {
@@ -678,7 +732,8 @@ async function main() {
       episodePages.get(episodeRangeKey(file.episode, file.episodeEnd)),
       file,
       fileUploadId,
-      options.apply
+      options.apply,
+      options.replaceExistingVideo
     );
   }
   console.log(`manifest written: ${manifestPath}`);

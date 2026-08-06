@@ -4,6 +4,26 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pageRow, searchTerms } from "./notion-work-identity-preflight.mjs";
+
+test("searchTerms keeps title aliases and external IDs within the bounded lookup set", () => {
+  const terms = searchTerms({ title: "Title", aliases: ["Alias"], imdbId: "tt123" });
+  assert.deepEqual(terms, ["Title", "Alias", "tt123"]);
+});
+
+test("pageRow retains structured identity fields from a searched work page", () => {
+  const row = pageRow({
+    id: "work-1",
+    properties: {
+      Name: { type: "title", title: [{ plain_text: "银河英雄传说 Die Neue These (2018)" }] },
+      "Release Year": { type: "number", number: 2018 },
+      "IMDb ID": { type: "rich_text", rich_text: [{ plain_text: "tt7407236" }] }
+    }
+  });
+  assert.equal(row.pageId, "work-1");
+  assert.equal(row.year, 2018);
+  assert.equal(row.imdbId, "tt7407236");
+});
 
 test("preflight blocks a legacy-title duplicate from a local snapshot", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-work-preflight-"));

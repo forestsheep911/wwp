@@ -16,7 +16,8 @@ export const PUBLICATION_STATES = Object.freeze([
   "upload_seen",
   "assets_pending",
   "verification_pending",
-  "sync_ready"
+  "sync_ready",
+  "cancelled"
 ]);
 
 export const WORKFLOW_HANDOFF_STATES = Object.freeze([
@@ -45,7 +46,9 @@ const workflowHandoffTransitions = Object.freeze({
   "已上传待 AI 收尾": ["AI 处理中", "待人工上传", "暂缓"],
   "待人工确认": ["已确认待 AI 发布", "待 AI 处理", "暂缓"],
   "已确认待 AI 发布": ["AI 处理中", "暂缓"],
-  "已完成": ["待 AI 处理"],
+  // A completed work can gain a distinct supplementary specification, such as
+  // a newly prepared regional dub that now needs a human upload.
+  "已完成": ["待 AI 处理", "待人工上传"],
   "暂缓": ["待 AI 处理"]
 });
 
@@ -62,13 +65,16 @@ const productionTransitions = Object.freeze({
 });
 
 const publicationTransitions = Object.freeze({
-  not_ready: ["structure_pending"],
-  structure_pending: ["upload_pending"],
-  upload_pending: ["upload_seen"],
-  upload_seen: ["assets_pending"],
-  assets_pending: ["verification_pending"],
-  verification_pending: ["sync_ready", "assets_pending", "structure_pending"],
-  sync_ready: []
+  not_ready: ["structure_pending", "cancelled"],
+  structure_pending: ["upload_pending", "cancelled"],
+  upload_pending: ["upload_seen", "cancelled"],
+  upload_seen: ["assets_pending", "cancelled"],
+  assets_pending: ["verification_pending", "cancelled"],
+  verification_pending: ["sync_ready", "assets_pending", "structure_pending", "cancelled"],
+  // A repaired/replaced Notion media block must repeat exact readback before it
+  // can retain sync_ready, even when it belongs to an already released variant.
+  sync_ready: ["structure_pending"],
+  cancelled: []
 });
 
 function assertTransition(kind, transitions, from, to) {

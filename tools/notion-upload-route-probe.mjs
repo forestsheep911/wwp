@@ -3,8 +3,10 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
 
 const DEFAULT_PART_MIB = 20;
 const CLASH_PIPE = "\\\\.\\pipe\\verge-mihomo";
@@ -26,10 +28,12 @@ function parseArgs(argv) {
     maxRestarts: 0,
     report: ".local-data/notion-upload-route-probe.json",
     complete: false,
-    noResolveOverride: false
+    noResolveOverride: false,
+    resolveIp: "",
+    localAddress: ""
   };
   const valueArgs = new Set([
-    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report"
+    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report", "--resolve-ip", "--local-address"
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -42,6 +46,8 @@ function parseArgs(argv) {
       else if (arg === "--slow-seconds") options.slowSeconds = Number(value);
       else if (arg === "--max-restarts") options.maxRestarts = Number(value);
       else if (arg === "--report") options.report = path.resolve(value);
+      else if (arg === "--resolve-ip") options.resolveIp = value;
+      else if (arg === "--local-address") options.localAddress = value;
     } else if (arg === "--complete") {
       options.complete = true;
     } else if (arg === "--no-resolve-override") {
@@ -57,6 +63,8 @@ Options:
   --max-restarts <n>   Maximum connection restarts per part
   --no-resolve-override
                         Keep api.notion.com as a hostname so Clash domain rules can match
+  --resolve-ip <ip>     Override api.notion.com DNS for a direct-route probe
+  --local-address <ip>  Bind the direct probe to a physical local interface
   --complete           Complete the unattached FileUpload after all parts are sent
   --report <path>      JSON report path
 `);
@@ -207,14 +215,20 @@ async function main() {
   const token = process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN;
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
   if (!fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);
-  if (!options.noResolveOverride) installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
+  const resolveIp = options.noResolveOverride ? "" : (options.resolveIp || process.env.NOTION_API_RESOLVE_IP || "");
+  if (resolveIp) installNotionDnsOverride(resolveIp);
 
   const stat = fs.statSync(options.file);
   const partBytes = Math.floor(options.partMiB) * 1024 * 1024;
   const availableParts = Math.ceil(stat.size / partBytes);
   const partCount = Math.min(options.parts, availableParts);
   const filename = `notion-route-probe-${new Date().toISOString().replaceAll(/[:.]/gu, "-")}.mp4`;
-  const notion = new Client({ auth: token, timeoutMs: 600000 });
+  const notionOptions = { auth: token, timeoutMs: 600000 };
+  if (options.localAddress) {
+    notionOptions.fetch = nodeFetch;
+    notionOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
+  }
+  const notion = new Client(notionOptions);
   const upload = await notion.fileUploads.create({
     mode: "multi_part",
     filename,
@@ -233,7 +247,8 @@ async function main() {
     partCount,
     slowSeconds: options.slowSeconds,
     maxRestarts: options.maxRestarts,
-    resolveOverride: options.noResolveOverride ? null : process.env.NOTION_API_RESOLVE_IP,
+    resolveOverride: resolveIp || null,
+    localAddress: options.localAddress || null,
     attempts: [],
     status: "pending"
   };

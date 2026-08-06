@@ -60,7 +60,9 @@ test("scan-input-directory includes media files placed directly under the input 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(payload.entries.length, 1);
-    assert.equal(payload.entries[0].name, "The.Match.2025.1080p.WEB-DL");
+    assert.equal(payload.entries[0].name, "the.match.2025");
+    assert.equal(payload.entries[0].relativePath, "@flat/the.match.2025");
+    assert.equal(payload.entries[0].absolutePath, root);
     assert.equal(payload.entries[0].mediaCount, 1);
     assert.equal(payload.entries[0].subtitleCount, 1);
   } finally {

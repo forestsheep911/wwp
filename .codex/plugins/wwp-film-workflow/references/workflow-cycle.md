@@ -2,7 +2,7 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
-## Stable Contract (0.1.20)
+## Stable Contract (0.1.25)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as
@@ -15,6 +15,13 @@ moved by the API. Automatic upload is the normal route after a direct-route
 probe; manual upload is an explicit, bounded fallback coordinated through
 `Workflow Status` and `Workflow Note`, never through page timestamps.
 
+For exact pages already handed off for a manual tree move, a changed Notion
+`last_edited_time` is a **recheck trigger**, not completion proof. The next
+bounded cycle must retrieve that recorded page and inspect the expected
+spec -> Episode -> media topology even if the user did not change Workflow
+Status or append a Workflow Note. Continue only when the structural audit and
+media evidence pass; do not infer a completed upload from the timestamp alone.
+
 No item exits the workflow merely because encoding, upload, or a Media Assets
 write succeeded. A playable item exits only after structure, media block,
 ffprobe-backed Media Assets, ledger `sync_ready`, parent release, website sync,
@@ -22,10 +29,20 @@ and live readback all pass. Only then is the output moved to the external
 `E:\\待人工删除` quarantine directory. Metadata completion is reported
 separately and may finish before playable production.
 
-The 0.1.20 production decision is explicit: automatic Notion upload is the
+The 0.1.23 production decision is explicit: automatic Notion upload is the
 default after a direct-route probe; a series is published as one file per
 Episode page; multi-episode collections are allowed only after a special user
-instruction. These are workflow defaults, not page-layout requirements.
+instruction. Worthwhile subtitle-dependent sources without verified Chinese
+subtitles enter a bounded provider-acquisition handoff instead of being silently
+discarded. These are workflow defaults, not page-layout requirements.
+
+A verified Mandarin-dubbed (`国配`) playable is not subtitle-dependent. Missing
+Chinese subtitles on that Mandarin branch are a non-blocking future enhancement:
+the branch may be encoded, published, released, and marked complete after the
+normal media/QC/readback gates. Record one concise limitation note and keep any
+later subtitle search separate. A foreign-original-audio branch without usable
+Chinese subtitles remains subtitle-dependent and continues through the bounded
+subtitle-acquisition/deferred route.
 
 ## Work Areas and Queues
 
@@ -34,12 +51,13 @@ handling and cleanup are recorded as intake follow-up rather than as a separate
 high-frequency queue. Every cycle checks these areas in order, using a small batch
 and the local SQLite ledger:
 
-1. **Collaboration handoff**: query only actionable `Workflow Status` values, mirror them into SQLite, and claim at most three. This is the explicit replacement for inferring manual-upload completion from timestamps.
+1. **Collaboration handoff**: query only actionable `Workflow Status` values, mirror them into SQLite, and claim at most three. Separately, recheck up to three exact ledger-recorded pages that have an unresolved AI move/upload handoff when their Notion edit time or child topology changed. The recheck is evidence gathering, not an implicit claim or release.
 2. **Intake**: scan every enabled input root, import new or changed sources, identify the work, check duplicate aliases, and bind or defer the source.
 3. **Catalog maintenance**: create or reuse the work page, then backfill missing or stale work-level metadata for newly identified works and selected older works. This includes canonical title/identity, poster and external IDs, ratings fallbacks, AI advisory fields, `Needs Review`, `AI Issue`, `Human Issue`, and `Last AI Check Time`. This lane is independent of playable media and may finish before any spec exists.
-4. **Production**: evaluate source quality, Chinese subtitle evidence, audio/language choices, value, and risk; prepare destination pages before encoding. Directory-scan subtitle counts cover external files only, so zero sidecars means internal streams are still unprobed rather than proving Chinese subtitles are absent.
+4. **Production**: evaluate source quality, Chinese subtitle evidence, audio/language choices, value, and risk; prepare destination pages before encoding. The production queue has two explicit kinds: `source_selection` for a bound, usable source that has no selected variant yet, and `variant` for an already selected spec. Only enabled input roots participate; synthetic `@flat/...` output indexes and works explicitly marked `暂缓` or `已完成` do not re-enter automatically. A zero production queue means both kinds were checked and are empty; it must never mean only that no variant exists. Directory-scan subtitle counts cover external files only, so zero sidecars means internal streams are still unprobed rather than proving Chinese subtitles are absent. After probing and hard-sub inspection, route a worthwhile subtitle-dependent source with no verified Chinese subtitle through the bounded `wwp-subtitle-acquirer` handoff; keep it waiting/deferred without blocking metadata or other production candidates. A verified `国配` branch is not subtitle-dependent and proceeds without that handoff; record missing subtitles only as optional enrichment.
 5. **Publication**: reconcile only bounded exact targets for upload, page structure, Media Assets, and website-sync readiness. Prepare exact destination pages first. Probe final files and enforce browser-compatible stream tags before Notion access, prefer resumable automatic upload after a route probe, retry only the same failed part with bounded backoff, and use manual upload only as a recorded fallback. A root-level or unverified media block remains a publication issue, not an intake or metadata issue.
 6. **Source/archive maintenance**: keep source-only/original-disc records, manual-upload handoffs, retention decisions, and safe deletion candidates aligned with the ledger and verified Notion state. Do not delete merely because a file is old.
+7. **Local cleanup**: inspect both completed playable outputs and their bound source inputs every cycle. Notion status alone never makes the workflow idle: enabled input roots with unselected/unfinished sources remain a continuation condition. A playable output is cleanup-eligible only after its ledger file size and `sync_ready` state agree. A source is cleanup-eligible only when every linked variant is `sync_ready` or terminally cancelled, no variant is encoding/upload-pending, and the source still exists. Report candidates first, then move approved files or directories to the same-volume `待人工删除` directory; never final-delete as part of a normal cycle.
 
 ## Cycle start
 
@@ -64,6 +82,20 @@ new-resource intake and catalog maintenance while an encode, manual upload, or
 Notion reconciliation is waiting. A zero count means that lane was checked and
 currently has no due item; it does not remove the lane from the next cycle report.
 
+After a targeted Notion repair or Media Assets correction, refresh the affected
+work in the local website search index by exact page ID or exact title. Do not
+wait for an unrelated page edit or use a full-library sync as the default repair.
+For legacy media with no final stream probe, an attached Notion block is
+structure evidence only, not playback proof; a user-reported iOS/system decoder
+failure makes replacement and a visibility review due immediately.
+When every asset in an exact affected delivery is confirmed incompatible, hide
+only that delivery through `notion-media-assets-set-visibility.mjs`: pass the
+work page plus every recorded spec/episode source-page ID, inspect its dry-run,
+then apply only if the source-set guard matches exactly. Hide the work and mark
+it `Needs Review` while no playable replacement remains. A repaired file is not
+released merely because it uploads: require final `hvc1`/AAC QC, Media Assets
+readback, and a targeted website-index refresh before un-hiding it.
+
 At the beginning of each cycle, the agent may use the ledger's bounded cycle
 dashboard. It refreshes only due local intake reviews and catalog reviews; it does
 not query Notion:
@@ -73,7 +105,7 @@ node tools/notion-workflow-handoff.mjs scan --limit 3 --json
 node tools/film-ledger.mjs cycle --limit 3 --json
 ```
 
-The first command queries only `待 AI 处理`, `已上传待 AI 收尾`, and `已确认待 AI 发布`. It does not scan recently edited pages or inspect media trees until a work is claimed.
+The first command queries only `待 AI 处理`, `已上传待 AI 收尾`, and `已确认待 AI 发布`. It does not perform a broad recent-edit scan. For an existing exact manual-move handoff, the cycle additionally retrieves the recorded target page in a bounded recheck and runs `notion-series-structure-audit.mjs`; a timestamp change merely selects that exact page for inspection.
 
 The cycle reopens deferred intake tasks whose `next_run_at` has arrived, just as
 it reopens due metadata reviews. A deferred source therefore remains in the
@@ -89,6 +121,7 @@ node tools/film-ledger.mjs queue --stage intake --limit 3 --json
 node tools/film-ledger.mjs queue --stage metadata --limit 3 --json
 node tools/film-ledger.mjs queue --stage production --limit 5 --json
 node tools/film-ledger.mjs queue --stage publication --limit 3 --json
+node tools/film-ledger.mjs queue --stage cleanup --limit 20 --json
 ```
 
 `metadata` and `catalog` are aliases for the catalog-maintenance lane. This lane
@@ -115,6 +148,7 @@ playable file, and no Media Assets.
 
 - After intake, preserve the source record even when production is deferred or rejected.
 - When an existing QC or `sync_ready` variant clearly came from a bound source but its legacy `source_id` is empty, repair the same-work link with `attach-variant-source` after verifying the exact work, source, output, and target evidence. Do not treat a missing link as proof that the source still needs production.
+- Treat the JSON object returned by `select-variant` as the sole authority for the new variant ID. Capture its `id` and pass that exact value to `start-production`, `record-qc`, `register-target`, and `reconcile-notion`; never infer an ID from the prior record because concurrent work can allocate intervening IDs.
 - A `deferred` production item is retained for reporting but is not a current
   production candidate. It re-enters selection only when its recorded
   `next_review_at` is due or an explicit human retry reopens it.

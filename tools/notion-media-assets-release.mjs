@@ -1,14 +1,19 @@
 import dns from "node:dns";
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
+import { pendingHumanWorkflowNoteFromPage } from "./lib/notion-workflow-handoff.mjs";
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     manifestPath: "",
     reportPath: ".local-data/notion-media-assets-release.json",
     resolveIp: "",
+    localAddress: "",
+    releaseWorkPageId: "",
     apply: false
   };
 
@@ -19,6 +24,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     if (name === "--manifest") options.manifestPath = value();
     else if (name === "--report") options.reportPath = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
+    else if (name === "--release-work-page") options.releaseWorkPageId = value();
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -41,7 +48,14 @@ The manifest must identify every Media Assets page and its expected Work, source
 page, media block, episode, resolution, codec, container, and decimal-GB size.
 Use an integer expectedEpisodeNumber for series assets and explicit null for movies.
 Dry-run is the default. Apply clears only the asset row's Hide from Website field
-after all evidence matches and verifies the updated row by direct readback.`);
+after all evidence matches and verifies the updated row by direct readback.
+
+Network workaround:
+  --resolve-ip <api-ip> --local-address <lan-ip>
+
+Use --release-work-page only after every manifest item has passed its exact
+Media Assets readback. It releases the matching work page after confirming all
+items belong to that page and the work has no Human Issue.`);
 }
 
 function dotenv(name) {
@@ -83,6 +97,22 @@ function propertyText(property) {
 
 function normalized(value) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function sameNotionId(left, right) {
+  return normalized(left).replaceAll("-", "") === normalized(right).replaceAll("-", "");
+}
+
+function releaseWorkPatch(page) {
+  const properties = page.properties ?? {};
+  if (pendingHumanWorkflowNoteFromPage(page)) {
+    throw new Error("Refusing to release work page with an unacknowledged human Workflow Note.");
+  }
+  const patch = {};
+  if (properties["Hide from Website"]?.type === "checkbox") patch["Hide from Website"] = { checkbox: false };
+  if (properties["Needs Review"]?.type === "checkbox") patch["Needs Review"] = { checkbox: false };
+  if (properties["Media Availability"]?.type === "select") patch["Media Availability"] = { select: { name: "playable" } };
+  return patch;
 }
 
 function required(item, name) {
@@ -133,20 +163,23 @@ export function validateReleaseCandidate(page, item) {
     approximateSizeGb: properties["Approx Size GB"]?.number
   };
 
-  if (page.id !== pageId) failures.push(`page id ${page.id} != ${pageId}`);
+  if (!sameNotionId(page.id, pageId)) failures.push(`page id ${page.id} != ${pageId}`);
   if (page.archived || page.in_trash) failures.push("page is archived or in trash");
-  if (!workIds.includes(expected.workPageId)) failures.push("Work relation mismatch");
+  if (!workIds.some(id => sameNotionId(id, expected.workPageId))) failures.push("Work relation mismatch");
   if (actual.assetType !== "playable_video") failures.push("Asset Type is not playable_video");
   if (actual.availability !== "playable") failures.push("Media Availability is not playable");
   if (actual.playbackVerified !== true) failures.push("Playback Verified is not true");
-  if (actual.sourcePageId !== expected.sourcePageId) failures.push("Source Page ID mismatch");
-  if (actual.mediaBlockId !== expected.mediaBlockId) failures.push("Media Block ID mismatch");
+  if (!sameNotionId(actual.sourcePageId, expected.sourcePageId)) failures.push("Source Page ID mismatch");
+  if (!sameNotionId(actual.mediaBlockId, expected.mediaBlockId)) failures.push("Media Block ID mismatch");
   if (actual.episodeNumber !== expected.episodeNumber) failures.push("Episode Number mismatch");
   if (normalized(actual.resolution) !== normalized(expected.resolution)) failures.push("Resolution mismatch");
   if (normalized(actual.videoCodec) !== normalized(expected.videoCodec)) failures.push("Video Codec mismatch");
   if (normalized(actual.container) !== normalized(expected.container)) failures.push("Container mismatch");
+  // Approx Size GB is a display-scale value. The writer stores one decimal,
+  // while release manifests preserve two-decimal source measurements. Permit
+  // one one-decimal rounding increment, but still reject a real file-size gap.
   if (!Number.isFinite(actual.approximateSizeGb)
-    || Math.abs(actual.approximateSizeGb - expected.approximateSizeGb) > 0.001) {
+    || Math.abs(actual.approximateSizeGb - expected.approximateSizeGb) > 0.051) {
     failures.push("Approx Size GB mismatch");
   }
   if (typeof actual.hidden !== "boolean") failures.push("Hide from Website is missing");
@@ -177,7 +210,13 @@ async function main() {
   installNotionDnsOverride(options.resolveIp);
   const auth = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN") || dotenv("NOTION_API_KEY");
   if (!auth) throw new Error("NOTION_WRITE_TOKEN, NOTION_TOKEN, or NOTION_API_KEY is required.");
-  const notion = new Client({ auth, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) });
+  const clientOptions = { auth, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  if (options.localAddress) {
+    clientOptions.fetch = nodeFetch;
+    clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
+    console.log(`direct local address: ${options.localAddress}`);
+  }
+  const notion = new Client(clientOptions);
   const actions = [];
 
   for (const item of manifest.items) {
@@ -213,11 +252,35 @@ async function main() {
     alreadyReleased: actions.filter((item) => item.action === "already_released").length,
     blocked: actions.filter((item) => item.action === "blocked").length
   };
+  let workRelease;
+  if (options.releaseWorkPageId) {
+    const expectedWorkIds = [...new Set(manifest.items.map((item) => normalized(item.expectedWorkPageId).replaceAll("-", "")))];
+    if (expectedWorkIds.length !== 1 || !sameNotionId(expectedWorkIds[0], options.releaseWorkPageId)) {
+      throw new Error("--release-work-page must exactly match the sole expected Work page in the manifest.");
+    }
+    if (summary.blocked > 0 || summary.wouldRelease > 0) {
+      throw new Error("Refusing to release work page before every Media Asset is fully released.");
+    }
+    const work = await notion.pages.retrieve({ page_id: options.releaseWorkPageId });
+    const patch = releaseWorkPatch(work);
+    if (options.apply && Object.keys(patch).length > 0) {
+      await notion.pages.update({ page_id: work.id, properties: patch });
+      const readback = await notion.pages.retrieve({ page_id: work.id });
+      const readbackProperties = readback.properties ?? {};
+      if (readbackProperties["Hide from Website"]?.checkbox !== false
+        || readbackProperties["Needs Review"]?.checkbox !== false
+        || readbackProperties["Media Availability"]?.select?.name !== "playable") {
+        throw new Error("Work page release readback failed.");
+      }
+    }
+    workRelease = { pageId: work.id, action: options.apply ? "released" : "would_release" };
+  }
   const report = {
     generatedAt: new Date().toISOString(),
     mode: options.apply ? "apply" : "dry-run",
     manifestPath: options.manifestPath,
     summary,
+    workRelease,
     actions
   };
   fs.mkdirSync(path.dirname(path.resolve(options.reportPath)), { recursive: true });

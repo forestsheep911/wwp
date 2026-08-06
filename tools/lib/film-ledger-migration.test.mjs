@@ -201,6 +201,7 @@ test("production manifests preserve audio and subtitle variants in the ledger", 
       outputSpec: "国配 4.79GB",
       workPageId: "work-page",
       targetSpecPageId: "spec-page",
+      mediaBlockId: "media-block",
       audioVariant: "mandarin",
       subtitleVariant: "traditional_english_burned"
     });
@@ -208,6 +209,7 @@ test("production manifests preserve audio and subtitle variants in the ledger", 
     assert.equal(result.status, "imported");
     assert.equal(variant.audio_variant, "mandarin");
     assert.equal(variant.subtitle_variant, "traditional_english_burned");
+    assert.equal(f.db.prepare("SELECT media_block_id FROM notion_targets WHERE variant_id=?").get(variant.id).media_block_id, "media-block");
   } finally { f.close(); }
 });
 

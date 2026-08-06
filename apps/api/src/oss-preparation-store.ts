@@ -21,17 +21,28 @@ export interface OssPreparationJob {
   taskId: string;
   status: OssPreparationStatus;
   progress: number;
+  progressDeterminate?: boolean;
   message: string;
   expectedBytes?: number;
+  transferredBytes?: number;
+  partCount?: number;
+  lastProgressAt?: string;
   contentLength?: number;
   contentType?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  lastPlayedAt?: string;
+  expiresAt?: string;
+  cleanupClaimedAt?: string;
+  cleanupClaimToken?: string;
 }
 
-export type PublicOssPreparationJob = Omit<OssPreparationJob, "sourceUrl">;
+export type PublicOssPreparationJob = Omit<
+  OssPreparationJob,
+  "sourceUrl" | "cleanupClaimedAt" | "cleanupClaimToken"
+>;
 
 interface StoreOptions {
   backend?: "local" | "azure";
@@ -48,8 +59,24 @@ interface LocalState {
 const partitionKey = "oss-prepare";
 const renameRetryDelaysMs = [10, 25, 50, 100, 250];
 
-function publicJob({ sourceUrl: _sourceUrl, ...job }: OssPreparationJob): PublicOssPreparationJob {
+function publicJob({
+  sourceUrl: _sourceUrl,
+  cleanupClaimedAt: _cleanupClaimedAt,
+  cleanupClaimToken: _cleanupClaimToken,
+  ...job
+}: OssPreparationJob): PublicOssPreparationJob {
   return job;
+}
+
+function isPreconditionFailure(error: unknown) {
+  return (error as { statusCode?: number }).statusCode === 412;
+}
+
+export class OssPreparationCleanupClaimedError extends Error {
+  constructor() {
+    super("OSS preparation is being cleaned up.");
+    this.name = "OssPreparationCleanupClaimedError";
+  }
 }
 
 export class OssPreparationStore {
@@ -136,8 +163,60 @@ export class OssPreparationStore {
       assetKey: job.assetKey,
       status: job.status,
       createdAt: job.createdAt,
+      ...(job.lastPlayedAt ? { lastPlayedAt: job.lastPlayedAt } : {}),
+      ...(job.expiresAt ? { expiresAt: job.expiresAt } : {}),
+      ...(job.cleanupClaimedAt ? { cleanupClaimedAt: job.cleanupClaimedAt } : {}),
+      ...(job.cleanupClaimToken ? { cleanupClaimToken: job.cleanupClaimToken } : {}),
       payload: JSON.stringify(job)
     }, "Replace");
+  }
+
+  async markPlayed(id: string, playedAt: string, expiresAt: string) {
+    if (!this.table) {
+      let updated: OssPreparationJob | undefined;
+      const mutation = this.localMutationTail.then(async () => {
+        const state = await this.readLocal();
+        const job = state.jobs[id];
+        if (!job) return;
+        if (job.cleanupClaimedAt) throw new OssPreparationCleanupClaimedError();
+        updated = { ...job, lastPlayedAt: playedAt, expiresAt };
+        state.jobs[id] = updated;
+        await this.writeLocal(state);
+      });
+      this.localMutationTail = mutation.catch(() => undefined);
+      await mutation;
+      return updated;
+    }
+
+    await this.ensureReady();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let entity;
+      try {
+        entity = await this.table.getEntity<Record<string, unknown>>(partitionKey, id);
+      } catch (error) {
+        if ((error as { statusCode?: number }).statusCode === 404) return undefined;
+        throw error;
+      }
+      const job = JSON.parse(String(entity.payload)) as OssPreparationJob;
+      if (job.cleanupClaimedAt) throw new OssPreparationCleanupClaimedError();
+      const updated = { ...job, lastPlayedAt: playedAt, expiresAt };
+      try {
+        await this.table.updateEntity({
+          partitionKey,
+          rowKey: id,
+          assetKey: updated.assetKey,
+          status: updated.status,
+          createdAt: updated.createdAt,
+          lastPlayedAt: playedAt,
+          expiresAt,
+          payload: JSON.stringify(updated)
+        }, "Replace", { etag: entity.etag });
+        return updated;
+      } catch (error) {
+        if (!isPreconditionFailure(error) || attempt === 2) throw error;
+      }
+    }
+    return undefined;
   }
 
   async delete(id: string) {

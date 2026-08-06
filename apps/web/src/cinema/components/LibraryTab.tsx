@@ -1,11 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Database,
-  Download,
   Eye,
   Film,
   Flame,
@@ -25,6 +25,7 @@ import {
   browseInitialVisibleCount,
   browseTspdtCatalogLimit
 } from "../browse-load-policy";
+import { calculateCompositeRating } from "../composite-rating";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -46,22 +47,26 @@ import {
   formatDateTime,
   formatLongDate,
   groupEpisodeVariantsBySpec,
+  jobProgressIndeterminate,
+  jobProgressLabel,
   jobStatusLabel,
   jobVariant,
   metadataLine,
   peopleTags,
   titleInitial,
+  variantEpisodeLabel,
   variantEpisodeNumber,
   variantSpecText,
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
-import { latestVariantAsset, pendingCacheStatusLabel, trackedCacheNeedsStatusRefresh } from "../cache-flow";
+import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
+import { resultMatchesBrowseChannel } from "../browse-channel";
 import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000, type TspdtEntry } from "../tspdt";
-import { formatCreditAmount, playbackCreditCost, type BadgeVariant, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
+import { type BadgeVariant, type BrowseChannel, type BrowseViewId, type CollectionMark, type FavoriteEntry, type LibraryViewMode, type PlaybackHistoryEntry, type ResultWithCache, type TrackedCacheItem } from "../types";
 import { EmptyState } from "./EmptyState";
 import { PosterImage } from "./PosterImage";
 import { VariantSpecTags } from "./VariantSpecTags";
@@ -90,6 +95,7 @@ interface LibraryTabProps {
   onFocusedAssetHandled?: () => void;
   onToggleFavorite: (result: ResultWithCache) => void;
   onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
+  onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   detailAssetKey?: string;
   onOpenDetail: (result: ResultWithCache) => void;
@@ -125,6 +131,7 @@ export function LibraryTab({
   onFocusedAssetHandled,
   onToggleFavorite,
   onUpdateCollectionMark,
+  onBrowsePresetChange,
   onBrowseViewChange,
   detailAssetKey,
   onOpenDetail,
@@ -262,6 +269,7 @@ export function LibraryTab({
           favoriteAssetKeys={favoriteAssetKeys}
           trackedByAssetKey={trackedByAssetKey}
           browseView={browseView}
+          onBrowsePresetChange={onBrowsePresetChange}
           onBrowseViewChange={onBrowseViewChange}
           onRefreshBrowse={onRefreshBrowse}
           onOpenDetail={openDetailResult}
@@ -412,8 +420,101 @@ const movieBrowseViews: Array<{
   { id: "tspdtRank", label: copy.library.browseViews.tspdtRank.label, detail: copy.library.browseViews.tspdtRank.detail, icon: Trophy }
 ];
 
+const browseChannels: Array<{
+  id: BrowseChannel;
+  label: string;
+  icon: typeof Film;
+}> = [
+  { id: "recommended", label: "全部", icon: LayoutGrid },
+  { id: "movie", label: copy.layout.browseChannels.movie, icon: Film },
+  { id: "tv", label: copy.layout.browseChannels.tv, icon: List },
+  { id: "animation", label: copy.layout.browseChannels.animation, icon: Sparkles }
+];
+
+const rankingViews = movieBrowseViews.filter((view) => (
+  view.id === "doubanRank" ||
+  view.id === "imdbRank" ||
+  view.id === "rottenRank" ||
+  view.id === "tspdtRank"
+));
+
 function viewsForBrowseChannel(channel: BrowseChannel) {
   return channel === "movie" ? movieBrowseViews : browseViews;
+}
+
+function DesktopBrowseSidebar({
+  activeChannel,
+  activeView,
+  onBrowsePresetChange
+}: {
+  activeChannel: BrowseChannel;
+  activeView: BrowseViewId;
+  onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
+}) {
+  const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
+
+  function renderPresetButton(
+    channel: BrowseChannel,
+    view: BrowseViewId,
+    label: string,
+    detail: string,
+    Icon: typeof CalendarDays,
+    active: boolean
+  ) {
+    return (
+      <button
+        className={`group flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
+          active
+            ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/20"
+            : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+        }`}
+        key={`${channel}-${view}-${label}`}
+        type="button"
+        aria-current={active ? "page" : undefined}
+        title={detail}
+        onClick={() => onBrowsePresetChange(channel, view)}
+      >
+        <Icon className={`h-4 w-4 shrink-0 ${active ? "text-slate-950" : "text-slate-500 group-hover:text-slate-300"}`} />
+        <span className="truncate">{label}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="hidden min-w-0 self-start lg:block">
+      <aside className="sticky top-[4.75rem] min-h-[calc(100dvh-5.75rem)] min-w-0 overflow-y-auto rounded-xl border border-slate-800/90 bg-slate-950/72 p-3 shadow-2xl shadow-black/10 backdrop-blur">
+        <nav aria-label="影片快速筛选" className="grid gap-5">
+          <section className="grid gap-1">
+            <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">片库</h2>
+            {browseChannels.map((channel) => (
+              renderPresetButton(
+                channel.id,
+                "newGood",
+                channel.label,
+                channel.label,
+                channel.icon,
+                activeChannel === channel.id && !hasActiveRanking
+              )
+            ))}
+          </section>
+
+          <section className="grid gap-1 border-t border-slate-800/80 pt-4">
+            <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">榜单</h2>
+            {rankingViews.map((view) => (
+              renderPresetButton(
+                "movie",
+                view.id,
+                view.label,
+                view.detail,
+                view.icon,
+                activeChannel === "movie" && activeView === view.id
+              )
+            ))}
+          </section>
+        </nav>
+      </aside>
+    </div>
+  );
 }
 
 function LibraryHome({
@@ -430,6 +531,7 @@ function LibraryHome({
   favoriteAssetKeys,
   trackedByAssetKey,
   browseView,
+  onBrowsePresetChange,
   onBrowseViewChange,
   onRefreshBrowse,
   onOpenDetail,
@@ -451,6 +553,7 @@ function LibraryHome({
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
   browseView: BrowseViewId;
+  onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
   onOpenDetail: (result: ResultWithCache) => void;
@@ -589,11 +692,18 @@ function LibraryHome({
   }, [browseLoading, browseLoadingMore, canLoadMoreFromServer, hasMoreItems, totalVisibleItems, visibleItemCount]);
 
   return (
-    <section className="grid min-w-0 gap-4">
-      <nav
-        aria-label="首页内容排序"
-        className="scrollbar-none flex max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3 sm:hidden"
-      >
+    <section className="grid min-w-0 gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start lg:gap-6">
+      <DesktopBrowseSidebar
+        activeChannel={browseChannel}
+        activeView={activeSortView}
+        onBrowsePresetChange={onBrowsePresetChange}
+      />
+
+      <div className="grid min-w-0 gap-4">
+        <nav
+          aria-label="首页内容排序"
+          className="scrollbar-none flex max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3 sm:hidden"
+        >
         {channelViews.map((view) => {
           const Icon = view.icon;
           const active = activeSortView === view.id;
@@ -629,9 +739,9 @@ function LibraryHome({
             </Button>
           );
         })}
-      </nav>
+        </nav>
 
-      <div className="hidden max-w-full overflow-x-clip sm:block">
+      <div className="hidden max-w-full overflow-x-clip sm:block lg:hidden">
         <div className="scrollbar-none flex max-w-none flex-nowrap gap-2 overflow-x-auto overscroll-x-contain rounded-md border border-slate-800 bg-slate-950 p-1">
           {channelViews.map((view) => {
             const Icon = view.icon;
@@ -775,6 +885,7 @@ function LibraryHome({
           <EmptyState icon={<Database className="h-5 w-5" />} title={copy.library.emptyBrowse} />
         )}
       </div>
+      </div>
     </section>
   );
 }
@@ -831,7 +942,7 @@ function BrowseLoadingGrid() {
       <div className="gallery-results-grid grid gap-4">
         {Array.from({ length: 6 }).map((_, index) => (
           <article
-            className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4"
+            className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4 lg:grid-cols-1 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none"
             key={index}
           >
             <div className="aspect-[2/3] animate-pulse rounded-md bg-slate-800/70" />
@@ -846,7 +957,7 @@ function BrowseLoadingGrid() {
                 <div className="h-6 w-16 animate-pulse rounded-full bg-slate-800/60" />
               </div>
             </div>
-            <div className="col-span-2 grid min-w-0 gap-3">
+            <div className="col-span-2 grid min-w-0 gap-3 lg:hidden">
               <div className="space-y-2">
                 <div className="h-4 w-full animate-pulse rounded bg-slate-800/60" />
                 <div className="h-4 w-11/12 animate-pulse rounded bg-slate-800/50" />
@@ -1238,82 +1349,6 @@ function uniqueStrings(values: Array<string | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
-function normalizedMetadataText(result: SearchResult) {
-  const metadata = result.metadata;
-  const work = metadata?.work;
-  return [
-    result.title,
-    result.sourceBreadcrumb?.join(" "),
-    metadata?.kind,
-    work?.kind,
-    metadata?.type,
-    metadata?.ratingLevel?.join(" "),
-    metadata?.genres?.join(" "),
-    work?.genres?.join(" "),
-    metadata?.display?.title,
-    metadata?.display?.subtitle,
-    work?.display?.title,
-    work?.display?.subtitle,
-    metadata?.titles?.map((title) => title.title).join(" "),
-    work?.titles?.map((title) => title.title).join(" "),
-    metadata?.info,
-    metadata?.description,
-    metadata?.external?.omdb?.type,
-    metadata?.external?.omdb?.genres?.join(" "),
-    metadata?.external?.omdb?.plot
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function explicitBrowseKind(result: SearchResult): "movie" | "tv" | undefined {
-  const kind = result.metadata?.work?.kind ?? result.metadata?.kind;
-  if (kind === "series" || kind === "season" || kind === "episode") {
-    return "tv";
-  }
-  if (kind === "movie" || kind === "short" || kind === "special") {
-    return "movie";
-  }
-
-  const type = result.metadata?.type?.trim().toLowerCase();
-  if (!type) {
-    return undefined;
-  }
-
-  if (/\bmovie\b|\bfilm\b|电影/.test(type)) {
-    return "movie";
-  }
-
-  if (/\btv\b|\bseries\b|\bseason\b|\bshow\b|电视|电视剧|剧集|影集/.test(type)) {
-    return "tv";
-  }
-
-  return undefined;
-}
-
-function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel) {
-  if (channel === "recommended") {
-    return true;
-  }
-
-  const text = normalizedMetadataText(result);
-  if (channel === "animation") {
-    return /动画|動畫|动漫|動漫|番剧|番劇|anime|animation|animated/.test(text);
-  }
-
-  const explicitKind = explicitBrowseKind(result);
-  if (explicitKind) {
-    return channel === explicitKind;
-  }
-
-  if (channel === "tv") {
-    return /电视|电视剧|剧集|影集|tv|series|season|show/.test(text);
-  }
-
-  return /电影|movie|film/.test(text) && !/电视|电视剧|剧集|影集|tv series|series/.test(text);
-}
-
 function toTime(value?: string) {
   if (!value) {
     return 0;
@@ -1365,11 +1400,7 @@ function historyStatsByAssetKey(historyItems: PlaybackHistoryEntry[]) {
 }
 
 function numericRating(result: SearchResult) {
-  const ratings = ratingCandidates(result);
-  const values = ratings
-    .map((rating) => Number.parseFloat(rating.value.replace(/[^\d.]/g, "")))
-    .filter((value) => Number.isFinite(value));
-  return values.length ? Math.max(...values) : 0;
+  return compositeRatingForResult(result)?.score ?? 0;
 }
 
 function sourceRating(result: SearchResult, source: "douban" | "imdb" | "rotten") {
@@ -1595,6 +1626,13 @@ function displayRatings(result: SearchResult): DisplayRating[] {
       return displayRating;
     })
     .filter((rating): rating is DisplayRating => Boolean(rating));
+}
+
+function compositeRatingForResult(result: SearchResult) {
+  return calculateCompositeRating(displayRatings(result).map((rating) => ({
+    source: rating.source,
+    value: rating.value
+  })));
 }
 
 function ratingHref(result: SearchResult, source: RatingSource) {
@@ -1881,13 +1919,10 @@ function PosterActions({
 }
 
 function VariantButtons({
-  creditPolicy,
   result,
   pendingAssetKeys,
-  pendingDownloadAssetKeys,
   trackedByAssetKey,
   onSelect,
-  onDownload,
   onShowAllVariants,
   compact = false,
   variantLimit,
@@ -1974,12 +2009,12 @@ function VariantButtons({
     const displayStatus = pending
       ? pendingCacheStatusLabel()
       : tracked && tracked.job.status !== "ready"
-        ? `${jobStatusLabel(tracked.job.status)} ${tracked.job.progress}%`
+        ? `${jobStatusLabel(tracked.job.status)} ${jobProgressLabel(tracked.job)}`
         : displayAsset && displayAsset.status !== "ready"
           ? cacheLabel(displayAsset)
           : undefined;
-    const downloading = pendingDownloadAssetKeys.includes(variant.assetKey);
     const progress = tracked?.job.progress ?? 0;
+    const progressIndeterminate = tracked ? jobProgressIndeterminate(tracked.job) : false;
     const progressColor = tracked?.job.status === "failed"
       ? "bg-rose-500/22"
       : displayAsset?.status === "ready"
@@ -1990,38 +2025,22 @@ function VariantButtons({
       : tracked && tracked.job.status !== "ready"
         ? jobVariant(tracked.job.status)
         : cacheVariant(displayAsset);
-    const isActiveCacheHit = pending || trackedCacheNeedsStatusRefresh(tracked);
-    const actionLabel = displayAsset?.status === "ready"
-      ? copy.watchlist.play
-      : copy.watchlist.prepare;
-    const costLabel = creditPolicy.billingEnabled
-      ? displayAsset?.status === "ready"
-        ? formatCreditAmount(playbackCreditCost(displayAsset.media?.contentLength, creditPolicy), creditPolicy.unitSymbol)
-        : formatCreditAmount(creditPolicy.cacheCredits, creditPolicy.unitSymbol)
-      : actionLabel;
-    const costDisplayLabel = displayAsset?.status === "ready" && !isActiveCacheHit
-      ? `▶ ${costLabel}`
-      : costLabel;
-    const costBadgeClass = displayAsset?.status === "ready" && !isActiveCacheHit
-      ? "border-slate-950/25 bg-slate-950/90 px-2.5 text-slate-50 shadow-sm shadow-emerald-950/20"
-      : undefined;
 
     return (
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] gap-2 sm:grid-cols-[minmax(0,1fr)_2.5rem]" key={variant.assetKey}>
+      <div className="grid min-w-0" key={variant.assetKey}>
         <Button
           className={`relative h-auto min-h-12 min-w-0 flex-col items-start overflow-hidden rounded-lg px-3.5 py-2.5 text-left sm:min-h-10 sm:rounded-md sm:px-3 sm:py-2 sm:flex-row sm:items-center sm:justify-between ${compact ? "" : ""}`}
           type="button"
           variant={displayAsset?.status === "ready" ? "default" : "secondary"}
           onClick={() => onSelect(result, variant)}
-          disabled={isActiveCacheHit}
-          title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
-          aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / ${costLabel}`}
+          title={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / 打开使用方式`}
+          aria-label={displayStatus ? `${variantLabel} / ${displayStatus}` : `${variantLabel} / 打开使用方式`}
         >
           {tracked ? (
             <span
               aria-hidden="true"
-              className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500`}
-              style={{ width: `${Math.max(4, Math.min(100, progress))}%` }}
+              className={`absolute inset-y-0 left-0 ${progressColor} transition-[width] duration-500 ${progressIndeterminate ? "animate-pulse" : ""}`}
+              style={{ width: `${progressIndeterminate ? 35 : Math.max(4, Math.min(100, progress))}%` }}
             />
           ) : null}
           <span className="relative z-10 min-w-0 max-w-full">
@@ -2029,52 +2048,93 @@ function VariantButtons({
           </span>
           <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
             {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {!isActiveCacheHit && creditPolicy.billingEnabled ? (
-              <Badge className={costBadgeClass} variant="warning">
-                {costDisplayLabel}
-              </Badge>
-            ) : null}
             {displayStatus ? <Badge variant={badgeVariant}>{displayStatus}</Badge> : null}
+            <ChevronRight className="h-4 w-4 text-slate-400" />
           </span>
-        </Button>
-        <Button
-          className="h-full min-h-12 rounded-lg border-slate-700 bg-slate-900/80 text-slate-100 hover:bg-slate-800 sm:min-h-10 sm:rounded-md"
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={() => onDownload(result, variant)}
-          disabled={downloading}
-          title={`${variantLabel} / ${copy.library.directDownload}`}
-          aria-label={`${variantLabel} / ${copy.library.directDownload}`}
-        >
-          {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          <span className="sr-only">{copy.library.directDownload}</span>
         </Button>
       </div>
     );
   });
 
   const showDetailedSpecGroups = !variantLimit && specGroups.length > 0;
+  const renderEpisodeTiles = (items: MediaVariant[]) => items.map((variant) => {
+    const episodeLabel = variantEpisodeLabel(variant) ?? variantSpecText(result.title, variant, { compact: true });
+    const pending = pendingAssetKeys.includes(variant.assetKey);
+    const tracked = trackedByAssetKey.get(variant.assetKey);
+    const displayAsset = latestVariantAsset(variant, tracked);
+    const displayStatus = pending
+      ? pendingCacheStatusLabel()
+      : tracked && tracked.job.status !== "ready"
+        ? `${jobStatusLabel(tracked.job.status)} ${jobProgressLabel(tracked.job)}`
+        : displayAsset && displayAsset.status !== "ready"
+          ? cacheLabel(displayAsset)
+          : undefined;
+    const progress = tracked?.job.progress ?? 0;
+    const progressIndeterminate = tracked ? jobProgressIndeterminate(tracked.job) : false;
+    const progressColor = tracked?.job.status === "failed"
+      ? "bg-rose-400"
+      : displayAsset?.status === "ready"
+        ? "bg-emerald-300"
+        : "bg-amber-300";
+
+    return (
+      <Button
+        className="group/episode relative aspect-square min-h-[76px] min-w-0 flex-col items-start justify-between overflow-hidden rounded-lg border-slate-700 bg-slate-900/75 p-3 text-left text-slate-100 shadow-sm shadow-black/20 transition hover:-translate-y-0.5 hover:border-emerald-300/55 hover:bg-slate-800 hover:shadow-lg hover:shadow-black/30 focus-visible:ring-emerald-300 sm:min-h-[88px] sm:max-w-[104px]"
+        type="button"
+        variant="outline"
+        key={variant.assetKey}
+        onClick={() => onSelect(result, variant)}
+        title={displayStatus ? `${episodeLabel} / ${displayStatus}` : `${episodeLabel} / 打开使用方式`}
+        aria-label={displayStatus ? `${episodeLabel} / ${displayStatus}` : `${episodeLabel} / 打开使用方式`}
+        data-episode-tile={variant.assetKey}
+      >
+        {tracked ? (
+          <span
+            aria-hidden="true"
+            className={`absolute bottom-0 left-0 h-0.5 ${progressColor} transition-[width] duration-500 ${progressIndeterminate ? "animate-pulse" : ""}`}
+            style={{ width: `${progressIndeterminate ? 35 : Math.max(4, Math.min(100, progress))}%` }}
+          />
+        ) : null}
+        <span className="flex w-full flex-1 items-center justify-center text-center text-sm font-bold leading-5 text-white">
+          {episodeLabel}
+        </span>
+        {displayStatus ? (
+          <span className="flex min-h-4 w-full items-center justify-between gap-1 text-[10px] font-medium text-slate-400">
+            <span className="truncate">{displayStatus}</span>
+            {pending ? <Loader2 className="h-3 w-3 shrink-0 animate-spin text-amber-300" /> : null}
+          </span>
+        ) : (
+          <ChevronRight className="absolute bottom-2.5 right-2.5 h-3.5 w-3.5 text-slate-600 transition group-hover/episode:translate-x-0.5 group-hover/episode:text-emerald-300" />
+        )}
+      </Button>
+    );
+  });
 
   return (
     <div className={compact ? "grid min-w-[220px] gap-2 sm:min-w-[240px]" : "grid gap-2"}>
       {showDetailedSpecGroups ? specGroups.map((group) => (
-        <section className="grid gap-2 border-l-2 border-slate-800 pl-3" key={group.key}>
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className="flex min-w-0 flex-wrap gap-1.5">
-              {(group.labels.length > 0 ? group.labels : [group.label]).map((label) => (
-                <span
-                  className="inline-flex max-w-full items-center rounded-full border border-slate-600/70 bg-slate-950/55 px-2 py-0.5 text-[11px] font-semibold leading-4 text-slate-100 shadow-sm shadow-black/10"
-                  key={`${group.key}-${label}`}
-                  title={label}
-                >
-                  <span className="max-w-full truncate">{label}</span>
+        <section
+          className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/65"
+          key={group.key}
+          data-spec-group={group.key}
+        >
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/55 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="h-8 w-1 shrink-0 rounded-full bg-emerald-300" aria-hidden="true" />
+              <div className="grid min-w-0 gap-0.5">
+                <span className="text-[10px] font-bold tracking-[0.14em] text-slate-500">播放规格</span>
+                <span className="truncate text-sm font-semibold text-slate-100">
+                  {(group.labels.length > 0 ? group.labels : [group.label]).join(" · ")}
                 </span>
-              ))}
-            </span>
-            <Badge className="shrink-0" variant="muted">{group.episodeCount} 集</Badge>
+              </div>
+            </div>
+            <Badge className="shrink-0 border border-slate-700 bg-slate-950/70 text-slate-300" variant="muted">
+              {group.rangeLabel}
+            </Badge>
           </div>
-          <div className="grid gap-2">{renderVariantRows(group.variants)}</div>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-2 p-3 sm:grid-cols-[repeat(auto-fill,minmax(88px,104px))] sm:gap-2.5 sm:p-4">
+            {renderEpisodeTiles(group.variants)}
+          </div>
         </section>
       )) : renderVariantRows(visibleVariants)}
       {!showDetailedSpecGroups && hiddenVariantCount > 0 ? (
@@ -2115,6 +2175,178 @@ function sortedVariants(variants: MediaVariant[]) {
   });
 }
 
+function DesktopMovieCard({
+  result,
+  onOpenDetail
+}: {
+  result: ResultWithCache;
+  onOpenDetail: (result: ResultWithCache) => void;
+}) {
+  const tags = cardTags(result).slice(0, 2);
+  const compositeRating = compositeRatingForResult(result);
+  const work = result.metadata?.work;
+  const year = work?.release?.year ?? result.metadata?.release?.year ?? result.metadata?.year;
+  const countries = (work?.release?.countries ?? work?.countries ?? []).slice(0, 2).join(" / ");
+  const hoverMetadata = [year, countries].filter(Boolean).join(" · ");
+  const summary = bestSummary(result);
+  const previewTimerRef = useRef<number | undefined>(undefined);
+  const cardRef = useRef<HTMLButtonElement>(null);
+  const [previewPosition, setPreviewPosition] = useState<{
+    left: number;
+    top: number;
+    side: "left" | "right";
+  }>();
+
+  function showPreview(delay = 180) {
+    window.clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = window.setTimeout(() => {
+      const card = cardRef.current;
+      if (!card) {
+        return;
+      }
+
+      const rect = card.getBoundingClientRect();
+      const viewportPadding = 16;
+      const panelGap = 14;
+      const panelWidth = Math.min(420, window.innerWidth - viewportPadding * 2);
+      const hasRoomOnRight = window.innerWidth - rect.right >= panelWidth + panelGap + viewportPadding;
+      const side = hasRoomOnRight ? "right" : "left";
+      const left = side === "right"
+        ? rect.right + panelGap
+        : Math.max(viewportPadding, rect.left - panelWidth - panelGap);
+      const estimatedPanelHeight = 520;
+      const top = Math.max(
+        viewportPadding,
+        Math.min(rect.top - 24, window.innerHeight - estimatedPanelHeight - viewportPadding)
+      );
+
+      setPreviewPosition({ left, top, side });
+    }, delay);
+  }
+
+  function hidePreview() {
+    window.clearTimeout(previewTimerRef.current);
+    setPreviewPosition(undefined);
+  }
+
+  useEffect(() => {
+    if (!previewPosition) {
+      return;
+    }
+
+    const closePreview = () => hidePreview();
+    window.addEventListener("scroll", closePreview, true);
+    window.addEventListener("resize", closePreview);
+    return () => {
+      window.removeEventListener("scroll", closePreview, true);
+      window.removeEventListener("resize", closePreview);
+    };
+  }, [previewPosition]);
+
+  useEffect(() => () => window.clearTimeout(previewTimerRef.current), []);
+
+  return (
+    <>
+      <button
+        ref={cardRef}
+        className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 lg:grid"
+        type="button"
+        onClick={() => onOpenDetail(result)}
+        onMouseEnter={() => showPreview()}
+        onMouseLeave={hidePreview}
+        onFocus={() => showPreview(0)}
+        onBlur={hidePreview}
+        title={copy.library.viewDetails}
+        aria-label={`${result.title}，${compositeRating ? `评分 ${compositeRating.score}` : "暂无评分"}`}
+      >
+        <div className="relative overflow-hidden rounded-lg border border-slate-800 bg-slate-950 shadow-xl shadow-black/20 transition duration-200 group-hover:-translate-y-1 group-hover:scale-[1.015] group-hover:border-slate-600 group-hover:shadow-2xl group-focus-visible:border-emerald-400">
+          <MoviePoster result={result} />
+          <span className="absolute right-2 top-2 z-20 inline-flex items-baseline gap-1 rounded-md border border-white/10 bg-slate-950/82 px-2 py-1 text-[10px] font-bold tracking-wide text-slate-300 shadow-lg shadow-black/30 backdrop-blur">
+            {compositeRating ? (
+              <span className="text-sm leading-none text-amber-200">{compositeRating.score}</span>
+            ) : (
+              <span>暂无评分</span>
+            )}
+          </span>
+        </div>
+
+        <div className="grid min-w-0 gap-2 px-0.5">
+          <h2 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 text-slate-100 transition-colors group-hover:text-emerald-100">
+            {result.title}
+          </h2>
+          {tags.length ? (
+            <div className="flex min-w-0 flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <span
+                  className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-4 ${tag.className}`}
+                  key={tag.key}
+                >
+                  {tag.tag}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="text-[11px] text-slate-600">未分类</span>
+          )}
+        </div>
+      </button>
+
+      {previewPosition && typeof document !== "undefined"
+        ? createPortal(
+            <aside
+              className="pointer-events-none fixed z-[90] w-[min(420px,calc(100vw-32px))] animate-in fade-in zoom-in-95 duration-150"
+              style={{ left: previewPosition.left, top: previewPosition.top }}
+              aria-hidden="true"
+              data-gallery-preview={result.assetKey}
+            >
+              <div className="relative overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/98 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.72)] ring-1 ring-white/5 backdrop-blur-xl">
+                <span
+                  className={`absolute top-16 h-8 w-1 rounded-full bg-emerald-300 ${
+                    previewPosition.side === "right" ? "left-0" : "right-0"
+                  }`}
+                />
+                <div className="grid gap-4">
+                  <div className="grid gap-2">
+                    {hoverMetadata ? (
+                      <p className="text-[11px] font-bold tracking-[0.12em] text-emerald-300">
+                        {hoverMetadata}
+                      </p>
+                    ) : null}
+                    <div className="flex items-start justify-between gap-4">
+                      <h3 className="text-xl font-semibold leading-7 text-white">{result.title}</h3>
+                      <span className="flex-none rounded-md border border-amber-200/20 bg-amber-300/10 px-2.5 py-1 text-base font-bold text-amber-200">
+                        {compositeRating?.score ?? "暂无评分"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {tags.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {tags.map((tag) => (
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold leading-5 ${tag.className}`}
+                          key={tag.key}
+                        >
+                          {tag.tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{summary}</p>
+                  <p className="border-t border-slate-800 pt-3 text-[11px] font-bold tracking-wide text-slate-500">
+                    点击海报查看详细信息
+                  </p>
+                </div>
+              </div>
+            </aside>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
 function MovieCard({
   creditPolicy,
   result,
@@ -2147,7 +2379,9 @@ function MovieCard({
   const info = basicInfoLine(result);
 
   return (
-    <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4">
+    <>
+      <DesktopMovieCard result={result} onOpenDetail={onOpenDetail} />
+      <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 lg:hidden">
       <div className="group relative">
         <button
           className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
@@ -2228,7 +2462,8 @@ function MovieCard({
           variantLimit={variantLimit}
         />
       </div>
-    </article>
+      </article>
+    </>
   );
 }
 
@@ -2562,7 +2797,7 @@ function MovieDetailView({
   const variantCount = result.variants?.length ?? 0;
 
   return (
-    <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4">
+    <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4 lg:mx-auto lg:w-full lg:max-w-6xl">
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
         <Button className="w-full justify-start sm:w-auto" type="button" variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft className="h-4 w-4" />
