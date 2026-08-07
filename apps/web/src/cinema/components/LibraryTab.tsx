@@ -3,11 +3,13 @@ import { createPortal } from "react-dom";
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Database,
   Eye,
   Film,
+  Filter,
   Flame,
   LayoutGrid,
   List,
@@ -62,6 +64,16 @@ import {
 import { genreBadgeClass } from "../genre-style";
 import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
 import { resultMatchesBrowseChannel } from "../browse-channel";
+import {
+  browseFilterActive,
+  browseFilterGenres,
+  emptyBrowseFilter,
+  filterBrowseResults,
+  type BrowseFilterDecade,
+  type BrowseFilterRating,
+  type BrowseFilterState,
+  type BrowseFilterAvailability
+} from "../browse-filter";
 import { copy } from "../i18n";
 import { tspdtImdbIds } from "../tspdt-id-map";
 import { tspdtChineseTitles } from "../tspdt-zh";
@@ -481,8 +493,11 @@ function DesktopBrowseSidebar({
   }
 
   return (
-    <div className="hidden min-w-0 self-start lg:block">
-      <aside className="sticky top-[4.75rem] min-h-[calc(100dvh-5.75rem)] min-w-0 overflow-y-auto rounded-xl border border-slate-800/90 bg-slate-950/72 p-3 shadow-2xl shadow-black/10 backdrop-blur">
+    <div
+      className="hidden min-w-0 self-start lg:sticky lg:top-[4.75rem] lg:block lg:h-[calc(100dvh-5.75rem)] lg:max-h-[calc(100dvh-5.75rem)] lg:overflow-y-auto lg:overscroll-contain"
+      data-desktop-library-sidebar
+    >
+      <aside className="min-h-full min-w-0 rounded-xl border border-slate-800/90 bg-slate-950/72 p-3 shadow-2xl shadow-black/10 backdrop-blur">
         <nav aria-label="影片快速筛选" className="grid gap-5">
           <section className="grid gap-1">
             <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">片库</h2>
@@ -513,6 +528,150 @@ function DesktopBrowseSidebar({
           </section>
         </nav>
       </aside>
+    </div>
+  );
+}
+
+function DesktopBrowseFilter({
+  filter,
+  open,
+  genres,
+  resultCount,
+  totalCount,
+  onOpenChange,
+  onChange
+}: {
+  filter: BrowseFilterState;
+  open: boolean;
+  genres: string[];
+  resultCount: number;
+  totalCount: number;
+  onOpenChange: (open: boolean) => void;
+  onChange: (filter: BrowseFilterState) => void;
+}) {
+  const active = browseFilterActive(filter);
+  const update = <K extends keyof BrowseFilterState>(key: K, value: BrowseFilterState[K]) => {
+    onChange({ ...filter, [key]: value });
+  };
+
+  return (
+    <section className="hidden overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/72 shadow-xl shadow-black/10 backdrop-blur lg:block" aria-label="片库筛选条件">
+      <header className="flex min-h-14 items-center justify-between gap-4 px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${active ? "bg-emerald-300 text-slate-950" : "bg-slate-900 text-slate-400"}`}>
+            <Filter className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-slate-100">筛选片库</h2>
+              {active ? <span className="rounded-full bg-emerald-300/12 px-2 py-0.5 text-[10px] font-bold text-emerald-200">{resultCount}/{totalCount}</span> : null}
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">组合条件，或者直接使用网站准备好的视图</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {active ? (
+            <button className="min-h-9 rounded-lg px-3 text-xs font-semibold text-slate-400 hover:bg-slate-900 hover:text-slate-100" type="button" onClick={() => onChange(emptyBrowseFilter)}>
+              清除
+            </button>
+          ) : null}
+          <button
+            className="flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+            type="button"
+            aria-expanded={open}
+            onClick={() => onOpenChange(!open)}
+          >
+            {open ? "收起" : "展开"}
+            <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      </header>
+
+      {open ? (
+        <div className="grid gap-3 border-t border-slate-800/80 px-5 py-4">
+          <FilterChoiceRow
+            label="快捷"
+            value=""
+            options={[
+              ["recent-high", "近期高分"],
+              ["subtitle", "中文字幕"],
+              ["prepared", "已准备"]
+            ]}
+            accent
+            onChange={(value) => {
+              if (value === "recent-high") onChange({ ...emptyBrowseFilter, decade: "2020s", rating: "8" });
+              if (value === "subtitle") onChange({ ...emptyBrowseFilter, availability: "subtitle" });
+              if (value === "prepared") onChange({ ...emptyBrowseFilter, availability: "prepared" });
+            }}
+          />
+          <FilterChoiceRow
+            label="年代"
+            value={filter.decade}
+            options={[["all", "全部"], ["2020s", "2020 年后"], ["2010s", "2010 年代"], ["2000s", "2000 年代"], ["classic", "经典老片"]]}
+            onChange={(value) => update("decade", value as BrowseFilterDecade)}
+          />
+          <FilterChoiceRow
+            label="评分"
+            value={filter.rating}
+            options={[["all", "不限"], ["7", "7 分+"], ["8", "8 分+"], ["9", "9 分+"]]}
+            onChange={(value) => update("rating", value as BrowseFilterRating)}
+          />
+          <FilterChoiceRow
+            label="题材"
+            value={filter.genre}
+            options={[["all", "全部"], ...genres.map((genre) => [genre, genre] as [string, string])]}
+            onChange={(value) => update("genre", value)}
+          />
+          <FilterChoiceRow
+            label="资源"
+            value={filter.availability}
+            options={[["all", "不限"], ["playable", "可直接播放"], ["subtitle", "含中文字幕"], ["prepared", "我已准备"]]}
+            onChange={(value) => update("availability", value as BrowseFilterAvailability)}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function FilterChoiceRow({
+  label,
+  value,
+  options,
+  accent = false,
+  onChange
+}: {
+  label: string;
+  value: string;
+  options: Array<[string, string]>;
+  accent?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-start gap-3">
+      <span className={`pt-1.5 text-xs font-bold ${accent ? "text-emerald-300" : "text-slate-500"}`}>{label}</span>
+      <div className="flex min-w-0 flex-wrap gap-x-1 gap-y-1">
+        {options.map(([optionValue, optionLabel]) => {
+          const selected = value === optionValue;
+          return (
+          <button
+            className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors ${
+              selected
+                ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/20"
+                : accent
+                  ? "text-emerald-200/80 hover:bg-emerald-300/10 hover:text-emerald-100"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+            }`}
+            key={optionValue}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(optionValue)}
+          >
+            {optionLabel}
+          </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -563,6 +722,8 @@ function LibraryHome({
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
+  const [browseFilter, setBrowseFilter] = useState<BrowseFilterState>(emptyBrowseFilter);
+  const [filterOpen, setFilterOpen] = useState(true);
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialVisibleCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -574,9 +735,14 @@ function LibraryHome({
     () => browseResults.filter((result) => resultMatchesBrowseChannel(result, browseChannel)),
     [browseChannel, browseResults]
   );
+  const filterGenres = useMemo(() => browseFilterGenres(channelResults), [channelResults]);
+  const filteredChannelResults = useMemo(
+    () => filterBrowseResults(channelResults, browseFilter, trackedByAssetKey),
+    [browseFilter, channelResults, trackedByAssetKey]
+  );
   const browsableResults = useMemo(
-    () => channelResults.filter((result) => (result.variants?.length ?? 0) > 0),
-    [channelResults]
+    () => filteredChannelResults.filter((result) => (result.variants?.length ?? 0) > 0),
+    [filteredChannelResults]
   );
   const historyStats = useMemo(() => historyStatsByAssetKey(historyItems), [historyItems]);
   const rankedResults = useMemo(
@@ -584,15 +750,16 @@ function LibraryHome({
     [activeSortView, browsableResults, historyStats, viewSeed]
   );
   const tspdtItems = useMemo(
-    () => buildTspdtRankItems(channelResults),
-    [channelResults]
+    () => buildTspdtRankItems(filteredChannelResults),
+    [filteredChannelResults]
   );
   const tspdtMatchedCount = useMemo(
     () => tspdtItems.filter((item) => Boolean(item.result)).length,
     [tspdtItems]
   );
   const showingTspdtRank = activeSortView === "tspdtRank";
-  const needsFullBrowseResults = showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
+  const filterIsActive = browseFilterActive(browseFilter);
+  const needsFullBrowseResults = filterIsActive || showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
   const browseServerItemLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseViewItemLimit;
   const fullCatalogRequest = browseFullCatalogRequest(activeSortView);
@@ -700,6 +867,16 @@ function LibraryHome({
       />
 
       <div className="grid min-w-0 gap-4">
+        <DesktopBrowseFilter
+          filter={browseFilter}
+          open={filterOpen}
+          genres={filterGenres}
+          resultCount={filteredChannelResults.length}
+          totalCount={channelResults.length}
+          onOpenChange={setFilterOpen}
+          onChange={setBrowseFilter}
+        />
+
         <nav
           aria-label="首页内容排序"
           className="scrollbar-none flex max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3 sm:hidden"

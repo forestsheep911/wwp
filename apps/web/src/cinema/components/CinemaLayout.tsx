@@ -249,7 +249,7 @@ export function CinemaLayout({
         </header>
 
         <div className="grid w-full gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8 xl:px-10">
-          <div className="min-w-0 overflow-hidden">
+          <div className="min-w-0 overflow-x-clip">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
             <TabsContent className="mt-0" value="forum">{forum}</TabsContent>
