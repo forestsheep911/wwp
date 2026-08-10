@@ -63,7 +63,10 @@ decision layer:
 - `AI建议最低年龄`: numeric age from 0 to 18 suggested by an AI review.
 - `AI年龄建议置信度`: `high`, `medium`, or `low`.
 - `内容风险标签`: content concerns such as `暴力`, `血腥`, `恐怖`, `性/裸露`,
-  `脏话`, `毒品`, `自杀自伤`, `战争`, `歧视/仇恨`, `成人主题`, or `儿童友好`.
+  `脏话`, `毒品`, `自杀自伤`, `战争`, `歧视/仇恨`, `犯罪`, `死亡/丧亲`, or
+  `儿童友好`. Tags describe concrete, observable content risks; theme complexity,
+  politics, ethics, or life experience belong in the specific age-reason sentence
+  and must not be collapsed into a generic adult-theme label.
 - `AI年龄建议理由`: short internal explanation for the age recommendation.
 - `人工年龄覆盖`: manual numeric override. Website logic should treat
   `人工年龄覆盖 > AI建议最低年龄 > official rating mapping > unknown`.

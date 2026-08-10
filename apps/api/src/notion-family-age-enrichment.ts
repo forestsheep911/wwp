@@ -2,7 +2,7 @@ import "./env.js";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import dns from "node:dns";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
 
@@ -11,6 +11,7 @@ type JsonRecord = Record<string, unknown>;
 interface FamilyAgeOptions {
   apply: boolean;
   refresh: boolean;
+  refreshRiskTag?: string;
   includeLegacyPages: boolean;
   limit: number;
   maxUpdates: number;
@@ -71,7 +72,8 @@ const allowedRiskTags = new Set([
   "自杀自伤",
   "战争",
   "歧视/仇恨",
-  "成人主题",
+  "犯罪",
+  "死亡/丧亲",
   "儿童友好",
   "需人工复核"
 ]);
@@ -145,6 +147,7 @@ function parseArgs(): FamilyAgeOptions {
   return {
     apply: has("--apply"),
     refresh: has("--refresh"),
+    refreshRiskTag: value("--refresh-risk-tag", "").trim() || undefined,
     includeLegacyPages: has("--include-legacy-pages"),
     limit: Math.max(1, Math.floor(Number(value("--limit", "20")))),
     maxUpdates: Math.max(1, Math.floor(Number(value("--max-updates", "5")))),
@@ -199,7 +202,7 @@ function pagePropertyValue(name: string, value: unknown) {
   if (name === "AI年龄建议置信度") return value ? { select: { name: String(value) } } : undefined;
   if (name === "内容风险标签") {
     const values = Array.isArray(value) ? value : [];
-    return values.length > 0 ? { multi_select: values.map((item) => ({ name: String(item) })) } : undefined;
+    return { multi_select: values.map((item) => ({ name: String(item) })) };
   }
   if (name === "AI年龄建议理由") return value ? { rich_text: richText(String(value)) } : undefined;
   return undefined;
@@ -281,7 +284,7 @@ function authHeaders(apiKey: string) {
   return { Authorization: `Bearer ${apiKey}` } as Record<string, string>;
 }
 
-function promptForPage(title: string, properties: JsonRecord) {
+export function promptForPage(title: string, properties: JsonRecord) {
   const fields = {
     title,
     englishTitle: propertyText(properties["English Title"]),
@@ -307,8 +310,8 @@ function promptForPage(title: string, properties: JsonRecord) {
     `字段要求：\n` +
     `- minimumAge: 0 到 18 的整数。0 表示全年龄，18 表示只建议成人。\n` +
     `- confidence: high | medium | low。\n` +
-    `- riskTags: 从这些中文标签选择 0 到 6 个：暴力, 血腥, 恐怖, 性/裸露, 脏话, 毒品, 自杀自伤, 战争, 歧视/仇恨, 成人主题, 儿童友好, 需人工复核。\n` +
-    `- reason: 中文一句话，不超过 80 字，说明关键依据。\n` +
+    `- riskTags: 从这些中文标签选择 0 到 6 个：暴力, 血腥, 恐怖, 性/裸露, 脏话, 毒品, 自杀自伤, 战争, 歧视/仇恨, 犯罪, 死亡/丧亲, 儿童友好, 需人工复核。\n` +
+    `- reason: 中文一句话，不超过 80 字，必须写明影响年龄建议的具体内容或理解门槛，不得使用“成人主题”“成人内容”“成人向”“成熟主题”“少儿不宜”“不适合未成年人”等笼统结论代替依据。\n` +
     `- needsReview: 布尔值；资料不足或官方分级与内容明显冲突时为 true。\n\n` +
     `标签必须对应资料中明确存在的内容风险，不要按气氛、隐喻或泛化联想贴标签：\n` +
     `- 战争：仅用于作品实际呈现真实战争或军队间有组织武装冲突；战争只作为人物履历或历史背景、私人武装争斗、灾难救援、阶级冲突、犯罪、恐袭、反恐行动、毒品战争、枪战、黑帮冲突不等于战争。\n` +
@@ -316,13 +319,15 @@ function promptForPage(title: string, properties: JsonRecord) {
     `- 恐怖：仅用于恐怖类型、持续惊吓或明确恐怖意象；悬疑、压抑、心理复杂不等于恐怖。\n` +
     `- 歧视/仇恨：仅用于明确的种族、性别、身份等偏见或仇恨行为；贫困、企业不公、一般社会不平等不等于歧视。\n` +
     `- 自杀自伤：仅用于资料明确写出的自杀意念、行为或自残；悲伤、绝望、精神疾病、牺牲、人物败亡或角色死亡不等于自杀自伤。若理由只能写“暗示、倾向、象征”，不得使用此标签。\n` +
-    `- 成人主题可单独表达复杂伦理、政治、犯罪或沉重现实，不要为了凑标签附加其他类别。\n` +
+    `- 犯罪：仅用于作品明确、持续或核心呈现谋杀、绑架、勒索、黑帮、有组织犯罪等违法行为；复杂伦理、政治议题、一般社会不公或一次轻微违规不等于犯罪。\n` +
+    `- 死亡/丧亲：仅用于死亡、丧亲或哀悼是明确且重要的观看内容，并可能给儿童造成情绪压力；背景信息或普通动作片中的短暂角色死亡不自动使用此标签。\n` +
+    `- 复杂伦理、政治、身份认同、人生阅历或沉重现实本身不属于内容风险标签；若它们确实提高理解门槛，应在 reason 中具体说明议题和所需理解能力。\n` +
     `- 儿童友好可以与轻度幻想暴力并存，但不要仅因反派或紧张桥段标记恐怖。\n\n` +
-    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。资料不足时降低 confidence 并加入 需人工复核。reason 必须全部使用中文。\n\n` +
+    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。标签只描述明确、可观察且与儿童观看风险直接相关的内容，不表达“需要成年人观看”，也不把主题复杂等同于性内容。资料不足时降低 confidence 并加入 需人工复核。reason 必须全部使用中文。\n\n` +
     `作品资料：\n${JSON.stringify(fields, null, 2)}`;
 }
 
-function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined {
+export function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
   const minimumAge = Math.round(Number(record.minimumAge));
@@ -333,6 +338,7 @@ function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined {
     .filter((item) => allowedRiskTags.has(item))
     .filter((item) => needsReview || item !== "需人工复核");
   const reason = asString(record.reason).replace(/\bexplicit\b/giu, "明确的").trim().slice(0, 160);
+  if (/(?:成人主题|成人内容|成人向|成熟主题|少儿不宜|不适合未成年人)/u.test(reason)) return undefined;
   const explicitSelfHarm = /(?:自杀(?!倾向|暗示|象征)|自残(?!倾向|暗示|象征)|割腕|割脉|跳楼|跳河|服毒|上吊)/u.test(reason);
   const depictedWar = /(?:战争场面|战争伤亡|军事冲突|军事入侵|战役|战场|军队.{0,8}(?:战斗|交战)|部族冲突|(?:大规模|有组织|军事|军队).{0,8}武装冲突)/u.test(reason);
   const depictedBlood = /(?:血腥|流血|喷血|伤口|肢解|断肢|残肢|尸体细节|斩首|内脏)/u.test(reason);
@@ -543,6 +549,9 @@ async function main() {
   if (options.refresh && !options.pageId) {
     throw new Error("--refresh requires one explicit --page-id.");
   }
+  if (options.refreshRiskTag && options.refreshRiskTag !== "成人主题" && !allowedRiskTags.has(options.refreshRiskTag)) {
+    throw new Error(`Unsupported --refresh-risk-tag: ${options.refreshRiskTag}`);
+  }
   const notionToken = options.apply
     ? process.env.NOTION_WRITE_TOKEN ?? process.env.NOTION_TOKEN
     : process.env.NOTION_READ_ONLY_TOKEN ?? process.env.NOTION_WRITE_TOKEN ?? process.env.NOTION_TOKEN;
@@ -558,9 +567,13 @@ async function main() {
   const candidatePages = (await collectPages(notion, library, options)).filter((page) => {
     const properties = asRecord(page.properties) ?? {};
     const title = titleFromProperties(properties);
-    return (options.refresh || pageNeedsFamilyAge(properties)) &&
-      (options.refresh || !completedPageIds.has(asString(page.id))) &&
-      (options.refresh || !failedPageIds.has(asString(page.id))) &&
+    const refreshRiskTag = options.refreshRiskTag && propertyText(properties["内容风险标签"])
+      .split(/\s+/u)
+      .includes(options.refreshRiskTag);
+    const forceRefresh = options.refresh || Boolean(refreshRiskTag);
+    return (forceRefresh || pageNeedsFamilyAge(properties)) &&
+      (forceRefresh || !completedPageIds.has(asString(page.id))) &&
+      (forceRefresh || !failedPageIds.has(asString(page.id))) &&
       (options.includeLegacyPages || !isLegacyPageTitle(title));
   });
   if (options.writeCandidateCache) {
@@ -574,7 +587,7 @@ async function main() {
   let applied = 0;
   for (const page of pages) {
     try {
-      const plan = await planPage(page, options.refresh);
+      const plan = await planPage(page, options.refresh || Boolean(options.refreshRiskTag));
       plans.push(plan);
       if (plan.skipped) skipped[plan.skipped] = (skipped[plan.skipped] ?? 0) + 1;
       if (options.apply && Object.keys(plan.updates).length > 0) {
@@ -614,6 +627,7 @@ async function main() {
     limit: options.limit,
     maxUpdates: options.maxUpdates,
     candidateSource: options.candidateCache ?? "notion",
+    refreshRiskTag: options.refreshRiskTag,
     candidateCount: candidatePages.length,
     planned: plans.filter((plan) => plan.updateFields.length > 0).length,
     applied,
@@ -633,7 +647,9 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

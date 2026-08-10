@@ -16,6 +16,8 @@
     "notion:audit": "tsx src/notion-metadata-audit.ts",
     "notion:omdb": "tsx src/notion-omdb-enrichment.ts",
     "notion:family-age": "tsx src/notion-family-age-enrichment.ts",
+    "notion:risk-tag-schema": "tsx src/notion-content-risk-schema.ts",
+    "notion:migrate-adult-theme": "tsx src/notion-adult-theme-migration.ts",
     "notion:title-cleanup": "tsx src/notion-title-field-cleanup.ts",
     "notion:genre-cleanup": "tsx src/notion-genre-field-cleanup.ts",
     "notion:release-date-cleanup": "tsx src/notion-release-date-cleanup.ts",

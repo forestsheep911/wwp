@@ -132,7 +132,8 @@ export const notionManagedProperties = [
       { name: "自杀自伤", color: "red" },
       { name: "战争", color: "orange" },
       { name: "歧视/仇恨", color: "red" },
-      { name: "成人主题", color: "brown" },
+      { name: "犯罪", color: "brown" },
+      { name: "死亡/丧亲", color: "gray" },
       { name: "儿童友好", color: "green" },
       { name: "需人工复核", color: "gray" }
     ]
