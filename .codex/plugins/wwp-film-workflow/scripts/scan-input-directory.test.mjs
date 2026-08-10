@@ -37,6 +37,7 @@ test("scan-input-directory summarizes top-level media candidates", () => {
     assert.equal(payload.entries[0].internalSubtitleProbe, "not_run");
     assert.equal(payload.entries[0].nfoCount, 1);
     assert.equal(payload.entries[0].subtitleHints.includes("chseng"), true);
+    assert.match(payload.entries[0].contentFingerprint, /^[a-f0-9]{64}$/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -94,6 +95,7 @@ test("scan-input-directory keeps five fingerprint samples regardless of display 
     const payload = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(payload.entries[0].largestMedia.length, 2);
     assert.equal(payload.entries[0].fingerprintMedia.length, 5);
+    assert.match(payload.entries[0].contentFingerprint, /^[a-f0-9]{64}$/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

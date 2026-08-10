@@ -8,6 +8,13 @@ New playable production does not automatically upload source/original discs. Ent
 
 Work-level metadata still has priority in source/archive workflows. Once the work page exists, start metadata backfill from Douban, OMDb, TMDb when available, and AI advisory fields, even if playable encoding or source upload is blocked, slow, or only partially complete.
 
+## Expansion Retention
+
+- Keep a playable source after the first release while any concrete higher-bitrate, alternate-audio, subtitle, commentary, or cut variant is selected or deferred.
+- A work-level `Workflow Status=已完成` means the current release is live; it does not mean the source has been exhausted.
+- Permit source cleanup only after the expansion decision is `[规格扩展:CLOSED]`, every linked variant is `sync_ready` or terminally cancelled, and no encode, QC, upload, or publication state is open.
+- Outputs that are individually `sync_ready` may be quarantined under their normal proof rules without moving the still-active source.
+
 ## Manual Upload Alignment
 
 When the user manually uploads source files:

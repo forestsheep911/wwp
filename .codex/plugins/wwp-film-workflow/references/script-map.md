@@ -9,26 +9,33 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 
 ## Plugin Helpers
 
+  - `node tools/film-workflow-cycle.mjs --limit 3 --json`
+  - Required bounded cycle entry point. It always performs a fresh local scan of every enabled input root before deciding whether the Notion handoff/full round is due. By default, an unchanged scan is subject to a one-hour full-round cooldown; a changed/new input bypasses it immediately, and `--force` is required for an explicit user-reported recheck even when an automatic continuation has already registered the batch. First-seen sources create pending intake tasks; source fingerprints include every discovered file path, size, and modification time, so copied files with preserved timestamps are still detected. Its `summary` separates newly discovered sources from existing production/publication work and includes `registeredSourcesNeedingProductionReview`, `discoveryMessage`, and `workMessage`; a zero file delta does not erase a batch already registered in the ledger and must never be summarized as "无新片". Root-level flat-file groups may be production candidates after identity binding; only synthetic `@flat/episode ...` groups are excluded from movie source selection. It is a one-shot cycle, not a background watcher. During a long encode/upload, monitor that process and avoid rapid repeated full cycles unless the user reports a new batch or an urgent Workflow Note change.
+
 - `python .codex/plugins/wwp-film-workflow/scripts/subtitle_companion_bridge.py create-task --workspace . --request <subtitle-search-request.json>`
   - Creates or reuses one content-addressed `wwp-subtitle-search.v1` task and starts/reuses the short-lived loopback Bridge on `127.0.0.1:8818..8838`. Install `assets/userscript/wwp-subtitle-companion.user.js` in Tampermonkey, open an enabled provider such as SubHD, refresh tasks, search, and explicitly capture the current results/detail page. V0.1 returns normalized candidates; artifact download remains a visible human handoff before existing external-subtitle QC.
 - `python .codex/plugins/wwp-film-workflow/scripts/subtitle_companion_bridge.py list --workspace .`
   - Lists retained local subtitle-search states and provider candidate counts. Use `retry --task <id>` only after reviewing a failed/deferred task; terminal downloaded/selected tasks fail closed.
 - `node .codex/plugins/wwp-film-workflow/scripts/scan-input-directory.mjs --root <input-dir> --output <scan.json>`
   - Summarizes top-level candidate folders, largest media files, subtitle sidecars, NFOs, and filename-derived flags before heavy probing. Subtitle counts cover external files only and internal streams are explicitly unprobed; zero sidecars must never be interpreted as no Chinese subtitles.
+- `node tools/film-ledger-backfill-existing-movie.mjs --work-page-id <page-id> --work-id <ledger-id> [--apply]`
+  - Reconciles a single existing movie Media Assets tree into the local ledger only when the released, visible asset has a mapped spec page, media block, and exact local output file. Missing evidence is reported and rejected; it never creates a media block or publishes a new file.
 - `node .codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs --root <input-dir> --state <state.json> --once`
-  - Compares the latest scan with a saved state file and reports new, removed, or changed queue entries. Pass `--ledger .local-data/wwp-film-workflow.sqlite` so every scan writes source discoveries to the local ledger before the JSON baseline is replaced. It also accepts positional `root state output` arguments for npm-forwarding edge cases. Use `--interval-sec <seconds>` only when an active monitoring loop is desired.
+  - Compares the latest scan with a saved state file and reports new, removed, or changed queue entries. Pass `--ledger .local-data/wwp-film-workflow.sqlite` so every scan writes source discoveries to the local ledger before the JSON baseline is replaced. It also accepts positional `root state output` arguments for npm-forwarding edge cases. `--max-samples` changes report detail only and never by itself creates a changed-source event. Use `--interval-sec <seconds>` only when an active monitoring loop is desired.
 - `node .codex/plugins/wwp-film-workflow/scripts/probe-media.mjs --input <media> --output <json>`
   - Runs `ffprobe` and writes structured JSON for source/final media.
 - `node .codex/plugins/wwp-film-workflow/scripts/render-pgs-samples.mjs --input <media> --subtitle-stream <ordinal> --output-dir <directory> [--events 3]`
   - For an unlabelled PGS track, extracts bounded subtitle packets and renders the first distinct subtitle events over black evidence images. Inspect those images before deciding whether the track is Chinese; stream position or absent metadata is never language proof.
-- `node .codex/plugins/wwp-film-workflow/scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none> [--subtitle-file <ass|ssa>] [--audio-channels <count>]`
+- `node .codex/plugins/wwp-film-workflow/scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none> [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-channels <count>]`
   - Use `--audio-channels 6` when a TrueHD/Atmos 7.1 source should be delivered as broadly compatible AAC 5.1. Omitting it preserves the previous automatic channel-layout behavior.
+- `pwsh -File tools/goat-postprocess-watch.ps1 -ProcessId <encode-pid>`
+  - One-shot post-encode handoff for a long-running local job. It waits for the exact encoder process, generates ffprobe metadata and a bounded QC contact sheet, then writes `qc_ready`. It never records `qc_passed`, uploads, changes website visibility, or releases a work page automatically.
 - `node .codex/plugins/wwp-film-workflow/scripts/build-series-collections.mjs --manifest <json> [--apply]`
   - Optional collection-only path. Do not run it for normal series production; one file per episode is the default. Use it only after an explicit user instruction, then upload with `--allow-collections`.
   - Probes already QC-passed episode MP4s, groups consecutive episodes toward 4.85GB, verifies identical stream layouts within each group, and concat-remuxes one `S01E01-E05` style upload asset per group. Dry-run is the default. Every applied output is checked against the hard 5,000,000,000-byte cap.
 - `node .codex/plugins/wwp-film-workflow/scripts/remux-audio-variant.mjs --video-source <qc-passed-mp4> --audio-source <media> --audio-stream <ordinal> --output <mp4> [--audio-channels 6]`
   - Reuse an already QC-passed `hvc1` video stream when only the audio variant changes. The selected source audio is encoded to AAC while the video is stream-copied, and the final MP4 still fails closed above `--max-bytes`. Do not use this for different hard-subtitle variants because their video pixels differ.
-  - Burns a selected PGS subtitle with `--subtitle-stream`, uses `none` when the source already has a verified hard subtitle, or burns extracted ASS/SSA text subtitles through libass with `--subtitle-file`. Writes an MKV work file first, then remuxes to MP4 with `hvc1`. Supports `--duration` for bounded subtitle/color smoke tests, `--scale WIDTHxHEIGHT` for an explicit delivery resolution, `--video-bitrate RATE` for size-oriented outputs, and `--tone-map-sdr` for validated HDR/Dolby Vision to BT.709 conversion. Refuses outputs over the 5GB workflow cap.
+  - Burns a selected PGS subtitle with `--subtitle-stream`, uses `none` when the source already has a verified hard subtitle, or burns extracted ASS/SSA/SRT text subtitles through libass with `--subtitle-file`. Use `--subtitle-charenc` for a verified non-UTF-8 sidecar such as GBK. Writes an MKV work file first, then remuxes to MP4 with `hvc1`. Supports `--duration` for bounded subtitle/color smoke tests, `--scale WIDTHxHEIGHT` for an explicit delivery resolution, `--video-bitrate RATE` for size-oriented outputs, and `--tone-map-sdr` for validated HDR/Dolby Vision to BT.709 conversion. Refuses outputs over the 5GB workflow cap.
 - `node .codex/plugins/wwp-film-workflow/scripts/remux-hevc-hvc1.mjs --input <hev1-mp4> --output <hvc1-mp4>`
   - Losslessly remuxes an existing HEVC `hev1` MP4 for browser delivery. It preserves every stream, forces the video sample entry to `hvc1`, verifies the final probe, enforces the byte cap, writes atomically, and never overwrites the source. Use this instead of a full re-encode when codec-tag compatibility is the only defect.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.ps1 -InputPath <media> -Output <png>`
@@ -62,8 +69,23 @@ Use plugin helper scripts for generic media mechanics and existing repository to
   - Lists newly discovered or changed sources that still need identity, duplicate, Notion-state, and routing analysis.
 - `node tools/film-ledger.mjs queue --stage metadata --limit 3 --json`
   - Lists independent work-level metadata backfill/maintenance tasks. This queue remains meaningful even when production and publication queues are empty.
+- `node .codex/plugins/wwp-film-workflow/scripts/audit-completed-metadata.mjs [--apply]`
+  - Audits only exact Notion work-page IDs whose ledger metadata task is already
+    `done`. It compares the current page with the plugin core-field contract and
+    writes `.local-data/metadata-completion-audit.json`. Dry-run is the default.
+    With `--apply`, it requeues only tasks whose recorded status is not
+    `verified`, whose core/external-identity/issue gate fails, whose Notion
+    `影别` disagrees with ledger `work_type`, or whose exact
+    page cannot be read. It never scans unrelated Notion pages and never edits
+    Notion; the next bounded metadata cycle owns page repairs and handoff state.
 - `node tools/film-ledger.mjs complete-task --task <id> --failure-detail "backfill completed" --json`
-  - Marks one intake/metadata task complete after readback evidence. Use the task reason for unresolved or deferred decisions rather than silently dropping the task.
+  - For a metadata task, use this only after exact Notion readback proves
+    `Metadata Status=verified`, empty issue fields, and a usable maintained
+    poster. Include that evidence in the reason. A `partial` result must stay
+    pending or be deferred with `missingCoreFields`, attempted sources, blocker,
+    and `next_review_at`; never use this command merely because fetch attempts
+    finished. Intake tasks retain their separate identity-binding completion
+    rule.
 - `node tools/film-ledger.mjs schedule-metadata --work-id <id> --failure-detail "refresh stale fields" [--next-review-at <ISO>] --json`
   - Reopens a completed work-level metadata task for a later repair or AI/rating refresh. Use this for old entries; it does not imply that playable media or Media Assets exist.
 - `node tools/film-ledger.mjs update-source --source-id <id> --probe-path <json> --quality-state <state> --subtitle-evidence '<json>' --audio-evidence '<json>' --color-risk <state> --json`
@@ -94,7 +116,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `node tools/film-ledger.mjs migrate-local-data --queue-state <state.json> [--queue-state <state.json> ...] --organizer-report <report.json> [--corrections <manifest.json>]`
   - One-time, explicit baseline import. Queue states create input roots and source discoveries only; they never auto-select work. Organizer reports register only explicit work/spec/episode page IDs and media block IDs. Review corrections require an exact output path and append a review event; they may repair `displayTitle`, `audioVariant`, `subtitleVariant`, or a guarded failed/deferred production state after stronger evidence overrides filename inference. Repeating the same correction is a no-op. This command is not a watcher and must not be run automatically.
 - `node tools/film-ledger.mjs next --stage production --limit 5 --json`
-  - Reads the bounded local production queue. `qc_passed` variants are excluded here to prevent duplicate encoding.
+  - Reads the bounded local production queue. Rows expose `release_covered`: `0` means the work still lacks any `sync_ready` playable and is ordered before covered supplemental work; `1` means the work already has a first release. Already selected first-release variants are ordered ahead of sources still needing selection, and both are ordered ahead of covered supplements. Concrete due supplements remain queryable even when the parent work is `已完成`. `qc_passed` variants are excluded here to prevent duplicate encoding.
 - `node tools/film-ledger.mjs select-variant ...`
   - For movies, requires `--compact-decision compact_exists|compact_selected|compact_deferred` and `--compact-detail <evidence-or-reason>` before a pre-encode variant can be selected. This records compact-playable coverage without forcing every film to have two encodes.
 - `node tools/film-ledger.mjs retire-variant --variant <id> --failure-code <code> --failure-detail <reason> --json`
@@ -155,7 +177,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 - `tools/notion-metadata-backfill.mjs`
   - Backfill work-level metadata, including Douban search/fetch/poster behavior and structured fields such as `Release Year`, `上映日期`, `Countries`, `Languages`, `Traditional Chinese Title (Taiwan)`, `Traditional Chinese Title (Hong Kong)`, `旨趣`, `外部类型原文`, `未映射类型`, `Runtime Minutes`, `Directors`, `Writers`, `Cast`, source/status/confidence, and update date. It does not write legacy `Release Date`.
 - `tools/notion-create-work-page.mjs`
-  - Create one explicit metadata-first movie/series work page after duplicate preflight. It is dry-run by default; use verified Chinese/English titles, year, and external IDs with `--apply`. It sets `Hide from Website=true`, `Needs Review=true`, and `Media Availability=needs_processing`; it does not create playable specs or Media Assets and must not be used for a broad library scan.
+  - Create or reconcile one explicit metadata-first movie/series work page after duplicate preflight. `--work-id <ledger-id>` is mandatory: the tool derives `影别` from the ledger, rejects a conflicting `--type`, reads the exact page back, and links a newly created/reused page to that same ledger work. Use `--page-id <id>` for an exact repair. It is dry-run by default; use verified titles/year/external IDs with `--apply`. It sets `Hide from Website=true`, `Needs Review=true`, and `Media Availability=needs_processing`; it does not create playable specs or Media Assets and must not be used for a broad library scan.
 - `tools/notion-work-identity-correction.mjs`
   - Safely correct one existing work page's canonical title and structured Chinese/original title fields after a verified identity review. Use `--expected-current` and dry-run first; apply only after comparing the Douban display heading and existing media identity.
 - `tools/notion-child-page-list.mjs`

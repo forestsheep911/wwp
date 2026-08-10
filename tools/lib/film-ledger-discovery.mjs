@@ -11,14 +11,56 @@ function fingerprintMaterial(entry) {
     subtitleCount: entry.subtitleCount,
     nfoCount: entry.nfoCount,
     totalBytes: entry.totalBytes,
+    latestFileMtime: entry.latestFileMtime ?? null,
+    contentFingerprint: entry.contentFingerprint ?? null,
     // Keep discovery identity independent from the human-facing sample count.
     largestMedia: entry.fingerprintMedia ?? entry.largestMedia,
     flags: entry.flags
   };
 }
 
+function preContentFingerprintMaterial(entry) {
+  const material = fingerprintMaterial(entry);
+  delete material.contentFingerprint;
+  return material;
+}
+
+function legacyFingerprintEntry(entry) {
+  const legacyMaterial = {
+    relativePath: entry.relativePath,
+    fileCount: entry.fileCount,
+    mediaCount: entry.mediaCount,
+    subtitleCount: entry.subtitleCount,
+    nfoCount: entry.nfoCount,
+    totalBytes: entry.totalBytes,
+    largestMedia: entry.fingerprintMedia ?? entry.largestMedia,
+    flags: entry.flags
+  };
+  return createHash("sha256").update(JSON.stringify(legacyMaterial)).digest("hex");
+}
+
 export function fingerprintEntry(entry) {
   return createHash("sha256").update(JSON.stringify(fingerprintMaterial(entry))).digest("hex");
+}
+
+function migrationFingerprintEntry(entry) {
+  return createHash("sha256").update(JSON.stringify(preContentFingerprintMaterial(entry))).digest("hex");
+}
+
+function resolvedEntryPath(rootPath, relativePath, absolutePath) {
+  const normalizedRoot = normalizeLedgerPath(rootPath);
+  const normalizedAbsolute = absolutePath
+    ? normalizeLedgerPath(absolutePath)
+    : null;
+  // The scanner uses the input root as a placeholder for synthetic @flat
+  // groups. Resolve the relative path instead of treating the existing root
+  // directory as proof that the synthetic source still exists.
+  if (normalizedAbsolute && normalizedAbsolute.toLowerCase() !== normalizedRoot.toLowerCase()) {
+    return normalizedAbsolute;
+  }
+  return /^[a-z]:[\\/]/i.test(normalizedRoot)
+    ? normalizeLedgerPath(path.win32.resolve(normalizedRoot, relativePath))
+    : path.resolve(normalizedRoot, relativePath);
 }
 
 function validatePayload(payload) {
@@ -61,17 +103,19 @@ export function importScan(repo, payload) {
   for (const entry of payload.entries) {
     const fingerprint = fingerprintEntry(entry);
     const previous = existing.get(entry.relativePath);
-    const state = !previous ? "inserted" : previous.fingerprint === fingerprint && previous.missing === 0 ? "unchanged" : "changed";
+    const state = !previous
+      ? "inserted"
+      : (previous.fingerprint === fingerprint
+        || previous.fingerprint === migrationFingerprintEntry(entry)
+        || previous.fingerprint === legacyFingerprintEntry(entry)) && previous.missing === 0
+        ? "unchanged"
+        : "changed";
     summary[state] += 1;
     seen.add(entry.relativePath);
     const source = repo.upsertDiscoveredSource({
       inputRootId: root.id,
       relativePath: entry.relativePath,
-      absolutePath: entry.absolutePath
-        ? normalizeLedgerPath(entry.absolutePath)
-        : /^[a-z]:[\\/]/i.test(normalizedRoot)
-        ? normalizeLedgerPath(path.win32.resolve(normalizedRoot, entry.relativePath))
-        : path.resolve(normalizedRoot, entry.relativePath),
+      absolutePath: resolvedEntryPath(normalizedRoot, entry.relativePath, entry.absolutePath),
       fingerprint,
       sourceKind: sourceKindFor(entry),
       subtitleEvidence: {
@@ -83,7 +127,18 @@ export function importScan(repo, payload) {
       missing: false,
       discoveredAt: payload.scannedAt
     });
-    if (state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
+    const syntheticMissing = source.relative_path.toLowerCase().startsWith("@flat/")
+      && !existsSync(source.absolute_path)
+      && source.missing === 0;
+    if (syntheticMissing) {
+      repo.markSourceMissing(source.id, true);
+      summary.missing += 1;
+    }
+    if (!syntheticMissing && state === "inserted") {
+      repo.requeueIntakeTask(source.id, {
+        reason: "New source discovered; inspect identity, duplicates, Notion state, and routing"
+      });
+    } else if (!syntheticMissing && state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
       repo.requeueIntakeTask(source.id, {
         reason: "Source contents changed; inspect added, replaced, or removed media before continuing"
       });
@@ -96,7 +151,10 @@ export function importScan(repo, payload) {
     // not appear in the top-level scan payload. Only mark a source missing when
     // it is absent from both the scan and the filesystem.
     if (!seen.has(source.relative_path)) {
-      if (existsSync(source.absolute_path)) {
+      const filesystemPath = source.relative_path.toLowerCase().startsWith("@flat/")
+        ? resolvedEntryPath(root.path, source.relative_path, source.absolute_path)
+        : source.absolute_path;
+      if (existsSync(filesystemPath)) {
         if (source.missing === 1) repo.markSourceMissing(source.id, false);
       } else if (source.missing === 0) {
         repo.markSourceMissing(source.id, true);

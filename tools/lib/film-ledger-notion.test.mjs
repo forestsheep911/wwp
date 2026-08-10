@@ -202,6 +202,36 @@ test("adapter uses only recorded pages and an exact Media Assets trace query", a
   assert.equal(calls.length, 5);
 });
 
+test("adapter accepts exact asset evidence when the recorded work page is temporarily inaccessible", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) {
+      if (page_id === "work-1") throw Object.assign(new Error("object_not_found"), { code: "object_not_found" });
+      return { id: page_id, parent: { type: "page_id", page_id: page_id === "spec-1" ? "work-1" : "spec-1" } };
+    } },
+    blocks: { children: { async list({ block_id }) {
+      if (block_id !== "episode-1") return { results: [], has_more: false };
+      return { results: [{ id: "media-1", type: "video", video: {
+        caption: [{ plain_text: "Wages.of.Fear.mp4" }],
+        file: { url: "https://example.test/video.mp4" }
+      } }], has_more: false };
+    } } },
+    dataSources: { async query() {
+      return { results: [publishableAsset({
+        Work: { type: "relation", relation: [] },
+        "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "episode-1" }] },
+        "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] }
+      })] };
+    } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1", expected_filename: "Wages.of.Fear.mp4"
+  });
+  assert.equal(result.structureVerified, true);
+  assert.equal(result.mediaVerified, true);
+  assert.equal(result.assetsVerified, true);
+  assert.equal(result.mediaAssetPageId, "asset-1");
+});
+
 test("adapter rejects an arbitrary sibling media block when expected filename does not match", async () => {
   const client = {
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
@@ -275,6 +305,30 @@ test("adapter verifies recorded page parent relationships instead of retrieval a
     work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1"
   });
   assert.equal(result.structureVerified, false);
+});
+
+test("adapter blocks publication when ledger work type and Notion 影别 disagree", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) {
+      if (page_id === "work-1") return {
+        id: page_id,
+        parent: { type: "workspace", workspace: true },
+        properties: { "影别": { type: "select", select: { name: "Movie" } } }
+      };
+      return { id: page_id, parent: { type: "page_id", page_id: "work-1" } };
+    } },
+    blocks: { children: { async list() { return { results: [] }; } } },
+    dataSources: { async query() { return { results: [] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1",
+    spec_page_id: "spec-1",
+    work_type: "series"
+  });
+  assert.equal(result.structureVerified, false);
+  assert.equal(result.assetGateCode, "work_type_mismatch");
+  assert.equal(result.evidence.expectedNotionMediaType, "TV Series");
+  assert.equal(result.evidence.notionMediaType, "Movie");
 });
 
 test("adapter accepts an existing spec nested under a legacy callout without allowing arbitrary parents", async () => {

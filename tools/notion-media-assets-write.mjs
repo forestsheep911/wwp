@@ -496,6 +496,13 @@ async function auditPage(notion, page, maxSpecsPerPage, sourcePageId = "", targe
     }
   }
 
+  // A target-only publication handoff may provide the prepared spec page
+  // itself rather than its inaccessible work-page parent. Treat direct media
+  // on that page as one playable spec while preserving a manifest Work override.
+  if (children.some(isPlayableMedia)) {
+    await auditPlayableSpecPage({ id: page.id, child_page: { title } });
+  }
+
   return {
     pageId: page.id,
     title,
@@ -564,15 +571,23 @@ function asMultiSelect(values) {
   return items.length > 0 ? { multi_select: items } : undefined;
 }
 
+function publishedEdition(metadata, includeDefaultEdition = false) {
+  const edition = cleanText(String(metadata?.edition ?? ""));
+  if (!includeDefaultEdition && /^(?:theatrical|院线版?|院線版?)$/i.test(edition)) return undefined;
+  return edition || undefined;
+}
+
 function buildAssetProperties(dataSource, candidate) {
   const metadata = candidate.metadata ?? {};
   const properties = {};
   setIfProperty(properties, dataSource, "Name", { title: richText(candidate.name || candidate.displayLabel) });
-  setIfProperty(properties, dataSource, "Work", { relation: [{ id: candidate.workPageId }] });
+  if (!candidate.skipWorkRelation) {
+    setIfProperty(properties, dataSource, "Work", { relation: [{ id: candidate.workPageId }] });
+  }
   setIfProperty(properties, dataSource, "Asset Type", asSelect(candidate.assetType));
   setIfProperty(properties, dataSource, "Media Availability", asSelect(metadata.availability));
   setIfProperty(properties, dataSource, "Display Label", { rich_text: richText(candidate.displayLabel) });
-  setIfProperty(properties, dataSource, "Edition / Version", { rich_text: richText(metadata.edition) });
+  setIfProperty(properties, dataSource, "Edition / Version", { rich_text: richText(publishedEdition(metadata, candidate.includeDefaultEdition)) });
   setIfProperty(properties, dataSource, "Episode Number", metadata.episodeNumber ? { number: metadata.episodeNumber } : undefined);
   setIfProperty(properties, dataSource, "Resolution", asSelect(metadata.resolution));
   setIfProperty(properties, dataSource, "Video Codec", asSelect(metadata.videoCodec));
@@ -809,6 +824,8 @@ function normalizeManifest(manifest, options) {
     return {
       label: item.label || item.expectedTitleContains || item.pageId,
       pageId: item.pageId,
+      workPageId: item.workPageId ?? defaults.workPageId,
+      skipWorkRelation: item.skipWorkRelation ?? defaults.skipWorkRelation ?? false,
       expectedTitleContains: item.expectedTitleContains,
       sourcePageId: item.sourcePageId ?? defaults.sourcePageId,
       mediaBlockId: item.mediaBlockId,
@@ -821,6 +838,7 @@ function normalizeManifest(manifest, options) {
       mediaAvailability: item.mediaAvailability ?? defaults.mediaAvailability,
       hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
       developerMemo: item.developerMemo ?? defaults.developerMemo,
+      includeDefaultEdition: item.includeDefaultEdition ?? defaults.includeDefaultEdition ?? false,
       replaceExistingFields: item.replaceExistingFields ?? defaults.replaceExistingFields,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined
     };
@@ -833,6 +851,7 @@ function applyManifestOverrides(candidate, item = {}) {
     item.mediaAvailability === undefined &&
     item.hideFromWebsite === undefined &&
     !item.developerMemo &&
+    !item.includeDefaultEdition &&
     item.replaceExistingFields === undefined &&
     !item.previousOriginalFileName &&
     !item.previousDisplayLabel &&
@@ -844,6 +863,7 @@ function applyManifestOverrides(candidate, item = {}) {
     ...candidate,
     hideFromWebsite: item.hideFromWebsite,
     developerMemo: item.developerMemo,
+    includeDefaultEdition: item.includeDefaultEdition,
     replaceExistingFields: item.replaceExistingFields,
     previousOriginalFileName: item.previousOriginalFileName,
     previousDisplayLabel: item.previousDisplayLabel,
@@ -902,7 +922,12 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
     targetedCandidates,
     item.maxAssets ?? options.maxAssets,
     item.allowedAssetTypes
-  ).map((candidate) => applyManifestOverrides(candidate, item));
+  ).map((candidate) => applyManifestOverrides({
+    ...candidate,
+    workPageId: item.workPageId || candidate.workPageId,
+    workTitle: item.workTitle || candidate.workTitle,
+    skipWorkRelation: item.skipWorkRelation ?? candidate.skipWorkRelation
+  }, item));
   const actions = [];
 
   for (const candidate of selected) {

@@ -11,7 +11,7 @@ import { openLedger } from "../../../../tools/lib/film-ledger-schema.mjs";
 function usage() {
   console.log(`Usage:
   node scripts/watch-input-directory.mjs --root <input-dir> [--state .local-data/wwp-queue-state.json] [--ledger film-ledger.sqlite] [--once]
-  node scripts/watch-input-directory.mjs --root <input-dir> --interval-sec 300 [--max-iterations 0]
+  node scripts/watch-input-directory.mjs --root <input-dir> --interval-sec 600 [--max-iterations 0]
   node scripts/watch-input-directory.mjs <input-dir> [state.json] [output.json]
 
 Compares top-level input-directory scan results against a saved state file and
@@ -123,6 +123,8 @@ function signature(entry) {
     subtitleCount: entry.subtitleCount,
     nfoCount: entry.nfoCount,
     totalBytes: entry.totalBytes,
+    contentFingerprint: entry.contentFingerprint ?? null,
+    latestFileMtime: entry.latestFileMtime ?? null,
     largestMedia: entry.largestMedia?.map((item) => ({
       relativePath: item.relativePath,
       bytes: item.bytes,
@@ -140,6 +142,19 @@ function stableString(value) {
   return JSON.stringify(value);
 }
 
+function entriesDiffer(before, after) {
+  const beforeSamples = before.largestMedia ?? [];
+  const afterSamples = after.largestMedia ?? [];
+  if (before.contentFingerprint && after.contentFingerprint) {
+    return before.contentFingerprint !== after.contentFingerprint;
+  }
+  // `--max-samples` changes report detail only. Compare the shared prefix so a
+  // caller changing that presentation limit cannot create a false intake event.
+  const sharedSamples = Math.min(beforeSamples.length, afterSamples.length);
+  return stableString({ ...before, largestMedia: beforeSamples.slice(0, sharedSamples) })
+    !== stableString({ ...after, largestMedia: afterSamples.slice(0, sharedSamples) });
+}
+
 function diffState(previousEntries, currentEntries) {
   const previous = indexEntries(previousEntries);
   const current = indexEntries(currentEntries);
@@ -153,7 +168,7 @@ function diffState(previousEntries, currentEntries) {
       continue;
     }
     const before = previous.get(key);
-    if (stableString(before) !== stableString(entry)) {
+    if (entriesDiffer(before, entry)) {
       changed.push({ before, after: entry });
     }
   }

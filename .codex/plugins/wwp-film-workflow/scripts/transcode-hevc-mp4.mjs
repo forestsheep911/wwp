@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 function usage() {
   console.log(`Usage:
   node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none>
-    [--subtitle-file <ass|ssa|srt>] [--audio-stream <ordinal>] [--audio-channels <count>]
+    [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-loudnorm]
     [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
     [--max-bytes <bytes>] [--scale <width>x<height>] [--tone-map-sdr]
     [--tone-map-libplacebo]
@@ -25,16 +25,17 @@ Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, audioStream: 0, audioChannels: null, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, scale: null, toneMapSdr: false, toneMapLibplacebo: false };
+  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLoudnorm: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, scale: null, toneMapSdr: false, toneMapLibplacebo: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
+    else if (arg === "--audio-loudnorm") options.audioLoudnorm = true;
     else if (arg === "--tone-map-sdr") options.toneMapSdr = true;
     else if (arg === "--tone-map-libplacebo") {
       options.toneMapSdr = true;
       options.toneMapLibplacebo = true;
     }
-    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--audio-stream", "--audio-channels", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--scale", "--ffmpeg"].includes(arg)) {
+    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       const key = arg.slice(2).replaceAll("-", "_");
@@ -49,6 +50,7 @@ function parseArgs(argv) {
     ? null
     : Number(options.subtitle_stream);
   options.subtitleFile = options.subtitle_file == null ? null : path.resolve(options.subtitle_file);
+  options.subtitleCharenc = options.subtitle_charenc == null ? null : String(options.subtitle_charenc);
   options.audioStream = options.audio_stream == null ? 0 : Number(options.audio_stream);
   options.audioChannels = options.audio_channels == null ? null : Number(options.audio_channels);
   options.duration = options.duration == null ? null : Number(options.duration);
@@ -187,14 +189,25 @@ function main() {
   const libplaceboDimensions = options.scale == null
     ? "w=iw:h=ih"
     : `w=${options.scale.width}:h=${options.scale.height}:fillcolor=black`;
+  // Resize HDR sources on the GPU before the CPU tone-map path. Tone-mapping a
+  // full 4K frame before reducing it to the delivery resolution is needlessly
+  // slow; the final CPU pad keeps the requested canvas dimensions without
+  // distorting sources whose aspect ratio differs from the target.
+  const gpuHdrPreScale = options.toneMapSdr && options.scale != null
+    ? `scale_cuda=w=${options.scale.width}:h=${options.scale.height}:force_original_aspect_ratio=decrease:format=p010,hwdownload,format=p010le`
+    : null;
+  const hdrPreScale = gpuHdrPreScale ?? scaleFilter ?? "null";
+  const hdrPostScale = options.toneMapSdr && options.scale != null
+    ? `,pad=${options.scale.width}:${options.scale.height}:(ow-iw)/2:(oh-ih)/2:color=black`
+    : "";
   const baseVideo = options.toneMapLibplacebo
     ? `[0:v:0]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p[base]`
     : options.toneMapSdr
-    ? `[0:v:0]zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,${scaleFilter ?? "null"},format=yuv420p[base]`
+    ? `[0:v:0]${hdrPreScale},zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,format=yuv420p${hdrPostScale}[base]`
     : `[0:v:0]${scaleFilter ?? "null"}[base]`;
   const effectiveSubtitleFile = options.subtitleFile ?? (embeddedTextSubtitle ? extractedSubtitle : null);
   const subtitleFilePath = effectiveSubtitleFile == null ? null : escapedSubtitlePath(effectiveSubtitleFile);
-  const subtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'`;
+  const subtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}`;
   // PGS subtitle canvases are often 16:9 even when the movie image is wider.
   // Resize only the subtitle canvas: subtitles may live in the source letterbox,
   // while the video itself must keep its original aspect ratio.
@@ -217,10 +230,14 @@ function main() {
   const rateArgs = options.videoBitrate == null
     ? ["-cq", String(options.cq)]
     : ["-b:v", options.videoBitrate, "-maxrate", options.videoBitrate, "-bufsize", options.videoBitrate];
-  const audioArgs = options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)];
+  const audioArgs = [
+    ...(options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)]),
+    ...(options.audioLoudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [])
+  ];
   run(options.ffmpeg, [
     "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
     ...(options.toneMapLibplacebo ? ["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"] : []),
+    ...(gpuHdrPreScale ? ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] : []),
     "-i", input,
     ...durationArgs,
     ...videoArgs, "-map", `0:a:${options.audioStream}`,
@@ -243,7 +260,7 @@ function main() {
   fs.rmSync(work, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
+  console.log(JSON.stringify({ output, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLoudnorm: options.audioLoudnorm, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
 }
 
 try {

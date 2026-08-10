@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -91,6 +92,8 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
   let subtitleCount = 0;
   let nfoCount = 0;
   let totalBytes = 0;
+  let latestFileMtime = 0;
+  const contentEntries = [];
 
   for (const file of files) {
     let stats;
@@ -101,6 +104,12 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
       continue;
     }
     totalBytes += stats.size;
+    latestFileMtime = Math.max(latestFileMtime, stats.mtimeMs);
+    contentEntries.push({
+      relativePath: path.relative(root, file),
+      bytes: stats.size,
+      mtimeMs: Math.trunc(stats.mtimeMs)
+    });
     const ext = path.extname(file).toLowerCase();
     if (mediaExt.has(ext)) media.push({ path: file, bytes: stats.size });
     if (subtitleExt.has(ext)) {
@@ -111,6 +120,10 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
   }
 
   media.sort((a, b) => b.bytes - a.bytes);
+  contentEntries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "en"));
+  const contentFingerprint = createHash("sha256")
+    .update(JSON.stringify(contentEntries))
+    .digest("hex");
   return {
     name,
     relativePath,
@@ -121,7 +134,9 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
     internalSubtitleProbe: "not_run",
     nfoCount,
     totalBytes,
+    latestFileMtime: latestFileMtime ? new Date(latestFileMtime).toISOString() : null,
     totalGB: Number((totalBytes / 1024 / 1024 / 1024).toFixed(2)),
+    contentFingerprint,
     largestMedia: media.slice(0, maxSamples).map((item) => ({
       relativePath: path.relative(root, item.path),
       bytes: item.bytes,

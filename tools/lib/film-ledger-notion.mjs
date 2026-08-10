@@ -1,4 +1,5 @@
 import { isSyncReady, nextRetryAt, normalizeLimit } from "./film-ledger-domain.mjs";
+import { compareNotionMediaType } from "./work-media-type.mjs";
 
 const BREAKER_KEY = "notion_backoff_until";
 const NEXT_PUBLICATION_STATE = Object.freeze({
@@ -137,6 +138,20 @@ function recordedStructureMatches(pages, target) {
   return true;
 }
 
+function partiallyRecordedStructureMatches(pages, target) {
+  const spec = pages.find(page => sameNotionId(page?.id, target.spec_page_id));
+  if (!spec) return false;
+  const season = target.season_page_id
+    ? pages.find(page => sameNotionId(page?.id, target.season_page_id))
+    : null;
+  if (season && !sameNotionId(parentPageId(season), target.work_page_id)) return false;
+  if (target.season_page_id && !season && !sameNotionId(parentPageId(spec), target.season_page_id)) return false;
+  if (!target.season_page_id && !sameNotionId(parentPageId(spec), target.work_page_id)) return false;
+  if (!target.episode_page_id) return true;
+  const episode = pages.find(page => sameNotionId(page?.id, target.episode_page_id));
+  return Boolean(episode) && sameNotionId(parentPageId(episode), target.spec_page_id);
+}
+
 async function recordedLegacyStructureMatches(client, pages, target) {
   const spec = pages.find(page => sameNotionId(page.id, target.spec_page_id));
   if (spec?.parent?.type !== "block_id") return false;
@@ -180,9 +195,10 @@ function playbackAssetGate(page) {
   return null;
 }
 
-function matchesRecordedAssetEvidence(page, { workPageId, sourcePageId, mediaBlockId }) {
+function matchesRecordedAssetEvidence(page, { workPageId, sourcePageId, mediaBlockId, allowMissingWorkRelation = false }) {
   const properties = page?.properties ?? {};
-  if (!relationIds(properties.Work).some(id => sameNotionId(id, workPageId))) return false;
+  const workMatches = relationIds(properties.Work).some(id => sameNotionId(id, workPageId));
+  if (!workMatches && !allowMissingWorkRelation) return false;
   const sourceMatches = sameNotionId(propertyPlainText(properties["Source Page ID"]), sourcePageId);
   const mediaMatches = Boolean(mediaBlockId) && sameNotionId(propertyPlainText(properties["Media Block ID"]), mediaBlockId);
   return sourceMatches || mediaMatches;
@@ -239,7 +255,9 @@ export function createNotionTargetAdapter(client, {
   return {
     async inspectTarget(target) {
       const recordedIds = [target.work_page_id, target.season_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
-      const pages = await Promise.all(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
+      const pageResults = await Promise.allSettled(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
+      const pages = pageResults.filter(result => result.status === "fulfilled").map(result => result.value);
+      if (pages.length === 0) throw pageResults.find(result => result.status === "rejected")?.reason ?? new Error("No recorded Notion page is accessible.");
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);
       const mediaBlocks = blocks.filter(block => ["video", "file", "audio"].includes(block.type) && mediaUrl(block));
@@ -260,23 +278,40 @@ export function createNotionTargetAdapter(client, {
           })
           : []
       };
+      const workPage = pages.find(page => sameNotionId(page?.id, target.work_page_id));
+      const workPageAccessible = Boolean(workPage);
+      const mediaType = target.work_type
+        ? compareNotionMediaType(target.work_type, selectName(workPage?.properties?.["影别"]))
+        : { expected: null, actual: null, matches: true };
       const asset = media ? (assets.results ?? []).find(page => matchesRecordedAssetEvidence(page, {
         workPageId: target.work_page_id,
         sourcePageId: contentPageId,
-        mediaBlockId: media?.id
+        mediaBlockId: media?.id,
+        allowMissingWorkRelation: !workPageAccessible
       })) ?? null : null;
       const assetGate = media ? playbackAssetGate(asset) : { code: "media_block_missing", detail: "No matching media block was found on the recorded destination page." };
-      const structureVerified = recordedStructureMatches(pages, target)
-        || await recordedLegacyStructureMatches(client, pages, target);
+      const structureVerified = mediaType.matches && (recordedStructureMatches(pages, target)
+        || partiallyRecordedStructureMatches(pages, target)
+        || await recordedLegacyStructureMatches(client, pages, target));
       return {
         structureVerified: recordedIds.length >= 2 && structureVerified,
         mediaBlockId: media?.id ?? null,
         mediaVerified: Boolean(media),
         mediaAssetPageId: asset?.id ?? null,
         assetsVerified: Boolean(asset && playbackAssetComplete(asset)),
-        assetGateCode: assetGate?.code ?? null,
-        assetGateDetail: assetGate?.detail ?? null,
-        evidence: { inspectedPageIds: recordedIds, contentPageId, mediaBlockId: media?.id ?? null }
+        assetGateCode: !mediaType.matches ? "work_type_mismatch" : assetGate?.code ?? null,
+        assetGateDetail: !mediaType.matches
+          ? `Notion 影别=${mediaType.actual ?? "empty"}; expected ${mediaType.expected} from ledger work_type=${target.work_type}.`
+          : assetGate?.detail ?? null,
+        evidence: {
+          inspectedPageIds: recordedIds,
+          contentPageId,
+          mediaBlockId: media?.id ?? null,
+          workType: target.work_type ?? null,
+          notionMediaType: mediaType.actual,
+          expectedNotionMediaType: mediaType.expected,
+          mediaTypeMatches: mediaType.matches
+        }
       };
     }
   };

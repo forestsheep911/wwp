@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,6 +38,34 @@ test("fingerprint uses fixed media evidence instead of the display sample count"
       { relativePath: "Example.Movie.2025\\sample.m2ts", bytes: 100, extension: ".m2ts" }
     ]
   }));
+});
+
+test("fingerprint changes when a copied directory gains content with preserved mtimes", () => {
+  const original = entry({ contentFingerprint: "before" });
+  assert.notEqual(fingerprintEntry(original), fingerprintEntry({ ...original, contentFingerprint: "after" }));
+});
+
+test("importScan upgrades legacy fingerprints without reopening every source", () => {
+  const f = fixture();
+  try {
+    const payload = { root: "X:\\queue", scannedAt: "2026-07-12T00:00:00.000Z", entries: [entry()] };
+    importScan(f.repo, payload);
+    const source = f.db.prepare("SELECT id FROM sources").get();
+    const oldMaterial = {
+      relativePath: payload.entries[0].relativePath,
+      fileCount: payload.entries[0].fileCount,
+      mediaCount: payload.entries[0].mediaCount,
+      subtitleCount: payload.entries[0].subtitleCount,
+      nfoCount: payload.entries[0].nfoCount,
+      totalBytes: payload.entries[0].totalBytes,
+      largestMedia: payload.entries[0].largestMedia,
+      flags: payload.entries[0].flags
+    };
+    f.db.prepare("UPDATE sources SET fingerprint=? WHERE id=?").run(createHash("sha256").update(JSON.stringify(oldMaterial)).digest("hex"), source.id);
+    const result = importScan(f.repo, { ...payload, entries: [{ ...payload.entries[0], latestFileMtime: "2026-07-12T01:00:00.000Z" }] });
+    assert.equal(result.summary.unchanged, 1);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "pending");
+  } finally { f.close(); }
 });
 
 test("importScan is idempotent, reopens changed evidence, marks missing, and never creates works", () => {
@@ -94,6 +123,70 @@ test("importScan is idempotent, reopens changed evidence, marks missing, and nev
     assert.deepEqual(importScan(f.repo, payload).summary, { inserted: 0, unchanged: 0, changed: 1, missing: 0 });
     assert.equal(f.db.prepare("SELECT missing FROM sources").get().missing, 0);
   } finally { f.close(); }
+});
+
+test("importScan creates an intake task for a first-seen source", () => {
+  const f = fixture();
+  try {
+    const result = importScan(f.repo, {
+      root: "X:\\queue",
+      scannedAt: "2026-07-12T00:00:00.000Z",
+      entries: [entry({ relativePath: "New.Movie.2026" })]
+    });
+    assert.equal(result.summary.inserted, 1);
+    const source = f.db.prepare("SELECT id FROM sources WHERE relative_path=?").get("New.Movie.2026");
+    const task = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`);
+    assert.equal(task.status, "pending");
+    assert.match(task.reason, /New source discovered/u);
+  } finally { f.close(); }
+});
+
+test("importScan marks a synthetic flat source missing when its derived path is absent", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-flat-source-"));
+  try {
+    const result = importScan(f.repo, {
+      root,
+      entries: [entry({
+        relativePath: "@flat/removed-title",
+        absolutePath: root,
+        mediaCount: 1
+      })]
+    });
+    const source = f.db.prepare("SELECT absolute_path, missing FROM sources WHERE relative_path=?")
+      .get("@flat/removed-title");
+    assert.equal(result.summary.missing, 1);
+    assert.match(source.absolute_path.replaceAll("\\", "/"), /@flat\/removed-title$/u);
+    assert.equal(source.missing, 1);
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 9 }).length, 0);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importScan retires an old synthetic flat source even when the input root still exists", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-stale-flat-"));
+  try {
+    const inputRoot = f.repo.upsertInputRoot(root);
+    const work = f.repo.ensureWork({ canonicalTitle: "Stale Flat", year: 2025 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: inputRoot.id,
+      workId: work.id,
+      relativePath: "@flat/removed-title",
+      absolutePath: root,
+      fingerprint: "stale-flat",
+      sourceKind: "folder"
+    });
+    const result = importScan(f.repo, { root, entries: [] });
+    assert.equal(result.summary.missing, 1);
+    assert.equal(f.db.prepare("SELECT missing FROM sources WHERE id=?").get(source.id).missing, 1);
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 9 }).length, 0);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("importScan counts duplicate scan entries deterministically", () => {

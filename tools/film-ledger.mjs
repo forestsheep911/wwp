@@ -190,6 +190,17 @@ async function main() {
       const variant = variantRecord(db, id);
       if (variant.production_state !== "selected") throw new Error("production start requires selected state");
       output(repo.transitionProduction(id, "encoding", { failureDetail: options.failure_detail ?? "Encoding started" }), options.json, `variant ${id}: encoding`);
+    } else if (command === "defer-production") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      const variant = variantRecord(db, id);
+      if (!["discovered", "evaluated", "selected", "qc_failed"].includes(variant.production_state)) {
+        throw new Error("production defer requires discovered, evaluated, selected, or qc_failed state");
+      }
+      output(repo.transitionProduction(id, "deferred", {
+        failureCode: options.failure_code ?? "production_deferred",
+        failureDetail: requireOption(options, "failure_detail", "--failure-detail"),
+        nextReviewAt: options.next_review_at
+      }), options.json, `variant ${id}: deferred`);
     } else if (command === "retry-production") {
       const id = asId(requireOption(options, "variant", "--variant"));
       const variant = variantRecord(db, id);

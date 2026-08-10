@@ -15,6 +15,8 @@
 
 Use positive labels in spec page titles: work title, subtitle/language label, and measured file size. Example movie shape: `Work Title 简英 1.16GB`. For series, default to measured per-episode size or range, for example `Work Title 简英 H.265 0.4-0.6GB/集`; do not use a season total. Use `/合集` only for explicitly approved collection delivery.
 
+Treat the ordinary theatrical cut as the implicit default. Do not write `theatrical`/`院线版` into `Edition / Version`, spec titles, or display labels when it is the work's only cut. Record and display the theatrical label only when the same work also has a materially different cut such as a director's cut, extended cut, or restored version and the label is needed to distinguish the sibling variants. Non-default cut labels always require explicit source evidence.
+
 Do not encode hidden technical truth in title text. Media Assets is the authoritative structured record for codec, duration, resolution, frame rate, audio, subtitle, source lineage, and availability.
 
 Title QA is bounded: after a current production, rename, structure-preparation, or manual-upload handoff, check only the exact recent targets recorded for that run, normally at most three. Do not scan the whole Notion library to find historical title mistakes; older untouched specs can wait for a user-directed repair.
@@ -60,13 +62,24 @@ Title QA is bounded: after a current production, rename, structure-preparation, 
 ## Visibility and Review Gates
 
 - Keep `Hide from Website` true when there is no verified playable path: no suitable upload, no playable Media Assets row, source-only state, blocked encode/QC, missing required Chinese subtitles on a subtitle-dependent branch, broken media relationship, or unresolved playback risk. Missing Chinese subtitles on a verified `国配` branch are not by themselves a visibility blocker.
-- Treat a user-set `Hide from Website` as intentional. Do not clear it automatically. If the playable specs and Media Assets look good but the work is still hidden, report the evidence and ask the user before un-hiding.
+- Once one useful playable path and the work metadata/review gates pass, clear the work-level automation-owned `Hide from Website` without waiting for optional supplemental variants. Keep unfinished supplemental asset/spec gates hidden individually until their own QC, Media Assets, and readback pass.
+- Treat a user-set `Hide from Website` as intentional unless the user has explicitly delegated this gate to AI. Under that delegation, the publisher may clear an automation-owned asset gate only through the exact release manifest and readback; keep the work page hidden when metadata is partial, `Needs Review` is true, or either issue field is unresolved.
 - A matching Media Assets row may exist while publication remains pending when `Hide from Website=true` or `Needs Review=true`. Record the asset evidence, preserve the gate, and route the item to a human visibility/review decision; do not misclassify it as a missing Media Assets row or clear the checkbox during backfill.
 - `Hide from Website` is not part of local-retention proof. A correctly traced, upload-backed playable asset may allow deletion of its local output even when it remains hidden; visibility is controlled separately and automation must not infer why the flag is true.
 - Use `Needs Review` for fixable uncertainty rather than visibility alone: ambiguous work/spec matching, Media Assets mismatch, duplicate or missing episode/spec links, missing ffprobe evidence, subtitle/audio uncertainty, metadata conflict, low-confidence AI advisory, or any condition where a human should inspect before relying on the row.
 - Clearing `Needs Review` requires the named issue to be resolved and read back. Clearing it should not automatically clear `Hide from Website`.
-- After exact upload, Media Assets, QC, and ledger reconciliation reach `sync_ready`, update the work page itself: set `Media Availability=playable`, clear only automation-owned initial gates, append the release evidence to `Workflow Note`, and transition `Workflow Status` to `已完成`. This parent-page write is required because Notion may not advance the work page's `last_edited_time` when only a child media block or related Media Assets row changes.
+- After exact upload, Media Assets, QC, and ledger reconciliation reach
+  `sync_ready`, treat the playable gate as complete but do not yet transition
+  `Workflow Status` to `已完成`. First require exact work-page
+  `Metadata Status=verified`, empty issue fields, a usable poster, and targeted
+  live-site readback of poster/core metadata alongside the playable assets.
+  Then set `Media Availability=playable`, clear only automation-owned initial
+  gates, append both media and metadata evidence to `Workflow Note`, and set
+  `已完成`. This parent-page write is required because Notion may not advance the
+  work page's `last_edited_time` when only a child media block or related Media
+  Assets row changes.
 - For a completed verified `国配` asset without Chinese subtitles, write `Subtitle Language=none` or the schema-equivalent factual value, preserve the verified Mandarin audio label, and add one non-blocking future-enhancement sentence to the production manifest/Developer Memo and AI completion line. Do not set `Needs Review`, keep `Hide from Website`, or withhold `已完成` solely for the missing subtitle.
+- Mirror source expansion in the latest AI `Workflow Note` line as `[规格扩展:OPEN]` with concrete pending variants and the earliest review time, or `[规格扩展:CLOSED]` with the value-exhausted reason. This is a human-facing mirror, not a new Notion database property; the ledger variants remain authoritative.
 - Trigger a bounded website metadata sync after the parent-page release write. Verify the running `/api/search` result contains the expected Media Assets page ID or variant label. An updated JSON file without live API readback is not final publication proof.
 
 ## Backfill Rules

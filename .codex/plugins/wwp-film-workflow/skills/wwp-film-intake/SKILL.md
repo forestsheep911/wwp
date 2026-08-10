@@ -14,6 +14,9 @@ When one discovered directory contains several independently catalogued seasons,
 1. Resolve the user-specified input root or an enabled ledger root. Historical paths are examples, never fixed defaults.
 2. Run a bounded scan and import discoveries into the local SQLite ledger.
    The scan fingerprint must be independent from the human-facing sample count. A
+   first-seen source always creates a pending intake task, and the fingerprint
+   includes the newest file modification time so same-size replacements are not
+   silently treated as unchanged.
    real file-count, byte-count, subtitle, or fixed-media-evidence change reopens
    the existing source's intake task even when that source is already bound to a
    work. This is how newly added episodes or replacement media inside an old

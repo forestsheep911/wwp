@@ -2,13 +2,22 @@
 
 import fs from "node:fs";
 import dns from "node:dns";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import { openLedger } from "./lib/film-ledger-schema.mjs";
+import { compareNotionMediaType, expectedNotionMediaType } from "./lib/work-media-type.mjs";
 
-function parseArgs(argv) {
-  const options = { type: "series", apply: false };
+const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
+
+export function parseArgs(argv) {
+  const options = { apply: false, db: DEFAULT_DB };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--type") options.type = argv[++i];
+    else if (arg === "--work-id") options.workId = Number(argv[++i]);
+    else if (arg === "--page-id") options.pageId = argv[++i];
+    else if (arg === "--db") options.db = path.resolve(argv[++i]);
     else if (arg === "--title") options.title = argv[++i];
     else if (arg === "--chinese-title") options.chineseTitle = argv[++i];
     else if (arg === "--english-title") options.englishTitle = argv[++i];
@@ -18,9 +27,46 @@ function parseArgs(argv) {
     else if (arg === "--apply") options.apply = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!options.title) throw new Error("--title is required");
-  if (!["movie", "series"].includes(options.type)) throw new Error("--type must be movie or series");
+  if (!Number.isInteger(options.workId) || options.workId < 1) {
+    throw new Error("--work-id is required so 影别 comes from the verified ledger identity");
+  }
+  if (!options.pageId && !options.title) throw new Error("--title is required when creating or finding a page");
+  if (options.type && !["movie", "series"].includes(options.type)) throw new Error("--type must be movie or series");
   return options;
+}
+
+export function ledgerWorkForOptions(options) {
+  const db = openLedger(options.db);
+  try {
+    const work = db.prepare("SELECT * FROM works WHERE id=?").get(options.workId);
+    if (!work) throw new Error(`Ledger work not found: ${options.workId}`);
+    if (options.type && options.type !== work.work_type) {
+      throw new Error(`--type=${options.type} conflicts with ledger work_type=${work.work_type} for work ${work.id}`);
+    }
+    if (options.pageId && work.notion_work_page_id && work.notion_work_page_id.replaceAll("-", "") !== options.pageId.replaceAll("-", "")) {
+      throw new Error(`--page-id does not match ledger work ${work.id} notion_work_page_id`);
+    }
+    expectedNotionMediaType(work.work_type);
+    return work;
+  } finally {
+    db.close();
+  }
+}
+
+function linkLedgerWorkPage(options, work, pageId) {
+  const db = openLedger(options.db);
+  try {
+    const duplicate = db.prepare("SELECT id FROM works WHERE notion_work_page_id=? AND id<>?").get(pageId, work.id);
+    if (duplicate) throw new Error(`Notion page ${pageId} is already linked to ledger work ${duplicate.id}`);
+    const current = db.prepare("SELECT notion_work_page_id FROM works WHERE id=?").get(work.id)?.notion_work_page_id;
+    if (current && current.replaceAll("-", "") !== pageId.replaceAll("-", "")) {
+      throw new Error(`Ledger work ${work.id} is already linked to a different Notion page`);
+    }
+    db.prepare("UPDATE works SET notion_work_page_id=COALESCE(notion_work_page_id, ?), updated_at=? WHERE id=?")
+      .run(pageId, new Date().toISOString(), work.id);
+  } finally {
+    db.close();
+  }
 }
 
 function env(name) {
@@ -75,10 +121,6 @@ function titleProperty(dataSource) {
   return Object.entries(dataSource.properties ?? {}).find(([, value]) => value.type === "title")?.[0] ?? "Title";
 }
 
-function expectedMediaType(type) {
-  return type === "series" ? "TV Series" : "Movie";
-}
-
 function selectValue(page, property) {
   return page.properties?.[property]?.select?.name;
 }
@@ -86,12 +128,12 @@ function selectValue(page, property) {
 async function reconcileMediaType(notion, library, pageId, type, apply) {
   if (!propertyName(library.dataSource, "影别", "select")) return { expected: undefined, actual: undefined, corrected: false };
 
-  const expected = expectedMediaType(type);
+  const expected = expectedNotionMediaType(type);
   let page = await notion.pages.retrieve({ page_id: pageId });
   let actual = selectValue(page, "影别");
-  if (actual === expected) return { expected, actual, corrected: false };
+  if (actual === expected) return { expected, actual, corrected: false, lastEditedTime: page.last_edited_time ?? null };
 
-  if (!apply) return { expected, actual, corrected: false, wouldCorrect: true };
+  if (!apply) return { expected, actual, corrected: false, wouldCorrect: true, lastEditedTime: page.last_edited_time ?? null };
 
   await notion.pages.update({
     page_id: pageId,
@@ -100,7 +142,7 @@ async function reconcileMediaType(notion, library, pageId, type, apply) {
   page = await notion.pages.retrieve({ page_id: pageId });
   actual = selectValue(page, "影别");
   if (actual !== expected) throw new Error(`Work page ${pageId} has 影别=${actual ?? "(empty)"}; expected ${expected}`);
-  return { expected, actual, corrected: true };
+  return { expected, actual, corrected: true, lastEditedTime: page.last_edited_time ?? null };
 }
 
 async function findExistingIdentity(notion, library, options) {
@@ -125,11 +167,23 @@ async function findExistingIdentity(notion, library, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const work = ledgerWorkForOptions(options);
+  options.type = work.work_type;
+  options.title ??= work.canonical_title;
   installDnsOverride();
   const token = env("NOTION_WRITE_TOKEN") || env("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
   const notion = new Client({ auth: token, timeoutMs: 120000 });
   const library = await loadLibrary(notion);
+  if (options.pageId) {
+    const page = await notion.pages.retrieve({ page_id: options.pageId });
+    const currentType = selectValue(page, "影别");
+    const comparison = compareNotionMediaType(work.work_type, currentType);
+    const mediaType = await reconcileMediaType(notion, library, page.id, work.work_type, options.apply);
+    if (options.apply) linkLedgerWorkPage(options, work, page.id);
+    console.log(JSON.stringify({ status: "existing_page", workId: work.id, pageId: page.id, title: options.title, comparison, mediaType }));
+    return;
+  }
   const existing = await notion.dataSources.query({
     data_source_id: library.dataSourceId,
     page_size: 5,
@@ -137,14 +191,17 @@ async function main() {
   });
   if (existing.results?.[0]) {
     const mediaType = await reconcileMediaType(notion, library, existing.results[0].id, options.type, options.apply);
-    console.log(JSON.stringify({ status: "existing", pageId: existing.results[0].id, title: options.title, mediaType }));
+    if (options.apply) linkLedgerWorkPage(options, work, existing.results[0].id);
+    console.log(JSON.stringify({ status: "existing", workId: work.id, pageId: existing.results[0].id, title: options.title, mediaType }));
     return;
   }
   const identityMatch = await findExistingIdentity(notion, library, options);
   if (identityMatch) {
     const mediaType = await reconcileMediaType(notion, library, identityMatch.page.id, options.type, options.apply);
+    if (options.apply) linkLedgerWorkPage(options, work, identityMatch.page.id);
     console.log(JSON.stringify({
       status: "existing_identity",
+      workId: work.id,
       pageId: identityMatch.page.id,
       title: options.title,
       matchedProperty: identityMatch.property,
@@ -185,7 +242,10 @@ async function main() {
     });
   }
   const mediaType = await reconcileMediaType(notion, library, page.id, options.type, true);
-  console.log(JSON.stringify({ status: "created", pageId: page.id, title: options.title, mediaType }));
+  linkLedgerWorkPage(options, work, page.id);
+  console.log(JSON.stringify({ status: "created", workId: work.id, pageId: page.id, title: options.title, mediaType }));
 }
 
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(error => { console.error(error.message); process.exitCode = 1; });
+}

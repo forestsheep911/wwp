@@ -155,7 +155,10 @@ function installNotionDnsOverride(notionApiIp) {
 
 function createNotionClient(token, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
-  const options = { auth: token, timeoutMs: 600000 };
+  // A stalled multipart request must return to the bounded retry loop instead
+  // of keeping the workflow in an apparently active state for ten minutes.
+  const timeoutMs = Number(dotenv("NOTION_UPLOAD_REQUEST_TIMEOUT_MS") || 90000);
+  const options = { auth: token, timeoutMs };
   if (localAddress) {
     options.fetch = nodeFetch;
     options.agent = new https.Agent({ keepAlive: true, localAddress });

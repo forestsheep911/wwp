@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 function usage() {
   console.log(`Usage:
   node scripts/remux-audio-variant.mjs --video-source <qc-passed-mp4> --audio-source <media>
-    --audio-stream <ordinal> --output <mp4> [--audio-channels <count>]
+    --audio-stream <ordinal> --output <mp4> [--audio-channels <count>] [--audio-loudnorm]
     [--audio-bitrate <rate>] [--max-bytes <bytes>] [--ffmpeg <path>]
 
 The video stream is copied without re-encoding and tagged hvc1. The selected audio
@@ -22,6 +22,7 @@ function parseArgs(argv) {
   const options = {
     ffmpeg: "ffmpeg",
     audioChannels: null,
+    audioLoudnorm: false,
     audioBitrate: "256k",
     maxBytes: 5_000_000_000
   };
@@ -38,6 +39,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
+    else if (arg === "--audio-loudnorm") options.audioLoudnorm = true;
     else if (values.has(arg)) {
       const value = argv[++index];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
@@ -108,7 +110,10 @@ function availableBytes(directory) {
 }
 
 export function buildFfmpegArgs(options, videoSource, audioSource, part) {
-  const audioChannels = options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)];
+  const audioChannels = [
+    ...(options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)]),
+    ...(options.audioLoudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [])
+  ];
   return [
     "-hide_banner",
     "-y",
@@ -163,6 +168,7 @@ function main() {
     audioSource,
     audioStream: options.audioStream,
     audioChannels: options.audioChannels,
+    audioLoudnorm: options.audioLoudnorm,
     audioBitrate: options.audioBitrate
   }));
 }

@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.25",
+  "version": "0.1.28",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"
@@ -16,6 +16,6 @@
       "skills",
       "scripts"
     ],
-    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow from registered input roots through metadata, playable production, Notion publishing, Media Assets, and final readback verification."
+    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow with release-first batch coverage: publish the first verified useful playable for each eligible new work as early as practical, use encode/upload wait time for metadata and other independent lanes, then revisit concrete selected or deferred supplemental variants without deleting their sources. Never set Workflow Status=已完成 from sync_ready alone."
   }
 }

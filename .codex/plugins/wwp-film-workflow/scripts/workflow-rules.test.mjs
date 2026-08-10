@@ -40,6 +40,64 @@ test("plugin revision records the updated subtitle gate contract", () => {
   assert.match(cycle, new RegExp(`Stable Contract \\(${manifest.version.replaceAll(".", "\\.")}\\)`, "u"));
 });
 
+test("release completion requires playable and verified metadata gates", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const maintainer = read("skills/wwp-library-maintainer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+  const handoff = read("references/workflow-handoff.md");
+
+  assert.match(producer, /`sync_ready` is final playable completion, not release completion/u);
+  assert.match(producer, /`Metadata Status=verified`/u);
+  assert.match(publisher, /published-but-metadata-incomplete work `AI 处理中`/u);
+  assert.match(maintainer, /A `partial` page is\s+not complete/u);
+  assert.match(cycle, /Neither metadata completion nor `sync_ready` alone|`sync_ready` alone/u);
+  assert.match(handoff, /Neither metadata completion nor `sync_ready` alone\s+qualifies/u);
+});
+
+test("release-first coverage is separate from source expansion", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const selector = read("skills/wwp-film-candidate-selector/SKILL.md");
+  const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+  const archive = read("references/source-archive-rules.md");
+
+  assert.match(producer, /prioritize one releaseable playable for each eligible newly arrived work/u);
+  assert.match(selector, /Do not build a Cartesian product/u);
+  assert.match(encoder, /Default to a compact first release/u);
+  assert.match(encoder, /upload the high tier while deriving compact/iu);
+  assert.match(publisher, /without waiting for optional supplemental variants/u);
+  assert.match(cycle, /production queue is also the durable expansion query/u);
+  assert.match(archive, /`Workflow Status=已完成` means the current release is live/u);
+});
+
+test("expansion marker uses concrete ledger variants instead of a new Notion property", () => {
+  const selector = read("skills/wwp-film-candidate-selector/SKILL.md");
+  const handoff = read("references/workflow-handoff.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+
+  assert.match(selector, /Create concrete ledger variants/u);
+  assert.match(selector, /`\[规格扩展:OPEN\]`/u);
+  assert.match(selector, /human-visible marker, not a new Notion property/u);
+  assert.match(handoff, /supplemental work does not keep a verified first release hidden/u);
+  assert.match(publisher, /exact selected\/deferred ledger variants remain the queryable machine queue/u);
+});
+
+test("metadata task completion requires exact core and poster evidence", () => {
+  const metadata = read("skills/wwp-metadata-backfiller/SKILL.md");
+  const sources = read("references/metadata-sources.md");
+  const scripts = read("references/script-map.md");
+
+  assert.match(metadata, /Complete the ledger `metadata_backfill` task only after that exact readback/u);
+  assert.match(metadata, /Determine `movie` versus `series` before the first Notion metadata write/u);
+  assert.match(metadata, /notion-create-work-page\.mjs --work-id <id>/u);
+  assert.match(metadata, /`missingCoreFields`/u);
+  assert.match(metadata, /maintained `Poster URL` is usable and later website readback succeeds/u);
+  assert.match(sources, /Complete the ledger\s+metadata task only for `Metadata Status=verified`/u);
+  assert.match(scripts, /A `partial` result must stay\s+pending or be deferred/u);
+});
+
 test("multi-season shows use one database work page per season", () => {
   const seriesRules = read("references/series-rules.md");
   const seriesProducer = read("skills/wwp-series-producer/SKILL.md");

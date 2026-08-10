@@ -89,6 +89,9 @@ for (const [name, value] of [
 if (options.imdbId !== undefined && page.properties?.["IMDb ID"]?.type === "rich_text") {
   proposed["IMDb ID"] = { rich_text: richText(options.imdbId) };
 }
+if (options.imdbId !== undefined && page.properties?.imdb?.type === "rich_text") {
+  proposed.imdb = { rich_text: richText(options.imdbId) };
+}
 
 const result = { mode: options.apply ? "apply" : "dry_run", pageId: options.pageId, currentTitle, updates: proposed };
 if (options.apply && Object.keys(proposed).length > 0) {

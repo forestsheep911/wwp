@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import { openLedger } from "../../../../tools/lib/film-ledger-schema.mjs";
 
 const scriptPath = path.resolve(".codex/plugins/wwp-film-workflow/scripts/watch-input-directory.mjs");
 
-function runWatch(root, state, output) {
+function runWatch(root, state, output, maxSamples) {
   const result = spawnSync(process.execPath, [
     scriptPath,
     "--root",
@@ -17,6 +17,7 @@ function runWatch(root, state, output) {
     state,
     "--output",
     output,
+    ...(maxSamples ? ["--max-samples", String(maxSamples)] : []),
     "--once"
   ], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -48,6 +49,48 @@ test("watch-input-directory creates baseline then reports added entries", () => 
     assert.equal(second.baseline, false);
     assert.equal(second.summary.added, 1);
     assert.equal(second.added[0].name, "Movie.Two.2026");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("watch-input-directory does not treat a report sample limit change as source content change", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-watch-samples-"));
+  try {
+    mkdirSync(path.join(root, "Movie.One.2025"), { recursive: true });
+    for (const [name, bytes] of [["a.mkv", 1024], ["b.mkv", 2048], ["c.mkv", 3072]]) {
+      writeFileSync(path.join(root, "Movie.One.2025", name), Buffer.alloc(bytes));
+    }
+
+    const state = path.join(root, "state.json");
+    const output = path.join(root, "watch.json");
+    runWatch(root, state, output, 1);
+    const next = runWatch(root, state, output, 3);
+    assert.equal(next.summary.changed, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("watch-input-directory detects a new non-largest file even when its mtime is preserved", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-watch-content-fingerprint-"));
+  try {
+    const movie = path.join(root, "Movie.One.2025");
+    mkdirSync(movie, { recursive: true });
+    writeFileSync(path.join(movie, "feature.mkv"), Buffer.alloc(4096));
+
+    const state = path.join(root, "state.json");
+    const output = path.join(root, "watch.json");
+    runWatch(root, state, output);
+
+    const subtitle = path.join(movie, "subtitle.ass");
+    writeFileSync(subtitle, "subtitle");
+    const original = new Date("2020-01-01T00:00:00Z");
+    utimesSync(subtitle, original, original);
+
+    const next = runWatch(root, state, output);
+    assert.equal(next.summary.changed, 1);
+    assert.equal(next.changed[0].after.subtitleCount, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

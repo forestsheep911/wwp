@@ -492,6 +492,37 @@ test("CLI requires an auditable compact coverage decision before selecting a mov
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI defers a selected production with an auditable reason", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-defer-production-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({ canonicalTitle: "Deferred Film", year: 2025, workType: "movie" });
+    const variant = repo.ensureVariant({ workId: work.id, specKey: "deferred", displayTitle: "Deferred Film" });
+    repo.transitionProduction(variant.id, "evaluated");
+    repo.transitionProduction(variant.id, "selected");
+    db.close();
+
+    const deferred = run([
+      "--db", dbPath,
+      "defer-production",
+      "--variant", String(variant.id),
+      "--failure-code", "color_pipeline_slow",
+      "--failure-detail", "Tone mapping path is not currently usable",
+      "--next-review-at", "2026-08-14T00:00:00.000Z",
+      "--json"
+    ], dir);
+    assert.equal(deferred.status, 0, deferred.stderr);
+    const row = JSON.parse(deferred.stdout);
+    assert.equal(row.production_state, "deferred");
+    assert.equal(row.failure_code, "color_pipeline_slow");
+    assert.equal(row.next_review_at, "2026-08-14T00:00:00.000Z");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI can reselect a failed production for a corrected retry", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-retry-"));
   try {

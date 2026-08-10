@@ -67,6 +67,12 @@ export function relatedFlatSources(filePath, flatSources) {
   return flatSources.filter((source) => filename.startsWith(source.slug) || source.slug.startsWith(filename));
 }
 
+export function isDeferredRetainedCandidate(item) {
+  return item.exactVariantId === null
+    && item.classification === "playable_candidate"
+    && item.flatSourceCandidates.some((source) => source.qualityState === "deferred");
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
@@ -128,6 +134,8 @@ function main() {
         exactRegisteredPresent: localFiles.filter((item) => item.exactVariantId !== null).length,
         filenameMatchOnly: localFiles.filter((item) => item.filenameMatchOnly).length,
         unregisteredPlayableCandidates: localFiles.filter((item) => item.exactVariantId === null && item.classification === "playable_candidate").length,
+        deferredRetainedCandidates: localFiles.filter(isDeferredRetainedCandidate).length,
+        unresolvedPlayableCandidates: localFiles.filter((item) => item.exactVariantId === null && item.classification === "playable_candidate" && !isDeferredRetainedCandidate(item)).length,
         qcArtifacts: localFiles.filter((item) => item.classification === "qc_artifact").length,
         workIntermediates: localFiles.filter((item) => item.classification === "work_intermediate").length,
         registeredOutputsMovedToPendingDeletion: movedToPendingDeletion.length,

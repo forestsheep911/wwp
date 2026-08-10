@@ -22,7 +22,7 @@ Classify each candidate as:
 - source-only/archive workflow instead of playable workflow
 - metadata-only cataloging candidate when playable production is blocked, deferred, or not worth doing now
 
-Supplemental specs can be as valuable as new works when existing specs are weak. Do not apply a blanket "new films first" rule.
+Supplemental specs can be as valuable as new works when existing specs are weak, but a newly arrived batch follows release-first coverage: give every eligible work one releaseable playable before deepening an already covered work. Once that coverage round is complete or the remaining works are blocked, return to high-value supplemental specs.
 
 Work-level metadata is a separate high-priority track. If a scanned work is worth collecting, do not skip cataloging just because the current source lacks subtitles, has color risk, is too large, or has no immediate playable path.
 
@@ -49,6 +49,7 @@ Raise priority for:
 - children's films with Mandarin dubbing
 - Hong Kong films with Cantonese plus Chinese subtitles
 - director cuts, commentary tracks with Chinese assistance, or missing Mandarin/Cantonese specs
+- verified commentary tracks that can be paired with Chinese subtitles; when the source and a QC-passed visual stream are available, prioritize this branch before optional duplicate language or bitrate variants
 - existing works lacking a better 3-4GB-ish playable when the source quality supports it
 - existing works that have only high-bitrate files but lack a compact 1.0-1.8GB-ish playable for easier streaming
 - newly arrived input-directory entries detected by a queue watcher, after they pass the same subtitle, quality, Notion-state, and risk gates
@@ -79,6 +80,14 @@ This profile is an internal production decision. Spec titles and website-facing 
 - `compact_deferred`: no compact version will be made in this batch. Record a concrete reason, such as source quality, a user-requested high-bitrate-only result, an occupied equivalent compact spec, or a later explicitly scheduled batch.
 
 For a movie, `film-ledger select-variant` requires `--compact-decision` and `--compact-detail` to retain this decision with the selected variant. A movie may proceed with only one version only after this decision is recorded. Series remain episode-aware: assess compact coverage using actual per-episode sizes and existing specs, but do not force a duplicate season-wide delivery.
+
+## Release and Expansion Decisions
+
+- Treat release readiness and source-value exhaustion as separate decisions. The first verified useful variant can release the work; it does not imply that every worthwhile source-supported spec has been produced.
+- For each planned supplemental output, create an exact ledger variant with its bitrate/use tier, audio, subtitle treatment, cut, and target evidence. Use `selected` for current work or `deferred` with a concrete reason and `next_review_at` for later work.
+- Never represent expansion with an unspecific placeholder or an informal promise. If no additional variant is worthwhile, record expansion closed with the reason: weak source, materially duplicate experience, low-value title sufficiently served by compact, or no supported distinct branch.
+- Prioritize rare cuts/commentaries, original Cantonese for Hong Kong films, Mandarin/Taiwan dubbing for children's/family films, high bitrate for high-value films, and genuinely useful alternate subtitle treatments. Add a balanced tier only when it fills a distinct viewing need.
+- Do not create a Cartesian product. Choose the smallest set of variants that preserves materially different fan or viewing value.
 
 ## Deferred Decisions
 

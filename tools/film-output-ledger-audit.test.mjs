@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyLocalMedia, flatSourceSlug, pendingDeletionPath, relatedFlatSources } from "./film-output-ledger-audit.mjs";
+import { classifyLocalMedia, flatSourceSlug, isDeferredRetainedCandidate, pendingDeletionPath, relatedFlatSources } from "./film-output-ledger-audit.mjs";
 
 test("local output audit classifies playable, QC, and work artifacts", () => {
   assert.equal(classifyLocalMedia("Film.2025.mp4"), "playable_candidate");
@@ -24,4 +24,10 @@ test("local output audit links flat-source clues without adopting a variant", ()
     relatedFlatSources("E:\\video_made\\all.the.good.eyes.2026.2160p.mp4", [{ slug: "all.the.good.eyes.2026", id: 177 }]),
     [{ slug: "all.the.good.eyes.2026", id: 177 }]
   );
+});
+
+test("local output audit separates deferred retained media from unresolved candidates", () => {
+  const item = { exactVariantId: null, classification: "playable_candidate", flatSourceCandidates: [{ qualityState: "deferred" }] };
+  assert.equal(isDeferredRetainedCandidate(item), true);
+  assert.equal(isDeferredRetainedCandidate({ ...item, flatSourceCandidates: [{ qualityState: "unknown" }] }), false);
 });

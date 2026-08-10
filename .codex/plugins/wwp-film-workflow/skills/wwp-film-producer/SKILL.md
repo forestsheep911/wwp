@@ -25,6 +25,15 @@ route unless the user gives a more specific instruction:
   block, ffprobe-backed Media Assets row, ledger `sync_ready`, parent release,
   website sync, and live readback all pass. Only then may the local output move
   to `E:\待人工删除`.
+- `sync_ready` is final playable completion, not release completion. A work or
+  season may enter `Workflow Status=已完成` for the current release only when its exact work page also
+  has `Metadata Status=verified`, no unresolved `Human Issue` or `AI Issue`, a
+  usable poster, and targeted website readback proves the poster and core
+  metadata are present in the running site.
+- Release completion and source-value completion are separate lifecycles. One
+  verified useful playable may release the work while concrete supplemental
+  variants remain selected or deferred. Those variants, not `Workflow Status`,
+  keep expansion queryable and keep the source out of cleanup.
 
 These defaults were validated by the recent automatic-upload trial and are the
 baseline for future `开始制作影视库` runs:
@@ -48,13 +57,14 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 Treat the exact phrase `开始制作影视库` as the end-to-end start command. Do not ask the user to restate the workflow.
 
 1. Read enabled input roots and pending work from `.local-data/wwp-film-workflow.sqlite`. If the ledger has no enabled input root, use a directory explicitly supplied in the same request; ask for one only when neither source exists.
-2. Run `node tools/scan-enabled-input-roots.mjs --json` before reading any lanes. It performs one bounded discovery pass for every enabled ledger root and imports new or materially changed sources into SQLite; it is not a persistent watcher. Then run `node tools/notion-workflow-handoff.mjs scan --limit 3 --json` to mirror only explicit AI-actionable handoffs, followed by `node tools/film-ledger.mjs cycle --limit 3 --json`. Do not use Notion parent timestamps or a broad watcher.
+2. Run `node tools/film-workflow-cycle.mjs --limit 3 --json` before reading any lanes. This single entry point performs a fresh bounded scan of every enabled input root, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. The local scan always runs, while the Notion handoff/full round is throttled for one hour after an unchanged scan; a changed input bypasses that cooldown. When the user reports a new batch, run the same command with `--force`, because an automatic continuation may already have registered the batch before the user-facing turn. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, and cleanup candidates. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
 3. Claim a bounded actionable handoff before changing it, following `../../references/workflow-handoff.md`. Continue the other workflow lanes after the handoff batch.
-4. For each bounded batch, identify new resources and existing works needing metadata/spec repair before selecting playable production. Start work-page creation and metadata backfill as soon as a scanned work is identified. Run independent metadata, destination-page preparation, encoding, and QC work concurrently when practical.
+4. For each bounded batch, identify new resources and existing works needing metadata/spec repair before selecting playable production. Start work-page creation and metadata backfill as soon as a scanned work is identified. Apply release-first coverage: after the minimum production gates pass, prioritize one releaseable playable for each eligible newly arrived work before supplemental depth on an already covered work. Run independent metadata, destination-page preparation, upload, QC, and encoding work concurrently when practical; use long encode/upload wait time for the non-conflicting lanes. While a long encode or upload is active, monitor that process instead of starting rapid repeated full cycles. After an unchanged scan, wait for that process to close, a user-reported new input batch, or an urgent Workflow Note change before starting another full cycle.
 5. Continue through destination structure, playable production, upload handoff, Media Assets, and targeted readback. Reconcile at most three registered Notion targets per run. Media-block reconciliation is only the publication lane, not the workflow trigger or completion test.
 6. Record uncertain or deferred decisions and continue with other candidates instead of interrupting the batch. Ask only when a decision blocks every useful next action or requires user-only evidence/action.
-7. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final playable completion; set `Workflow Status=已完成` only after the current requested cycle is read back.
-8. When work-level metadata is complete but a playable specification is blocked or deferred, set `Workflow Status=暂缓` with an AI-marked recovery condition. A completed intake or metadata task is not a completed work cycle.
+7. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final playable completion. Before setting `Workflow Status=已完成`, run exact metadata maintenance/readback for the work page, require `Metadata Status=verified`, empty `Human Issue` and `AI Issue`, a usable poster, and targeted live-site readback of the poster and core metadata. If playable publication is complete but this metadata gate is not, keep the work in `AI 处理中`, requeue or defer its metadata task with the exact missing fields, and say explicitly that playback is complete while release completion is pending. Supplemental variants do not block this first-release state.
+8. Before completing a released work, create exact ledger variants for every source-supported supplemental spec worth revisiting. Keep later variants `selected` or `deferred` with `next_review_at`, and mirror the latest decision in `Workflow Note` as `[规格扩展:OPEN] ...` or `[规格扩展:CLOSED] ...`. Do not create a new Notion property or a generic placeholder task for this marker.
+9. When work-level metadata is complete but no first playable specification can continue, set `Workflow Status=暂缓` with an AI-marked recovery condition. Do not use work-level `暂缓` merely because a released work still has deferred supplemental variants.
 
 ## Stable Workflow Contract
 
@@ -73,6 +83,10 @@ The following defaults are considered settled for the current plugin revision:
   upload is only a bounded fallback, and must use a page prepared in advance.
 - A production item exits only after Notion structure, media block, Media Assets,
   ledger `sync_ready`, parent release, website sync, and live readback all pass.
+- A work or season exits the complete workflow only after that playable gate and
+  the work-level metadata gate both pass. `Metadata Status=partial`, a generic
+  "checked" task reason, or a successful backfill command is never metadata
+  completion evidence.
 - Finished local outputs are moved to `E:\待人工删除`; normal workflow never
   deletes them directly.
 
@@ -101,11 +115,13 @@ toggle, callout, or base-like visual containers.
   collaboration status channel.
 - Series are published one episode per file by default. A multi-episode
   collection is an explicit exception, not an upload optimization.
-- A work is not finally complete at encode, upload, or Media Assets write alone.
-  The required order is destination structure, uploaded block, ffprobe-backed
-  Media Assets, exact ledger reconciliation to `sync_ready`, parent release,
-  incremental website sync, and live API readback. Only then may the work be
-  marked `已完成`.
+- A work is not finally complete at encode, upload, Media Assets write, or
+  `sync_ready` alone. The required gates are: destination structure, uploaded
+  block, ffprobe-backed Media Assets, exact ledger reconciliation to
+  `sync_ready`; then exact work-page metadata maintenance with
+  `Metadata Status=verified`, no unresolved issue fields, and a usable poster;
+  then parent release, incremental website sync, and live API readback of both
+  playable assets and work metadata. Only then may the work be marked `已完成`.
 - Verified finished outputs are moved to `E:\待人工删除` for later human
   deletion. Never place the quarantine directory under `E:\video_made`, and do
   not delete source files or quarantine files as part of normal completion.
@@ -137,16 +153,18 @@ toggle, callout, or base-like visual containers.
 ## Default Flow
 
 1. Resolve the input directory from the current request or enabled ledger roots. Do not assume a historical path is fixed.
-2. Run `node tools/scan-enabled-input-roots.mjs --json` to scan/import every enabled root before reading the bounded intake queue. A scan is not an encode decision.
+2. Run `node tools/film-workflow-cycle.mjs --limit 3 --json` to scan/import every enabled root and load the bounded queues in one invocation. A scan is not an encode decision, and a previous cycle's empty result is never reusable for a later cycle.
 3. Identify works, perform duplicate/alias preflight, and create/reuse metadata work pages. Metadata tasks are high priority even when playable production is blocked or deferred.
 4. Process a small metadata-maintenance batch independently: repair identity, fill sourced fields, run AI advisory fields, and record unresolved issues. This includes old catalog entries with missing or stale fields, not only newly discovered works. Do not stop because no media block is waiting.
-5. Select playable candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk. When a worthwhile subtitle-dependent source lacks verified Chinese subtitles, create or continue a bounded `wwp-subtitle-acquirer` task before deferring it; do not let an open browser handoff block metadata or other candidates.
+5. Select playable candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk. Rank uncovered eligible new works ahead of supplemental variants for already released works. When a worthwhile subtitle-dependent source lacks verified Chinese subtitles, create or continue a bounded `wwp-subtitle-acquirer` task before deferring it; do not let an open browser handoff block metadata or other candidates.
 6. For accepted playable candidates, create or reuse the Notion work page and intended destination pages before long encode/upload work when they are missing. Confirm that a reused destination does not already contain a materially equivalent playable video; preparation must fail closed when the exact movie spec is occupied. Notion's API cannot move uploaded media blocks between pages in this workflow, so destination preparation is mandatory, not optional. Movie uploads need an empty spec child page. Series uploads need a spec page plus one Episode child page per episode by default. When manual upload is likely, report the target title and page ID before encoding starts so the user can upload the finished file to the correct child page rather than the work-page root.
 7. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
 8. Run probe/QC before upload.
 9. Publish playable output to Notion automatically by default after a successful route probe. Preserve the resumable upload manifest. Fall back to an exact manual-upload handoff only when the route is below the safe-start threshold, bounded retries still fail, or the user explicitly chooses manual upload. Then write Media Assets from `ffprobe` and production manifests.
-10. Revisit remaining metadata tasks while uploads or encodes wait; publication is only one queue.
-11. Report intake, catalog maintenance, production, upload, Media Assets, website-sync, and deferred-decision states separately. `node tools/film-ledger.mjs cycle --limit 3 --json` is the bounded start-of-cycle dashboard; Media Assets is only the publication reconciliation substage.
+10. Revisit remaining metadata tasks and prepare/upload completed outputs while encodes wait; publication is only one queue. A metadata task may be completed only after exact readback yields `Metadata Status=verified`. Leave `partial` work pending when another automatic source or AI pass is available; otherwise defer it with `missingCoreFields`, the attempted sources, and `next_review_at`.
+11. Before release completion, refresh the exact work in the website index and read the live result. Require a non-empty poster resolved from a maintained poster field and require the live metadata projection to contain the core identity/descriptive fields. A Notion `Poster URL` that cannot be fetched/cached is not a usable poster.
+12. Record the source-expansion decision separately from release completion: exact planned variants remain in the production queue or deferred queue, while a closed decision says why the current specs have exhausted useful source value.
+13. Report intake, catalog maintenance, first-release coverage, supplemental production, upload, Media Assets, metadata status, website-sync, and deferred-decision states separately. `node tools/film-ledger.mjs cycle --limit 3 --json` is the bounded start-of-cycle dashboard; Media Assets is only the publication reconciliation substage.
 
 ## Round-Robin Continuation Rule
 
@@ -154,8 +172,8 @@ Every execution cycle must treat these as parallel work lanes, in this order:
 
 1. **Collaboration handoff**: mirror and claim at most three explicit actionable `Workflow Status` rows. Ignore `人工上传中`; `已上传待 AI 收尾` is the manual-upload completion signal.
 2. **Intake**: inspect a small batch of newly discovered or changed source directories, resolve identity and duplicate risk, bind each source, and create its work-level metadata task.
-3. **Metadata maintenance**: process a small batch of new and old work pages independently of playback. Fill sourced fields, repair canonical identity, generate AI advisory values after sourced data is coherent, and record unresolved `AI Issue` items.
-4. **Production**: select only candidates that pass source, applicable subtitle, language, quality, value, and risk rules; prepare the destination structure before encoding. A verified `国配` branch passes the subtitle gate without Chinese subtitles; record the missing subtitle as optional enrichment rather than deferring it.
+3. **Metadata maintenance**: process a small batch of new and old work pages independently of playback. Fill sourced fields, repair canonical identity, generate AI advisory values after sourced data is coherent, and record unresolved `AI Issue` items. Close a metadata task only after the exact page reads back as `Metadata Status=verified`; `partial` must remain pending or be explicitly deferred with missing-core evidence and a review time.
+4. **Production**: first cover each eligible new work with one releaseable spec, then select due supplemental variants by fan value. Prepare the destination structure before encoding. A verified `国配` branch passes the subtitle gate without Chinese subtitles; record the missing subtitle as optional enrichment rather than deferring it.
 5. **Publication and Media Assets**: reconcile only bounded exact targets. Prefer resumable automatic upload; use manual upload as a recorded fallback, not the normal path. A missing upload is a pending handoff, not a reason to stop the other lanes.
 6. **Source/archive and deferred maintenance**: retain blocked, user-decision, source-only, cleanup, and later-backfill tasks with reasons and next-review times; do not silently discard them.
 
@@ -176,9 +194,15 @@ The cycle may end only after these work areas have been checked and the next bou
 - A deferred production decision must not be reconsidered every cycle. Keep it
   visible in status, but only select it again after its `next_review_at` is due
   or after an explicit human retry.
+- Never clear or archive a bound source while a concrete supplemental variant is
+  selected, deferred, encoding, QC-pending, or publication-pending. A released
+  work may be `已完成` while its source remains active for expansion.
 - If the user explicitly cancels an optional variant after QC but before upload, or an existing canonical media asset makes a prepared duplicate unnecessary, confirm that no upload is in flight, archive only its exact empty placeholder page when applicable, and retire the ledger variant with `retire-variant`. It records terminal publication state `cancelled`; do not mark a retired variant `sync_ready`, and do not leave it in `upload_pending` or `assets_pending` where a later cycle can select it again.
 - An empty production queue does not mean the workflow is idle. Check `queue --stage intake` and `queue --stage metadata` before stopping.
 - Do not claim completion until Notion or Media Assets readback proves the external state.
+- Do not claim release completion from `sync_ready` alone. Exact work-page
+  metadata verification and live poster/core-metadata readback are additional
+  hard gates for `Workflow Status=已完成`.
 - Treat `Workflow Status` as collaboration state only. It does not replace `Media Availability`, `Hide from Website`, `Needs Review`, production state, or publication state.
 - Read the unacknowledged plain-text tail of `Workflow Note` as the human instruction, then append an AI acknowledgement marker without changing it. `Human Issue` and `AI Issue` contain unresolved issues only; use neither as a coordination log.
 

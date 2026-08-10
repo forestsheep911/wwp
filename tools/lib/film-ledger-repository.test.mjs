@@ -320,6 +320,7 @@ test("source reconciliation lists one root and can mark missing then reopen", ()
     assert.deepEqual(f.repo.listSourcesForRoot(firstRoot.id).map(source => source.id), [first.id, second.id]);
     assert.equal(f.repo.markSourceMissing(first.id).missing, 1);
     assert.equal(f.repo.listSourcesForRoot(firstRoot.id)[0].missing, 1);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${first.id}`).status, "done");
     assert.equal(f.repo.markSourceMissing(first.id, false).missing, 0);
     assert.equal(f.repo.listSourcesForRoot(firstRoot.id)[0].missing, 0);
   } finally { f.close(); }
@@ -419,9 +420,51 @@ test("production queue keeps a bound source visible until a variant is selected"
       inputRootId: root.id, workId: work.id, relativePath: "@flat/Selection Needed",
       absolutePath: "E:\\video_made", fingerprint: "selection-flat", sourceKind: "folder", qualityState: "acceptable"
     });
-    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === flat.id), false);
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === flat.id), true);
+    const episodeFlat = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "@flat/episode 01",
+      absolutePath: "E:\\video_made", fingerprint: "selection-episode-flat", sourceKind: "folder", qualityState: "acceptable"
+    });
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === episodeFlat.id), false);
     f.repo.setInputRootEnabled("X:\\queue", false);
     assert.deepEqual(f.repo.listProductionSourceCandidates({ limit: 5 }), []);
+  } finally { f.close(); }
+});
+
+test("production queue prioritizes first-release coverage and keeps completed-work supplements queryable", () => {
+  const f = fixture();
+  try {
+    const covered = seed(f.repo, "Covered");
+    f.db.prepare("UPDATE works SET priority_score=100, workflow_status='已完成' WHERE id=?").run(covered.work.id);
+    f.db.prepare("UPDATE variants SET production_state='qc_passed', publication_state='sync_ready' WHERE id=?").run(covered.variant.id);
+    const supplement = f.repo.ensureVariant({
+      workId: covered.work.id,
+      sourceId: covered.source.id,
+      specKey: "commentary",
+      displayTitle: "ExampleCovered 导评版"
+    });
+
+    const uncovered = seed(f.repo, "Uncovered");
+    f.db.prepare("UPDATE works SET priority_score=10 WHERE id=?").run(uncovered.work.id);
+
+    const root = f.repo.upsertInputRoot("X:\\queueNeedsSelection");
+    const needsSelectionWork = f.repo.ensureWork({ canonicalTitle: "Needs Selection", year: 2025, priorityScore: 5 });
+    f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: needsSelectionWork.id,
+      relativePath: "Needs Selection",
+      absolutePath: "X:\\queueNeedsSelection\\Needs Selection",
+      fingerprint: "needs-selection",
+      sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+
+    const queue = f.repo.listProductionQueue({ limit: 10 });
+    assert.deepEqual(queue.map((row) => row.candidate_type), ["variant", "source_selection", "variant"]);
+    assert.equal(queue[0].id, uncovered.variant.id);
+    assert.equal(queue[0].release_covered, 0);
+    assert.equal(queue.at(-1).id, supplement.id);
+    assert.equal(queue.at(-1).release_covered, 1);
   } finally { f.close(); }
 });
 

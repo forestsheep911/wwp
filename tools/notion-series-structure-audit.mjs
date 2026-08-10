@@ -13,7 +13,9 @@ function parseArgs() {
     skipTargets: 0,
     reportPath: ".local-data/notion-series-structure-audit.json",
     includePrefixed: false,
-    resolveIp: ""
+    resolveIp: "",
+    episodeFrom: undefined,
+    episodeTo: undefined
   };
 
   const args = process.argv.slice(2);
@@ -27,6 +29,8 @@ function parseArgs() {
     else if (name === "--skip-targets") options.skipTargets = Number(value());
     else if (name === "--report") options.reportPath = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--episode-from") options.episodeFrom = Number(value());
+    else if (name === "--episode-to") options.episodeTo = Number(value());
     else if (arg === "--include-prefixed") options.includePrefixed = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -49,6 +53,12 @@ function parseArgs() {
   if (!Number.isFinite(options.skipTargets) || options.skipTargets < 0) {
     throw new Error("--skip-targets must be zero or a positive number.");
   }
+  if ((options.episodeFrom === undefined) !== (options.episodeTo === undefined)) {
+    throw new Error("--episode-from and --episode-to must be supplied together.");
+  }
+  if (options.episodeFrom !== undefined && (!Number.isInteger(options.episodeFrom) || !Number.isInteger(options.episodeTo) || options.episodeFrom < 1 || options.episodeTo < options.episodeFrom)) {
+    throw new Error("--episode-from/--episode-to must be an inclusive positive range.");
+  }
   return options;
 }
 
@@ -58,6 +68,7 @@ function printHelp() {
   node tools/notion-series-structure-audit.mjs --manifest .local-data/notion-media-assets-batch-round22.json --skip-targets 20 --limit 20 --report .local-data/series-audit-next.json
   npm run notion:series-audit -- .local-data/notion-media-assets-batch-round22.json .local-data/series-audit.json
   node tools/notion-series-structure-audit.mjs --page-id <notion-page-id> --report .local-data/series-audit.json
+  node tools/notion-series-structure-audit.mjs --page-id <notion-page-id> --episode-from 3 --episode-to 10 --report .local-data/series-audit-e03-e10.json
 
 This is read-only. It inspects TV/season page structure and reports whether the
 old Notion tree follows season -> spec -> episode -> media.
@@ -200,6 +211,12 @@ function episodeNumberFromLabel(value) {
   return chineseEpisodeNumber(cleaned.match(/第\s*([一二两三四五六七八九十百零〇]+)\s*[集话話]/u)?.[1] ?? "");
 }
 
+function specialEpisodeCodeFromLabel(value) {
+  const cleaned = cleanText(value);
+  const match = cleaned.match(/\b(?:Episode[\s._-]*)?SP[\s._-]*(\d{1,3})\b/i);
+  return match?.[1] ? `SP${String(Number(match[1])).padStart(2, "0")}` : undefined;
+}
+
 function canonicalEpisodeLabel(value) {
   const number = episodeNumberFromLabel(value);
   return number ? `Episode ${String(number).padStart(2, "0")}` : cleanText(value);
@@ -237,9 +254,14 @@ function loadTargets(options) {
   return targets.slice(options.skipTargets, options.skipTargets + options.limit);
 }
 
-async function auditSpecPage(notion, specPage) {
+async function auditSpecPage(notion, specPage, options = {}) {
   const children = await listChildren(notion, specPage.id).catch(() => []);
-  const episodeBlocks = children.filter((block) => block.type === "child_page");
+  const episodeBlocks = children.filter((block) => {
+    if (block.type !== "child_page") return false;
+    if (options.episodeFrom === undefined) return true;
+    const number = episodeNumberFromLabel(blockTitle(block));
+    return number !== undefined && number >= options.episodeFrom && number <= options.episodeTo;
+  });
   const directPlayable = children.filter(isPlayableMedia);
   const episodes = [];
   const seenNumbers = new Map();
@@ -247,6 +269,7 @@ async function auditSpecPage(notion, specPage) {
   for (const episodeBlock of episodeBlocks) {
     const title = blockTitle(episodeBlock);
     const number = episodeNumberFromLabel(title);
+    const specialCode = specialEpisodeCodeFromLabel(title);
     const episodeChildren = await listChildren(notion, episodeBlock.id).catch(() => []);
     const playable = episodeChildren.filter(isPlayableMedia);
     if (number) seenNumbers.set(number, (seenNumbers.get(number) ?? 0) + 1);
@@ -254,7 +277,8 @@ async function auditSpecPage(notion, specPage) {
       pageId: episodeBlock.id,
       title,
       episodeNumber: number,
-      canonicalLabel: canonicalEpisodeLabel(title),
+      episodeCode: specialCode,
+      canonicalLabel: specialCode ? `Episode ${specialCode}` : canonicalEpisodeLabel(title),
       playableMediaCount: playable.length,
       playableMediaNames: playable.map(mediaBlockName).slice(0, 5)
     });
@@ -264,8 +288,8 @@ async function auditSpecPage(notion, specPage) {
     pageId: specPage.id,
     title: specPage.title,
     episodePageCount: episodes.length,
-    parseableEpisodeCount: episodes.filter((episode) => episode.episodeNumber).length,
-    unparseableEpisodeTitles: episodes.filter((episode) => !episode.episodeNumber).map((episode) => episode.title),
+    parseableEpisodeCount: episodes.filter((episode) => episode.episodeNumber || episode.episodeCode).length,
+    unparseableEpisodeTitles: episodes.filter((episode) => !episode.episodeNumber && !episode.episodeCode).map((episode) => episode.title),
     duplicateEpisodeNumbers: [...seenNumbers.entries()].filter(([, count]) => count > 1).map(([number]) => number),
     emptyEpisodeTitles: episodes.filter((episode) => episode.playableMediaCount === 0).map((episode) => episode.title),
     playableMediaInEpisodes: episodes.reduce((sum, episode) => sum + episode.playableMediaCount, 0),
@@ -275,7 +299,7 @@ async function auditSpecPage(notion, specPage) {
   };
 }
 
-async function auditSeriesPage(notion, target) {
+async function auditSeriesPage(notion, target, options = {}) {
   const page = await notion.pages.retrieve({ page_id: target.pageId });
   const title = pageTitle(page) || target.title;
   const children = await listChildren(notion, page.id);
@@ -314,7 +338,7 @@ async function auditSeriesPage(notion, target) {
 
   const auditedSpecs = [];
   for (const specPage of specPages) {
-    auditedSpecs.push(await auditSpecPage(notion, specPage));
+    auditedSpecs.push(await auditSpecPage(notion, specPage, options));
   }
 
   const episodePageCount = auditedSpecs.reduce((sum, spec) => sum + spec.episodePageCount, 0);
@@ -382,7 +406,7 @@ async function main() {
   const notion = createNotionClient(token);
   const pages = [];
   for (const target of targets) {
-    pages.push(await auditSeriesPage(notion, target));
+    pages.push(await auditSeriesPage(notion, target, options));
   }
 
   const report = {

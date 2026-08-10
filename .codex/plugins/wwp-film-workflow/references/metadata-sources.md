@@ -9,17 +9,25 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 3. Parse old Douban-style basic-info text when present.
 4. Use existing IDs first only after that cross-check passes: Douban Subject ID, IMDb ID, TMDb ID.
 5. If a scanned work is worth cataloging and the work page does not exist yet, create/reuse the work page even when playable media is unavailable, unsuitable, or deferred.
+5a. Before that first write, resolve `movie` versus `series` from strong source/external evidence and persist it in the ledger. Invoke the work-page creator with the ledger work ID; never allow a movie/series default at the Notion boundary. Exact readback must prove `movie -> Movie` or `series -> TV Series`, and any mismatch blocks metadata completion and publication reconciliation.
 6. If playable or manual upload work is also planned, create/reuse the intended spec/episode pages before waiting for long encodes or uploads. This destination step is a media workflow requirement, not a metadata prerequisite.
 7. Run identity maintenance so `WW Work ID`, parsed external IDs, schema, match status, and source/status fields are initialized.
 8. Fetch missing sourced fields from Douban, OMDb, and TMDb lanes as soon as the work page exists and the required IDs/credentials are available.
 9. Run AI advisory fields only after sourced metadata is present.
 10. Apply conservatively and verify readback.
+11. Calculate core completeness from the exact readback. Complete the ledger
+    metadata task only for `Metadata Status=verified`; keep `partial` pending or
+    defer it with exact missing-core/source/blocker/review evidence.
+12. Before current-release completion, verify that the maintained poster can be
+    fetched/cached and that the targeted live website result contains that
+    poster and the core metadata projection.
 
 ## Current Notion Field Contract
 
 - `上映日期` is the active release-date field. Do not write the removed legacy `Release Date` field.
 - `Release Year` is a numeric derived field for sort/filter/matching/index use. Derive it from a sourced release date first. A canonical title may be fallback evidence only when the year is the terminal parenthesized suffix, such as `(2004)`; never treat arbitrary four-digit title text such as `2046`, `1917`, `2001: A Space Odyssey`, or `Blade Runner 2049` as the release year.
 - `WW Work ID` is a local stable identity field and belongs to identity maintenance.
+- `影别` is an identity field, not descriptive enrichment. Its only valid workflow mapping is ledger `movie -> Movie` and ledger `series -> TV Series`. Derive the ledger decision before page creation from strong evidence such as TMDb kind, episode/first-air metadata, and `SxxEyy` source structure; do not infer it from the presence or absence of playable media.
 - `TMDB ID` and `TMDB URL` must come from TMDb or a trusted existing hint; do not generate them with AI. A verified IMDb ID may use Wikidata as a discovery bridge: `P4947` is a TMDb movie ID and `P4983` is a TMDb television-series ID. Accept only one value from exactly one property, build the matching `/movie/<id>` or `/tv/<id>` URL, and leave multi-valued or simultaneous movie/TV matches for manual review.
 - `Traditional Chinese Title (Taiwan)` and `Traditional Chinese Title (Hong Kong)` come from Douban regional aliases, TMDb localized data, or trusted existing text.
 - `Countries`, `Languages`, `Runtime Minutes`, `Directors`, `Writers`, and `Cast` are structured fields and should be filled when the source gives them.
@@ -28,6 +36,9 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 - `未映射类型` records genre values that did not map cleanly and should trigger review.
 - `Box Office`, `Box Office Amount`, `Box Office Currency`, and `Box Office Source` normally come from OMDb. Leave them empty when OMDb has `N/A` or no trusted source exists.
 - `Metadata Source`, `Metadata Status`, `Metadata Confidence`, `Match Status`, and `Metadata Updated At` should reflect the latest sourced metadata pass. `Metadata Updated At` changes only when metadata changes.
+- `Metadata Status=verified` is the metadata completion gate. A successful tool
+  run or `partial` result is not enough to complete the ledger task or the
+  whole-work workflow.
 - `Last AI Check Time` records the end of a valid AI inspection even when it makes no metadata change. Candidate selection should use it to skip recently checked stable works while allowing earlier refresh for airing/new works, missing fields, or unresolved issues.
 - `Human Issue` is human-owned and contains values migrated from the former `Issue` field. Automation may read it but must not overwrite or clear it. `AI Issue` contains only concrete issues an AI check could not resolve during that pass; it is not an activity log.
 - `Media Availability` is media-operations state. Sourced work metadata must not mark a work playable without uploaded/probed media evidence.
@@ -35,6 +46,12 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 - `Hide from Website` is a visibility safety gate. Keep it true when the work has no playable verified media, upload/encoding/applicable subtitle requirements are blocked, Media Assets are missing or inconsistent, or the user manually hid the work. A verified `国配` branch without Chinese subtitles has no blocked subtitle requirement; missing subtitles are optional later enrichment and do not justify hiding or review by themselves. Do not clear the flag just because metadata is now complete. If other specs look good but the flag is true, ask the user before clearing it.
 - `Needs Review` is a quality/review gate. Set it when sourced metadata conflicts, the match is ambiguous, `未映射类型` is non-empty, AI advisory confidence is low or marks review, schema/media state disagrees, a manual decision is pending, or either issue field is non-empty. Clear it only after every concrete review reason is resolved and readback confirms the corrected state. Clearing review never clears `Human Issue` and must not automatically change `Hide from Website`.
 - `AI建议最低年龄`, `AI年龄建议置信度`, `内容风险标签`, `AI年龄建议理由`, and `人工年龄覆盖` are advisory/family fields. Run the AI advisory step after sourced fields are present.
+- `内容风险标签` must describe concrete, observable content such as violence,
+  gore, horror, sex/nudity, language, drugs, self-harm, war, discrimination,
+  crime, or death/bereavement. Do not use `成人主题`, `成人内容`, `成人向`,
+  or similar catch-all wording. Theme complexity, politics, ethics, identity,
+  and life experience belong in a specific `AI年龄建议理由`; the reason must
+  name the actual content or comprehension barrier rather than restating the age.
 
 ## Old Data Cleanup
 

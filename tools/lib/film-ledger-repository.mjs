@@ -581,7 +581,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function listProductionCandidates({ limit } = {}) {
-    return db.prepare(`SELECT 'variant' AS candidate_type, variants.*, works.priority_score, works.canonical_title
+    return db.prepare(`SELECT 'variant' AS candidate_type, variants.*, works.priority_score, works.canonical_title,
+        EXISTS (SELECT 1 FROM variants AS released
+          WHERE released.work_id=variants.work_id AND released.publication_state='sync_ready') AS release_covered
       FROM variants JOIN works ON works.id=variants.work_id
       WHERE (
         (variants.production_state NOT IN ('qc_passed','rejected','deferred')
@@ -602,6 +604,8 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         sources.color_risk, sources.discovered_at, sources.updated_at,
         works.priority_score, works.canonical_title, works.year, works.work_type,
         'needs_selection' AS production_state,
+        EXISTS (SELECT 1 FROM variants AS released
+          WHERE released.work_id=sources.work_id AND released.publication_state='sync_ready') AS release_covered,
         'Bound source has no selected production variant yet' AS selection_reason
       FROM sources
       JOIN works ON works.id=sources.work_id
@@ -609,7 +613,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       WHERE sources.missing=0
         AND sources.work_id IS NOT NULL
         AND input_roots.enabled=1
-        AND sources.relative_path NOT LIKE '@flat/%'
+        -- Root-level flat-file groups can be real movie sources (for example
+        -- "Z (1969)"). Only the synthetic per-episode groups are excluded;
+        -- otherwise a newly scanned movie can disappear after intake binding.
+        AND sources.relative_path NOT LIKE '@flat/episode %'
         AND sources.quality_state NOT IN ('unacceptable', 'rejected')
         AND (works.next_review_at IS NULL OR works.next_review_at <= ?)
         AND (
@@ -638,7 +645,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function listProductionQueue({ limit } = {}) {
     const capped = normalizeLimit(limit, 5, 50);
     return [...listProductionSourceCandidates({ limit: capped }), ...listProductionCandidates({ limit: capped })]
-      .sort((left, right) => Number(right.priority_score) - Number(left.priority_score)
+      .sort((left, right) => Number(left.release_covered ?? 0) - Number(right.release_covered ?? 0)
+        || Number(right.candidate_type === "variant") - Number(left.candidate_type === "variant")
+        || Number(right.priority_score) - Number(left.priority_score)
         || String(left.discovered_at ?? left.created_at).localeCompare(String(right.discovered_at ?? right.created_at)))
       .slice(0, capped);
   }
@@ -772,6 +781,13 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function markSourceMissing(sourceId, missing = true) {
     const at = timestamp();
     db.prepare("UPDATE sources SET missing = ?, updated_at = ? WHERE id = ?").run(missing ? 1 : 0, at, sourceId);
+    if (missing) {
+      db.prepare(`UPDATE workflow_tasks
+        SET status='done', reason='Source is no longer present in the configured input root',
+            next_run_at=NULL, updated_at=?
+        WHERE source_id=? AND task_type='intake' AND status IN ('pending','in_progress','waiting_user')`)
+        .run(at, sourceId);
+    }
     return db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
   }
 
@@ -779,8 +795,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     const ids = (variantIds ?? []).map(Number).filter(Number.isInteger);
     const variantClause = ids.length > 0 ? ` AND variants.id IN (${ids.map(() => "?").join(",")})` : "";
     const dueClause = ids.length > 0 ? "" : " AND (notion_targets.next_check_at IS NULL OR notion_targets.next_check_at <= ?)";
-    return db.prepare(`SELECT notion_targets.*, variants.publication_state, variants.production_state
+    return db.prepare(`SELECT notion_targets.*, variants.publication_state, variants.production_state,
+        works.id AS work_id, works.canonical_title, works.work_type
       FROM notion_targets JOIN variants ON variants.id=notion_targets.variant_id
+      JOIN works ON works.id=variants.work_id
       WHERE variants.production_state='qc_passed' AND variants.publication_state<>'sync_ready'
         ` + dueClause + variantClause + `
       ORDER BY notion_targets.updated_at ASC, notion_targets.variant_id ASC LIMIT ?`)
@@ -882,6 +900,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         throw new Error("migration productionState must be qc_failed or deferred");
       }
       const desired = {
+        specKey: correction.specKey ?? current.spec_key,
         displayTitle: correction.displayTitle ?? current.display_title,
         audioVariant: correction.audioVariant ?? current.audio_variant,
         subtitleVariant: correction.subtitleVariant ?? current.subtitle_variant,
@@ -889,7 +908,8 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         failureCode: correction.failureCode ?? current.failure_code,
         failureDetail: correction.failureDetail ?? current.failure_detail
       };
-      const unchanged = desired.displayTitle === current.display_title
+      const unchanged = desired.specKey === current.spec_key
+        && desired.displayTitle === current.display_title
         && desired.audioVariant === current.audio_variant
         && desired.subtitleVariant === current.subtitle_variant
         && desired.productionState === current.production_state
@@ -897,15 +917,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         && desired.failureDetail === current.failure_detail;
       if (unchanged) return { row: current, applied: false };
       const at = timestamp();
-      db.prepare(`UPDATE variants SET display_title=COALESCE(?, display_title),
+      db.prepare(`UPDATE variants SET spec_key=COALESCE(?, spec_key), display_title=COALESCE(?, display_title),
         audio_variant=COALESCE(?, audio_variant), subtitle_variant=COALESCE(?, subtitle_variant),
         production_state=COALESCE(?, production_state), failure_code=COALESCE(?, failure_code),
         failure_detail=COALESCE(?, failure_detail), updated_at=? WHERE id=?`)
-        .run(correction.displayTitle ?? null, correction.audioVariant ?? null,
+        .run(correction.specKey ?? null, correction.displayTitle ?? null, correction.audioVariant ?? null,
           correction.subtitleVariant ?? null, correction.productionState ?? null,
           correction.failureCode ?? null, correction.failureDetail ?? null, at, variantId);
       insertEvent.run("variant", variantId, "human_review_correction",
         stableJson({ from: {
+          specKey: current.spec_key,
           displayTitle: current.display_title,
           audioVariant: current.audio_variant,
           subtitleVariant: current.subtitle_variant,

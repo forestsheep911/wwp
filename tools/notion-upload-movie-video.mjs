@@ -18,6 +18,7 @@ function parseArgs() {
     file: "",
     targetPageId: "",
     targetTitle: "",
+    targetOnly: false,
     partMiB: DEFAULT_PART_MIB,
     uploadConcurrency: 1,
     prepareOnly: false,
@@ -37,6 +38,7 @@ function parseArgs() {
     }
     else if (arg === "--file") options.file = args[++index];
     else if (arg === "--target-page-id") options.targetPageId = args[++index];
+    else if (arg === "--target-only") options.targetOnly = true;
     else if (arg === "--target-title") options.targetTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--upload-concurrency") options.uploadConcurrency = Math.max(1, Number(args[++index]) || 1);
@@ -57,6 +59,7 @@ function parseArgs() {
     throw new Error("--page-id is required; refusing to use the historical default movie page.");
   }
   if (!options.file && !options.prepareOnly) throw new Error("--file is required.");
+  if (options.targetOnly && !options.targetPageId) throw new Error("--target-only requires --target-page-id.");
   if (options.file) options.file = path.resolve(options.file);
   if (options.prepareOnly && !options.targetPageId && !options.targetTitle) {
     throw new Error("--prepare-only requires --target-title or --target-page-id.");
@@ -78,6 +81,7 @@ Options:
   --prepare-only  Create/reuse an empty target spec child page before long encode or manual upload handoff, then skip upload. Fails when the target already contains video so an existing playable spec cannot be mistaken for a new destination.
   --replace-existing-video
                   Explicitly replace all video blocks on the selected spec page. The replacement file is uploaded completely before old blocks are deleted.
+  --target-only   Use an already prepared target spec page directly. This is for cases where the parent work page is temporarily unavailable to the integration; it never creates or discovers a different destination.
   --resolve-ip <ip>
                    Override api.notion.com DNS for route-specific Notion API failures.
   --local-address <ip>
@@ -474,14 +478,23 @@ async function main() {
     console.log(`upload probe: ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
   }
   const notion = createNotionClient(token, options.localAddress);
-  const page = await notion.pages.retrieve({ page_id: options.pageId });
-  const inferredTargetTitle = file
+  const page = options.targetOnly
+    ? null
+    : await notion.pages.retrieve({ page_id: options.pageId });
+  const inferredTargetTitle = file && page
     ? `${cleanMovieTitle(pageTitle(page))} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`
     : "";
   const targetTitle = options.targetTitle || (options.targetPageId ? "" : inferredTargetTitle);
-  const target = await findTargetPage(notion, page.id, options, file?.name ?? "", targetTitle);
+  const target = options.targetOnly
+    ? await (async () => {
+        const targetPage = await notion.pages.retrieve({ page_id: options.targetPageId });
+        return targetCandidate(notion, { id: targetPage.id, child_page: { title: pageTitle(targetPage) } });
+      })()
+    : await findTargetPage(notion, page.id, options, file?.name ?? "", targetTitle);
 
-  console.log(`page: ${pageTitle(page)} ${page.id}`);
+  console.log(page
+    ? `page: ${pageTitle(page)} ${page.id}`
+    : `page: (parent unavailable; target-only) ${options.pageId}`);
   console.log(file ? `file: ${file.name} ${file.size} bytes` : "file: (none; prepare-only)");
   console.log(`target page: ${target.title ?? ""} ${target.id}`);
   console.log(`target title: ${targetTitle}`);
