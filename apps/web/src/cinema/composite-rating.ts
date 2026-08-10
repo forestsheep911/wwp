@@ -1,3 +1,5 @@
+import type { SearchResult } from "@wwpdw/shared";
+
 export type CompositeRatingSource = "douban" | "imdb" | "rotten" | "metacritic";
 
 export interface CompositeRatingValue {
@@ -11,10 +13,10 @@ export interface CompositeRating {
 }
 
 const sourceWeights: Record<CompositeRatingSource, number> = {
-  douban: 35,
-  imdb: 30,
-  metacritic: 25,
-  rotten: 10
+  douban: 13,
+  imdb: 27,
+  metacritic: 35,
+  rotten: 25
 };
 
 function normalizeRating({ source, value }: CompositeRatingValue) {
@@ -57,4 +59,31 @@ export function calculateCompositeRating(values: CompositeRatingValue[]): Compos
     score: Math.round(weightedScore / availableWeight),
     sourceCount
   };
+}
+
+export function calculateCompositeRatingForResult(result: SearchResult) {
+  const metadata = result.metadata;
+  const ratings = [
+    ...(metadata?.ratings ?? []),
+    ...(metadata?.external?.omdb?.ratings ?? [])
+  ];
+
+  if (metadata?.external?.omdb?.imdbRating && metadata.external.omdb.imdbRating !== "N/A") {
+    ratings.push({ label: "IMDb", value: metadata.external.omdb.imdbRating });
+  }
+  if (metadata?.external?.omdb?.metascore && metadata.external.omdb.metascore !== "N/A") {
+    ratings.push({ label: "Metacritic", value: metadata.external.omdb.metascore });
+  }
+
+  const sourceMatchers: Array<[CompositeRatingSource, RegExp]> = [
+    ["douban", /douban|豆瓣/i],
+    ["imdb", /imdb/i],
+    ["rotten", /^rt$|rotten|tomato|tomatometer|烂番茄|爛番茄/i],
+    ["metacritic", /^meta$|metacritic|meta\s*critic|metascore|metamatrix|metamatrices/i]
+  ];
+
+  return calculateCompositeRating(sourceMatchers.flatMap(([source, matcher]) => {
+    const rating = ratings.find((item) => item.label && item.value && item.value !== "N/A" && matcher.test(item.label));
+    return rating ? [{ source, value: rating.value }] : [];
+  }));
 }

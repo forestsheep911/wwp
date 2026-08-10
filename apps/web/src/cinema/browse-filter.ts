@@ -1,26 +1,35 @@
 import type { SearchResult } from "@wwpdw/shared";
-import type { ResultWithCache, TrackedCacheItem } from "./types";
+import { resultMatchesBrowseChannel } from "./browse-channel";
+import { calculateCompositeRatingForResult } from "./composite-rating";
+import type { ResultWithCache } from "./types";
 
+export type BrowseFilterKind = "all" | "movie" | "tv" | "animation";
 export type BrowseFilterDecade = "all" | "2020s" | "2010s" | "2000s" | "classic";
-export type BrowseFilterRating = "all" | "7" | "8" | "9";
-export type BrowseFilterAvailability = "all" | "playable" | "subtitle" | "prepared";
+export type BrowseFilterRating = "all" | "70" | "80" | "90";
+export type BrowseFilterAvailability = "all" | "publicPrepared";
 
 export interface BrowseFilterState {
+  kind: BrowseFilterKind;
   decade: BrowseFilterDecade;
   rating: BrowseFilterRating;
-  genre: string;
+  genres: string[];
   availability: BrowseFilterAvailability;
 }
 
 export const emptyBrowseFilter: BrowseFilterState = {
+  kind: "all",
   decade: "all",
   rating: "all",
-  genre: "all",
+  genres: [],
   availability: "all"
 };
 
 export function browseFilterActive(filter: BrowseFilterState) {
-  return Object.entries(filter).some(([key, value]) => value !== emptyBrowseFilter[key as keyof BrowseFilterState]);
+  return filter.kind !== "all"
+    || filter.decade !== "all"
+    || filter.rating !== "all"
+    || filter.genres.length > 0
+    || filter.availability !== "all";
 }
 
 export function browseFilterGenres(results: SearchResult[]) {
@@ -32,39 +41,34 @@ export function browseFilterGenres(results: SearchResult[]) {
   }
   return [...counts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
-    .slice(0, 12)
     .map(([genre]) => genre);
 }
 
 export function filterBrowseResults(
   results: ResultWithCache[],
-  filter: BrowseFilterState,
-  trackedByAssetKey: Map<string, TrackedCacheItem>
+  filter: BrowseFilterState
 ) {
   return results.filter((result) => {
     const year = yearForResult(result);
-    const rating = ratingForResult(result);
+    const rating = calculateCompositeRatingForResult(result)?.score;
     const genres = genresForResult(result);
     const variants = result.variants ?? [];
 
+    if (filter.kind !== "all" && !resultMatchesBrowseChannel(result, filter.kind)) {
+      return false;
+    }
     if (filter.decade !== "all" && !matchesDecade(year, filter.decade)) {
       return false;
     }
     if (filter.rating !== "all" && (rating === undefined || rating < Number(filter.rating))) {
       return false;
     }
-    if (filter.genre !== "all" && !genres.some((genre) => genre.toLowerCase() === filter.genre.toLowerCase())) {
-      return false;
-    }
-    if (filter.availability === "playable" && !variants.some((variant) => variant.metadata?.availability === "playable")) {
-      return false;
-    }
-    if (filter.availability === "subtitle" && !variants.some((variant) =>
-      (variant.metadata?.subtitleLanguages ?? []).some((language) => /中文|简体|繁体|chinese|mandarin/i.test(language))
+    if (filter.genres.length > 0 && !filter.genres.some((selectedGenre) =>
+      genres.some((genre) => genre.toLowerCase() === selectedGenre.toLowerCase())
     )) {
       return false;
     }
-    if (filter.availability === "prepared" && !trackedByAssetKey.has(result.assetKey)) {
+    if (filter.availability === "publicPrepared" && result.cache?.status !== "ready" && !variants.some((variant) => variant.cache?.status === "ready")) {
       return false;
     }
     return true;

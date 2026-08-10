@@ -444,18 +444,27 @@ function normalizedEditionLabel(value: string) {
   return "";
 }
 
-function variantEditionLabel(variant: MediaVariant) {
+function variantEditionLabel(variant: MediaVariant, options: { includeDefaultEdition?: boolean } = {}) {
   const metadata = variant.metadata;
   const explicitEdition = metadata?.edition?.trim();
   if (explicitEdition) {
-    return normalizedEditionLabel(explicitEdition) || explicitEdition;
+    const label = normalizedEditionLabel(explicitEdition) || explicitEdition;
+    return label === "院线版" && !options.includeDefaultEdition ? "" : label;
   }
 
-  return normalizedEditionLabel([
+  const label = normalizedEditionLabel([
     metadata?.sourceLabel,
     variant.sourceBreadcrumb?.[1],
     variant.label
   ].filter(Boolean).join(" "));
+  return label === "院线版" && !options.includeDefaultEdition ? "" : label;
+}
+
+export function variantsNeedDefaultEditionLabel(variants: MediaVariant[]) {
+  const editionLabels = variants
+    .map((variant) => variantEditionLabel(variant, { includeDefaultEdition: true }))
+    .filter(Boolean);
+  return editionLabels.includes("院线版") && editionLabels.some((label) => label !== "院线版");
 }
 
 function variantDurationLabel(variant: MediaVariant) {
@@ -556,7 +565,7 @@ export function variantEpisodeLabel(variant: MediaVariant) {
     : `第${number}集`;
 }
 
-export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean; includeEpisode?: boolean; includeSize?: boolean } = {}) {
+export function variantSpecLabels(variant: MediaVariant, options: { compact?: boolean; includeEpisode?: boolean; includeSize?: boolean; includeDefaultEdition?: boolean } = {}) {
   const metadata = variant.metadata;
   if (!metadata) {
     return [];
@@ -569,7 +578,7 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
     : labelList(metadata.subtitleLanguages);
   const labels = uniqueDisplayLabels([
     includeEpisode ? variantEpisodeLabel(variant) : undefined,
-    variantEditionLabel(variant),
+    variantEditionLabel(variant, options),
     metadata.resolution,
     variantDurationLabel(variant),
     subtitles,
@@ -611,7 +620,7 @@ export function variantSpecGroupText(title: string, variant: MediaVariant) {
   return displayVariantLabel(title, sourceLabel) || "默认规格";
 }
 
-export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean } = {}) {
+export function variantSpecText(title: string, variant: MediaVariant, options: { compact?: boolean; includeDefaultEdition?: boolean } = {}) {
   const labels = variantSpecLabels(variant, options);
   return labels.length > 0 ? labels.join(" / ") : displayVariantLabel(title, variant.label);
 }

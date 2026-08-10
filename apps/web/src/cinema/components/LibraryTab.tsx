@@ -27,7 +27,7 @@ import {
   browseInitialVisibleCount,
   browseTspdtCatalogLimit
 } from "../browse-load-policy";
-import { calculateCompositeRating } from "../composite-rating";
+import { calculateCompositeRatingForResult } from "../composite-rating";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -59,17 +59,20 @@ import {
   variantEpisodeLabel,
   variantEpisodeNumber,
   variantSpecText,
+  variantsNeedDefaultEditionLabel,
   visibleTags
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
 import { resultMatchesBrowseChannel } from "../browse-channel";
+import { moviePreviewCredits } from "../movie-credits";
 import {
   browseFilterActive,
   browseFilterGenres,
   emptyBrowseFilter,
   filterBrowseResults,
   type BrowseFilterDecade,
+  type BrowseFilterKind,
   type BrowseFilterRating,
   type BrowseFilterState,
   type BrowseFilterAvailability
@@ -536,6 +539,7 @@ function DesktopBrowseFilter({
   filter,
   open,
   genres,
+  browseChannel,
   resultCount,
   totalCount,
   onOpenChange,
@@ -544,6 +548,7 @@ function DesktopBrowseFilter({
   filter: BrowseFilterState;
   open: boolean;
   genres: string[];
+  browseChannel: BrowseChannel;
   resultCount: number;
   totalCount: number;
   onOpenChange: (open: boolean) => void;
@@ -566,7 +571,7 @@ function DesktopBrowseFilter({
               <h2 className="text-sm font-bold text-slate-100">筛选片库</h2>
               {active ? <span className="rounded-full bg-emerald-300/12 px-2 py-0.5 text-[10px] font-bold text-emerald-200">{resultCount}/{totalCount}</span> : null}
             </div>
-            <p className="mt-0.5 text-xs text-slate-500">组合条件，或者直接使用网站准备好的视图</p>
+            <p className="mt-0.5 text-xs text-slate-500">在当前片库范围内继续组合条件</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -589,21 +594,14 @@ function DesktopBrowseFilter({
 
       {open ? (
         <div className="grid gap-3 border-t border-slate-800/80 px-5 py-4">
-          <FilterChoiceRow
-            label="快捷"
-            value=""
-            options={[
-              ["recent-high", "近期高分"],
-              ["subtitle", "中文字幕"],
-              ["prepared", "已准备"]
-            ]}
-            accent
-            onChange={(value) => {
-              if (value === "recent-high") onChange({ ...emptyBrowseFilter, decade: "2020s", rating: "8" });
-              if (value === "subtitle") onChange({ ...emptyBrowseFilter, availability: "subtitle" });
-              if (value === "prepared") onChange({ ...emptyBrowseFilter, availability: "prepared" });
-            }}
-          />
+          {browseChannel === "recommended" ? (
+            <FilterChoiceRow
+              label="影别"
+              value={filter.kind}
+              options={[["all", "全部"], ["movie", "电影"], ["tv", "电视"], ["animation", "动画"]]}
+              onChange={(value) => update("kind", value as BrowseFilterKind)}
+            />
+          ) : null}
           <FilterChoiceRow
             label="年代"
             value={filter.decade}
@@ -611,21 +609,21 @@ function DesktopBrowseFilter({
             onChange={(value) => update("decade", value as BrowseFilterDecade)}
           />
           <FilterChoiceRow
-            label="评分"
+            label="综合评分"
             value={filter.rating}
-            options={[["all", "不限"], ["7", "7 分+"], ["8", "8 分+"], ["9", "9 分+"]]}
+            options={[["all", "不限"], ["70", "70+"], ["80", "80+"], ["90", "90+"]]}
             onChange={(value) => update("rating", value as BrowseFilterRating)}
           />
-          <FilterChoiceRow
+          <FilterMultiChoiceRow
             label="题材"
-            value={filter.genre}
-            options={[["all", "全部"], ...genres.map((genre) => [genre, genre] as [string, string])]}
-            onChange={(value) => update("genre", value)}
+            values={filter.genres}
+            options={genres}
+            onChange={(values) => update("genres", values)}
           />
           <FilterChoiceRow
-            label="资源"
+            label="状态"
             value={filter.availability}
-            options={[["all", "不限"], ["playable", "可直接播放"], ["subtitle", "含中文字幕"], ["prepared", "我已准备"]]}
+            options={[["all", "不限"], ["publicPrepared", "公共已准备"]]}
             onChange={(value) => update("availability", value as BrowseFilterAvailability)}
           />
         </div>
@@ -669,6 +667,55 @@ function FilterChoiceRow({
           >
             {optionLabel}
           </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FilterMultiChoiceRow({
+  label,
+  values,
+  options,
+  onChange
+}: {
+  label: string;
+  values: string[];
+  options: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const toggle = (value: string) => {
+    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  };
+
+  return (
+    <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-start gap-3">
+      <span className="pt-1.5 text-xs font-bold text-slate-500">
+        {label}
+        <span className="ml-1 font-medium text-slate-600">多选</span>
+      </span>
+      <div className="flex min-w-0 flex-wrap gap-x-1 gap-y-1">
+        <button
+          className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors ${values.length === 0 ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/20" : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"}`}
+          type="button"
+          aria-pressed={values.length === 0}
+          onClick={() => onChange([])}
+        >
+          全部
+        </button>
+        {options.map((option) => {
+          const selected = values.includes(option);
+          return (
+            <button
+              className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors ${selected ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/20" : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"}`}
+              key={option}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => toggle(option)}
+            >
+              {option}
+            </button>
           );
         })}
       </div>
@@ -737,8 +784,8 @@ function LibraryHome({
   );
   const filterGenres = useMemo(() => browseFilterGenres(channelResults), [channelResults]);
   const filteredChannelResults = useMemo(
-    () => filterBrowseResults(channelResults, browseFilter, trackedByAssetKey),
-    [browseFilter, channelResults, trackedByAssetKey]
+    () => filterBrowseResults(channelResults, browseFilter),
+    [browseFilter, channelResults]
   );
   const browsableResults = useMemo(
     () => filteredChannelResults.filter((result) => (result.variants?.length ?? 0) > 0),
@@ -759,7 +806,7 @@ function LibraryHome({
   );
   const showingTspdtRank = activeSortView === "tspdtRank";
   const filterIsActive = browseFilterActive(browseFilter);
-  const needsFullBrowseResults = filterIsActive || showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
+  const needsFullBrowseResults = filterOpen || filterIsActive || showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
   const browseServerItemLimit = showingTspdtRank ? browseTspdtCatalogLimit : browseViewItemLimit;
   const fullCatalogRequest = browseFullCatalogRequest(activeSortView);
@@ -804,6 +851,9 @@ function LibraryHome({
     setActiveView(nextView);
     if (nextView !== "lucky") {
       setViewSeed(randomBrowseSeed());
+    }
+    if (browseChannel !== "recommended") {
+      setBrowseFilter((current) => current.kind === "all" ? current : { ...current, kind: "all" });
     }
   }, [browseChannel, browseView]);
 
@@ -870,7 +920,8 @@ function LibraryHome({
         <DesktopBrowseFilter
           filter={browseFilter}
           open={filterOpen}
-          genres={filterGenres}
+          genres={[...new Set([...filterGenres, ...browseFilter.genres])]}
+          browseChannel={browseChannel}
           resultCount={filteredChannelResults.length}
           totalCount={channelResults.length}
           onOpenChange={setFilterOpen}
@@ -1806,10 +1857,7 @@ function displayRatings(result: SearchResult): DisplayRating[] {
 }
 
 function compositeRatingForResult(result: SearchResult) {
-  return calculateCompositeRating(displayRatings(result).map((rating) => ({
-    source: rating.source,
-    value: rating.value
-  })));
+  return calculateCompositeRatingForResult(result);
 }
 
 function ratingHref(result: SearchResult, source: RatingSource) {
@@ -2118,6 +2166,7 @@ function VariantButtons({
   reserveMoreRow?: boolean;
 }) {
   const variants = sortedVariants(result.variants ?? []);
+  const includeDefaultEdition = variantsNeedDefaultEditionLabel(variants);
   const specGroups = groupEpisodeVariantsBySpec(result.title, variants);
   const showPreviewSpecGroups = Boolean(variantLimit && onShowAllVariants && specGroups.length > 0);
   if (showPreviewSpecGroups) {
@@ -2179,7 +2228,7 @@ function VariantButtons({
   }
 
   const renderVariantRows = (items: MediaVariant[]) => items.map((variant) => {
-    const variantLabel = variantSpecText(result.title, variant, { compact });
+    const variantLabel = variantSpecText(result.title, variant, { compact, includeDefaultEdition });
     const pending = pendingAssetKeys.includes(variant.assetKey);
     const tracked = trackedByAssetKey.get(variant.assetKey);
     const displayAsset = latestVariantAsset(variant, tracked);
@@ -2221,7 +2270,7 @@ function VariantButtons({
             />
           ) : null}
           <span className="relative z-10 min-w-0 max-w-full">
-            <VariantSpecTags compact={compact} title={result.title} variant={variant} />
+            <VariantSpecTags compact={compact} includeDefaultEdition={includeDefaultEdition} title={result.title} variant={variant} />
           </span>
           <span className="relative z-10 flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
             {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -2359,13 +2408,16 @@ function DesktopMovieCard({
   result: ResultWithCache;
   onOpenDetail: (result: ResultWithCache) => void;
 }) {
-  const tags = cardTags(result).slice(0, 2);
+  const tags = genreTags(result);
+  const posterTags = tags.slice(0, 2);
   const compositeRating = compositeRatingForResult(result);
   const work = result.metadata?.work;
   const year = work?.release?.year ?? result.metadata?.release?.year ?? result.metadata?.year;
   const countries = (work?.release?.countries ?? work?.countries ?? []).slice(0, 2).join(" / ");
   const hoverMetadata = [year, countries].filter(Boolean).join(" · ");
   const summary = bestSummary(result);
+  const previewCredits = moviePreviewCredits(result);
+  const hasPreviewCredits = previewCredits.directors.length > 0 || previewCredits.writers.length > 0 || previewCredits.cast.length > 0;
   const previewTimerRef = useRef<number | undefined>(undefined);
   const cardRef = useRef<HTMLButtonElement>(null);
   const [previewPosition, setPreviewPosition] = useState<{
@@ -2451,9 +2503,9 @@ function DesktopMovieCard({
           <h2 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 text-slate-100 transition-colors group-hover:text-emerald-100">
             {result.title}
           </h2>
-          {tags.length ? (
+          {posterTags.length ? (
             <div className="flex min-w-0 flex-wrap gap-1.5">
-              {tags.map((tag) => (
+              {posterTags.map((tag) => (
                 <span
                   className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-4 ${tag.className}`}
                   key={tag.key}
@@ -2510,10 +2562,15 @@ function DesktopMovieCard({
                     </div>
                   ) : null}
 
+                  {hasPreviewCredits ? (
+                    <div className="grid gap-2 border-y border-slate-800/80 py-3">
+                      <PreviewCreditRow label="导演" names={previewCredits.directors} />
+                      <PreviewCreditRow label="编剧" names={previewCredits.writers} />
+                      <PreviewCreditRow label="主演" names={previewCredits.cast} />
+                    </div>
+                  ) : null}
+
                   <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{summary}</p>
-                  <p className="border-t border-slate-800 pt-3 text-[11px] font-bold tracking-wide text-slate-500">
-                    点击海报查看详细信息
-                  </p>
                 </div>
               </div>
             </aside>,
@@ -2521,6 +2578,19 @@ function DesktopMovieCard({
           )
         : null}
     </>
+  );
+}
+
+function PreviewCreditRow({ label, names }: { label: string; names: string[] }) {
+  if (names.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-3 text-xs leading-5">
+      <span className="font-bold text-slate-500">{label}</span>
+      <span className="text-slate-300">{names.join(" / ")}</span>
+    </div>
   );
 }
 

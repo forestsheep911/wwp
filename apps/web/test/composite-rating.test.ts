@@ -19,7 +19,7 @@ test("renormalizes the weights when rating sources are missing", () => {
     { source: "douban", value: "8.5" },
     { source: "imdb", value: "7.5" }
   ]), {
-    score: 80,
+    score: 78,
     sourceCount: 2
   });
 });

@@ -132,7 +132,7 @@ function ArtPlayerView({
       pip: true,
       fullscreen: true,
       fullscreenWeb: true,
-      miniProgressBar: true,
+      miniProgressBar: false,
       playsInline: true,
       lock: true,
       fastForward: true,

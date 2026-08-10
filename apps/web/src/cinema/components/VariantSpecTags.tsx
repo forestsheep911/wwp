@@ -5,14 +5,16 @@ export function VariantSpecTags({
   title,
   variant,
   compact = false,
+  includeDefaultEdition = false,
   className = ""
 }: {
   title: string;
   variant: MediaVariant;
   compact?: boolean;
+  includeDefaultEdition?: boolean;
   className?: string;
 }) {
-  const labels = variantSpecLabels(variant, { compact });
+  const labels = variantSpecLabels(variant, { compact, includeDefaultEdition });
   if (labels.length === 0) {
     return (
       <span className={`min-w-0 truncate text-sm font-semibold leading-5 ${className}`}>

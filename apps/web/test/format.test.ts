@@ -10,7 +10,8 @@ import {
   jobMessageLabel,
   variantHasSizeMetadata,
   variantSpecLabels,
-  variantSpecText
+  variantSpecText,
+  variantsNeedDefaultEditionLabel
 } from "../src/cinema/format";
 
 test("queued preparation jobs show their live queue position", () => {
@@ -132,6 +133,48 @@ test("variantSpecLabels formats Media Assets metadata as structured tags", () =>
   ]);
   assert.equal(variantSpecText("地球特派员 Elio (2025)", variant), "导演剪辑版 / 1080p / 2小时12分 / 简英 / 1.72G");
   assert.equal(variantHasSizeMetadata(variant), true);
+});
+
+test("variantSpecLabels hides a lone default theatrical edition", () => {
+  const variant: MediaVariant = {
+    assetKey: "pressure-compact",
+    label: "诺曼底72小时 简英 1.01GB",
+    sourceUrl: "https://example.local/pressure.mp4",
+    kind: "file",
+    summary: "Structured Media Assets row.",
+    metadata: {
+      structuredSource: "media_assets",
+      edition: "theatrical",
+      resolution: "1080p",
+      subtitleLanguages: ["zh-Hans", "en"],
+      approximateSizeGb: 1.01
+    }
+  };
+
+  assert.deepEqual(variantSpecLabels(variant), ["1080p", "简英", "1.01G"]);
+});
+
+test("variantSpecLabels can show theatrical when sibling cuts require distinction", () => {
+  const theatrical: MediaVariant = {
+    assetKey: "film-theatrical",
+    label: "影片 4.2GB",
+    sourceUrl: "https://example.local/theatrical.mp4",
+    kind: "file",
+    summary: "Theatrical cut.",
+    metadata: { structuredSource: "media_assets", edition: "theatrical", resolution: "1080p" }
+  };
+  const extended: MediaVariant = {
+    assetKey: "film-extended",
+    label: "影片 加长版 4.8GB",
+    sourceUrl: "https://example.local/extended.mp4",
+    kind: "file",
+    summary: "Extended cut.",
+    metadata: { structuredSource: "media_assets", edition: "extended", resolution: "1080p" }
+  };
+
+  assert.equal(variantsNeedDefaultEditionLabel([theatrical, extended]), true);
+  assert.deepEqual(variantSpecLabels(theatrical, { includeDefaultEdition: true }), ["院线版", "1080p"]);
+  assert.deepEqual(variantSpecLabels(extended, { includeDefaultEdition: true }), ["加长版", "1080p"]);
 });
 
 test("variantSpecText falls back to cleaned labels without structured metadata", () => {
