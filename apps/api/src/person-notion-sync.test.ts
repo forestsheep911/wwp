@@ -183,6 +183,18 @@ test("failed catalog publication never advances the successful checkpoint", asyn
   assert.equal(checkpoint.lastSuccessfulSyncAt, undefined);
 });
 
+test("failed downstream publication never advances the successful checkpoint", async () => {
+  const checkpoint = emptyPeopleNotionSyncCheckpoint();
+  await assert.rejects(() => runPeopleNotionSync({
+    source: { async listChanged() { return [row()]; } },
+    store: { description: "fake", async getState() { return catalog(); }, async replaceState() {} },
+    checkpoint,
+    apply: true,
+    beforeCheckpoint: async () => { throw new Error("search index failed"); }
+  }), /search index failed/);
+  assert.deepEqual(checkpoint, { schemaVersion: 1 });
+});
+
 test("a Notion editorial change reaches the persisted website read model", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "wwpdw-people-notion-sync-"));
   try {

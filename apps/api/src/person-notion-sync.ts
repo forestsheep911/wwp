@@ -180,6 +180,11 @@ export async function runPeopleNotionSync(input: {
   overlapMinutes?: number;
   now?: () => Date;
   persistCheckpoint?: (checkpoint: PeopleNotionSyncCheckpoint) => Promise<void>;
+  beforeCheckpoint?: (context: {
+    since?: string;
+    changes: NotionPeopleChange[];
+    nextCatalog: PersonCatalogState;
+  }) => Promise<void>;
 }) {
   const now = input.now ?? (() => new Date());
   const startedAt = now().toISOString();
@@ -190,6 +195,7 @@ export async function runPeopleNotionSync(input: {
   const lastSourceEditedAt = changes.map((change) => change.lastEditedTime).sort().at(-1);
   if (input.apply) {
     if (plan.catalogChanged) await input.store.replaceState(plan.nextCatalog);
+    await input.beforeCheckpoint?.({ since, changes, nextCatalog: plan.nextCatalog });
     input.checkpoint.lastSuccessfulSyncAt = startedAt;
     if (lastSourceEditedAt) input.checkpoint.lastSourceEditedAt = lastSourceEditedAt;
     await input.persistCheckpoint?.(input.checkpoint);

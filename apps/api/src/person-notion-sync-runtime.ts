@@ -19,6 +19,11 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
   limit?: number;
   pageSize?: number;
   stateDir?: string;
+  beforeCheckpoint?: (context: {
+    since?: string;
+    changes: import("./notion-people-source.js").NotionPeopleChange[];
+    nextCatalog: import("@wwpdw/shared").PersonCatalogState;
+  }) => Promise<void>;
 } = {}) {
   if (!enabled(process.env.WWPDW_PEOPLE_NOTION_SYNC_ENABLED, true)) {
     return { mode: "skipped" as const, reason: "disabled" };
@@ -62,6 +67,7 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
       limit: options.limit,
       pageSize: options.pageSize ?? numberOption("WWPDW_PEOPLE_NOTION_SYNC_PAGE_SIZE", 100),
       overlapMinutes: numberOption("WWPDW_PEOPLE_NOTION_SYNC_OVERLAP_MINUTES", 10),
+      beforeCheckpoint: options.beforeCheckpoint,
       persistCheckpoint: (value) => azureState
         ? azureState.writeCheckpoint(value)
         : writeJsonAtomic(checkpointPath, value)
