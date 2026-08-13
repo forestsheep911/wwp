@@ -913,7 +913,9 @@ export class AzureSearchIndexStore implements SearchIndexStore {
     const snapshot = await this.loadSnapshot();
     if (snapshot) {
       this.cacheEntries(snapshot);
-      this.startSnapshotRefresh();
+      if (process.env.SEARCH_INDEX_SNAPSHOT_REFRESH_DISABLED !== "true") {
+        this.startSnapshotRefresh();
+      }
       return snapshot.map(cloneEntry);
     }
 

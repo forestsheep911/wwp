@@ -88,9 +88,11 @@ if (notionSyncEnabled) {
 }
 
 async function runNotionSyncLoop() {
-  const [{ createSearchIndexStore }, { runMetaSync }] = await Promise.all([
+  const [{ createSearchIndexStore }, { runMetaSync }, { runPeopleNotionSyncFromEnvironment }, { runHomeNotionSyncCycle }] = await Promise.all([
     import("../packages/cache-store/src/index.ts"),
-    import("../apps/api/src/meta-sync.ts")
+    import("../apps/api/src/meta-sync.ts"),
+    import("../apps/api/src/person-notion-sync-runtime.ts"),
+    import("../apps/api/src/home-notion-sync-cycle.ts")
   ]);
   const searchIndex = createSearchIndexStore();
 
@@ -106,7 +108,14 @@ async function runNotionSyncLoop() {
         entryCount: stats.entryCount,
         index: searchIndex.description
       }));
-      await runMetaSync();
+      const { peopleResult } = await runHomeNotionSyncCycle({
+        runMetadataSync: runMetaSync,
+        runPeopleSync: () => runPeopleNotionSyncFromEnvironment({ apply: true })
+      });
+      console.log(JSON.stringify({
+        event: "home.people_sync.complete",
+        ...peopleResult
+      }));
       succeeded = true;
       console.log(JSON.stringify({
         event: "home.notion_sync.complete",

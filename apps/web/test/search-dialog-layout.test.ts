@@ -16,3 +16,7 @@ test("desktop search dialog keeps one stable viewport before and after results l
 test("search loading indicator reserves its width while idle", () => {
   assert.match(source, /grid h-5 w-5 shrink-0 place-items-center/);
 });
+
+test("desktop search keeps results in the dialog instead of offering a legacy list transition", () => {
+  assert.doesNotMatch(source, /copy\.search\.viewAll/);
+});

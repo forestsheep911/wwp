@@ -18,7 +18,8 @@ import {
   Sparkles,
   Star,
   Shuffle,
-  Trophy
+  Trophy,
+  X
 } from "lucide-react";
 import type { CreditPolicyResponse, MediaVariant, MovieSummaryMode, MovieSummaryResponse, SearchResult } from "@wwpdw/shared";
 import { errorMessage, summarizeMovie as requestMovieSummary } from "../../api";
@@ -113,7 +114,10 @@ interface LibraryTabProps {
   onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
   detailAssetKey?: string;
+  detailResult?: ResultWithCache;
+  detailLoading?: boolean;
   onOpenDetail: (result: ResultWithCache) => void;
+  onOpenPerson: (personId: string) => void;
   onCloseDetail: () => void;
   onClearSearch: () => void;
   onRefreshBrowse: (options?: { append?: boolean; mode?: "paged" | "random"; limit?: number; view?: BrowseViewId; force?: boolean }) => void;
@@ -149,7 +153,10 @@ export function LibraryTab({
   onBrowsePresetChange,
   onBrowseViewChange,
   detailAssetKey,
+  detailResult: routedDetailResult,
+  detailLoading = false,
   onOpenDetail,
+  onOpenPerson,
   onCloseDetail,
   onClearSearch,
   onRefreshBrowse,
@@ -226,11 +233,11 @@ export function LibraryTab({
       return;
     }
 
-    const detailCandidate = [...results, ...browseResults].find((result) => result.assetKey === detailAssetKey);
+    const detailCandidate = routedDetailResult ?? [...results, ...browseResults].find((result) => result.assetKey === detailAssetKey);
     if (detailCandidate) {
       setDetailResult(detailCandidate);
     }
-  }, [browseResults, detailAssetKey, results]);
+  }, [browseResults, detailAssetKey, results, routedDetailResult]);
 
   useEffect(() => {
     if (!focusedAssetKey) {
@@ -262,13 +269,18 @@ export function LibraryTab({
           collectionEntry={collectionMarksByAssetKey.get(detailResult.assetKey)}
           trackedByAssetKey={trackedByAssetKey}
           onBack={onCloseDetail}
-          backLabel={hasQuery ? copy.library.backToSearchResults(query.trim()) : copy.library.backToList}
+          backLabel={copy.library.backToList}
           onSummarize={openMovieSummary}
+          onOpenPerson={onOpenPerson}
           onToggleFavorite={onToggleFavorite}
           onUpdateCollectionMark={onUpdateCollectionMark}
           onSelect={onSelect}
           onDownload={onDownload}
         />
+      ) : detailAssetKey && detailLoading ? (
+        <div className="flex min-h-64 items-center justify-center text-sm text-slate-400">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 正在打开条目
+        </div>
       ) : !hasQuery && results.length === 0 ? (
         <LibraryHome
           creditPolicy={creditPolicy}
@@ -535,13 +547,80 @@ function DesktopBrowseSidebar({
   );
 }
 
+function MobileBrowseNavigation({
+  activeChannel,
+  activeView,
+  onBrowsePresetChange
+}: {
+  activeChannel: BrowseChannel;
+  activeView: BrowseViewId;
+  onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
+}) {
+  const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
+
+  return (
+    <section className="grid gap-3 sm:hidden" aria-label="片库导航">
+      <nav className="grid gap-1.5" aria-label="片库分类">
+        <span className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">片库</span>
+        <div className="grid grid-cols-4 gap-1 rounded-xl border border-slate-800 bg-slate-950/75 p-1">
+          {browseChannels.map((channel) => {
+            const Icon = channel.icon;
+            const active = activeChannel === channel.id && !hasActiveRanking;
+            return (
+              <button
+                aria-current={active ? "page" : undefined}
+                className={`flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-xs font-semibold transition-colors ${
+                  active
+                    ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/25"
+                    : "text-slate-400 active:bg-slate-900 active:text-slate-100"
+                }`}
+                key={channel.id}
+                type="button"
+                onClick={() => onBrowsePresetChange(channel.id, "newGood")}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span className="truncate">{channel.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      <nav className="grid gap-1.5" aria-label="电影榜单">
+        <span className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">榜单</span>
+        <div className="scrollbar-none flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3">
+          {rankingViews.map((view) => {
+            const Icon = view.icon;
+            const active = activeChannel === "movie" && activeView === view.id;
+            return (
+              <button
+                aria-current={active ? "page" : undefined}
+                className={`flex min-h-10 flex-none snap-start items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors ${
+                  active
+                    ? "border-emerald-300/35 bg-emerald-300 text-slate-950"
+                    : "border-slate-800 bg-slate-950/75 text-slate-400 active:border-slate-700 active:text-slate-100"
+                }`}
+                key={view.id}
+                title={view.detail}
+                type="button"
+                onClick={() => onBrowsePresetChange("movie", view.id)}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {view.label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+    </section>
+  );
+}
+
 function DesktopBrowseFilter({
   filter,
   open,
   genres,
   browseChannel,
-  resultCount,
-  totalCount,
   onOpenChange,
   onChange
 }: {
@@ -549,63 +628,70 @@ function DesktopBrowseFilter({
   open: boolean;
   genres: string[];
   browseChannel: BrowseChannel;
-  resultCount: number;
-  totalCount: number;
   onOpenChange: (open: boolean) => void;
   onChange: (filter: BrowseFilterState) => void;
 }) {
   const active = browseFilterActive(filter);
+  const filterPanelId = useId();
   const update = <K extends keyof BrowseFilterState>(key: K, value: BrowseFilterState[K]) => {
     onChange({ ...filter, [key]: value });
   };
 
   return (
-    <section className="hidden overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/72 shadow-xl shadow-black/10 backdrop-blur lg:block" aria-label="片库筛选条件">
-      <header className="flex min-h-14 items-center justify-between gap-4 px-5">
-        <div className="flex min-w-0 items-center gap-3">
+    <section className="overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/72 shadow-xl shadow-black/10 backdrop-blur" aria-label="片库筛选条件">
+      <header className="group relative flex min-h-14 items-center justify-between gap-4 px-5">
+        <button
+          className="absolute inset-0 z-0 cursor-pointer rounded-t-xl text-left transition-colors hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400"
+          type="button"
+          aria-controls={filterPanelId}
+          aria-expanded={open}
+          aria-label={open ? "收起片库筛选条件" : "展开片库筛选条件"}
+          onClick={() => onOpenChange(!open)}
+        />
+        <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-3">
           <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${active ? "bg-emerald-300 text-slate-950" : "bg-slate-900 text-slate-400"}`}>
             <Filter className="h-4 w-4" />
           </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-slate-100">筛选片库</h2>
-              {active ? <span className="rounded-full bg-emerald-300/12 px-2 py-0.5 text-[10px] font-bold text-emerald-200">{resultCount}/{totalCount}</span> : null}
-            </div>
-            <p className="mt-0.5 text-xs text-slate-500">在当前片库范围内继续组合条件</p>
-          </div>
+          <h2 className="min-w-0 text-sm font-bold text-slate-100">筛选片库</h2>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="relative z-10 flex items-center gap-1">
           {active ? (
             <button className="min-h-9 rounded-lg px-3 text-xs font-semibold text-slate-400 hover:bg-slate-900 hover:text-slate-100" type="button" onClick={() => onChange(emptyBrowseFilter)}>
               清除
             </button>
           ) : null}
-          <button
-            className="flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-slate-400 hover:bg-slate-900 hover:text-slate-100"
-            type="button"
-            aria-expanded={open}
-            onClick={() => onOpenChange(!open)}
-          >
+          <span className="pointer-events-none flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-slate-400 transition-colors group-hover:text-slate-200">
             {open ? "收起" : "展开"}
             <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-          </button>
+          </span>
         </div>
       </header>
 
       {open ? (
-        <div className="grid gap-3 border-t border-slate-800/80 px-5 py-4">
+        <div id={filterPanelId} className="grid gap-3 border-t border-slate-800/80 px-5 py-4">
           {browseChannel === "recommended" ? (
             <FilterChoiceRow
               label="影别"
               value={filter.kind}
-              options={[["all", "全部"], ["movie", "电影"], ["tv", "电视"], ["animation", "动画"]]}
+              options={[["all", "不限"], ["movie", "电影"], ["tv", "电视"], ["animation", "动画"]]}
               onChange={(value) => update("kind", value as BrowseFilterKind)}
             />
           ) : null}
           <FilterChoiceRow
             label="年代"
             value={filter.decade}
-            options={[["all", "全部"], ["2020s", "2020 年后"], ["2010s", "2010 年代"], ["2000s", "2000 年代"], ["classic", "经典老片"]]}
+            options={[
+              ["all", "不限"],
+              ["2020s", "2020 年代"],
+              ["2010s", "2010 年代"],
+              ["2000s", "2000 年代"],
+              ["1990s", "1990 年代"],
+              ["1980s", "1980 年代"],
+              ["1970s", "1970 年代"],
+              ["1960s", "1960 年代"],
+              ["1950s", "1950 年代"],
+              ["pre1950", "1949 年以前"]
+            ]}
             onChange={(value) => update("decade", value as BrowseFilterDecade)}
           />
           <FilterChoiceRow
@@ -623,7 +709,7 @@ function DesktopBrowseFilter({
           <FilterChoiceRow
             label="状态"
             value={filter.availability}
-            options={[["all", "不限"], ["publicPrepared", "公共已准备"]]}
+            options={[["all", "不限"], ["publicPrepared", "即刻播放"]]}
             onChange={(value) => update("availability", value as BrowseFilterAvailability)}
           />
         </div>
@@ -691,18 +777,29 @@ function FilterMultiChoiceRow({
 
   return (
     <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-start gap-3">
-      <span className="pt-1.5 text-xs font-bold text-slate-500">
-        {label}
-        <span className="ml-1 font-medium text-slate-600">多选</span>
-      </span>
+      <div className="flex min-h-8 items-center gap-1">
+        <span className="text-xs font-bold text-slate-500">{label}</span>
+        {values.length > 0 ? (
+          <button
+            className="grid h-5 w-5 place-items-center rounded-full text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            type="button"
+            aria-label={`清除全部已选题材，当前 ${values.length} 项`}
+            title="清除全部已选题材"
+            onClick={() => onChange([])}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        ) : null}
+      </div>
       <div className="flex min-w-0 flex-wrap gap-x-1 gap-y-1">
         <button
           className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors ${values.length === 0 ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/20" : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"}`}
           type="button"
           aria-pressed={values.length === 0}
+          aria-label="题材不限"
           onClick={() => onChange([])}
         >
-          全部
+          不限
         </button>
         {options.map((option) => {
           const selected = values.includes(option);
@@ -770,7 +867,9 @@ function LibraryHome({
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
   const [browseFilter, setBrowseFilter] = useState<BrowseFilterState>(emptyBrowseFilter);
-  const [filterOpen, setFilterOpen] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+  ));
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialVisibleCount);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -917,57 +1016,20 @@ function LibraryHome({
       />
 
       <div className="grid min-w-0 gap-4">
+        <MobileBrowseNavigation
+          activeChannel={browseChannel}
+          activeView={activeSortView}
+          onBrowsePresetChange={onBrowsePresetChange}
+        />
+
         <DesktopBrowseFilter
           filter={browseFilter}
           open={filterOpen}
           genres={[...new Set([...filterGenres, ...browseFilter.genres])]}
           browseChannel={browseChannel}
-          resultCount={filteredChannelResults.length}
-          totalCount={channelResults.length}
           onOpenChange={setFilterOpen}
           onChange={setBrowseFilter}
         />
-
-        <nav
-          aria-label="首页内容排序"
-          className="scrollbar-none flex max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3 sm:hidden"
-        >
-        {channelViews.map((view) => {
-          const Icon = view.icon;
-          const active = activeSortView === view.id;
-          return (
-            <Button
-              className={`min-h-11 flex-none snap-start rounded-full border px-4 ${
-                active
-                  ? "border-emerald-300/35 bg-emerald-300 text-slate-950"
-                  : "border-slate-800 bg-slate-950 text-slate-300"
-              }`}
-              key={view.id}
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (view.id === "lucky") {
-                  setActiveView(view.id);
-                  setViewSeed(randomBrowseSeed());
-                  onBrowseViewChange(view.id, { refresh: true });
-                  return;
-                }
-                if (!active) {
-                  setActiveView(view.id);
-                  setViewSeed(randomBrowseSeed());
-                  onBrowseViewChange(view.id);
-                }
-              }}
-              aria-current={active ? "page" : undefined}
-              title={view.detail}
-            >
-              <Icon className="h-4 w-4" />
-              {view.label}
-            </Button>
-          );
-        })}
-        </nav>
 
       <div className="hidden max-w-full overflow-x-clip sm:block lg:hidden">
         <div className="scrollbar-none flex max-w-none flex-nowrap gap-2 overflow-x-auto overscroll-x-contain rounded-md border border-slate-800 bg-slate-950 p-1">
@@ -1980,51 +2042,39 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
   );
 }
 
-type AgeConfidence = "high" | "medium" | "low";
-
 interface AgeRecommendation {
-  age: number;
-  label: string;
-  sourceLabel: string;
-  confidenceLabel?: string;
-  reason?: string;
+  age?: number;
+  label?: string;
   riskTags: string[];
   ratingLevel: string[];
-  variant: BadgeVariant;
+  variant?: BadgeVariant;
   tooltip: string;
 }
 
 function ageRecommendation(result: SearchResult): AgeRecommendation | undefined {
   const metadata = result.metadata;
   const age = metadata?.effectiveMinimumAge;
-  if (typeof age !== "number" || !Number.isFinite(age)) {
+  const hasAge = typeof age === "number" && Number.isFinite(age);
+  const ratingLevel = visibleTags(metadata?.ratingLevel).slice(0, 2);
+  const riskTags = visibleTags(metadata?.contentRiskTags).slice(0, 6);
+  if (!hasAge && ratingLevel.length === 0 && riskTags.length === 0) {
     return undefined;
   }
 
-  const label = copy.library.ageRecommendation(age);
-  const confidence = metadata?.aiAgeConfidence as AgeConfidence | undefined;
-  const confidenceLabel = confidence ? copy.library.ageConfidence[confidence] : undefined;
-  const sourceLabel = typeof metadata?.manualAgeOverride === "number" ? copy.library.manualAgeSource : copy.library.aiAgeSource;
-  const riskTags = visibleTags(metadata?.contentRiskTags).slice(0, 6);
-  const ratingLevel = visibleTags(metadata?.ratingLevel).slice(0, 2);
-  const reason = metadata?.aiAgeReason?.trim();
-  const variant: BadgeVariant = age >= 16 ? "danger" : age >= 13 ? "warning" : "default";
+  const label = hasAge ? copy.library.ageRecommendation(age) : undefined;
+  const variant: BadgeVariant | undefined = hasAge
+    ? age >= 16 ? "danger" : age >= 13 ? "warning" : "default"
+    : undefined;
   const tooltip = [
     copy.library.ageRecommendationTitle,
     label,
-    sourceLabel,
-    confidenceLabel,
     ratingLevel.length ? `分级 ${ratingLevel.join(" / ")}` : undefined,
-    riskTags.length ? riskTags.join(" / ") : undefined,
-    reason
+    riskTags.length ? riskTags.join(" / ") : undefined
   ].filter(Boolean).join(" / ");
 
   return {
-    age,
+    age: hasAge ? age : undefined,
     label,
-    sourceLabel,
-    confidenceLabel,
-    reason,
     riskTags,
     ratingLevel,
     variant,
@@ -2034,7 +2084,7 @@ function ageRecommendation(result: SearchResult): AgeRecommendation | undefined 
 
 function AgeRecommendationBadge({ result, className = "" }: { result: SearchResult; className?: string }) {
   const recommendation = ageRecommendation(result);
-  if (!recommendation) {
+  if (!recommendation?.label || !recommendation.variant) {
     return null;
   }
 
@@ -2058,30 +2108,41 @@ function AgeRecommendationPanel({ result }: { result: SearchResult }) {
   }
 
   return (
-    <div className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-200">
-          <ShieldCheck className="h-4 w-4 text-emerald-200" />
-          {copy.library.ageRecommendationTitle}
-        </h3>
-        <Badge variant={recommendation.variant}>{recommendation.label}</Badge>
-        <Badge variant="muted">{recommendation.sourceLabel}</Badge>
-        {recommendation.confidenceLabel ? <Badge variant="secondary">{recommendation.confidenceLabel}</Badge> : null}
-        {recommendation.ratingLevel.map((tag) => (
-          <Badge key={`rating-level-${tag}`} variant="secondary">{tag}</Badge>
-        ))}
+    <section
+      aria-label={recommendation.tooltip}
+      className="grid gap-2.5 rounded-md border border-slate-800 bg-slate-950/80 px-4 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {recommendation.label && recommendation.variant ? (
+          <Badge
+            variant={recommendation.variant}
+            title={copy.library.ageRecommendationTitle}
+            className="gap-1.5 px-2.5 py-1.5 text-sm"
+          >
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            <span>{recommendation.label}</span>
+          </Badge>
+        ) : null}
+        {recommendation.label && recommendation.ratingLevel.length ? (
+          <span className="h-5 w-px bg-slate-800" aria-hidden="true" />
+        ) : null}
+        {recommendation.ratingLevel.length ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">分级</span>
+            {recommendation.ratingLevel.map((tag) => (
+              <Badge key={`rating-level-${tag}`} variant="secondary" className="px-2 py-1 font-bold text-slate-200">{tag}</Badge>
+            ))}
+          </div>
+        ) : null}
       </div>
-      {recommendation.reason ? (
-        <p className="text-sm leading-6 text-slate-300">{recommendation.reason}</p>
-      ) : null}
       {recommendation.riskTags.length ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {recommendation.riskTags.map((tag) => (
             <Badge key={`age-risk-${tag}`} variant="muted">{tag}</Badge>
           ))}
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -3016,6 +3077,7 @@ function MovieDetailView({
   onBack,
   backLabel,
   onSummarize,
+  onOpenPerson,
   onToggleFavorite,
   onUpdateCollectionMark,
   onSelect,
@@ -3031,6 +3093,7 @@ function MovieDetailView({
   onBack: () => void;
   backLabel: string;
   onSummarize: (result: ResultWithCache) => void;
+  onOpenPerson: (personId: string) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
   onUpdateCollectionMark: (result: ResultWithCache, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
@@ -3086,6 +3149,8 @@ function MovieDetailView({
               <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>
             ) : null}
           </div>
+
+          <LinkedCredits result={result} onOpenPerson={onOpenPerson} />
 
           {ratings.length ? (
             <div className="flex flex-wrap gap-2">
@@ -3149,6 +3214,34 @@ function MovieDetailView({
             />
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function LinkedCredits({ result, onOpenPerson }: { result: SearchResult; onOpenPerson: (personId: string) => void }) {
+  const credits = (result.metadata?.work?.credits ?? [])
+    .filter((credit) => credit.name.trim())
+    .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER));
+  if (!credits.length) return null;
+  const pendingCount = credits.filter((credit) => !credit.personId).length;
+  const labels: Record<string, string> = { directing: "导演", writing: "编剧", acting: "演员", production: "制片", camera: "摄影", editing: "剪辑", music: "音乐" };
+  return (
+    <section className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3" aria-label="主创与卡司">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-xs font-semibold tracking-wide text-slate-400">主创与卡司 · {credits.length} 人</h3>
+        {pendingCount ? <p className="text-[11px] text-slate-500">{pendingCount} 人关系已收录，人物资料待补</p> : null}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {credits.map((credit, index) => credit.personId ? (
+          <button className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 py-1 text-xs font-semibold text-emerald-100 transition hover:border-emerald-300/60 hover:bg-emerald-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" key={`${credit.personId}-${credit.department}-${credit.job ?? ""}-${index}`} onClick={() => onOpenPerson(credit.personId!)} type="button">
+            <span className="text-emerald-300/70">{labels[credit.department] ?? credit.job ?? "主创"}</span> {credit.name}
+          </button>
+        ) : (
+          <span className="rounded-full border border-dashed border-slate-700 px-2.5 py-1 text-xs text-slate-400" key={`${credit.name}-${credit.department}-${index}`} title="关系已收录，人物资料待补">
+            {labels[credit.department] ?? credit.job ?? "主创"} {credit.name} <span className="text-slate-600">· 待建档</span>
+          </span>
+        ))}
       </div>
     </section>
   );

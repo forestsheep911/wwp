@@ -1,3 +1,8 @@
+import type { PersonExternalIds } from "./person-names.js";
+
+export * from "./person-identity.js";
+export * from "./person-names.js";
+
 export type CacheStatus =
   | "queued"
   | "fetching"
@@ -70,6 +75,7 @@ export type MovieMetadataSource =
   | "douban"
   | "imdb"
   | "tmdb"
+  | "wikidata"
   | "omdb"
   | "tspdt"
   | "search-index"
@@ -118,7 +124,7 @@ export interface MovieCreditEntry {
   character?: string;
   order?: number;
   source?: MovieMetadataSource;
-  externalIds?: MovieExternalIds;
+  externalIds?: PersonExternalIds;
 }
 
 export interface MovieRatingEntry extends RatingValue {
@@ -177,6 +183,9 @@ export interface MovieWorkProfile {
   countries?: string[];
   runtimeMinutes?: number;
   credits?: MovieCreditEntry[];
+  productionCompanies?: string[];
+  distributors?: string[];
+  studios?: string[];
   ratings?: MovieRatingEntry[];
   boxOffice?: MovieBoxOffice;
   media?: MovieMediaAssets;
@@ -328,6 +337,9 @@ export interface MovieMetadata {
   genres?: string[];
   directors?: string[];
   people?: string[];
+  productionCompanies?: string[];
+  distributors?: string[];
+  studios?: string[];
   ratings?: RatingValue[];
   boxOfficeDisplay?: string;
   boxOfficeAmount?: number;
@@ -507,6 +519,10 @@ export interface SearchResponse {
   hasMore?: boolean;
   nextOffset?: number;
   mode?: "paged" | "random";
+}
+
+export interface LibraryAssetResponse {
+  result: SearchResult & { cache?: CacheAsset };
 }
 
 export interface NowPlayingMovie {

@@ -104,6 +104,19 @@ test("basicInfoLine hides long slash-separated cast dumps", () => {
   );
 });
 
+test("basicInfoLine displays organization roles without merging their meaning", () => {
+  assert.equal(
+    basicInfoLine(result({
+      metadata: {
+        productionCompanies: ["A24", "Plan B Entertainment"],
+        studios: ["Studio Ponoc"],
+        distributors: ["Toho（日本院线）"]
+      }
+    })),
+    "制作：A24 / Plan B Entertainment · 工作室：Studio Ponoc · 发行：Toho（日本院线）"
+  );
+});
+
 test("variantSpecLabels formats Media Assets metadata as structured tags", () => {
   const variant: MediaVariant = {
     assetKey: "media-assets-elio-1080p",

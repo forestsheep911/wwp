@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWP People Curator"
+  short_description: "Collect, verify, and publish WWP people profiles."
+  default_prompt: "Use $wwp-people-curator to add a small, reviewed batch of people to WWP without running the film-production workflow."

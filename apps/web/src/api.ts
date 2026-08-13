@@ -27,6 +27,7 @@ import type {
   EnsureCacheResponse,
   ForumThreadResponse,
   ForumThreadsResponse,
+  LibraryAssetResponse,
   MemberCodeListResponse,
   MemberCreditUsageResponse,
   MemberInvitationListResponse,
@@ -40,6 +41,8 @@ import type {
   PlaybackCapacity,
   PlaybackLine,
   PlaybackResponse,
+  PublicPersonDetail,
+  PublicPersonListResponse,
   RegisterMemberRequest,
   RegisterMemberResponse,
   ResetMemberPasscodeRequest,
@@ -56,6 +59,7 @@ import type {
 import { apiRequestUrl, healthRequestUrl, normalizeApiBaseUrl } from "./api-routing";
 import type { BrowseChannel } from "./cinema/types";
 import type { BrowseViewId } from "./cinema/types";
+import type { SiteStatistics } from "./cinema/site-statistics";
 import { unwrapAuthenticatedSession, type AuthenticatedSessionEnvelope } from "./cinema/auth-session";
 import { retryAfterCsrfRecovery } from "./csrf-recovery";
 
@@ -295,7 +299,7 @@ export function searchAssets(query: string, line?: PlaybackLine) {
 export function browseAssets(
   limit = 60,
   offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine } = {}
+  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string } = {}
 ) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (options.mode) {
@@ -310,7 +314,23 @@ export function browseAssets(
   if (options.line) {
     params.set("line", options.line);
   }
+  if (options.personId) {
+    params.set("person", options.personId);
+  }
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
+}
+
+export function getSiteStatistics() {
+  return request<SiteStatistics>(apiUrl("/api/site-statistics"));
+}
+
+export function searchPeople(query: string, limit = 20, offset = 0) {
+  const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
+  return request<PublicPersonListResponse>(apiUrl(`/api/people?${params.toString()}`));
+}
+
+export function getPerson(personId: string) {
+  return request<PublicPersonDetail>(apiUrl(`/api/people/${encodeURIComponent(personId)}`));
 }
 
 export function getNowPlaying(options: { refresh?: boolean } = {}) {
@@ -413,6 +433,10 @@ export function getCacheAsset(assetKey: string, line?: PlaybackLine) {
   if (line) params.set("line", line);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return request<CacheAssetLookupResponse>(apiUrl(`/api/assets/${encodeURIComponent(assetKey)}${suffix}`));
+}
+
+export function getLibraryAsset(assetKey: string) {
+  return request<LibraryAssetResponse>(apiUrl(`/api/library-assets/${encodeURIComponent(assetKey)}`));
 }
 
 export function listCachedAssets(limit = 100, line?: PlaybackLine) {

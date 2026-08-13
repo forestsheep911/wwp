@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   Bell,
+  ChartNoAxesCombined,
   ChevronDown,
   CircleUserRound,
   Clapperboard,
@@ -21,7 +22,8 @@ import {
   SlidersHorizontal,
   Star,
   Sun,
-  UserCircle
+  UserCircle,
+  UsersRound
 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -54,6 +56,8 @@ interface CinemaLayoutProps {
   noticeUnreadCount: number;
   theme: AppTheme;
   library: ReactNode;
+  people: ReactNode;
+  statistics: ReactNode;
   cached: ReactNode;
   forum: ReactNode;
   history: ReactNode;
@@ -69,6 +73,8 @@ interface CinemaLayoutProps {
   onBrowseChannelChange: (value: BrowseChannel) => void;
   onLock: () => void;
   onOpenHome: () => void;
+  onOpenPeople: () => void;
+  onOpenStatistics: () => void;
   onOpenHelp: () => void;
   onOpenForum: () => void;
   onOpenFavorites: () => void;
@@ -94,6 +100,8 @@ export function CinemaLayout({
   noticeUnreadCount,
   theme,
   library,
+  people,
+  statistics,
   cached,
   forum,
   history,
@@ -109,6 +117,8 @@ export function CinemaLayout({
   onBrowseChannelChange,
   onLock,
   onOpenHome,
+  onOpenPeople,
+  onOpenStatistics,
   onOpenHelp,
   onOpenForum,
   onOpenFavorites,
@@ -174,6 +184,14 @@ export function CinemaLayout({
             </nav> : null}
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2">
+              <Button type="button" variant="outline" size="icon" onClick={onOpenPeople} title="人物索引">
+                <UsersRound className="h-4 w-4" />
+                <span className="sr-only">人物索引</span>
+              </Button>
+              <Button type="button" variant="outline" size="icon" onClick={onOpenStatistics} title="片库统计">
+                <ChartNoAxesCombined className="h-4 w-4" />
+                <span className="sr-only">片库统计</span>
+              </Button>
               <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
                 <HelpCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.help}</span>
@@ -251,6 +269,8 @@ export function CinemaLayout({
         <div className="grid w-full gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8 xl:px-10">
           <div className="min-w-0 overflow-x-clip">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
+            <TabsContent className="mt-0" value="people">{people}</TabsContent>
+            <TabsContent className="mt-0" value="statistics">{statistics}</TabsContent>
             <TabsContent className="mt-0" value="cached">{cached}</TabsContent>
             <TabsContent className="mt-0" value="forum">{forum}</TabsContent>
             <TabsContent className="mt-0" value="history">{history}</TabsContent>

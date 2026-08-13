@@ -5,6 +5,7 @@ export interface CinemaRoute {
   browseChannel: BrowseChannel;
   browseView: BrowseViewId;
   query: string;
+  personId?: string;
   detailAssetKey?: string;
   playerAssetKey?: string;
 }
@@ -16,6 +17,8 @@ interface CinemaHistoryState {
 
 export const routeTabs: AppTab[] = [
   "library",
+  "people",
+  "statistics",
   "cached",
   "history",
   "favorites",
@@ -68,8 +71,16 @@ export function routeFromLocation(): CinemaRoute {
     };
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const tab = isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
+  return routeFromUrl(new URL(window.location.href));
+}
+
+export function routeFromUrl(url: URL): CinemaRoute {
+  const params = url.searchParams;
+  const pathPersonId = personIdFromPath(url.pathname);
+  const pathDetailAssetKey = detailAssetKeyFromPath(url.pathname);
+  const tab = pathPersonId
+    ? "people"
+    : isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
   const browseChannel = isBrowseChannel(params.get("channel"))
     ? params.get("channel") as BrowseChannel
     : "recommended";
@@ -81,9 +92,30 @@ export function routeFromLocation(): CinemaRoute {
     browseChannel,
     browseView,
     query: params.get("q") ?? "",
-    detailAssetKey: params.get("detail") ?? undefined,
+    personId: pathPersonId ?? params.get("person") ?? undefined,
+    detailAssetKey: pathDetailAssetKey ?? params.get("detail") ?? undefined,
     playerAssetKey: params.get("play") ?? undefined
   };
+}
+
+function personIdFromPath(pathname: string) {
+  const match = pathname.match(/^\/people\/([^/]+)\/?$/);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
+}
+
+function detailAssetKeyFromPath(pathname: string) {
+  const match = pathname.match(/^\/movie\/([^/]+)\/?$/);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
 }
 
 export function historyStateRoute(state: unknown): CinemaRoute | undefined {
@@ -109,16 +141,22 @@ export function historyStateRoute(state: unknown): CinemaRoute | undefined {
     browseChannel,
     browseView,
     query: route.query ?? "",
+    personId: route.personId,
     detailAssetKey: route.detailAssetKey,
     playerAssetKey: route.playerAssetKey
   };
 }
 
-export function routeUrl(route: CinemaRoute) {
-  const url = new URL(window.location.href);
+export function routeUrl(route: CinemaRoute, currentHref = window.location.href) {
+  const url = new URL(currentHref);
+  url.pathname = route.personId
+    ? `/people/${encodeURIComponent(route.personId)}`
+    : route.detailAssetKey
+      ? `/movie/${encodeURIComponent(route.detailAssetKey)}`
+      : "/";
   url.search = "";
   url.hash = "";
-  if (route.tab !== "library") {
+  if (!route.personId && route.tab !== "library") {
     url.searchParams.set("tab", route.tab);
   }
   if (route.tab === "library" && route.browseChannel !== "recommended") {
@@ -127,13 +165,10 @@ export function routeUrl(route: CinemaRoute) {
   if (route.tab === "library" && route.browseView !== defaultBrowseView(route.browseChannel)) {
     url.searchParams.set("view", route.browseView);
   }
-  if (route.query.trim()) {
+  if (!route.personId && route.tab === "library" && route.query.trim()) {
     url.searchParams.set("q", route.query.trim());
   }
-  if (route.detailAssetKey) {
-    url.searchParams.set("detail", route.detailAssetKey);
-  }
-  if (route.playerAssetKey) {
+  if (!route.personId && route.playerAssetKey) {
     url.searchParams.set("play", route.playerAssetKey);
   }
   return `${url.pathname}${url.search}`;
@@ -146,6 +181,7 @@ export function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
       left.browseChannel === right.browseChannel &&
       left.browseView === right.browseView &&
       left.query === right.query &&
+      left.personId === right.personId &&
       left.detailAssetKey === right.detailAssetKey &&
       left.playerAssetKey === right.playerAssetKey
   );

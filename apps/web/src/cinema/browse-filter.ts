@@ -4,7 +4,7 @@ import { calculateCompositeRatingForResult } from "./composite-rating";
 import type { ResultWithCache } from "./types";
 
 export type BrowseFilterKind = "all" | "movie" | "tv" | "animation";
-export type BrowseFilterDecade = "all" | "2020s" | "2010s" | "2000s" | "classic";
+export type BrowseFilterDecade = "all" | "2020s" | "2010s" | "2000s" | "1990s" | "1980s" | "1970s" | "1960s" | "1950s" | "pre1950";
 export type BrowseFilterRating = "all" | "70" | "80" | "90";
 export type BrowseFilterAvailability = "all" | "publicPrepared";
 
@@ -63,7 +63,7 @@ export function filterBrowseResults(
     if (filter.rating !== "all" && (rating === undefined || rating < Number(filter.rating))) {
       return false;
     }
-    if (filter.genres.length > 0 && !filter.genres.some((selectedGenre) =>
+    if (filter.genres.length > 0 && !filter.genres.every((selectedGenre) =>
       genres.some((genre) => genre.toLowerCase() === selectedGenre.toLowerCase())
     )) {
       return false;
@@ -104,8 +104,8 @@ function matchesDecade(year: number | undefined, decade: BrowseFilterDecade) {
   if (year === undefined) {
     return false;
   }
-  if (decade === "classic") {
-    return year < 2000;
+  if (decade === "pre1950") {
+    return year < 1950;
   }
   const start = Number(decade.slice(0, 4));
   return year >= start && year < start + 10;

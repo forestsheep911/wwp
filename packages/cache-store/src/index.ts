@@ -4,6 +4,8 @@ import { AzureCacheStore } from "./azure.js";
 import { FilesystemCacheStore } from "./filesystem.js";
 import { LocalCacheStore } from "./local.js";
 import { LocalMovieCatalogStore } from "./movie-catalog.js";
+import { LocalPersonCatalogStore } from "./person-catalog.js";
+import { AzurePersonCatalogStore } from "./person-catalog-azure.js";
 import { AzureSearchIndexStore, LocalSearchIndexStore } from "./search-index.js";
 import { AzureTspdtBrowseStore, LocalTspdtBrowseStore, LocalTspdtRankingStore } from "./tspdt-ranking.js";
 import type { CacheBackend, CacheStore } from "./types.js";
@@ -34,6 +36,22 @@ export {
   summarizeMovieCatalog
 } from "./movie-catalog.js";
 export type {
+  PersonCatalogBuildOptions,
+  PersonCatalogBuildSummary,
+  PersonCatalogStore
+} from "./person-catalog.js";
+export type { AzurePersonCatalogStoreOptions, PersonCatalogTableClient } from "./person-catalog-azure.js";
+export { AzurePersonCatalogStore } from "./person-catalog-azure.js";
+export {
+  buildPersonCatalogFromWorks,
+  emptyPersonCatalogState,
+  LocalPersonCatalogStore,
+  mergePersonCatalogEntries,
+  rebuildDerivedPersonIndexes,
+  resolvePersonId,
+  summarizePersonCatalog
+} from "./person-catalog.js";
+export type {
   TspdtRankingBuildOptions,
   TspdtBrowseEntry,
   TspdtBrowseState,
@@ -54,6 +72,7 @@ const repoRoot = path.resolve(moduleDir, "../../..");
 const defaultStatePath = path.join(repoRoot, ".local-data", "cache-state.json");
 const defaultSearchIndexPath = path.join(repoRoot, ".local-data", "search-index.json");
 const defaultMovieCatalogPath = path.join(repoRoot, ".local-data", "movie-catalog.json");
+const defaultPersonCatalogPath = path.join(repoRoot, ".local-data", "person-catalog.json");
 const defaultTspdtRankingPath = path.join(repoRoot, ".local-data", "tspdt-ranking-2026.json");
 const defaultTspdtBrowsePath = path.join(repoRoot, ".local-data", "tspdt-browse-2026.json");
 
@@ -88,6 +107,17 @@ export function createMovieCatalogStore(): LocalMovieCatalogStore {
   return new LocalMovieCatalogStore(process.env.WWPDW_LOCAL_DATA_DIR
     ? path.resolve(process.env.WWPDW_LOCAL_DATA_DIR, "movie-catalog.json")
     : defaultMovieCatalogPath);
+}
+
+export function createPersonCatalogStore(
+  backend = (process.env.PERSON_CATALOG_BACKEND ?? process.env.SEARCH_INDEX_BACKEND ?? process.env.CACHE_BACKEND) as CacheBackend
+): LocalPersonCatalogStore | AzurePersonCatalogStore {
+  if (backend === "azure") {
+    return new AzurePersonCatalogStore();
+  }
+  return new LocalPersonCatalogStore(process.env.WWPDW_LOCAL_DATA_DIR
+    ? path.resolve(process.env.WWPDW_LOCAL_DATA_DIR, "person-catalog.json")
+    : defaultPersonCatalogPath);
 }
 
 export function createTspdtRankingStore(): LocalTspdtRankingStore {

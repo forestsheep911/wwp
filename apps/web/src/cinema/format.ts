@@ -297,11 +297,19 @@ export function bestSummary(result: SearchResult) {
 
 export function basicInfoLine(result: SearchResult) {
   const info = usableInfo(result.metadata?.info);
-  if (!info || bestSummary(result) === info) {
-    return "";
-  }
-
-  return info;
+  const organizationParts = [
+    visibleTags(result.metadata?.productionCompanies).length > 0
+      ? `制作：${visibleTags(result.metadata?.productionCompanies).slice(0, 3).join(" / ")}`
+      : undefined,
+    visibleTags(result.metadata?.studios).length > 0
+      ? `工作室：${visibleTags(result.metadata?.studios).slice(0, 3).join(" / ")}`
+      : undefined,
+    visibleTags(result.metadata?.distributors).length > 0
+      ? `发行：${visibleTags(result.metadata?.distributors).slice(0, 3).join(" / ")}`
+      : undefined
+  ].filter(Boolean).join(" · ");
+  const visibleInfo = info && bestSummary(result) !== info ? info : "";
+  return [visibleInfo, organizationParts].filter(Boolean).join(" / ");
 }
 
 function looksTruncated(value: string) {

@@ -49,6 +49,7 @@ param(
     [string]$OssPreparationTable = "osspreparejobs",
     [string]$MemberTable = "membercodes",
     [string]$SearchIndexTable = "movieindex",
+    [string]$PersonCatalogTable = "peoplecatalog",
     [string]$TspdtBrowseTable = "tspdtbrowse",
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
@@ -220,6 +221,7 @@ $envVars = @(
     "SEARCH_RESULT_CACHE_TTL_SECONDS=600",
     "SEARCH_RESULT_CACHE_LIMIT=100",
     "SEARCH_INDEX_ENABLED=true",
+    "PERSON_CATALOG_BACKEND=azure",
     "SEARCH_INDEX_WRITE_THROUGH=true",
     "SEARCH_INDEX_REFRESH_ON_CACHE=true",
     "SEARCH_INDEX_RESULT_LIMIT=8",
@@ -257,6 +259,7 @@ $envVars = @(
     "AZURE_STORAGE_OSS_PREPARATION_TABLE=$OssPreparationTable",
     "AZURE_STORAGE_MEMBER_TABLE=$MemberTable",
     "AZURE_STORAGE_SEARCH_INDEX_TABLE=$SearchIndexTable",
+    "AZURE_STORAGE_PERSON_CATALOG_TABLE=$PersonCatalogTable",
     "AZURE_STORAGE_TSPDT_BROWSE_TABLE=$TspdtBrowseTable",
     "CACHE_ASSET_LOOKUP_CACHE_TTL_SECONDS=30",
     "AZURE_STORAGE_PLAYBACK_SAS_MINUTES=720",

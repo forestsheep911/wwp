@@ -47,6 +47,7 @@ import {
   type MoviePoster,
   type MovieSummaryRequest,
   type MovieRequestsResponse,
+  type LibraryAssetResponse,
   type MovieRequestStatus,
   type PlaybackCapacity,
   type PlaybackLine,
@@ -63,7 +64,7 @@ import {
   playbackCreditCost,
   validateMemberPasscode
 } from "@wwpdw/shared";
-import { createCacheStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
+import { createCacheStore, createPersonCatalogStore, createSearchIndexStore, createTspdtBrowseStore, isFreshReady } from "@wwpdw/cache-store";
 import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } from "./access-store.js";
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { isDirectMediaDownloadUrl } from "./direct-download.js";
@@ -88,10 +89,13 @@ import { inferVideoCodec, videoCodecForAsset } from "./playback-codec.js";
 import { PlaybackAdmissionQueue, playbackRequiresLocalAdmission } from "./playback-admission.js";
 import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
+import { getPublicPerson, listPublicPeople, listPublicPersonIssues } from "./person-service.js";
+import { buildSiteStatistics, type SiteStatistics } from "./site-statistics.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
+const personCatalog = createPersonCatalogStore();
 const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
 const sessionStore = createSessionStore();
@@ -125,6 +129,9 @@ const searchResultCache = new Map<string, {
 }>();
 const browseSnapshotCache = new BrowseSnapshotCache<SearchResult>(defaultBrowseSnapshotTtlMs);
 const browseSourceCache = new BrowseSnapshotCache<SearchResult>(defaultBrowseSnapshotTtlMs);
+const siteStatisticsCacheTtlMs = Math.max(60_000, Number(process.env.SITE_STATISTICS_CACHE_TTL_MS ?? 300_000));
+let siteStatisticsCache: { expiresAt: number; value: SiteStatistics } | undefined;
+let pendingSiteStatistics: Promise<SiteStatistics> | undefined;
 if (searchIndexEnabled) {
   void browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000)).catch((error) => {
     logWarn("api.browse.warmup_failed", errorLogFields(error));
@@ -1509,6 +1516,28 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
   sendJson(response, 200, { results });
 }
 
+async function handleLibraryAsset(assetKey: string, response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const searchLoad = await loadSearchResults(assetKey);
+  const result = findSearchResultByAssetKey(searchLoad.results, assetKey);
+  if (!result) {
+    sendJson(response, 404, { error: "片目不存在或已不再公开。" });
+    return;
+  }
+
+  rememberResults([result]);
+  const [enriched] = await enrichResultsWithCache([result]);
+  const payload: LibraryAssetResponse = { result: enriched };
+
+  logInfo("api.library_asset.lookup", {
+    requestId: context.requestId,
+    assetKey,
+    searchCache: searchLoad.cacheStatus,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, payload);
+}
+
 async function handleMovieSummary(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -1838,6 +1867,12 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
   const line = optionalPlaybackLine(url.searchParams.get("line"));
+  const requestedPersonId = url.searchParams.get("person")?.trim();
+  let personWorkIds: Set<string> | undefined;
+  if (requestedPersonId) {
+    const person = getPublicPerson(await personCatalog.getState(), requestedPersonId);
+    personWorkIds = new Set(person?.works.map((work) => work.workId) ?? []);
+  }
   const pagedLimitMaximum = channel === "movie" && view === "tspdtRank"
     ? 2000
     : view === "popular" || view === "mostWatched"
@@ -1845,7 +1880,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
       : 100;
   const limit = requestLimit(url, 50, mode === "random" ? 200 : pagedLimitMaximum);
 
-  if (channel === "movie" && view === "tspdtRank" && mode === "paged") {
+  if (!requestedPersonId && channel === "movie" && view === "tspdtRank" && mode === "paged") {
     const served = await serveStaticTspdtBrowse(response, context, {
       startedAt,
       offset,
@@ -1864,7 +1899,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
   const snapshotKey = `${channel}:${view}`;
-  let sortedResults = mode === "paged" ? browseSnapshotCache.get(snapshotKey) : undefined;
+  let sortedResults = mode === "paged" && !requestedPersonId ? browseSnapshotCache.get(snapshotKey) : undefined;
 
   if (sortedResults) {
     browseSource = "snapshot";
@@ -1899,12 +1934,18 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   if (!sortedResults) {
     const channelResults = mode === "random" ? searchResults : filterBrowseResults(searchResults, channel);
     sortedResults = mode === "random" ? channelResults : sortBrowseResults(channelResults, view);
-    if (mode === "paged") {
+    if (mode === "paged" && !requestedPersonId) {
       browseSnapshotCache.set(snapshotKey, sortedResults);
     }
   }
-  const pageResults = mode === "random" ? sortedResults.slice(0, limit) : sortedResults.slice(offset, offset + limit);
-  const hasMore = mode === "random" ? false : sortedResults.length > offset + limit;
+  const identityFilteredResults = personWorkIds
+    ? sortedResults.filter((result) => {
+      const workId = result.metadata?.work?.workId ?? result.metadata?.workId;
+      return Boolean(workId && personWorkIds.has(workId));
+    })
+    : sortedResults;
+  const pageResults = mode === "random" ? identityFilteredResults.slice(0, limit) : identityFilteredResults.slice(offset, offset + limit);
+  const hasMore = mode === "random" ? false : identityFilteredResults.length > offset + limit;
   rememberResults(pageResults);
   const results = await enrichResultsWithCache(pageResults, line);
 
@@ -1919,6 +1960,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     limit,
     offset,
     hasMore,
+    personId: requestedPersonId,
     durationMs: durationMs(startedAt)
   });
 
@@ -1931,6 +1973,70 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     mode
   }, {
     "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+    Vary: "Cookie"
+  });
+}
+
+async function visiblePersonWorkIds() {
+  try {
+    const results = await searchIndex.search("", 1_000_000);
+    return new Set(results.flatMap((result) => {
+      const work = result.metadata?.work;
+      const hidden = result.metadata?.hideFromWebsite;
+      const workId = work?.workId ?? result.metadata?.workId;
+      return !hidden && workId ? [workId] : [];
+    }));
+  } catch (error) {
+    logWarn("api.people.visible_work_index_failed", errorLogFields(error));
+    return new Set<string>();
+  }
+}
+
+async function loadSiteStatistics() {
+  if (siteStatisticsCache && siteStatisticsCache.expiresAt > Date.now()) {
+    return siteStatisticsCache.value;
+  }
+  if (pendingSiteStatistics) return pendingSiteStatistics;
+
+  pendingSiteStatistics = (async () => {
+    const results = searchIndexEnabled
+      ? await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))
+      : await searchSource.search("");
+    const [indexStats, cachedAssets, domesticJobs, peopleState] = await Promise.all([
+      searchIndexEnabled ? searchIndex.getStats() : Promise.resolve(undefined),
+      store.listCachedAssets(100_000),
+      ossPreparationStore.list(1_000),
+      personCatalog.getState()
+    ]);
+    const readyAssetKeys = new Set([
+      ...cachedAssets.map((asset) => asset.assetKey),
+      ...domesticJobs.filter((job) => ossCacheStatus(job) === "ready").map((job) => job.assetKey)
+    ]);
+    const statistics = buildSiteStatistics(results, {
+      readyAssetKeys,
+      people: listPublicPeople(peopleState, { limit: 1 }).total,
+      latestIndexedAt: indexStats?.latestIndexedAt
+    });
+    siteStatisticsCache = { expiresAt: Date.now() + siteStatisticsCacheTtlMs, value: statistics };
+    return statistics;
+  })().finally(() => {
+    pendingSiteStatistics = undefined;
+  });
+
+  return pendingSiteStatistics;
+}
+
+async function handleSiteStatistics(response: http.ServerResponse, context: RequestContext) {
+  const startedAt = Date.now();
+  const statistics = await loadSiteStatistics();
+  logInfo("api.site_statistics", {
+    requestId: context.requestId,
+    titleCount: statistics.totals.titles,
+    instantPlayCount: statistics.totals.instantPlay,
+    durationMs: durationMs(startedAt)
+  });
+  sendJson(response, 200, statistics, {
+    "Cache-Control": "private, max-age=300, stale-while-revalidate=600",
     Vary: "Cookie"
   });
 }
@@ -5266,8 +5372,55 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    const libraryAssetMatch = pathname.match(/^\/api\/library-assets\/([^/]+)$/);
+    if (request.method === "GET" && libraryAssetMatch) {
+      await handleLibraryAsset(decodeURIComponent(libraryAssetMatch[1]), response, context);
+      return;
+    }
+
+    if (pathname === "/api/admin/people/issues" && !requireAdmin(identity, response, context)) {
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/people/issues") {
+      sendJson(response, 200, listPublicPersonIssues(await personCatalog.getState()));
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/people") {
+      const state = await personCatalog.getState();
+      const visibleWorkIds = await visiblePersonWorkIds();
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 20)));
+      const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+      sendJson(response, 200, listPublicPeople(state, {
+        query: url.searchParams.get("q") ?? undefined,
+        department: url.searchParams.get("department") as never,
+        limit,
+        offset,
+        visibleWorkIds
+      }));
+      return;
+    }
+
+    const personMatch = pathname.match(/^\/api\/people\/([^/]+)$/);
+    if (request.method === "GET" && personMatch) {
+      const state = await personCatalog.getState();
+      const person = getPublicPerson(state, decodeURIComponent(personMatch[1]), { visibleWorkIds: await visiblePersonWorkIds() });
+      if (!person) {
+        sendJson(response, 404, { error: "Person was not found." });
+        return;
+      }
+      sendJson(response, 200, person);
+      return;
+    }
+
     if (request.method === "GET" && pathname === "/api/browse-assets") {
       await handleBrowseAssets(url, response, context);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/site-statistics") {
+      await handleSiteStatistics(response, context);
       return;
     }
 

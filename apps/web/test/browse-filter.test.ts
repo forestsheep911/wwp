@@ -35,17 +35,27 @@ test("filters by decade and the same 100-point composite rating shown on cards",
   assert.equal(filterBrowseResults([result({ year: "1998", ratings: [{ label: "IMDb", value: "9.2" }] })], filter).length, 0);
 });
 
+test("splits twentieth-century results into explicit decades", () => {
+  const nineties: BrowseFilterState = { ...emptyBrowseFilter, decade: "1990s" };
+  const pre1950: BrowseFilterState = { ...emptyBrowseFilter, decade: "pre1950" };
+  assert.equal(filterBrowseResults([result({ year: "1998" })], nineties).length, 1);
+  assert.equal(filterBrowseResults([result({ year: "1989" })], nineties).length, 0);
+  assert.equal(filterBrowseResults([result({ year: "1949" })], pre1950).length, 1);
+  assert.equal(filterBrowseResults([result({ year: "1950" })], pre1950).length, 0);
+});
+
 test("public prepared uses shared catalog cache instead of personal tracked state", () => {
   const filter: BrowseFilterState = { ...emptyBrowseFilter, availability: "publicPrepared" };
   assert.equal(filterBrowseResults([result()], filter).length, 0);
   assert.equal(filterBrowseResults([{ ...result(), cache: { status: "ready" } as never }], filter).length, 1);
 });
 
-test("genre choices are complete and use OR semantics within the row", () => {
+test("genre choices are complete and use AND semantics within the row", () => {
   const items = Array.from({ length: 14 }, (_, index) => result({ genres: [`题材${index + 1}`] }));
   assert.equal(browseFilterGenres(items).length, 14);
   const filter: BrowseFilterState = { ...emptyBrowseFilter, genres: ["喜剧", "科幻"] };
-  assert.equal(filterBrowseResults([result({ genres: ["科幻"] })], filter).length, 1);
+  assert.equal(filterBrowseResults([result({ genres: ["喜剧", "科幻", "剧情"] })], filter).length, 1);
+  assert.equal(filterBrowseResults([result({ genres: ["科幻"] })], filter).length, 0);
   assert.equal(filterBrowseResults([result({ genres: ["剧情"] })], filter).length, 0);
 });
 

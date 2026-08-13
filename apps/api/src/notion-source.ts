@@ -111,6 +111,9 @@ const releaseDatePropertyPattern = /^(?:\u4e0a\u6620\u65e5\u671f|\u9996\u64ad\u6
 const genrePropertyPattern = /^(?:\u65e8\u8da3)$/i;
 const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
 const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
+const productionCompaniesPropertyPattern = /^(?:production\s+compan(?:y|ies)|\u5236\u4f5c\u516c\u53f8|\u51fa\u54c1\u516c\u53f8)$/i;
+const distributorsPropertyPattern = /^(?:distributors?|distribution\s+compan(?:y|ies)|\u53d1\u884c\u516c\u53f8|\u767c\u884c\u516c\u53f8)$/i;
+const studiosPropertyPattern = /^(?:studios?|production\s+studios?|animation\s+studios?|\u5236\u4f5c\u5de5\u4f5c\u5ba4|\u88fd\u4f5c\u5de5\u4f5c\u5ba4|\u52a8\u753b\u5de5\u4f5c\u5ba4|\u52d5\u756b\u5de5\u4f5c\u5ba4)$/i;
 const ratingLevelPropertyPattern = /\u5206\u7ea7|certificate|rating level|rated/i;
 const aiSuggestedMinimumAgePropertyPattern = /AI\s*(?:suggested\s*)?(?:minimum\s*)?age|AI建议最低年龄|ai\s*age/i;
 const aiAgeConfidencePropertyPattern = /AI年龄建议置信度|AI\s*age\s*confidence|age\s*confidence/i;
@@ -803,6 +806,15 @@ function listFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: n
   return undefined;
 }
 
+function organizationListFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit = 12) {
+  const value = textFromNamedProperty(properties, pattern, 1200);
+  if (!value) return [];
+  return [...new Set(value
+    .split(/\s*(?:\/|／|;|；|\n|\r)\s*/u)
+    .map(cleanText)
+    .filter(Boolean))].slice(0, limit);
+}
+
 function dateFromNamedProperty(properties: JsonRecord, pattern: RegExp) {
   for (const [name, rawProperty] of Object.entries(properties)) {
     if (!pattern.test(name)) {
@@ -1230,6 +1242,9 @@ function movieMetadataFromPage(
   const genres = listFromNamedProperty(properties, genrePropertyPattern, 4) ?? [];
   const directors = listFromNamedProperty(properties, directorPropertyPattern, 3) ?? [];
   const people = listFromNamedProperty(properties, peoplePropertyPattern, 4) ?? [];
+  const productionCompanies = organizationListFromNamedProperty(properties, productionCompaniesPropertyPattern);
+  const distributors = organizationListFromNamedProperty(properties, distributorsPropertyPattern);
+  const studios = organizationListFromNamedProperty(properties, studiosPropertyPattern);
   const ratings = ratingsFromProperties(properties);
   const credits = creditEntries(directors, people);
   const kind = movieWorkKindFromType(type);
@@ -1307,6 +1322,9 @@ function movieMetadataFromPage(
       externalIds: hasExternalIds ? externalIds : undefined,
       genres,
       credits,
+      productionCompanies,
+      distributors,
+      studios,
       ratings: ratings.map((rating) => ({ ...rating, source: "notion" })),
       boxOffice,
       media: {
@@ -1345,6 +1363,9 @@ function movieMetadataFromPage(
     genres,
     directors,
     people,
+    productionCompanies,
+    distributors,
+    studios,
     ratings,
     boxOfficeDisplay: boxOffice?.display,
     boxOfficeAmount: boxOffice?.amount,

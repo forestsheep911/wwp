@@ -55,6 +55,7 @@ interface OmdbPayload {
   imdbID?: string;
   Type?: string;
   BoxOffice?: string;
+  Production?: string;
   Ratings?: Array<{ Source?: string; Value?: string }>;
   Response?: string;
   Error?: string;
@@ -535,6 +536,7 @@ function planUpdates(
   addUpdate(updates, availableProperties, pageProperties, "Directors", cleanOmdbText(payload.Director));
   addUpdate(updates, availableProperties, pageProperties, "Writers", cleanOmdbText(payload.Writer));
   addUpdate(updates, availableProperties, pageProperties, "Cast", cleanOmdbText(payload.Actors));
+  addUpdate(updates, availableProperties, pageProperties, "Production Companies", splitList(payload.Production).join(" / "));
   addUpdate(updates, availableProperties, pageProperties, "分级", omdbRated(payload.Rated));
   addUpdate(updates, availableProperties, pageProperties, "IMDB评分", numericText(payload.imdbRating));
   addUpdate(updates, availableProperties, pageProperties, "Metascore", numericText(payload.Metascore));

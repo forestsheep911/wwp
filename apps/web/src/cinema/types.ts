@@ -11,6 +11,8 @@ export { defaultCreditPolicy, playbackCreditCost } from "@wwpdw/shared";
 export type ResultWithCache = SearchResult & { cache?: CacheAsset };
 export type AppTab =
   | "library"
+  | "people"
+  | "statistics"
   | "cached"
   | "history"
   | "favorites"

@@ -11,6 +11,13 @@
   overflow-x: clip;
   color-scheme: dark;
   --mobile-nav-height: 4.5rem;
+  --chart-1: #6ee7b7;
+  --chart-2: #38bdf8;
+  --chart-3: #fcd34d;
+  --chart-4: #64748b;
+  --chart-label: #cbd5e1;
+  --chart-muted: #64748b;
+  --chart-grid: #1e293b;
 }
 
 html {
@@ -214,6 +221,10 @@ video {
   color: #24313f;
   background: #f7f4ec;
   color-scheme: light;
+  --chart-1: #059669;
+  --chart-label: #334155;
+  --chart-muted: #64748b;
+  --chart-grid: #cbd5e1;
 }
 
 :root[data-theme="light"] body {

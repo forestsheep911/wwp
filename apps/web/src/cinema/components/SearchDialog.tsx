@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Film, Loader2, Search } from "lucide-react";
-import type { SearchResult } from "@wwpdw/shared";
+import { ArrowLeft, Film, Loader2, Search, UserRound } from "lucide-react";
+import type { PublicPersonSummary, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
@@ -24,10 +24,12 @@ interface SearchDialogProps {
   open: boolean;
   query: string;
   results: ResultWithCache[];
+  people: PublicPersonSummary[];
   onOpenChange: (open: boolean) => void;
   onQueryChange: (value: string) => void;
   onSearch: (event?: FormEvent<HTMLFormElement>) => void;
   onSelectResult: (result: ResultWithCache) => void;
+  onSelectPerson: (personId: string) => void;
 }
 
 type SearchScope = "all" | "movie" | "tv" | "animation" | "ready";
@@ -46,10 +48,12 @@ export function SearchDialog({
   open,
   query,
   results,
+  people,
   onOpenChange,
   onQueryChange,
   onSearch,
-  onSelectResult
+  onSelectResult,
+  onSelectPerson
 }: SearchDialogProps) {
   const normalizedQuery = query.trim();
   const hasQuery = normalizedQuery.length > 0;
@@ -125,17 +129,11 @@ export function SearchDialog({
               <div className="flex h-12 items-center justify-between gap-3 border-b border-slate-900 px-4">
                 <p className="truncate text-sm font-semibold text-slate-400">
                   {hasQuery
-                    ? loading && visibleResults.length === 0
+                    ? loading && visibleResults.length === 0 && people.length === 0
                       ? copy.search.searching
-                      : copy.search.resultCount(visibleResults.length)
+                      : copy.search.resultCount(visibleResults.length + (scope === "all" ? people.length : 0))
                     : copy.search.start}
                 </p>
-                {hasQuery && visibleResults.length > 0 ? (
-                  <Button type="submit" variant="ghost" size="sm" disabled={loading}>
-                    {copy.search.viewAll}
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                ) : null}
               </div>
 
               <div className="max-h-[calc(100dvh-8rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 overflow-y-auto overscroll-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:h-full sm:max-h-none sm:min-h-0 sm:pb-2 sm:[scrollbar-gutter:stable]">
@@ -145,12 +143,28 @@ export function SearchDialog({
                   </div>
                 ) : !hasQuery ? (
                   <SearchIdleState />
-                ) : loading && visibleResults.length === 0 ? (
+                ) : loading && visibleResults.length === 0 && people.length === 0 ? (
                   <SearchLoadingRows />
-                ) : visibleResults.length === 0 ? (
+                ) : visibleResults.length === 0 && (scope !== "all" || people.length === 0) ? (
                   <SearchEmptyState query={normalizedQuery} />
                 ) : (
-                  <div className="grid gap-1">
+                  <div className="grid gap-3">
+                    {scope === "all" && people.length > 0 ? (
+                      <section className="grid gap-1" aria-label="人物搜索结果">
+                        <p className="px-3 pt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">人物</p>
+                        {people.map((person) => (
+                          <button className="grid min-h-16 w-full grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-2 text-left text-slate-300 transition-colors hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400" key={person.personId} type="button" onClick={() => onSelectPerson(person.personId)}>
+                            <span className="grid h-10 w-10 place-items-center rounded-full border border-slate-800 bg-slate-900"><UserRound className="h-5 w-5 text-emerald-300" /></span>
+                            <span className="min-w-0">
+                              <span className="flex min-w-0 items-baseline gap-2"><span className="truncate font-semibold text-slate-100">{person.names.primary}</span>{person.names.english && person.names.english !== person.names.primary ? <span className="truncate text-xs text-slate-500">{person.names.english}</span> : null}</span>
+                              <span className="mt-1 block truncate text-xs text-slate-500">{[person.departments.map(personDepartmentLabel).join(" / "), person.representativeWorks.slice(0, 2).join(" · ")].filter(Boolean).join(" · ") || `WWP 收录作品 ${person.workCount} 部`}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </section>
+                    ) : null}
+                    {visibleResults.length > 0 ? <section className="grid gap-1" aria-label="影视搜索结果">
+                      {scope === "all" && people.length > 0 ? <p className="px-3 pt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">影视</p> : null}
                     {visibleResults.map((result) => (
                       <SearchResultRow
                         active={activeResult?.assetKey === result.assetKey}
@@ -160,6 +174,7 @@ export function SearchDialog({
                         onSelect={() => onSelectResult(result)}
                       />
                     ))}
+                    </section> : null}
                   </div>
                 )}
               </div>
@@ -184,6 +199,14 @@ export function SearchDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function personDepartmentLabel(value: PublicPersonSummary["departments"][number]) {
+  return ({
+    directing: "导演", writing: "编剧", acting: "演员", production: "制片", camera: "摄影",
+    music: "音乐", editing: "剪辑", art: "美术", sound: "声音", visual_effects: "视效",
+    costume: "服装", makeup: "化妆", crew: "主创", other: "其他"
+  } as const)[value];
 }
 
 function resultMatchesScope(result: ResultWithCache, scope: SearchScope) {

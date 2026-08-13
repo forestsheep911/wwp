@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AccessRole,
   AdminCacheJobEntry,
@@ -18,6 +18,8 @@ import type {
   PlaybackAdmissionResponse,
   PlaybackLine,
   PlaybackResponse,
+  PublicPersonDetail,
+  PublicPersonSummary,
   SearchResponse,
   SearchResult
 } from "@wwpdw/shared";
@@ -42,8 +44,10 @@ import {
   getCacheStatus,
   getDirectDownload,
   getForumThread,
+  getLibraryAsset,
   getCreditPolicy,
   getPlayback,
+  getPerson,
   releasePlaybackAdmission,
   requestPlaybackAdmission,
   isUnauthorizedError,
@@ -66,6 +70,7 @@ import {
   retryCacheJob,
   revokeSession,
   searchAssets,
+  searchPeople,
   setMemberCredits as setMemberCreditsApi,
   updateMemberProfile,
   updateMovieRequestStatus as updateMovieRequestStatusApi,
@@ -86,6 +91,8 @@ import { ForumPanel } from "./cinema/components/ForumPanel";
 import { HelpPanel } from "./cinema/components/HelpPanel";
 import { HistoryPanel } from "./cinema/components/HistoryPanel";
 import { LibraryTab } from "./cinema/components/LibraryTab";
+import { PeopleDirectory } from "./cinema/components/PeopleDirectory";
+import { PersonDetail } from "./cinema/components/PersonDetail";
 import { MovieRequestDialog } from "./cinema/components/MovieRequestDialog";
 import { NoticeInboxDialog } from "./cinema/components/NoticeInboxDialog";
 import { NowPlayingPanel } from "./cinema/components/NowPlayingPanel";
@@ -190,6 +197,10 @@ type PlaybackLineDialogState = PlaybackLineChoice & {
   options?: { syncHistory?: boolean; target?: "newTab" | "currentTab" };
 };
 
+const StatisticsDashboard = lazy(() => import("./cinema/components/StatisticsDashboard").then((module) => ({
+  default: module.StatisticsDashboard
+})));
+
 const defaultMemberCredits = 200;
 
 function canPreviewServiceWakeDialog() {
@@ -263,7 +274,24 @@ function CinemaApp() {
   const [preferredPlaybackLine, setPreferredPlaybackLine] = useState<PlaybackLine>(() => readPlaybackLine());
   const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>("gallery");
   const [query, setQuery] = useState(initialRoute.query);
+  const [personId, setPersonId] = useState<string | undefined>(initialRoute.personId);
+  const [person, setPerson] = useState<PublicPersonDetail | undefined>();
+  const [personWorks, setPersonWorks] = useState<SearchResult[]>([]);
+  const [personLoading, setPersonLoading] = useState(Boolean(initialRoute.personId));
+  const [personError, setPersonError] = useState("");
+  const [directoryPeople, setDirectoryPeople] = useState<PublicPersonSummary[]>([]);
+  const [directoryTotal, setDirectoryTotal] = useState(0);
+  const [directoryWorkRelationshipCount, setDirectoryWorkRelationshipCount] = useState(0);
+  const [directoryNextOffset, setDirectoryNextOffset] = useState<number | undefined>();
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [directoryAppliedQuery, setDirectoryAppliedQuery] = useState("");
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryLoadingMore, setDirectoryLoadingMore] = useState(false);
+  const [directoryLoaded, setDirectoryLoaded] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
   const [detailAssetKey, setDetailAssetKey] = useState<string | undefined>(initialRoute.detailAssetKey);
+  const [routedDetailResult, setRoutedDetailResult] = useState<ResultWithCache | undefined>();
+  const [detailLoading, setDetailLoading] = useState(Boolean(initialRoute.detailAssetKey));
   const [results, setResults] = useState<ResultWithCache[]>([]);
   const [browseResults, setBrowseResults] = useState<ResultWithCache[]>([]);
   const [browseLoading, setBrowseLoading] = useState(
@@ -332,7 +360,9 @@ function CinemaApp() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
   const [searchPreviewResults, setSearchPreviewResults] = useState<ResultWithCache[]>([]);
+  const [searchPreviewPeople, setSearchPreviewPeople] = useState<PublicPersonSummary[]>([]);
   const [searchDialogError, setSearchDialogError] = useState("");
+  const [detailOpenedFromSearch, setDetailOpenedFromSearch] = useState(false);
   const [serviceWakePreviewOpen, setServiceWakePreviewOpen] = useState(() => shouldOpenServiceWakePreview());
   const [focusedLibraryAssetKey, setFocusedLibraryAssetKey] = useState<string | undefined>();
   const [cacheRequestAssetKeys, setCacheRequestAssetKeys] = useState<string[]>([]);
@@ -366,7 +396,15 @@ function CinemaApp() {
   const pendingLibraryScrollRestoreRef = useRef<{ key: string; top: number } | undefined>(undefined);
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
+  const directoryRequestRef = useRef(0);
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
+  const searchDialogOriginRef = useRef({
+    browseChannel: initialRoute.browseChannel,
+    browseView: initialRoute.browseView,
+    query: initialRoute.query,
+    scrollTop: 0
+  });
   const forumThreadsAutoLoadRef = useRef(false);
   const browseRouteLoadRef = useRef("");
   const browseRetryRef = useRef<{ routeKey: string; attempt: number; timer?: number }>({
@@ -533,6 +571,7 @@ function CinemaApp() {
       browseChannel,
       browseView,
       query,
+      personId,
       detailAssetKey,
       playerAssetKey: playback?.assetKey,
       ...overrides
@@ -562,11 +601,15 @@ function CinemaApp() {
   function navigateToTab(nextTab: AppTab) {
     const nextRoute = permittedRoute(routeForCurrentView({
       tab: nextTab,
+      personId: undefined,
       detailAssetKey: undefined,
       playerAssetKey: undefined
     }));
     setPlayback(undefined);
+    setPersonId(undefined);
+    setPerson(undefined);
     setDetailAssetKey(undefined);
+    setDetailOpenedFromSearch(false);
     setActiveTab(nextRoute.tab);
     writeRoute(nextRoute, "push");
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -579,6 +622,7 @@ function CinemaApp() {
     setBrowseChannel(nextChannel);
     setBrowseView(nextBrowseView);
     setDetailAssetKey(undefined);
+    setDetailOpenedFromSearch(false);
     setError("");
     setQuery("");
     setResults([]);
@@ -670,19 +714,185 @@ function CinemaApp() {
 
   function openLibraryDetail(result: ResultWithCache) {
     rememberLibraryScrollPosition();
+    setPersonId(undefined);
+    setPerson(undefined);
+    setDetailOpenedFromSearch(false);
     setDetailAssetKey(result.assetKey);
+    setRoutedDetailResult(result);
+    setDetailLoading(false);
     setFocusedLibraryAssetKey(result.assetKey);
     setPlayback(undefined);
     writeRoute(routeForCurrentView({
       tab: "library",
+      personId: undefined,
+      detailAssetKey: result.assetKey,
+      playerAssetKey: undefined
+    }), "push");
+  }
+
+  async function loadLibraryDetail(nextAssetKey: string) {
+    const requestId = ++detailRequestRef.current;
+    setDetailLoading(true);
+    setRoutedDetailResult(undefined);
+    try {
+      const response = await getLibraryAsset(nextAssetKey);
+      if (detailRequestRef.current !== requestId) return;
+      setRoutedDetailResult(response.result);
+      setError("");
+    } catch (detailLoadError) {
+      if (detailRequestRef.current !== requestId) return;
+      setRoutedDetailResult(undefined);
+      handleRequestError(detailLoadError, "条目加载失败。");
+    } finally {
+      if (detailRequestRef.current === requestId) setDetailLoading(false);
+    }
+  }
+
+  async function loadPersonDetail(nextPersonId: string) {
+    setPersonLoading(true);
+    setPersonError("");
+    try {
+      const [nextPerson, workResponse] = await Promise.all([
+        getPerson(nextPersonId),
+        browseAssets(100, 0, { mode: "paged", personId: nextPersonId })
+      ]);
+      setPerson(nextPerson);
+      setPersonWorks(workResponse.results);
+    } catch (personLoadError) {
+      setPerson(undefined);
+      setPersonWorks([]);
+      setPersonError(errorMessage(personLoadError, "人物资料加载失败。"));
+    } finally {
+      setPersonLoading(false);
+    }
+  }
+
+  async function refreshPeopleDirectory(nextQuery = directoryQuery) {
+    const requestId = ++directoryRequestRef.current;
+    setDirectoryLoading(true);
+    setDirectoryError("");
+    if (nextQuery !== directoryAppliedQuery) setDirectoryPeople([]);
+    try {
+      const response = await searchPeople(nextQuery, 48, 0);
+      if (directoryRequestRef.current !== requestId) return;
+      setDirectoryPeople(response.people);
+      setDirectoryTotal(response.total);
+      setDirectoryWorkRelationshipCount(response.workRelationshipCount);
+      setDirectoryNextOffset(response.nextOffset);
+      setDirectoryAppliedQuery(nextQuery);
+      setDirectoryLoaded(true);
+    } catch (directoryLoadError) {
+      if (directoryRequestRef.current !== requestId) return;
+      setDirectoryError(errorMessage(directoryLoadError, "人物索引加载失败。"));
+    } finally {
+      if (directoryRequestRef.current === requestId) setDirectoryLoading(false);
+    }
+  }
+
+  async function loadMorePeople() {
+    if (directoryNextOffset === undefined || directoryLoading || directoryLoadingMore) return;
+    const requestId = ++directoryRequestRef.current;
+    setDirectoryLoadingMore(true);
+    setDirectoryError("");
+    try {
+      const response = await searchPeople(directoryAppliedQuery, 48, directoryNextOffset);
+      if (directoryRequestRef.current !== requestId) return;
+      setDirectoryPeople((current) => {
+        const merged = new Map(current.map((entry) => [entry.personId, entry]));
+        for (const entry of response.people) merged.set(entry.personId, entry);
+        return [...merged.values()];
+      });
+      setDirectoryTotal(response.total);
+      setDirectoryWorkRelationshipCount(response.workRelationshipCount);
+      setDirectoryNextOffset(response.nextOffset);
+    } catch (directoryLoadError) {
+      if (directoryRequestRef.current !== requestId) return;
+      setDirectoryError(errorMessage(directoryLoadError, "更多人物加载失败。"));
+    } finally {
+      if (directoryRequestRef.current === requestId) setDirectoryLoadingMore(false);
+    }
+  }
+
+  function openPersonDetail(nextPersonId: string, targetTab: "library" | "people" = "people") {
+    if (targetTab === "library") rememberLibraryScrollPosition();
+    setPersonId(nextPersonId);
+    setPerson(undefined);
+    setPersonWorks([]);
+    setDetailAssetKey(undefined);
+    detailRequestRef.current += 1;
+    setRoutedDetailResult(undefined);
+    setDetailLoading(false);
+    setDetailOpenedFromSearch(false);
+    setPlayback(undefined);
+    setActiveTab(targetTab);
+    writeRoute(routeForCurrentView({
+      tab: targetTab,
+      personId: nextPersonId,
+      detailAssetKey: undefined,
+      playerAssetKey: undefined
+    }), "push");
+    void loadPersonDetail(nextPersonId);
+  }
+
+  function closePersonDetail() {
+    if (activeTab === "library") queueLibraryScrollRestore({ browseChannel, browseView, query });
+    setPersonId(undefined);
+    setPerson(undefined);
+    setPersonWorks([]);
+    setPersonError("");
+    writeRoute(routeForCurrentView({ personId: undefined, detailAssetKey: undefined }), "replace");
+  }
+
+  function openWorkFromPerson(result: SearchResult) {
+    setPersonId(undefined);
+    setPerson(undefined);
+    setResults((current) => current.some((entry) => entry.assetKey === result.assetKey) ? current : [result, ...current]);
+    setDetailOpenedFromSearch(false);
+    setDetailAssetKey(result.assetKey);
+    setRoutedDetailResult(result);
+    setDetailLoading(false);
+    setFocusedLibraryAssetKey(result.assetKey);
+    setActiveTab("library");
+    writeRoute(routeForCurrentView({
+      tab: "library",
+      personId: undefined,
       detailAssetKey: result.assetKey,
       playerAssetKey: undefined
     }), "push");
   }
 
   function closeLibraryDetail() {
+    if (detailOpenedFromSearch) {
+      const origin = searchDialogOriginRef.current;
+      setDetailAssetKey(undefined);
+      setRoutedDetailResult(undefined);
+      setDetailLoading(false);
+      setFocusedLibraryAssetKey(undefined);
+      setDetailOpenedFromSearch(false);
+      setBrowseChannel(origin.browseChannel);
+      setBrowseView(origin.browseView);
+      setQuery(origin.query);
+      setResults([]);
+      libraryScrollPositionsRef.current.set(libraryScrollKey(origin), origin.scrollTop);
+      queueLibraryScrollRestore(origin);
+      writeRoute({
+        tab: "library",
+        browseChannel: origin.browseChannel,
+        browseView: origin.browseView,
+        query: origin.query,
+        detailAssetKey: undefined,
+        playerAssetKey: undefined
+      }, "push");
+      if (origin.query.trim()) {
+        void refreshResults({ showLoading: false, activateLibrary: false }, origin.query);
+      }
+      return;
+    }
+
     queueLibraryScrollRestore({ browseChannel, browseView, query });
     setDetailAssetKey(undefined);
+    setRoutedDetailResult(undefined);
+    setDetailLoading(false);
     writeRoute(routeForCurrentView({
       detailAssetKey: undefined,
       playerAssetKey: undefined
@@ -692,7 +902,10 @@ function CinemaApp() {
   function clearSearchResults() {
     setError("");
     setDetailAssetKey(undefined);
+    setRoutedDetailResult(undefined);
+    setDetailLoading(false);
     setFocusedLibraryAssetKey(undefined);
+    setDetailOpenedFromSearch(false);
     setQuery("");
     setResults([]);
     writeRoute(routeForCurrentView({
@@ -812,6 +1025,7 @@ function CinemaApp() {
     event?.preventDefault();
     const normalizedQuery = query.trim();
     setDetailAssetKey(undefined);
+    setDetailOpenedFromSearch(false);
     await refreshResults({ showLoading: true, activateLibrary: true }, normalizedQuery);
     writeRoute({
       tab: "library",
@@ -821,16 +1035,19 @@ function CinemaApp() {
     }, "push");
   }
 
-  async function runDialogSearch(event?: FormEvent<HTMLFormElement>) {
-    await runSearch(event);
-    if (query.trim()) {
-      setSearchOpen(false);
-    }
+  function runDialogSearch(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
   }
 
   function openSearchDialog() {
     setSearchDialogError("");
     searchDialogBaselineQueryRef.current = query;
+    searchDialogOriginRef.current = {
+      browseChannel,
+      browseView,
+      query,
+      scrollTop: window.scrollY
+    };
     if (query.trim() && results.length > 0) {
       setSearchPreviewResults(results);
     }
@@ -848,6 +1065,7 @@ function CinemaApp() {
     setSearchDialogError("");
     setSearchPreviewLoading(false);
     setSearchPreviewResults([]);
+    setSearchPreviewPeople([]);
     setQuery(baselineQuery);
     if (baselineQuery.trim().length === 0) {
       setResults([]);
@@ -869,6 +1087,9 @@ function CinemaApp() {
     setPlayback(undefined);
     setFocusedLibraryAssetKey(result.assetKey);
     setDetailAssetKey(result.assetKey);
+    setRoutedDetailResult(result);
+    setDetailLoading(false);
+    setDetailOpenedFromSearch(true);
     setSearchOpen(false);
     writeRoute({
       tab: "library",
@@ -2507,6 +2728,7 @@ function CinemaApp() {
 
     if (!normalizedQuery) {
       setSearchPreviewResults([]);
+      setSearchPreviewPeople([]);
       setSearchDialogError("");
       setSearchPreviewLoading(false);
       return;
@@ -2514,7 +2736,15 @@ function CinemaApp() {
 
     setSearchDialogError("");
     setSearchPreviewLoading(true);
+    setSearchPreviewPeople([]);
     const timer = window.setTimeout(async () => {
+      void searchPeople(normalizedQuery, 8)
+        .then((peopleResponse) => {
+          if (searchPreviewRequestRef.current === requestId) setSearchPreviewPeople(peopleResponse.people);
+        })
+        .catch(() => {
+          if (searchPreviewRequestRef.current === requestId) setSearchPreviewPeople([]);
+        });
       try {
         const response = await searchAssets(normalizedQuery);
         if (searchPreviewRequestRef.current !== requestId) {
@@ -2531,6 +2761,7 @@ function CinemaApp() {
         }
         setSearchDialogError(cacheErrorLabel(errorMessage(previewError, copy.fallbackErrors.searchFailed)));
         setSearchPreviewResults([]);
+        setSearchPreviewPeople([]);
       } finally {
         if (searchPreviewRequestRef.current === requestId) {
           setSearchPreviewLoading(false);
@@ -2646,6 +2877,7 @@ function CinemaApp() {
       browseChannel: initialRoute.browseChannel,
       browseView: initialRoute.browseView,
       query,
+      personId: initialRoute.personId,
       detailAssetKey: initialRoute.detailAssetKey,
       playerAssetKey: initialRoute.playerAssetKey
     });
@@ -2653,11 +2885,20 @@ function CinemaApp() {
     setBrowseChannel(initialPermittedRoute.browseChannel);
     setBrowseView(initialPermittedRoute.browseView);
     setQuery(initialPermittedRoute.query);
+    setPersonId(initialPermittedRoute.personId);
     setDetailAssetKey(initialPermittedRoute.detailAssetKey);
     writeRoute(initialPermittedRoute, "replace");
 
     if (initialPermittedRoute.query.trim()) {
       void refreshResults({ showLoading: true, activateLibrary: false }, initialPermittedRoute.query);
+    }
+
+    if (initialPermittedRoute.personId) {
+      void loadPersonDetail(initialPermittedRoute.personId);
+    }
+
+    if (initialPermittedRoute.detailAssetKey) {
+      void loadLibraryDetail(initialPermittedRoute.detailAssetKey);
     }
 
     if (initialPermittedRoute.playerAssetKey) {
@@ -2674,7 +2915,9 @@ function CinemaApp() {
       const nextRoute = permittedRoute(requestedRoute);
       const nextQuery = nextRoute.query.trim();
 
-      if (!sameRoute(requestedRoute, nextRoute)) {
+      const canonicalUrl = routeUrl(nextRoute);
+      const currentUrl = `${window.location.pathname}${window.location.search}`;
+      if (!sameRoute(requestedRoute, nextRoute) || canonicalUrl !== currentUrl) {
         writeRoute(nextRoute, "replace");
       }
 
@@ -2687,7 +2930,25 @@ function CinemaApp() {
       setBrowseChannel(nextRoute.browseChannel);
       setBrowseView(nextRoute.browseView);
       setQuery(nextRoute.query);
+      setPersonId(nextRoute.personId);
       setDetailAssetKey(nextRoute.detailAssetKey);
+      setDetailOpenedFromSearch(false);
+
+      if (nextRoute.detailAssetKey) {
+        void loadLibraryDetail(nextRoute.detailAssetKey);
+      } else {
+        detailRequestRef.current += 1;
+        setRoutedDetailResult(undefined);
+        setDetailLoading(false);
+      }
+
+      if (nextRoute.personId) {
+        void loadPersonDetail(nextRoute.personId);
+      } else {
+        setPerson(undefined);
+        setPersonWorks([]);
+        setPersonError("");
+      }
 
       if (!nextRoute.playerAssetKey) {
         setPlayback(undefined);
@@ -2785,6 +3046,24 @@ function CinemaApp() {
       void refreshForumThreads(true);
     }
   }, [activeTab, forumThreadsLoaded, role, unlocked]);
+
+  useEffect(() => {
+    if (!unlocked || !role) {
+      return;
+    }
+
+    if (activeTab === "people" && !directoryLoaded && !directoryLoading) {
+      void refreshPeopleDirectory();
+    }
+  }, [activeTab, directoryLoaded, directoryLoading, role, unlocked]);
+
+  useEffect(() => {
+    if (!unlocked || !role || activeTab !== "people" || personId || !directoryLoaded || directoryQuery === directoryAppliedQuery) {
+      return;
+    }
+    const timer = window.setTimeout(() => void refreshPeopleDirectory(directoryQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, directoryAppliedQuery, directoryLoaded, directoryQuery, personId, role, unlocked]);
 
   useEffect(() => {
     if (!unlocked || !role) {
@@ -2934,10 +3213,15 @@ function CinemaApp() {
         open={searchOpen}
         query={query}
         results={searchPreviewResults}
+        people={searchPreviewPeople}
         onOpenChange={handleSearchDialogOpenChange}
         onQueryChange={setQuery}
         onSearch={(event) => void runDialogSearch(event)}
         onSelectResult={openSearchResult}
+        onSelectPerson={(nextPersonId) => {
+          setSearchOpen(false);
+          openPersonDetail(nextPersonId);
+        }}
       />
       <DirectDownloadDialog
         state={directDownloadDialog}
@@ -3026,6 +3310,8 @@ function CinemaApp() {
         onBrowseChannelChange={openBrowseChannel}
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
+        onOpenPeople={() => navigateToTab("people")}
+        onOpenStatistics={() => navigateToTab("statistics")}
         onOpenForum={() => navigateToTab("forum")}
         onOpenFavorites={() => navigateToTab("favorites")}
         onOpenHelp={() => navigateToTab("help")}
@@ -3039,7 +3325,18 @@ function CinemaApp() {
         onOpenTasks={() => navigateToTab("tasks")}
         onOpenSearch={openSearchDialog}
         onToggleTheme={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
-        library={(
+        library={personId && activeTab === "library" ? (
+          <PersonDetail
+            person={person}
+            works={personWorks}
+            loading={personLoading}
+            error={personError}
+            backLabel="返回片库"
+            onBack={closePersonDetail}
+            onOpenWork={openWorkFromPerson}
+            onRetry={() => void loadPersonDetail(personId)}
+          />
+        ) : (
           <LibraryTab
             creditPolicy={creditPolicy}
             query={query}
@@ -3067,7 +3364,10 @@ function CinemaApp() {
             onBrowsePresetChange={openBrowsePreset}
             onBrowseViewChange={openBrowseView}
             detailAssetKey={detailAssetKey}
+            detailResult={routedDetailResult}
+            detailLoading={detailLoading}
             onOpenDetail={openLibraryDetail}
+            onOpenPerson={(nextPersonId) => openPersonDetail(nextPersonId, "library")}
             onCloseDetail={closeLibraryDetail}
             onClearSearch={clearSearchResults}
             onRefreshBrowse={(options) => void refreshBrowseAssets(options)}
@@ -3075,6 +3375,38 @@ function CinemaApp() {
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
             onDownload={(selectedResult, variant) => void downloadResult(selectedResult, variant)}
           />
+        )}
+        people={personId && activeTab === "people" ? (
+          <PersonDetail
+            person={person}
+            works={personWorks}
+            loading={personLoading}
+            error={personError}
+            backLabel="返回人物索引"
+            onBack={closePersonDetail}
+            onOpenWork={openWorkFromPerson}
+            onRetry={() => void loadPersonDetail(personId)}
+          />
+        ) : (
+          <PeopleDirectory
+            people={directoryPeople}
+            total={directoryTotal}
+            workRelationshipCount={directoryWorkRelationshipCount}
+            query={directoryQuery}
+            loading={directoryLoading}
+            loadingMore={directoryLoadingMore}
+            hasMore={directoryNextOffset !== undefined}
+            error={directoryError}
+            onQueryChange={setDirectoryQuery}
+            onLoadMore={() => void loadMorePeople()}
+            onOpenPerson={(nextPersonId) => openPersonDetail(nextPersonId, "people")}
+            onRetry={() => void refreshPeopleDirectory(directoryQuery)}
+          />
+        )}
+        statistics={(
+          <Suspense fallback={<div className="h-[34rem] animate-pulse rounded-2xl border border-slate-800 bg-slate-950/72" />}>
+            <StatisticsDashboard />
+          </Suspense>
         )}
         cached={(
           <CachedShelf

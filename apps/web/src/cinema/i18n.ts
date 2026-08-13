@@ -160,8 +160,8 @@ export const zhCN = {
     variantCount: (count: number) => `${count} 个规格`,
     playableVariantCount: (count: number) => `${count} 个可播放`,
     director: (name: string) => `导演 ${name}`,
-    ageRecommendationTitle: "年龄建议",
-    ageRecommendation: (age: number) => `建议 ${age}+`,
+    ageRecommendationTitle: "观影守卫建议",
+    ageRecommendation: (age: number) => `${age}+`,
     aiAgeSource: "AI建议",
     manualAgeSource: "人工覆盖",
     ageConfidence: {

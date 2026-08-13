@@ -68,6 +68,14 @@ test("managed schema separates collaboration, human issues, AI issues, and AI ch
   assert.equal(byName.get("Last AI Check Time"), "date");
 });
 
+test("managed schema keeps production, distribution, and studio roles separate", () => {
+  const byName = new Map(notionManagedProperties.map((property) => [property.name, property.type]));
+
+  assert.equal(byName.get("Production Companies"), "rich_text");
+  assert.equal(byName.get("Distributors"), "rich_text");
+  assert.equal(byName.get("Studios"), "rich_text");
+});
+
 test("content risk options use concrete labels and exclude the ambiguous adult-theme label", () => {
   const property = notionManagedProperties.find((item) => item.name === "内容风险标签");
   const names = property?.options?.map((option) => option.name) ?? [];

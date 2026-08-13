@@ -64,3 +64,34 @@ test("planUpdates does not rewrite Metadata Source when omdb already exists", ()
 
   assert.equal(plan.updates["Metadata Source"], undefined);
 });
+
+test("planUpdates maps OMDb Production without inventing distributor or studio roles", () => {
+  const plan = planUpdates(
+    {
+      id: "page-1",
+      properties: {
+        Title: { type: "title", title: [{ plain_text: "Example (2026)" }] },
+        "IMDb ID": richText("tt1234567"),
+        "Production Companies": richText(""),
+        Distributors: richText(""),
+        Studios: richText("")
+      }
+    },
+    available(["Production Companies", "Distributors", "Studios", "Metadata Source"]),
+    { includeNonMovies: false } as never,
+    {
+      Title: "Example",
+      imdbID: "tt1234567",
+      Type: "movie",
+      Production: "StudioCanal, Working Title Films",
+      Response: "True"
+    }
+  );
+
+  assert.equal(
+    (plan.updates["Production Companies"] as { rich_text: Array<{ text: { content: string } }> }).rich_text[0].text.content,
+    "StudioCanal / Working Title Films"
+  );
+  assert.equal(plan.updates.Distributors, undefined);
+  assert.equal(plan.updates.Studios, undefined);
+});
