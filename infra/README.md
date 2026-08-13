@@ -105,6 +105,9 @@ secret-safe report use a separate `peopleNotionSync` partition in the same
 table, so progress survives ephemeral job containers. Unknown identities,
 duplicate Person IDs, changed external IDs, and malformed rows are quarantined;
 the scheduled job never creates a new identity or invents work credits.
+When an existing person's reviewed display name changes, the same execution
+updates only that person's already-linked movie credits; it never performs a
+full-catalog name rewrite.
 
 Deploy or update it with `deploy-people-sync-job.ps1`. Trigger one execution
 without waiting for the next schedule with:

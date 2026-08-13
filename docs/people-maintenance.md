@@ -117,6 +117,11 @@ continues incrementally across ephemeral executions. Deploy it with
 `infra/deploy-people-sync-job.ps1` and trigger an immediate run with
 `infra/start-people-sync-job.ps1`.
 
+The Job also propagates a reviewed display-name edit to that person's existing
+linked credits in the Azure movie index. It scopes this operation to People
+rows read in the current incremental window. The first run only establishes a
+checkpoint and does not reinterpret historical credit names.
+
 Automatic People sync may update names, aliases, biography, dates, birthplace, profile URL, departments, locked fields, data status, and website visibility for an existing immutable `personId`. It never creates an unknown identity. A changed external ID, duplicate `Person ID`, second Notion page bound to one person, or malformed row is quarantined as an admin issue; that row's ordinary changes remain unpublished until the identity problem is resolved.
 
 The successful checkpoint and latest secret-safe report are stored under `WWPDW_PEOPLE_STATE_DIR`. Notion reads and reviewed writes share `notion-people.lock`, so a scheduled pull cannot observe a partially completed upsert batch.
