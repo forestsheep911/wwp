@@ -82,6 +82,11 @@ Never apply an offline diagnostic report or a report containing identity conflic
 5. Run Notion-to-catalog sync as dry-run, apply, then a fresh dry-run. Require convergence with zero unexpected writes or issues.
 6. Open the live people directory and several changed person routes. Verify biography language, roles, deduplicated works, reverse lookup, desktop layout, and mobile layout.
 
+The production `job-ww-people-index` later carries safe Notion edits for known
+people into Azure. It does not replace reviewed first publication, create an
+unknown identity, or add work credits. `home:start` is not part of the
+production People publishing path.
+
 ## Stop instead of weakening a gate
 
 Stop and report completed and remaining counts when:

@@ -38,6 +38,7 @@ API image/app and Static Web App:
 .\infra\deploy-api-containerapp.ps1
 .\infra\deploy-metadata-sync-job.ps1 -Mode full
 .\infra\deploy-metadata-sync-job.ps1 -Mode incremental
+.\infra\deploy-people-sync-job.ps1
 .\infra\deploy-web-staticapp.ps1
 ```
 
@@ -95,6 +96,22 @@ table warm:
 - `job-ww-meta-index-incremental`: scheduled crawl, default every 30 minutes.
   It scans recent Notion rows by `last_edited_time`, with a small overlap
   window to avoid missing close updates.
+
+People profile edits have a separate scheduled job, `job-ww-people-index`.
+It runs every two hours by default at minute 10, reads only the `People / 创作人`
+data source, and publishes safe edits for existing immutable `personId` values
+to the Azure `peoplecatalog` table. Its incremental checkpoint and latest
+secret-safe report use a separate `peopleNotionSync` partition in the same
+table, so progress survives ephemeral job containers. Unknown identities,
+duplicate Person IDs, changed external IDs, and malformed rows are quarantined;
+the scheduled job never creates a new identity or invents work credits.
+
+Deploy or update it with `deploy-people-sync-job.ps1`. Trigger one execution
+without waiting for the next schedule with:
+
+```powershell
+.\infra\start-people-sync-job.ps1
+```
 
 The index stores metadata and source page ids. Cache requests still refresh the
 selected Notion page before queueing work so temporary Notion file URLs are not

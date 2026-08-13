@@ -12,6 +12,7 @@ import {
 } from "./person-notion-sync.js";
 import { ProviderRateLimiter } from "./person-sources/provider-http.js";
 import { installNotionDnsOverride, notionProxyUrl } from "./notion-network.js";
+import { AzurePeopleNotionSyncStateStore } from "./person-notion-sync-state.js";
 
 export async function runPeopleNotionSyncFromEnvironment(options: {
   apply?: boolean;
@@ -34,8 +35,15 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
   const stateDir = path.resolve(options.stateDir ?? process.env.WWPDW_PEOPLE_STATE_DIR ?? ".local-data/people");
   const checkpointPath = path.join(stateDir, "notion-sync-checkpoint.json");
   const reportPath = path.join(stateDir, "notion-sync-last-report.json");
+  const stateBackend = (process.env.WWPDW_PEOPLE_SYNC_STATE_BACKEND ?? "local").toLowerCase();
+  if (!new Set(["local", "azure"]).has(stateBackend)) {
+    throw new Error(`Unsupported WWPDW_PEOPLE_SYNC_STATE_BACKEND: ${stateBackend}.`);
+  }
+  const azureState = stateBackend === "azure" ? new AzurePeopleNotionSyncStateStore() : undefined;
   const lease = new LocalRunLease(path.join(stateDir, "notion-people.lock"));
-  const checkpoint = await readCheckpoint(checkpointPath);
+  const checkpoint = azureState
+    ? await azureState.readCheckpoint()
+    : await readCheckpoint(checkpointPath);
   installNotionDnsOverride();
   const proxyUrl = notionProxyUrl();
   const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl, { keepAlive: false }) : undefined;
@@ -54,16 +62,19 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
       limit: options.limit,
       pageSize: options.pageSize ?? numberOption("WWPDW_PEOPLE_NOTION_SYNC_PAGE_SIZE", 100),
       overlapMinutes: numberOption("WWPDW_PEOPLE_NOTION_SYNC_OVERLAP_MINUTES", 10),
-      persistCheckpoint: (value) => writeJsonAtomic(checkpointPath, value)
+      persistCheckpoint: (value) => azureState
+        ? azureState.writeCheckpoint(value)
+        : writeJsonAtomic(checkpointPath, value)
     });
     const report = {
       ...result,
       store: store.description,
       dataSourceId,
-      checkpointPath,
-      reportPath
+      state: azureState?.description ?? `local:${stateDir}`,
+      ...(azureState ? {} : { checkpointPath, reportPath })
     };
-    await writeJsonAtomic(reportPath, report);
+    if (azureState) await azureState.writeReport(report);
+    else await writeJsonAtomic(reportPath, report);
     return report;
   } finally {
     proxyAgent?.destroy();

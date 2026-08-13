@@ -109,6 +109,14 @@ npm run people:sync -- --apply
 
 When `WWPDW_HOME_NOTION_SYNC_ENABLED=true`, `home:start` runs this People lane in every scheduled Notion cycle. The lanes are isolated: People sync is still attempted when movie metadata fails, and any lane failure makes the loop use its shorter failure retry interval.
 
+The production Azure website does not depend on `home:start`. The scheduled
+Container Apps Job `job-ww-people-index` runs the same safe People sync against
+Azure every two hours by default. Its checkpoint and latest report are stored
+in Azure Table Storage with `WWPDW_PEOPLE_SYNC_STATE_BACKEND=azure`, so the job
+continues incrementally across ephemeral executions. Deploy it with
+`infra/deploy-people-sync-job.ps1` and trigger an immediate run with
+`infra/start-people-sync-job.ps1`.
+
 Automatic People sync may update names, aliases, biography, dates, birthplace, profile URL, departments, locked fields, data status, and website visibility for an existing immutable `personId`. It never creates an unknown identity. A changed external ID, duplicate `Person ID`, second Notion page bound to one person, or malformed row is quarantined as an admin issue; that row's ordinary changes remain unpublished until the identity problem is resolved.
 
 The successful checkpoint and latest secret-safe report are stored under `WWPDW_PEOPLE_STATE_DIR`. Notion reads and reviewed writes share `notion-people.lock`, so a scheduled pull cannot observe a partially completed upsert batch.
