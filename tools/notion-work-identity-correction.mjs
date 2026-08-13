@@ -92,6 +92,18 @@ if (options.imdbId !== undefined && page.properties?.["IMDb ID"]?.type === "rich
 if (options.imdbId !== undefined && page.properties?.imdb?.type === "rich_text") {
   proposed.imdb = { rich_text: richText(options.imdbId) };
 }
+if (options.imdbId !== undefined && page.properties?.["IMDb URL"]?.type === "url") {
+  proposed["IMDb URL"] = { url: `https://www.imdb.com/title/${options.imdbId}/` };
+}
+if (options.imdbId !== undefined && page.properties?.["基本信息"]?.type === "rich_text") {
+  const currentBasicInfo = text(page.properties["基本信息"].rich_text);
+  const correctedBasicInfo = currentBasicInfo
+    .replace(/(IMDb\s*[:：]\s*)tt\d+/gi, `$1${options.imdbId}`)
+    .replace(/(imdb\.com\/title\/)tt\d+/gi, `$1${options.imdbId}`);
+  if (correctedBasicInfo !== currentBasicInfo) {
+    proposed["基本信息"] = { rich_text: richText(correctedBasicInfo) };
+  }
+}
 
 const result = { mode: options.apply ? "apply" : "dry_run", pageId: options.pageId, currentTitle, updates: proposed };
 if (options.apply && Object.keys(proposed).length > 0) {

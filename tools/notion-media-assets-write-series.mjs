@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
 import https from "node:https";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -27,7 +28,8 @@ function parseArgs() {
     mediaRoot: "",
     apply: false,
     resolveIp: "",
-    localAddress: ""
+    localAddress: "",
+    noProxy: false
   };
 
   const args = process.argv.slice(2);
@@ -46,6 +48,7 @@ function parseArgs() {
     else if (name === "--episode-to") options.episodeTo = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
     else if (name === "--local-address") options.localAddress = value();
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--include-direct-spec") options.includeDirectSpec = true;
     else if (arg === "--allow-partial-episodes") options.allowPartialEpisodes = true;
     else if (arg === "--update-existing-missing") options.updateExistingMissing = true;
@@ -124,7 +127,7 @@ directory, Approx Size GB is calculated from the actual local byte size rather
 than inferred from the spec-page title.
 
 Network workaround:
-  --resolve-ip <api-ip> --local-address <lan-ip>
+  --resolve-ip <api-ip> --local-address <lan-ip> --no-proxy
 `);
 }
 
@@ -153,8 +156,8 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, localAddress = "") {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, localAddress = "", noProxy = false) {
+  const proxyUrl = noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
   if (localAddress) {
     options.fetch = nodeFetch;
@@ -419,17 +422,52 @@ export function applyLocalFileSizes(candidates, mediaRoot = "") {
     try {
       const stat = fs.statSync(filePath);
       if (!stat.isFile() || stat.size <= 0) return candidate;
+      const metadata = {
+        ...(candidate.metadata ?? {}),
+        approximateSizeGb: Number((stat.size / 1_000_000_000).toFixed(2))
+      };
+      if (!metadata.resolution) {
+        const resolution = probeLocalResolution(filePath);
+        if (resolution) metadata.resolution = resolution;
+      }
       return {
         ...candidate,
-        metadata: {
-          ...(candidate.metadata ?? {}),
-          approximateSizeGb: Number((stat.size / 1_000_000_000).toFixed(2))
-        }
+        metadata
       };
     } catch {
       return candidate;
     }
   });
+}
+
+export function resolutionFromDimensions(width, height) {
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  if (!Number.isFinite(numericWidth) || !Number.isFinite(numericHeight) || numericWidth <= 0 || numericHeight <= 0) {
+    return undefined;
+  }
+  if (numericHeight >= 2000 || numericWidth >= 3500) return "2160p";
+  if (numericHeight >= 1000 || numericWidth >= 1800) return "1080p";
+  if (numericHeight >= 650 || numericWidth >= 1200) return "720p";
+  if (numericHeight >= 500 || numericWidth >= 900) return "576p";
+  return "480p";
+}
+
+function probeLocalResolution(filePath) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-of", "json",
+    filePath
+  ], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  if (result.error || result.status !== 0) return undefined;
+  try {
+    const stream = JSON.parse(result.stdout).streams?.[0];
+    return resolutionFromDimensions(stream?.width, stream?.height);
+  } catch {
+    return undefined;
+  }
 }
 
 async function listChildren(notion, blockId) {
@@ -703,6 +741,7 @@ function buildMissingProperties(dataSource, existingPage, candidate) {
 
 const SAFE_REPLACE_EXISTING_FIELDS = new Set([
   "Display Label",
+  "Episode Number",
   "Resolution",
   "Video Codec",
   "Container",
@@ -1174,7 +1213,7 @@ async function main() {
     options.includeDirectSpec,
     options.allowPartialEpisodes
   );
-  const notion = createNotionClient(token, options.localAddress);
+  const notion = createNotionClient(token, options.localAddress, options.noProxy);
   let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const schema = options.ensureSchema
     ? await ensureSeriesCollectionSchema(notion, mediaAssetsDataSource, options.apply)

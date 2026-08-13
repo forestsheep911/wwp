@@ -48,6 +48,12 @@ Chinese when otherwise comparable, following the playable encoder defaults.
 - Check real subtitle events near the beginning, middle, and end against the
   video. Do not validate an external subtitle with an input-side seek that shifts
   video but not subtitle time.
+- Never pair a sidecar subtitle with a video from the episode number in the
+  filename alone. Some release folders contain swapped, legacy, or misleading
+  episode labels. Before encoding, cross-check the sidecar's own title/content,
+  duration and several timed dialogue events against the selected video; if the
+  identity is ambiguous, keep the variant in `Needs Review`/deferred state until
+  the mapping is resolved.
 
 ## Decision Record
 
@@ -55,4 +61,3 @@ Record every compared candidate's provider, ID, URL, claimed release/language,
 compatibility decision, score/reason, and rejection reason. For the selected
 artifact also record filename, byte count, SHA-256, encoding, parsed event count,
 coverage, applied offset/stretch, sample timestamps, and final visual QC.
-

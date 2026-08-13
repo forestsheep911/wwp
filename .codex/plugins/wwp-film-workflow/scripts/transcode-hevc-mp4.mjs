@@ -9,7 +9,7 @@ function usage() {
   node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none>
     [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-loudnorm]
     [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
-    [--max-bytes <bytes>] [--scale <width>x<height>] [--tone-map-sdr]
+    [--max-bytes <bytes>] [--temp-dir <directory>] [--scale <width>x<height>] [--tone-map-sdr]
     [--tone-map-libplacebo]
 
 The subtitle ordinal is relative to subtitle streams (0:s:0, 0:s:1, ...), not the
@@ -25,7 +25,7 @@ Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLoudnorm: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, scale: null, toneMapSdr: false, toneMapLibplacebo: false };
+  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLoudnorm: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, toneMapSdr: false, toneMapLibplacebo: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
@@ -35,7 +35,7 @@ function parseArgs(argv) {
       options.toneMapSdr = true;
       options.toneMapLibplacebo = true;
     }
-    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--scale", "--ffmpeg"].includes(arg)) {
+    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       const key = arg.slice(2).replaceAll("-", "_");
@@ -51,6 +51,7 @@ function parseArgs(argv) {
     : Number(options.subtitle_stream);
   options.subtitleFile = options.subtitle_file == null ? null : path.resolve(options.subtitle_file);
   options.subtitleCharenc = options.subtitle_charenc == null ? null : String(options.subtitle_charenc);
+  options.tempDir = options.temp_dir == null ? null : path.resolve(options.temp_dir);
   options.audioStream = options.audio_stream == null ? 0 : Number(options.audio_stream);
   options.audioChannels = options.audio_channels == null ? null : Number(options.audio_channels);
   options.duration = options.duration == null ? null : Number(options.duration);
@@ -141,14 +142,13 @@ function availableBytes(directory) {
   return Number(stats.bavail) * Number(stats.bsize);
 }
 
-function assertOutputSpace(output, maxBytes, duration) {
-  // A full encode keeps the MKV work file and MP4 remux beside the final file.
+function assertOutputSpace(directory, requiredBytes, duration) {
   // Bounded samples are exempt because their actual size is duration-limited.
   if (duration != null) return;
-  const required = maxBytes * 2 + 512 * 1024 * 1024;
-  const available = availableBytes(path.dirname(output));
+  const required = requiredBytes;
+  const available = availableBytes(directory);
   if (available < required) {
-    throw new Error(`insufficient output disk space: available=${available} required=${required}; choose another output path or free space`);
+    throw new Error(`insufficient encode disk space: directory=${directory} available=${available} required=${required}; choose another output or temp directory, or free space`);
   }
 }
 
@@ -167,12 +167,17 @@ function main() {
   fs.mkdirSync(path.dirname(output), { recursive: true });
   if (path.extname(output).toLowerCase() !== ".mp4") throw new Error("output must be an .mp4 file");
 
-  const base = output.slice(0, -4);
+  const tempDir = options.tempDir == null ? path.dirname(output) : options.tempDir;
+  fs.mkdirSync(tempDir, { recursive: true });
+  const base = path.join(tempDir, path.basename(output, ".mp4"));
   const work = `${base}.work.mkv`;
   const part = `${base}.part.mp4`;
   const extractedSubtitle = `${base}.embedded-subtitle.srt`;
   for (const file of [work, part, extractedSubtitle]) fs.rmSync(file, { force: true });
-  assertOutputSpace(output, options.maxBytes, options.duration);
+  assertOutputSpace(tempDir, options.maxBytes * 2 + 512 * 1024 * 1024, options.duration);
+  if (path.dirname(output).toLowerCase() !== tempDir.toLowerCase()) {
+    assertOutputSpace(path.dirname(output), options.maxBytes + 512 * 1024 * 1024, options.duration);
+  }
 
   const durationArgs = options.duration == null ? [] : ["-t", String(options.duration)];
   const sourceDimensions = probeVideoDimensions(input);
@@ -231,7 +236,11 @@ function main() {
     ? ["-cq", String(options.cq)]
     : ["-b:v", options.videoBitrate, "-maxrate", options.videoBitrate, "-bufsize", options.videoBitrate];
   const audioArgs = [
-    ...(options.audioChannels == null ? [] : ["-ac", String(options.audioChannels)]),
+    ...(options.audioChannels == null ? [] : [
+      "-ac", String(options.audioChannels),
+      ...(options.audioChannels === 6 ? ["-channel_layout", "5.1"] : []),
+      ...(options.audioChannels === 8 ? ["-channel_layout", "7.1"] : [])
+    ]),
     ...(options.audioLoudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [])
   ];
   run(options.ffmpeg, [
@@ -248,7 +257,10 @@ function main() {
 
   run(options.ffmpeg, [
     "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y", "-i", work,
-    "-map", "0", "-c", "copy", "-tag:v", "hvc1", "-movflags", "+faststart", part
+    // Keep only the playable video/audio streams. Text-subtitle filters can
+    // leave an auxiliary data stream in the MKV work file; copying all streams
+    // into MP4 makes browser probing noisy and can trigger timestamp warnings.
+    "-map", "0:v:0", "-map", "0:a:0", "-dn", "-c", "copy", "-tag:v", "hvc1", "-movflags", "+faststart", part
   ], "remux-mp4");
 
   const size = fs.statSync(part).size;
@@ -256,11 +268,15 @@ function main() {
     fs.rmSync(part, { force: true });
     throw new Error(`output exceeds max-bytes: ${size} > ${options.maxBytes}`);
   }
-  fs.renameSync(part, output);
+  if (path.dirname(part).toLowerCase() === path.dirname(output).toLowerCase()) fs.renameSync(part, output);
+  else {
+    fs.copyFileSync(part, output);
+    fs.rmSync(part, { force: true });
+  }
   fs.rmSync(work, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLoudnorm: options.audioLoudnorm, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
+  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLoudnorm: options.audioLoudnorm, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
 }
 
 try {

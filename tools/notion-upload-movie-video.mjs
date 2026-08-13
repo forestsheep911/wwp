@@ -25,6 +25,7 @@ function parseArgs() {
     replaceExistingVideo: false,
     resolveIp: "",
     localAddress: "",
+    noProxy: false,
     apply: false
   };
   let pageIdProvided = false;
@@ -46,6 +47,7 @@ function parseArgs() {
     else if (arg === "--replace-existing-video") options.replaceExistingVideo = true;
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -86,6 +88,7 @@ Options:
                    Override api.notion.com DNS for route-specific Notion API failures.
   --local-address <ip>
                    Bind direct traffic to a physical interface. Pair with --resolve-ip when Clash fake-IP routing is unhealthy.
+  --no-proxy        Bypass proxy settings from .env and use the direct route.
   --upload-concurrency <n>
                    Send multipart chunks with bounded concurrency (default: 1). Raise only on a route that tolerates parallel requests.
 `);
@@ -117,8 +120,8 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, localAddress = "") {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, localAddress = "", noProxy = false) {
+  const proxyUrl = noProxy ? "" : dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: 600000 };
   if (localAddress) {
     options.fetch = nodeFetch;
@@ -477,7 +480,7 @@ async function main() {
     const qc = probePlayableUpload(file.path);
     console.log(`upload probe: ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
   }
-  const notion = createNotionClient(token, options.localAddress);
+  const notion = createNotionClient(token, options.localAddress, options.noProxy);
   const page = options.targetOnly
     ? null
     : await notion.pages.retrieve({ page_id: options.pageId });

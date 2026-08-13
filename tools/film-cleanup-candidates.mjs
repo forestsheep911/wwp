@@ -46,9 +46,17 @@ function uniqueQuarantinePath(sourcePath, quarantineDir, prefix) {
 export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
   const moved = [];
   for (const candidate of candidates.filter((item) => item.eligible)) {
-    const root = quarantineDirectory(candidate.path, quarantineDir);
+    const requestedRoot = quarantineDirectory(candidate.path, quarantineDir);
+    const sourceRoot = path.parse(path.resolve(candidate.path)).root;
+    const root = path.parse(path.resolve(requestedRoot)).root.toLowerCase() === sourceRoot.toLowerCase()
+      ? requestedRoot
+      : quarantineDirectory(candidate.path);
     fs.mkdirSync(root, { recursive: true });
-    const prefix = candidate.variantId != null ? `variant-${candidate.variantId}` : `source-${candidate.sourceId}`;
+    const prefix = candidate.variantId != null
+      ? `variant-${candidate.variantId}`
+      : candidate.sourceId != null
+        ? `source-${candidate.sourceId}`
+        : "uploaded";
     const destination = uniqueQuarantinePath(candidate.path, root, prefix);
     fs.renameSync(candidate.path, destination);
     moved.push({ candidateType: candidate.candidate_type, path: candidate.path, destination, isDirectory: candidate.isDirectory ?? false });
@@ -56,7 +64,7 @@ export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
   return moved;
 }
 
-function collectManifestMatches(manifestDir, outputRoot) {
+export function collectManifestMatches(manifestDir, outputRoot) {
   if (!fs.existsSync(manifestDir)) return [];
   const root = path.resolve(outputRoot);
   const matches = [];
@@ -80,8 +88,9 @@ function collectManifestMatches(manifestDir, outputRoot) {
         workPageId: item.expectedWorkPageId ?? null,
         sourcePageId: item.expectedSourcePageId ?? null,
         mediaBlockId: item.expectedMediaBlockId ?? null,
-        eligible: false,
-        reason: "release_manifest_match_requires_current_release_check"
+        expectedApproxSizeGb: item.expectedApproxSizeGb ?? null,
+        eligible: true,
+        reasons: []
       });
     }
   }
@@ -133,10 +142,6 @@ export function collectCleanupCandidates(db, outputRoot) {
       result.reasons.push("outside_output_root");
       return result;
     }
-    if (/^(?:待人工|暂缓)/u.test(String(row.workflow_status ?? "").trim())) {
-      result.reasons.push("human_workflow_gate");
-      return result;
-    }
     if (!fs.existsSync(filePath)) {
       result.reasons.push("file_missing");
       return result;
@@ -184,7 +189,6 @@ export function collectSourceCleanupCandidates(db) {
       eligible: false,
       reasons: []
     };
-    if (/^(?:待人工|暂缓)/u.test(String(row.workflow_status ?? "").trim())) result.reasons.push("human_workflow_gate");
     if (row.active_variant_count > 0 || row.closed_variant_count !== row.linked_variant_count) result.reasons.push("linked_variants_not_closed");
     if (!fs.existsSync(filePath)) result.reasons.push("file_missing");
     else {
@@ -206,8 +210,11 @@ export function main(args = process.argv.slice(2)) {
   const db = openLedger(options.db);
   try {
     const candidates = collectCleanupCandidates(db, options.outputRoot);
+    const manifestMatches = collectManifestMatches(options.manifestDir, options.outputRoot);
+    const uniqueManifestMatches = [...new Map(manifestMatches.map((row) => [row.path.toLowerCase(), row])).values()];
     const cleanupCandidates = [
       ...candidates.map((row) => ({ candidate_type: "playable_output", ...row })),
+      ...uniqueManifestMatches.map((row) => ({ candidate_type: "uploaded_output", ...row })),
       ...collectSourceCleanupCandidates(db).map((row) => ({ candidate_type: "source_input", ...row }))
     ];
     const report = {
@@ -218,7 +225,7 @@ export function main(args = process.argv.slice(2)) {
       candidates,
       eligibleCount: candidates.filter(item => item.eligible).length,
       sourceCandidates: cleanupCandidates.filter((row) => row.candidate_type === "source_input"),
-      manifestMatches: collectManifestMatches(options.manifestDir, options.outputRoot)
+      manifestMatches: uniqueManifestMatches
     };
     report.sourceEligibleCount = report.sourceCandidates.filter(item => item.eligible).length;
     if (options.apply) {

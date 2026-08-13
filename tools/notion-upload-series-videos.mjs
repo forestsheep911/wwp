@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
 import https from "node:https";
-import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
@@ -29,8 +29,10 @@ function parseArgs() {
     specTitle: "",
     partMiB: DEFAULT_PART_MIB,
     maxFiles: Infinity,
+    episodeNumberOverride: undefined,
     episodeFrom: undefined,
     episodeTo: undefined,
+    episodeOffset: 0,
     create: false,
     createSpec: false,
     createEpisodes: false,
@@ -39,9 +41,11 @@ function parseArgs() {
     replaceExistingVideo: false,
     allowCollections: false,
     resolveIp: "",
-    localAddress: ""
+    localAddress: "",
+    noProxy: false
   };
   let pageIdProvided = false;
+  let sourceDirProvided = false;
 
   const args = process.argv.slice(2);
   for (let index = 0; index < args.length; index += 1) {
@@ -54,14 +58,19 @@ function parseArgs() {
     else if (arg === "--chinese-title") options.chineseTitle = args[++index];
     else if (arg === "--english-title") options.englishTitle = args[++index];
     else if (arg === "--year") options.year = Number(args[++index]);
-    else if (arg === "--source-dir") options.sourceDir = args[++index];
+    else if (arg === "--source-dir") {
+      options.sourceDir = args[++index];
+      sourceDirProvided = true;
+    }
     else if (arg === "--file-pattern") options.filePattern = args[++index];
     else if (arg === "--target-spec-page-id") options.targetSpecPageId = args[++index];
     else if (arg === "--spec-title") options.specTitle = args[++index];
     else if (arg === "--part-mib") options.partMiB = Number(args[++index]);
     else if (arg === "--max-files") options.maxFiles = Number(args[++index]);
+    else if (arg === "--episode-number") options.episodeNumberOverride = Number(args[++index]);
     else if (arg === "--episode-from") options.episodeFrom = Number(args[++index]);
     else if (arg === "--episode-to") options.episodeTo = Number(args[++index]);
+    else if (arg === "--episode-offset") options.episodeOffset = Number(args[++index]);
     else if (arg === "--create") options.create = true;
     else if (arg === "--create-spec") options.createSpec = true;
     else if (arg === "--create-episodes") options.createEpisodes = true;
@@ -71,6 +80,7 @@ function parseArgs() {
     else if (arg === "--allow-collections") options.allowCollections = true;
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -80,6 +90,7 @@ function parseArgs() {
   }
 
   options.sourceDir = path.resolve(options.sourceDir);
+  options.sourceDirProvided = sourceDirProvided;
   if (options.create && !pageIdProvided) options.pageId = "";
   if (options.create && !pageIdProvided && !options.title) throw new Error("--create requires --title.");
   if (options.specTitle && !options.targetSpecPageId && !options.createSpec) {
@@ -92,9 +103,13 @@ function parseArgs() {
   if (options.episodeTo != null && (!Number.isInteger(options.episodeTo) || options.episodeTo < 1)) {
     throw new Error("--episode-to must be a positive integer.");
   }
+  if (options.episodeNumberOverride != null && (!Number.isInteger(options.episodeNumberOverride) || options.episodeNumberOverride < 1)) {
+    throw new Error("--episode-number must be a positive integer.");
+  }
   if (options.episodeFrom != null && options.episodeTo != null && options.episodeTo < options.episodeFrom) {
     throw new Error("--episode-to must be greater than or equal to --episode-from.");
   }
+  if (!Number.isInteger(options.episodeOffset)) throw new Error("--episode-offset must be an integer.");
   return options;
 }
 
@@ -112,6 +127,8 @@ Examples:
 
 Options:
   --prepare-only  Create/reuse the spec and Episode page structure before long encode or upload, then skip file uploads.
+  --episode-offset <integer>  Adjust parsed episode numbers for source naming schemes such as OVA.03 -> Episode 01.
+  --episode-number <integer>  Explicitly map one selected file to an episode when its output filename has no episode token.
   --replace-existing-video
                   Append the new uploaded video first, then delete existing episode video blocks only after the append succeeds.
   --create-spec   With --spec-title, create/reuse that exact spec page instead of renaming the first existing spec.
@@ -125,6 +142,8 @@ Options:
                   Explicit api.notion.com DNS fallback; hostname routing is the default.
   --local-address <ip>
                   Bind direct traffic to a physical interface; pair with --resolve-ip.
+  --no-proxy
+                  Bypass NOTION_PROXY_URL/HTTPS_PROXY for this run; use with --resolve-ip when needed.
 `);
 }
 
@@ -153,7 +172,7 @@ function installNotionDnsOverride(notionApiIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, localAddress = "") {
+function createNotionClient(token, localAddress = "", noProxy = false) {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   // A stalled multipart request must return to the bounded retry loop instead
   // of keeping the workflow in an apparently active state for ten minutes.
@@ -163,6 +182,10 @@ function createNotionClient(token, localAddress = "") {
     options.fetch = nodeFetch;
     options.agent = new https.Agent({ keepAlive: true, localAddress });
     console.log(`direct local address: ${localAddress}`);
+  } else if (noProxy) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true });
+    console.log("direct: proxy bypass");
   } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
@@ -222,7 +245,7 @@ function comparableName(value) {
   return decodeURIComponent(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-function globToRegExp(pattern) {
+export function globToRegExp(pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
   return new RegExp(`^${escaped}$`, "i");
 }
@@ -233,6 +256,13 @@ export function episodeNumber(fileName) {
 
 export function episodeRange(fileName) {
   const baseName = path.basename(fileName, path.extname(fileName));
+  const compactSeasonRange = fileName.match(/S\d+E\d{1,3}(?:E\d{1,3}){1,}/i);
+  if (compactSeasonRange) {
+    const episodes = [...compactSeasonRange[0].matchAll(/E(\d{1,3})/gi)].map((match) => Number(match[1]));
+    if (episodes.length >= 2 && episodes.every((episode) => Number.isInteger(episode) && episode > 0)) {
+      return { start: episodes[0], end: episodes.at(-1) };
+    }
+  }
   const rangeMatch =
     fileName.match(/S\d+E(\d{1,3})\s*[-~–—至到]\s*(?:S\d+)?E?(\d{1,3})/i) ??
     fileName.match(/E(?:pisode)?\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})/i) ??
@@ -248,7 +278,9 @@ export function episodeRange(fileName) {
     fileName.match(/S\d+E(\d+)/i) ??
     // Some older complete-season releases use S0401 for S04E01.
     fileName.match(/S\d{2}(\d{2,3})(?=[._\s-]|$)/i) ??
+    fileName.match(/EP(?:isode)?[.\s_-]*(\d+)/i) ??
     fileName.match(/E(?:pisode)?\s*(\d+)/i) ??
+    fileName.match(/OVA[.\s_-]*(\d+)/i) ??
     fileName.match(/\[(\d{1,3})[)\]]/) ??
     baseName.match(/(?:^|[-_\s])(?:ep(?:isode)?[-_\s]*)?(\d{1,3})$/i) ??
     baseName.match(/^(\d{1,3})$/);
@@ -286,22 +318,33 @@ export function filterEpisodeRange(files, episodeFrom, episodeTo) {
   });
 }
 
-function collectSourceFiles(options) {
+export function collectSourceFiles(options) {
   if (!fs.existsSync(options.sourceDir)) throw new Error(`Source dir not found: ${options.sourceDir}`);
   const pattern = globToRegExp(options.filePattern);
-  return fs.readdirSync(options.sourceDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && pattern.test(entry.name))
-    .map((entry) => {
-      const fullPath = path.join(options.sourceDir, entry.name);
+  const entries = fs.readdirSync(options.sourceDir, { withFileTypes: true });
+  const collected = entries
+    .map((entry) => ({ entry, fullPath: path.join(options.sourceDir, entry.name) }))
+    .filter(({ entry, fullPath }) => {
+      // Dirent.isFile() can be false for Windows filesystem reparse entries
+      // even when stat() resolves them to regular files (for example a
+      // hard-linked staging file). Use the resolved file type for intake.
+      return pattern.test(entry.name) && fs.statSync(fullPath).isFile();
+    })
+    .map(({ entry, fullPath }) => {
+      const parsedEpisode = options.episodeNumberOverride ?? episodeNumber(entry.name);
+      const parsedRange = options.episodeNumberOverride == null
+        ? episodeRange(entry.name)
+        : { start: parsedEpisode, end: parsedEpisode };
       return {
         name: entry.name,
         path: fullPath,
         size: fs.statSync(fullPath).size,
-        episode: episodeNumber(entry.name),
-        episodeEnd: episodeRange(entry.name)?.end
+        episode: parsedEpisode == null ? undefined : parsedEpisode + options.episodeOffset,
+        episodeEnd: parsedRange?.end == null ? undefined : parsedRange.end + options.episodeOffset
       };
     })
     .sort((left, right) => (left.episode ?? 9999) - (right.episode ?? 9999) || left.name.localeCompare(right.name, "en"));
+  return collected;
 }
 
 async function listChildren(notion, blockId) {
@@ -387,9 +430,12 @@ async function createSeriesPage(notion, library, options) {
 }
 
 async function ensureChildPage(notion, parentPageId, title, apply) {
-  const children = await listChildren(notion, parentPageId);
-  const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
-  if (existing) return { id: existing.id, title: blockTitle(existing) };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const children = await listChildren(notion, parentPageId);
+    const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
+    if (existing) return { id: existing.id, title: blockTitle(existing) };
+    if (attempt === 0 && apply) await sleep(750);
+  }
 
   console.log(`${apply ? "create" : "would create"} child page "${title}" under ${parentPageId}`);
   if (!apply) return { id: "(dry-run)", title };
@@ -538,6 +584,17 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
     sentParts: 0
   };
 
+  // An incomplete upload is only resumable when its chunk geometry matches the
+  // current run. Reusing a record created with another part size would send
+  // different byte ranges under the old part count and corrupt the upload.
+  if (record.fileUploadId && record.status !== "uploaded"
+    && (record.size !== file.size || record.partMiB !== options.partMiB || record.partCount !== partCount)) {
+    console.warn(`discard incompatible incomplete upload ${file.name}: old=${record.partMiB ?? "unknown"}MiB/${record.partCount ?? "unknown"} parts new=${options.partMiB}MiB/${partCount} parts`);
+    record = { filename: file.name, size: file.size, sentParts: 0 };
+    manifest.uploads[file.name] = record;
+    writeManifest(manifestPath, manifest);
+  }
+
   if (record.fileUploadId && isExpired(record)) {
     console.log(`discard expired upload ${file.name} ${record.fileUploadId}`);
     record = { filename: file.name, size: file.size, sentParts: 0 };
@@ -562,6 +619,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
     record.fileUploadId = upload.id;
     record.mode = mode;
     record.partCount = partCount;
+    record.partMiB = options.partMiB;
     record.expiryTime = upload.expiry_time;
     record.sentParts = 0;
     manifest.uploads[file.name] = record;
@@ -599,7 +657,8 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
       writeManifest(manifestPath, manifest);
-      await sleep(250);
+      // Keep one shared Notion upload lane below the repository's one-request-per-second default.
+      await sleep(1000);
     }
     console.log(`complete ${file.name}`);
     await withTransientNotionUploadRetry(
@@ -673,11 +732,22 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
-  const files = filterEpisodeRange(
-    collectSourceFiles(options),
-    options.episodeFrom,
-    options.episodeTo
-  );
+  let files;
+  if (options.prepareOnly && !options.sourceDirProvided) {
+    if (!options.createEpisodes || options.episodeFrom == null || options.episodeTo == null) {
+      throw new Error("prepare-only without --source-dir requires --create-episodes with --episode-from and --episode-to.");
+    }
+    files = Array.from({ length: options.episodeTo - options.episodeFrom + 1 }, (_, index) => {
+      const episode = options.episodeFrom + index;
+      return { name: episodePageTitle(episode), path: null, size: 0, episode, episodeEnd: episode };
+    });
+  } else {
+    files = filterEpisodeRange(
+      collectSourceFiles(options),
+      options.episodeFrom,
+      options.episodeTo
+    );
+  }
   if (files.length === 0) throw new Error(`No matching files found: ${path.join(options.sourceDir, options.filePattern)}`);
   const selectedFiles = files.slice(0, options.maxFiles);
   validateCollectionOptIn(selectedFiles, options.specTitle, options.allowCollections);
@@ -687,7 +757,7 @@ async function main() {
       console.log(`upload probe: ${file.name} ${qc.videoCodec} ${qc.codecTag || "(no tag)"}`);
     }
   }
-  const notion = createNotionClient(token, options.localAddress);
+  const notion = createNotionClient(token, options.localAddress, options.noProxy);
   const library = options.create ? await findLibrary(notion) : undefined;
   const page = options.pageId
     ? await notion.pages.retrieve({ page_id: options.pageId })

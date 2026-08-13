@@ -103,6 +103,36 @@ function sameNotionId(left, right) {
   return normalized(left).replaceAll("-", "") === normalized(right).replaceAll("-", "");
 }
 
+function notionNotFound(error) {
+  return error?.code === "object_not_found" || error?.status === 404;
+}
+
+async function retrieveAssetPage(notion, item) {
+  try {
+    return await notion.pages.retrieve({ page_id: item.pageId });
+  } catch (error) {
+    if (!notionNotFound(error)) throw error;
+    const dataSourceId = dotenv("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID");
+    if (!dataSourceId) throw error;
+    // Newly-created database rows can briefly be queryable but not directly
+    // retrievable through the Pages endpoint. Resolve only the exact Work and
+    // source row; the release validator still checks every protected field.
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 100,
+      filter: {
+        and: [
+          { property: "Work", relation: { contains: item.expectedWorkPageId } },
+          { property: "Source Page ID", rich_text: { equals: item.expectedSourcePageId } }
+        ]
+      }
+    });
+    const match = response.results.find(page => sameNotionId(page.id, item.pageId));
+    if (!match) throw error;
+    return match;
+  }
+}
+
 function releaseWorkPatch(page) {
   const properties = page.properties ?? {};
   if (pendingHumanWorkflowNoteFromPage(page)) {
@@ -220,7 +250,7 @@ async function main() {
   const actions = [];
 
   for (const item of manifest.items) {
-    const page = await notion.pages.retrieve({ page_id: item.pageId });
+    const page = await retrieveAssetPage(notion, item);
     const validation = validateReleaseCandidate(page, item);
     if (!validation.ok) {
       actions.push(validation);
@@ -237,7 +267,7 @@ async function main() {
         "Hide from Website": { checkbox: false }
       }
     });
-    const readback = await notion.pages.retrieve({ page_id: item.pageId });
+    const readback = await retrieveAssetPage(notion, item);
     const verified = validateReleaseCandidate(readback, item);
     if (!verified.ok || verified.action !== "already_released") {
       throw new Error(`Release readback failed for ${item.pageId}: ${verified.failures.join("; ")}`);

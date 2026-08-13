@@ -16,6 +16,7 @@ function parseArgs() {
     maxSpecsPerPage: 80,
     resolveIp: "",
     localAddress: "",
+    noProxy: false,
     apply: false,
     ensureSchema: true
   };
@@ -33,6 +34,7 @@ function parseArgs() {
     else if (name === "--max-specs-per-page") options.maxSpecsPerPage = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
     else if (name === "--local-address") options.localAddress = value();
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--no-ensure-schema") options.ensureSchema = false;
     else if (arg === "--help" || arg === "-h") {
@@ -69,6 +71,7 @@ replaceExistingFields.
 Network workaround:
   node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip 208.103.161.1
   node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip <current-api-ip> --local-address <lan-ip>
+  node tools/notion-media-assets-write.mjs --query "风之谷" --resolve-ip <current-api-ip> --no-proxy
 `);
 }
 
@@ -99,8 +102,8 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, localAddress = "") {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, localAddress = "", noProxy = false) {
+  const proxyUrl = noProxy ? "" : dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
   if (localAddress) {
     options.fetch = nodeFetch;
@@ -735,6 +738,7 @@ async function createAsset(notion, dataSource, candidate) {
 
 const SAFE_REPLACE_EXISTING_FIELDS = new Set([
   "Display Label",
+  "Episode Number",
   "Resolution",
   "Video Codec",
   "Container",
@@ -1022,7 +1026,7 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("Set NOTION_WRITE_TOKEN or NOTION_TOKEN.");
 
-  const notion = createNotionClient(token, options.localAddress);
+  const notion = createNotionClient(token, options.localAddress, options.noProxy);
   const mainDataSource = await loadMainDataSource(notion);
   let mediaAssetsDataSource = await loadMediaAssetsDataSource(notion);
   const schemaResult = options.ensureSchema && options.apply

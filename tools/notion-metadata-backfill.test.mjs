@@ -58,6 +58,9 @@ function pageWithProperties(overrides = {}) {
       Directors: emptyProperty("rich_text"),
       Writers: emptyProperty("rich_text"),
       Cast: emptyProperty("rich_text"),
+      "Production Companies": emptyProperty("rich_text"),
+      Distributors: emptyProperty("rich_text"),
+      Studios: emptyProperty("rich_text"),
       imdb: emptyProperty("rich_text"),
       "IMDb ID": emptyProperty("rich_text"),
       "IMDb URL": { type: "url", url: null },
@@ -98,6 +101,9 @@ test("buildPatch fills structured Douban metadata fields", () => {
     directors: ["索菲亚·科波拉"],
     writers: ["索菲亚·科波拉", "托马斯·卡利南"],
     cast: ["科林·法瑞尔", "妮可·基德曼"],
+    productionCompanies: ["American Zoetrope", "FR Productions"],
+    distributors: ["Focus Features（美国院线）"],
+    studios: ["American Zoetrope"],
     description: "美国内战期间的寄宿女校故事。",
     basicInfo: "导演：索菲亚·科波拉"
   };
@@ -117,12 +123,30 @@ test("buildPatch fills structured Douban metadata fields", () => {
   assert.equal(patch.Directors.rich_text[0].text.content, "索菲亚·科波拉");
   assert.equal(patch.Writers.rich_text[0].text.content, "索菲亚·科波拉 / 托马斯·卡利南");
   assert.equal(patch.Cast.rich_text[0].text.content, "科林·法瑞尔 / 妮可·基德曼");
+  assert.equal(patch["Production Companies"].rich_text[0].text.content, "American Zoetrope / FR Productions");
+  assert.equal(patch.Distributors.rich_text[0].text.content, "Focus Features（美国院线）");
+  assert.equal(patch.Studios.rich_text[0].text.content, "American Zoetrope");
   assert.equal(patch["Match Status"].select.name, "candidate");
   assert.equal(patch["Metadata Status"].select.name, "partial");
   assert.deepEqual(patch["Metadata Source"].multi_select.map((item) => item.name), ["douban"]);
   assert.equal(patch["Metadata Confidence"].number, 0.9);
   assert.equal(patch["Needs Review"].checkbox, true);
   assert.equal(patch["Metadata Updated At"].date.start, "2026-07-07");
+});
+
+test("forceDoubanFields replaces legacy non-Douban description and basic info", () => {
+  const page = pageWithProperties({
+    "简介": filledRichText("Legacy OMDb English plot"),
+    "基本信息": filledRichText("Legacy OMDb fields")
+  });
+  const metadata = {
+    metadataSource: "douban",
+    description: "豆瓣中文简介",
+    basicInfo: "导演：豆瓣导演"
+  };
+  const patch = buildPatch(page, metadata, undefined, undefined, { forceDoubanFields: true });
+  assert.equal(patch["简介"].rich_text[0].text.content, "豆瓣中文简介");
+  assert.equal(patch["基本信息"].rich_text[0].text.content, "导演：豆瓣导演");
 });
 
 test("buildPatch uses the verified Douban display title instead of subtitle-bearing fields", () => {
@@ -301,6 +325,31 @@ test("metadataIdentityConflict rejects a candidate that disagrees with an existi
     { imdbId: "tt0129027", releaseYear: "1994" }
   );
   assert.deepEqual(conflict, { field: "IMDb ID", expected: "tt0069952", actual: "tt0129027" });
+});
+
+test("metadataIdentityConflict preserves a verified series IMDb ID on season pages", () => {
+  const conflict = metadataIdentityConflict(
+    { "IMDb ID": filledRichText("tt0141842"), "Release Year": { type: "number", number: 2000 } },
+    { imdbId: "tt0705250", releaseYear: 2000 },
+    { title: "黑道家族 第二季 The Sopranos Season 2 (2000)" }
+  );
+
+  assert.equal(conflict, null);
+});
+
+test("buildPatch uses the existing verified IMDb ID for a season URL", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      "IMDb ID": filledRichText("tt0141842"),
+      "IMDb URL": { type: "url", url: "https://www.imdb.com/title/tt0705250/" }
+    }),
+    { imdbId: "tt0705250" },
+    undefined,
+    undefined,
+    { now: "2026-08-11" }
+  );
+
+  assert.equal(patch["IMDb URL"].url, "https://www.imdb.com/title/tt0141842/");
 });
 
 test("parseInfoPairs handles compact Douban info labels", () => {

@@ -117,7 +117,7 @@ test("CLI exposes and advances the bounded collaboration handoff queue", async (
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("cycle reports catalog maintenance as an independent lane and refreshes due work", async () => {
+test("cycle reports catalog maintenance independently without reopening a just-completed due work", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-cycle-"));
   try {
     const dbPath = path.join(dir, "ledger.sqlite");
@@ -132,10 +132,9 @@ test("cycle reports catalog maintenance as an independent lane and refreshes due
     const result = run(["--db", dbPath, "cycle", "--limit", "3", "--json"], dir);
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
-    assert.equal(payload.lanes.catalogMaintenance.length, 1);
-    assert.equal(payload.lanes.catalogMaintenance[0].work_id, work.id);
+    assert.deepEqual(payload.lanes.catalogMaintenance, []);
     assert.deepEqual(payload.refreshedIntakeTasks, []);
-    assert.deepEqual(payload.refreshedMetadataTasks.length, 1);
+    assert.deepEqual(payload.refreshedMetadataTasks, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

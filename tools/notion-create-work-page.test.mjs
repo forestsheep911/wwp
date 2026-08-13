@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
-import { ledgerWorkForOptions, parseArgs } from "./notion-create-work-page.mjs";
+import { canReuseIdentityMatch, ledgerWorkForOptions, parseArgs } from "./notion-create-work-page.mjs";
 
 test("work page creation requires a ledger work identity", () => {
   assert.throws(() => parseArgs(["--title", "Example"]), /--work-id is required/);
@@ -24,4 +24,20 @@ test("ledger work type is authoritative over a conflicting CLI type", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function titlePage(title) {
+  return { properties: { Title: { type: "title", title: [{ plain_text: title }] } } };
+}
+
+test("series identity matching does not merge different seasons sharing one IMDb ID", () => {
+  assert.equal(canReuseIdentityMatch(titlePage("广告狂人 第一季 Mad Men Season 1 (2007)"), {
+    type: "series", title: "广告狂人 第二季 Mad Men Season 2 (2008)"
+  }), false);
+  assert.equal(canReuseIdentityMatch(titlePage("广告狂人 第二季 Mad Men Season 2 (2008)"), {
+    type: "series", title: "Mad Men Season 2"
+  }), true);
+  assert.equal(canReuseIdentityMatch(titlePage("Mad Men (2007)"), {
+    type: "series", title: "广告狂人 Mad Men (2007)"
+  }), true);
 });

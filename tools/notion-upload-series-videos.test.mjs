@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   episodeNumber,
   episodeRange,
+  collectSourceFiles,
   filterEpisodeRange,
   validateCollectionOptIn,
   validateSeriesSpecTitle
@@ -23,6 +24,14 @@ test("series uploader documents and accepts prepare-only mode", () => {
   assert.match(result.stdout, /--prepare-only/);
   assert.match(result.stdout, /before long encode or upload/i);
   assert.match(result.stdout, /--allow-collections/);
+});
+
+test("prepare-only without a source directory requires an explicit episode range", () => {
+  const result = spawnSync(process.execPath, [scriptPath, "--prepare-only", "--create-episodes", "--page-id", "page", "--create-spec", "--spec-title", "Spec"], {
+    encoding: "utf8"
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /requires --create-episodes with --episode-from and --episode-to/u);
 });
 
 test("series uploader allows create-structure mode for an existing series page without title", () => {
@@ -75,7 +84,26 @@ test("episode parser accepts bracket typo but leaves recap decimals unmapped", (
 test("episode parser accepts a trailing episode number in ordinary filenames", () => {
   assert.equal(episodeNumber("Hokuto no Ken - 001.mp4"), 1);
   assert.equal(episodeNumber("Series_Episode_12.mkv"), 12);
+  assert.equal(episodeNumber("Slam.Dunk.EP021.SP.1993.mkv"), 21);
   assert.equal(episodeNumber("Film 2026.mp4"), undefined);
+});
+
+test("explicit episode mapping handles a generated special filename", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "wwp-series-episode-override-"));
+  try {
+    const filePath = path.join(cwd, "generated-special.mp4");
+    writeFileSync(filePath, "test");
+    const files = collectSourceFiles({
+      sourceDir: cwd,
+      filePattern: "generated-special.mp4",
+      episodeNumberOverride: 1,
+      episodeOffset: 0
+    });
+    assert.equal(files[0].episode, 1);
+    assert.equal(files[0].episodeEnd, 1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("episodeRange parses a series collection filename", () => {
@@ -84,6 +112,18 @@ test("episodeRange parses a series collection filename", () => {
     { start: 1, end: 5 }
   );
   assert.equal(episodeNumber("Teach.You.a.Lesson.S01E01-E05.2026.1080p.h265.cht.mp4"), 1);
+});
+
+test("episodeRange parses concatenated season episode tokens as a collection", () => {
+  assert.deepEqual(
+    episodeRange("Show.S04E19E20E21.Extended.mkv"),
+    { start: 19, end: 21 }
+  );
+});
+
+test("episodeRange parses OVA episode filenames", () => {
+  assert.deepEqual(episodeRange("Ranma½ OVA.03 - subtitle.mkv"), { start: 3, end: 3 });
+  assert.deepEqual(episodeRange("Ranma OVA-08.mkv"), { start: 8, end: 8 });
 });
 
 test("series uploader filters an explicit inclusive episode range", () => {

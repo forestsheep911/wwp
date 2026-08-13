@@ -255,6 +255,10 @@ async function main() {
       if (source.work_id !== workId) throw new Error(`source ${sourceId} belongs to work ${source.work_id}, not work ${workId}`);
       const work = db.prepare("SELECT work_type FROM works WHERE id=?").get(workId);
       if (!work) throw new Error(`work not found: ${workId}`);
+      // A series spec is shared by episode pages, but each source episode
+      // needs its own ledger variant so selection cannot overwrite a sibling.
+      const rawSpecKey = requireOption(options, "spec_key", "--spec-key");
+      const specKey = work.work_type === "series" ? `${rawSpecKey}:source-${sourceId}` : rawSpecKey;
       const compactDecision = options.compact_decision;
       const compactDetail = options.compact_detail?.trim();
       if (work.work_type === "movie") {
@@ -269,7 +273,7 @@ async function main() {
       const variant = repo.ensureVariant({
         workId,
         sourceId,
-        specKey: requireOption(options, "spec_key", "--spec-key"),
+        specKey,
         displayTitle: requireOption(options, "output_spec", "--output-spec"),
         outputPath: requireOption(options, "output_path", "--output-path"),
         targetSizeBytes: options.target_size == null ? undefined : asId(options.target_size, "--target-size"),

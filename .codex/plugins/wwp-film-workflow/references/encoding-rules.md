@@ -29,6 +29,8 @@ Choose in this order when tracks are real and usable:
 
 Report the full available subtitle set and the subset produced. More subtitle variants are optional capacity work, not required completion.
 
+For an original-English-audio branch, an existing Chinese-English subtitle track may be used for the bilingual specification. If a separate Chinese-only specification is requested, extract or filter the verified Chinese dialogue lines into a UTF-8 subtitle file and burn that file; do not label an English-only subtitle output as `简` or `简英`. Confirm the result at a dialogue timestamp before batching the season.
+
 ## Audio and Version Rules
 
 - Hong Kong films: Cantonese plus Chinese subtitles first; Mandarin can be supplemental when available.

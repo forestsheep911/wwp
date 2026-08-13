@@ -121,6 +121,32 @@ function titleProperty(dataSource) {
   return Object.entries(dataSource.properties ?? {}).find(([, value]) => value.type === "title")?.[0] ?? "Title";
 }
 
+function pageTitle(page) {
+  for (const property of Object.values(page.properties ?? {})) {
+    if (property.type === "title") return property.title?.map(item => item.plain_text ?? "").join("").trim() ?? "";
+  }
+  return "";
+}
+
+function seasonNumber(title) {
+  const value = String(title ?? "");
+  const arabic = value.match(/(?:第\s*(\d+)\s*季|\bseason\s*(\d+)\b|\bs(\d{1,2})\b)/iu);
+  if (arabic) return Number(arabic[1] ?? arabic[2] ?? arabic[3]);
+  const chinese = value.match(/第\s*([一二三四五六七八九十])\s*季/u);
+  if (!chinese) return undefined;
+  return { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[chinese[1]];
+}
+
+export function canReuseIdentityMatch(page, options) {
+  if (options.type !== "series") return true;
+  const existingSeason = seasonNumber(pageTitle(page));
+  const requestedSeason = seasonNumber(options.title);
+  // A series IMDb ID identifies the show, not an individual season. Never
+  // merge two explicitly different season pages merely because the ID is the same.
+  if (existingSeason !== undefined || requestedSeason !== undefined) return existingSeason === requestedSeason;
+  return true;
+}
+
 function selectValue(page, property) {
   return page.properties?.[property]?.select?.name;
 }
@@ -158,7 +184,7 @@ async function findExistingIdentity(notion, library, options) {
       page_size: 5,
       filter: { property, rich_text: { equals: value } }
     });
-    if (response.results?.[0]) {
+    if (response.results?.[0] && canReuseIdentityMatch(response.results[0], options)) {
       return { page: response.results[0], property, value };
     }
   }

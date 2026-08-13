@@ -16,6 +16,7 @@ import {
   episodeWithinRange,
   parseAssetMetadata,
   playablePlacementIssue,
+  resolutionFromDimensions,
   selectablePages
 } from "./notion-media-assets-write-series.mjs";
 
@@ -34,6 +35,13 @@ test("local media root overrides inferred spec size with decimal file bytes", ()
   } finally {
     fs.rmSync(mediaRoot, { recursive: true, force: true });
   }
+});
+
+test("resolution mapping uses measured dimensions when the spec title omits resolution", () => {
+  assert.equal(resolutionFromDimensions(1440, 1080), "1080p");
+  assert.equal(resolutionFromDimensions(1280, 720), "720p");
+  assert.equal(resolutionFromDimensions(3840, 2160), "2160p");
+  assert.equal(resolutionFromDimensions(undefined, 1080), undefined);
 });
 
 test("episodeWithinRange bounds series asset work before child-page reads", () => {

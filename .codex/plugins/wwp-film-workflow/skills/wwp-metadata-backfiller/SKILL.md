@@ -17,7 +17,7 @@ This fills work-level metadata. It is separate from Media Assets, which describe
 5. Run identity maintenance for `WW Work ID`, parsed IDs, title-derived fields, and schema readiness.
 6. Use explicit IDs when available, especially Douban Subject ID and IMDb ID, only after the media/identity conflict check passes. Existing coherent IDs override title search; same-title/remake works must not be rematched by title alone. A title-search candidate whose stated year conflicts with the work page must be rejected, not treated as a low-confidence match. If a fetched candidate's IMDb ID conflicts with a pre-existing verified IMDb ID, stop before any fields are written, preserve the page hidden, record the incident in `AI Issue`, and repair all fields only from the verified identity.
 7. Fetch missing fields from the appropriate source and record source/status.
-8. Fill the current structured field set, not only `基本信息`: `Release Year`, `上映日期`, `Countries`, `Languages`, `Traditional Chinese Title (Taiwan)`, `Traditional Chinese Title (Hong Kong)`, `旨趣`, `外部类型原文`, `未映射类型`, `Runtime Minutes`, `Directors`, `Writers`, `Cast`, ratings, poster fields, IDs/URLs, `Match Status`, `Metadata Status`, `Metadata Source`, `Metadata Confidence`, and `Metadata Updated At`.
+8. Fill the current structured field set, not only `基本信息`: `Release Year`, `上映日期`, `Countries`, `Languages`, `Traditional Chinese Title (Taiwan)`, `Traditional Chinese Title (Hong Kong)`, `旨趣`, `外部类型原文`, `未映射类型`, `Runtime Minutes`, `Directors`, `Writers`, `Cast`, `Production Companies`, `Distributors`, `Studios`, ratings, poster fields, IDs/URLs, `Match Status`, `Metadata Status`, `Metadata Source`, `Metadata Confidence`, and `Metadata Updated At`. Keep the three organization roles distinct: production-company evidence does not automatically prove a studio role, and distributor data should retain territory, medium, and release-period qualifiers when available. Preserve the historically credited company name; never replace it with a later parent, acquirer, renamed entity, or current rights holder. A company may appear in multiple role fields only when each role has explicit evidence.
 9. Run OMDb after IMDb ID exists to fill `分级`, `IMDB评分`, `Metascore`, `烂番茄新鲜度`, `Box Office`, `Box Office Amount`, `Box Office Currency`, and `Box Office Source`.
 10. If OMDb misses ratings that a trusted source likely has, run rating fallbacks before AI:
    - IMDb score: do not interpret OMDb `N/A`, `Incorrect IMDb ID`, quota failure, or stale new-series data as "no rating". First run `scripts/imdb-rating-inspect.mjs <ttid>` (the ID is positional; it uses the official IMDb dataset, then title-page JSON-LD) when available. The metadata backfill also continues automatically from an empty OMDb result to one official IMDb ratings-page fallback. Apply only a confirmed value with `node tools/notion-imdb-rating-enrichment.mjs --page-id <page> --imdb-id <ttid>` or the metadata backfill readback; never use a title-search snippet or agent guess.
@@ -55,6 +55,16 @@ This fills work-level metadata. It is separate from Media Assets, which describe
 - TMDb: TMDB ID/URL by IMDb lookup or title/year search, original title, localized zh-CN/zh-TW/zh-HK titles, release disambiguation, poster/credit support. Require TMDb credentials or a trusted existing TMDb hint.
 - IMDb: identity and disambiguation support.
 - Existing Notion text: first-pass parsing for older entries before external calls.
+
+## Legacy Source Correction
+
+When an older page has a complete but wrong-source `简介` or `基本信息` (for example, English OMDb text on a page with a verified Douban subject), run the explicit correction pass:
+
+```powershell
+node tools/notion-metadata-backfill.mjs --page-id <page-id> --douban-subject <page-id>=<subject-id> --force-processed --force-douban-fields
+```
+
+`--force-douban-fields` is restricted to a verified Douban pass and replaces only those two descriptive fields. It must not be used to overwrite human-owned fields, ratings, IDs, or technical asset data. Verify the exact Notion readback and retain `updatedFieldSources` in the report.
 
 ## Current Field Contract
 

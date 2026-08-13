@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
@@ -13,6 +14,8 @@ function parseArgs() {
     skipTargets: 0,
     reportPath: ".local-data/notion-series-structure-audit.json",
     includePrefixed: false,
+    noProxy: false,
+    localAddress: "",
     resolveIp: "",
     episodeFrom: undefined,
     episodeTo: undefined
@@ -29,6 +32,8 @@ function parseArgs() {
     else if (name === "--skip-targets") options.skipTargets = Number(value());
     else if (name === "--report") options.reportPath = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (name === "--episode-from") options.episodeFrom = Number(value());
     else if (name === "--episode-to") options.episodeTo = Number(value());
     else if (arg === "--include-prefixed") options.includePrefixed = true;
@@ -100,9 +105,10 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, clientOptions = {}) {
+  const proxyUrl = clientOptions.noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  if (clientOptions.localAddress) options.agent = new https.Agent({ keepAlive: true, localAddress: clientOptions.localAddress });
   if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
@@ -403,7 +409,7 @@ async function main() {
   if (!token) throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_TOKEN, or NOTION_WRITE_TOKEN.");
 
   const targets = loadTargets(options);
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options);
   const pages = [];
   for (const target of targets) {
     pages.push(await auditSeriesPage(notion, target, options));

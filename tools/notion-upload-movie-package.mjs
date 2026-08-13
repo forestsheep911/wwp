@@ -34,7 +34,8 @@ function parseArgs() {
     mediaAvailability: "",
     developerMemo: "",
     resolveIp: "",
-    localAddress: ""
+    localAddress: "",
+    noProxy: false
   };
 
   const args = process.argv.slice(2);
@@ -65,6 +66,7 @@ function parseArgs() {
     else if (arg === "--developer-memo") options.developerMemo = args[++index];
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -103,6 +105,7 @@ Useful flags:
   --developer-memo <text>       initial Developer Memo for new pages
   --resolve-ip <ip>              explicit api.notion.com DNS fallback; hostname routing is the default
   --local-address <ip>           bind direct traffic to a physical interface; pair with --resolve-ip
+  --no-proxy                     bypass NOTION_PROXY_URL/HTTPS_PROXY/HTTP_PROXY for direct Notion traffic
   --no-initial-gates            do not set safety gates on newly created work pages
 `);
 }
@@ -131,8 +134,8 @@ function installNotionDnsOverride(notionApiIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, localAddress = "") {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, localAddress = "", noProxy = false) {
+  const proxyUrl = noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
   const options = { auth: token, timeoutMs: 600000 };
   if (localAddress) {
     options.fetch = nodeFetch;
@@ -579,7 +582,7 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required.");
 
-  const notion = createNotionClient(token, options.localAddress);
+  const notion = createNotionClient(token, options.localAddress, options.noProxy);
   const library = await findLibrary(notion);
   const page = options.pageId
     ? await notion.pages.retrieve({ page_id: options.pageId })

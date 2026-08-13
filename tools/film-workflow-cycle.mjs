@@ -48,6 +48,18 @@ function run(args) {
   return JSON.parse(result.stdout);
 }
 
+function runOptional(args) {
+  const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+  if (result.status !== 0) {
+    return { status: "error", error: (result.stderr || result.stdout || `command failed: ${args.join(" ")}`).trim() };
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    return { status: "error", error: `invalid JSON from ${args[0]}: ${error.message}` };
+  }
+}
+
 function readState(filePath) {
   if (!existsSync(filePath)) return {};
   try {
@@ -128,6 +140,9 @@ function main() {
   const handoff = cooldownActive
     ? { skipped: true, reason: "unchanged_scan_cooldown", lastFullCycleAt: state.lastFullCycleAt, minFullCycleSec: options.minFullCycleSec, rows: [] }
     : run([path.join(root, "notion-workflow-handoff.mjs"), "scan", "--limit", String(Math.min(options.limit, 3)), "--json"]);
+  const metadataTaskSync = cooldownActive
+    ? { status: "skipped", reason: "unchanged_scan_cooldown" }
+    : runOptional([path.join(root, "notion-metadata-task-sync.mjs"), "--limit", String(Math.min(options.limit, 3)), "--apply", "--json"]);
   const cycle = run([path.join(root, "film-ledger.mjs"), "cycle", "--limit", String(options.limit), "--json"]);
   const fullCycleAt = cooldownActive ? state.lastFullCycleAt : new Date(now).toISOString();
   const nextFullCycleAt = cooldownActive
@@ -152,6 +167,7 @@ function main() {
     summary: buildSummary(scan, cycle),
     scan,
     handoff,
+    metadataTaskSync,
     cycle
   };
   process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);

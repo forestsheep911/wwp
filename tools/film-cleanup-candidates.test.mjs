@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectCleanupCandidates, collectSourceCleanupCandidates, moveCleanupCandidates } from "./film-cleanup-candidates.mjs";
+import { collectCleanupCandidates, collectManifestMatches, collectSourceCleanupCandidates, moveCleanupCandidates } from "./film-cleanup-candidates.mjs";
 
 function mockDb(rows) {
   return { prepare: () => ({ all: () => rows }) };
@@ -19,7 +19,8 @@ test("cleanup report accepts only sync-ready files with matching ledger size", (
       output_path: filePath,
       output_size_bytes: 5,
       publication_state: "sync_ready",
-      canonical_title: "Ready"
+      canonical_title: "Ready",
+      workflow_status: "已完成"
     }];
     assert.deepEqual(collectCleanupCandidates(mockDb(rows), root), [{
       variantId: 1,
@@ -43,7 +44,7 @@ test("cleanup report rejects mismatched and outside-root files", () => {
   fs.writeFileSync(outside, "outside");
   try {
     const rows = [
-      { variant_id: 2, output_path: inside, output_size_bytes: 99, publication_state: "sync_ready", canonical_title: "Mismatch" },
+      { variant_id: 2, output_path: inside, output_size_bytes: 99, publication_state: "sync_ready", canonical_title: "Mismatch", workflow_status: "已完成" },
       { variant_id: 3, output_path: outside, output_size_bytes: 7, publication_state: "sync_ready", canonical_title: "Outside" }
     ];
     const report = collectCleanupCandidates(mockDb(rows), root);
@@ -55,7 +56,7 @@ test("cleanup report rejects mismatched and outside-root files", () => {
   }
 });
 
-test("cleanup report preserves a sync-ready local file when the work awaits human confirmation", () => {
+test("cleanup report does not wait for work-page human confirmation", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-"));
   const filePath = path.join(root, "human-gate.mp4");
   fs.writeFileSync(filePath, "ready");
@@ -68,11 +69,29 @@ test("cleanup report preserves a sync-ready local file when the work awaits huma
       canonical_title: "Human gate",
       workflow_status: "待人工确认"
     }]), root);
-    assert.equal(candidate.eligible, false);
-    assert.deepEqual(candidate.reasons, ["human_workflow_gate"]);
+    assert.equal(candidate.eligible, true);
+    assert.deepEqual(candidate.reasons, []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("successful upload manifest independently authorizes playable-output quarantine", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-upload-manifest-"));
+  const outputRoot = path.join(root, "output");
+  fs.mkdirSync(outputRoot);
+  const fileName = "uploaded.mp4";
+  fs.writeFileSync(path.join(outputRoot, fileName), "ready");
+  fs.writeFileSync(path.join(root, "sample-release-manifest.json"), JSON.stringify({
+    items: [{ originalFileName: fileName, pageId: "page-1", expectedMediaBlockId: "block-1" }]
+  }));
+  try {
+    const [candidate] = collectManifestMatches(root, outputRoot);
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.mediaBlockId, "block-1");
+    const moved = moveCleanupCandidates([{ candidate_type: "uploaded_output", ...candidate }], { quarantineDir: path.join(root, "quarantine") });
+    assert.equal(moved.length, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("source cleanup treats a cancelled planned variant as closed", () => {

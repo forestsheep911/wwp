@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import https from "node:https";
 import dns from "node:dns";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
@@ -19,6 +20,7 @@ function parseArgs() {
     specTitle: "",
     apply: false,
     resolveIp: "",
+    noProxy: false,
     delayMs: 0
   };
 
@@ -36,6 +38,7 @@ function parseArgs() {
     else if (name === "--state") options.statePath = value();
     else if (name === "--spec-title") options.specTitle = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--no-proxy") options.noProxy = true;
     else if (name === "--delay-ms") options.delayMs = Number(value());
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--help" || arg === "-h") {
@@ -67,6 +70,7 @@ function printHelp() {
   node tools/notion-manual-upload-organizer.mjs --query "罪人"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --apply
+  node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --no-proxy --resolve-ip <notion-ip> --apply
 
 Default mode is read-only and bounded to three recent pages. It scans WWP library
 pages for manual upload landing media, especially video/file blocks placed directly
@@ -102,10 +106,14 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
+function createNotionClient(token, noProxy = false) {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
-  if (proxyUrl) {
+  if (noProxy) {
+    options.fetch = nodeFetch;
+    options.agent = new https.Agent({ keepAlive: true });
+    console.log("direct: proxy bypass");
+  } else if (proxyUrl) {
     options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
@@ -655,7 +663,7 @@ async function main() {
 
   const token = dotenv("NOTION_TOKEN") || dotenv("NOTION_READ_ONLY_TOKEN");
   if (!token) throw new Error("Set NOTION_TOKEN or NOTION_READ_ONLY_TOKEN.");
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options.noProxy);
   const dataSource = await loadLibraryDataSource(notion);
 
   let pages;

@@ -217,6 +217,19 @@ test("due work review automatically requeues metadata on the next identity pass"
   } finally { f.close(); }
 });
 
+test("completed due metadata maintenance schedules the next review instead of reopening immediately", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "CompletedDue");
+    f.db.prepare("UPDATE works SET next_review_at=? WHERE id=?").run("2026-07-19T00:00:00.000Z", work.id);
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "done", { reason: "metadata readback complete" });
+    const row = f.db.prepare("SELECT next_review_at FROM works WHERE id=?").get(work.id);
+    assert.equal(row.next_review_at, "2026-10-18T00:00:00.000Z");
+    assert.deepEqual(f.repo.refreshDueMetadataTasks({ now: "2026-07-20T00:00:00.000Z" }), []);
+  } finally { f.close(); }
+});
+
 test("null-year works and renamed sources remain idempotent", () => {
   const f = fixture();
   try {
@@ -428,6 +441,28 @@ test("production queue keeps a bound source visible until a variant is selected"
     assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === episodeFlat.id), false);
     f.repo.setInputRootEnabled("X:\\queue", false);
     assert.deepEqual(f.repo.listProductionSourceCandidates({ limit: 5 }), []);
+  } finally { f.close(); }
+});
+
+test("production queue excludes a split collection parent when child sources exist", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Split Season", year: 2025, priorityScore: 70 });
+    const parent = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Season 3",
+      absolutePath: "X:\\queue\\Season 3", fingerprint: "split-season-parent", sourceKind: "season_member",
+      qualityState: "acceptable"
+    });
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Season 3\\Episode 01.mkv",
+      absolutePath: "X:\\queue\\Season 3\\Episode 01.mkv", fingerprint: "split-season-child", sourceKind: "season_member",
+      qualityState: "acceptable"
+    });
+
+    const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
+    assert.equal(candidates.some((row) => row.source_id === parent.id), false);
+    assert.equal(candidates.some((row) => row.source_id === child.id), true);
   } finally { f.close(); }
 });
 

@@ -94,7 +94,8 @@ function parseArgs() {
     dryRun: false,
     noExternal: false,
     forceProcessed: false,
-    forcePoster: false
+    forcePoster: false,
+    forceDoubanFields: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -113,6 +114,8 @@ function parseArgs() {
       options.forceProcessed = true;
     } else if (arg === "--force-poster") {
       options.forcePoster = true;
+    } else if (arg === "--force-douban-fields") {
+      options.forceDoubanFields = true;
     } else if (arg === "--limit") {
       options.limit = Number(args[++index]);
     } else if (arg === "--delay-ms") {
@@ -771,11 +774,18 @@ async function findDoubanSubject(title, existingInfo, expectedType, cookie) {
   return { status: "ok", subject: candidates[0] };
 }
 
-export function metadataIdentityConflict(properties = {}, metadata = {}) {
+export function metadataIdentityConflict(properties = {}, metadata = {}, context = {}) {
   const existingImdbId = (propText(properties["IMDb ID"]) || propText(properties.imdb)).match(/tt\d+/i)?.[0]?.toLowerCase();
   const metadataImdbId = `${metadata.imdbId ?? ""}`.match(/tt\d+/i)?.[0]?.toLowerCase();
   if (existingImdbId && metadataImdbId && existingImdbId !== metadataImdbId) {
-    return { field: "IMDb ID", expected: existingImdbId, actual: metadataImdbId };
+    // Douban season pages occasionally expose one episode's IMDb ID. Once a
+    // season page already has a verified series-level ID, preserve that ID and
+    // continue filling the season metadata instead of treating the episode ID
+    // as a remake/identity collision.
+    const seasonTitle = `${context.title ?? ""}`;
+    if (!seasonNumber(seasonTitle)) {
+      return { field: "IMDb ID", expected: existingImdbId, actual: metadataImdbId };
+    }
   }
 
   const expectedYear = `${propText(properties["Release Year"]) ?? ""}`.match(/\d{4}/)?.[0];
@@ -909,6 +919,7 @@ async function fetchDoubanMetadata(subjectId, cookie, posterQuery = "") {
 
   return {
     subjectId,
+    metadataSource: "douban",
     subjectUrl: url,
     doubanDisplayTitle: doubanDisplayTitle || undefined,
     posterUrl: ld.image || suggestedPoster,
@@ -962,18 +973,25 @@ async function fetchOmdbMetadata(imdbId, timeoutMs, { omdbApiKey = dotenv("OMDB_
   if (payload.Response !== "True" || `${payload.imdbID ?? ""}`.toLowerCase() !== imdbId.toLowerCase()) return undefined;
 
   const list = (value) => `${value ?? ""}`.split(/\s*,\s*/u).filter(Boolean).filter((item) => item !== "N/A");
-  const runtimeMinutes = Number(`${payload.Runtime ?? ""}`.match(/\d+/u)?.[0]);
+  const rawRuntimeMinutes = Number(`${payload.Runtime ?? ""}`.match(/\d+/u)?.[0]);
+  // OMDb currently returns "1 min" for some TV-series records even though
+  // the value is not a meaningful series runtime. Keep the field empty and
+  // force review instead of persisting a visibly false value.
+  const suspiciousSeriesRuntime = payload.Type === "series" && Number.isFinite(rawRuntimeMinutes) && rawRuntimeMinutes < 10;
+  const runtimeMinutes = suspiciousSeriesRuntime ? undefined : rawRuntimeMinutes;
   const genres = list(payload.Genre);
   const countries = list(payload.Country);
   const languages = list(payload.Language);
   const directors = list(payload.Director);
   const writers = list(payload.Writer);
   const cast = list(payload.Actors);
+  const productionCompanies = list(payload.Production);
   const releaseYear = Number(`${payload.Year ?? ""}`.match(/\d{4}/u)?.[0]);
   const basicInfoLines = [
     ["导演", joinList(directors)],
     ["编剧", joinList(writers)],
     ["主演", joinList(cast)],
+    ["制作公司", joinList(productionCompanies)],
     ["类型", joinList(genres)],
     ["制片国家/地区", joinList(countries)],
     ["语言", joinList(languages)],
@@ -992,8 +1010,10 @@ async function fetchOmdbMetadata(imdbId, timeoutMs, { omdbApiKey = dotenv("OMDB_
     directors,
     writers,
     cast,
+    productionCompanies,
     description: payload.Plot && payload.Plot !== "N/A" ? payload.Plot : undefined,
     basicInfo: basicInfoLines.join("\n"),
+    warnings: suspiciousSeriesRuntime ? ["omdb_suspicious_series_runtime"] : [],
     metadataSource: "omdb"
   };
 }
@@ -1019,7 +1039,15 @@ async function uploadPoster(notion, metadata, title) {
   if (!metadata.posterUrl) {
     return undefined;
   }
-  const { bytes, contentType } = await fetchImage(metadata.posterUrl);
+  let image;
+  try {
+    image = await fetchImage(metadata.posterUrl);
+  } catch (error) {
+    metadata.warnings = [...(metadata.warnings ?? []), "poster_download_failed"];
+    console.warn(`poster download skipped for ${title}: ${error.message}`);
+    return undefined;
+  }
+  const { bytes, contentType } = image;
   const filename = notionFileName(`${cleanTitle(title)} poster - Douban.jpg`);
   const upload = await notion.fileUploads.create({
     mode: "single_part",
@@ -1054,6 +1082,8 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   const properties = page.properties;
   const patch = {};
   const genres = mapGenres(metadata.genres ?? []);
+  const existingImdbId = (propText(properties["IMDb ID"]) || propText(properties.imdb)).match(/tt\d+/i)?.[0];
+  const effectiveImdbId = existingImdbId || metadata.imdbId;
 
   if (!hasValue(properties, "豆瓣评分") && metadata.doubanRating !== undefined) {
     patch["豆瓣评分"] = { number: metadata.doubanRating };
@@ -1117,16 +1147,29 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   if (propertyExists(properties, "Cast") && !hasValue(properties, "Cast") && metadata.cast?.length) {
     patch.Cast = richTextValue(joinList(metadata.cast));
   }
-  if (!hasValue(properties, "imdb") && metadata.imdbId) {
+  if (propertyExists(properties, "Production Companies") && !hasValue(properties, "Production Companies") && metadata.productionCompanies?.length) {
+    patch["Production Companies"] = richTextValue(joinList(metadata.productionCompanies));
+  }
+  if (propertyExists(properties, "Distributors") && !hasValue(properties, "Distributors") && metadata.distributors?.length) {
+    patch.Distributors = richTextValue(joinList(metadata.distributors));
+  }
+  if (propertyExists(properties, "Studios") && !hasValue(properties, "Studios") && metadata.studios?.length) {
+    patch.Studios = richTextValue(joinList(metadata.studios));
+  }
+  if (!hasValue(properties, "imdb") && effectiveImdbId) {
     patch.imdb = {
-      rich_text: richText(metadata.imdbId, `https://www.imdb.com/title/${metadata.imdbId}/`)
+      rich_text: richText(effectiveImdbId, `https://www.imdb.com/title/${effectiveImdbId}/`)
     };
   }
-  if (!hasValue(properties, "IMDb ID") && metadata.imdbId) {
-    patch["IMDb ID"] = { rich_text: richText(metadata.imdbId) };
+  if (!hasValue(properties, "IMDb ID") && effectiveImdbId) {
+    patch["IMDb ID"] = { rich_text: richText(effectiveImdbId) };
   }
-  if (!hasValue(properties, "IMDb URL") && metadata.imdbId) {
-    patch["IMDb URL"] = { url: `https://www.imdb.com/title/${metadata.imdbId}/` };
+  if (propertyExists(properties, "IMDb URL") && effectiveImdbId) {
+    const currentImdbUrl = propText(properties["IMDb URL"]);
+    const expectedImdbUrl = `https://www.imdb.com/title/${effectiveImdbId}/`;
+    if (!currentImdbUrl || !currentImdbUrl.toLowerCase().includes(effectiveImdbId.toLowerCase())) {
+      patch["IMDb URL"] = { url: expectedImdbUrl };
+    }
   }
   if (!hasValue(properties, "Douban Subject ID") && metadata.subjectId) {
     patch["Douban Subject ID"] = { rich_text: richText(metadata.subjectId) };
@@ -1138,10 +1181,12 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
     patch["Poster URL"] = { url: metadata.posterUrl };
   }
   const currentDescription = propText(properties["简介"]);
-  if ((!currentDescription || (looksTruncated(currentDescription) && metadata.description?.length > currentDescription.length)) && metadata.description) {
+  if ((options.forceDoubanFields && metadata.metadataSource === "douban" && metadata.description)
+    || ((!currentDescription || (looksTruncated(currentDescription) && metadata.description?.length > currentDescription.length)) && metadata.description)) {
     patch["简介"] = { rich_text: richText(metadata.description) };
   }
-  if (!hasValue(properties, "基本信息") && metadata.basicInfo) {
+  if ((options.forceDoubanFields && metadata.metadataSource === "douban" && metadata.basicInfo)
+    || (!hasValue(properties, "基本信息") && metadata.basicInfo)) {
     patch["基本信息"] = { rich_text: richText(metadata.basicInfo) };
   }
   if ((options.forcePoster || !hasValue(properties, "海报")) && posterFile) {
@@ -1166,7 +1211,7 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
     patch["Metadata Confidence"] = { number: 0.9 };
   }
   const unresolvedGenres = uniqueNonEmpty(metadata.unmappedGenres?.length ? metadata.unmappedGenres : genres.unmapped);
-  if (propertyExists(properties, "Needs Review") && unresolvedGenres.length > 0) {
+  if (propertyExists(properties, "Needs Review") && (unresolvedGenres.length > 0 || metadata.warnings?.length > 0)) {
     patch["Needs Review"] = { checkbox: true };
   }
 
@@ -1244,6 +1289,44 @@ function snapshotProperty(property) {
   return value ?? null;
 }
 
+async function processOmdbFallback(notion, page, options, title, existingImdbId) {
+  const omdbMetadata = options.noExternal
+    ? undefined
+    : await fetchOmdbMetadata(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
+  if (!omdbMetadata) return undefined;
+
+  const identityConflict = metadataIdentityConflict(page.properties, omdbMetadata, { title });
+  if (identityConflict) {
+    return { pageId: page.id, title, status: "skipped", reason: "metadata_identity_conflict", identityConflict };
+  }
+  const imdbRating = await fetchImdbRating(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
+  const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && omdbMetadata.posterUrl;
+  const posterFile = needsPosterUpload && options.dryRun
+    ? { name: notionFileName(`${cleanTitle(title)} poster - OMDb.jpg`), type: "file_upload", file_upload: { id: "dry-run" } }
+    : needsPosterUpload
+      ? await uploadPoster(notion, omdbMetadata, title)
+      : undefined;
+  const patch = buildPatch(page, omdbMetadata, imdbRating, posterFile, options);
+  if (Object.keys(patch).length === 0) {
+    return { pageId: page.id, title, status: "skipped", reason: "nothing_to_update", source: "omdb" };
+  }
+  let readback;
+  if (!options.dryRun) {
+    await notion.pages.update({ page_id: page.id, properties: patch });
+    const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
+    readback = Object.fromEntries(Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])]));
+  }
+  return {
+    pageId: page.id,
+    title,
+    status: options.dryRun ? "dry_run" : "updated",
+    source: "omdb",
+    fields: Object.keys(patch),
+    updatedFieldSources: Object.fromEntries(Object.keys(patch).map((field) => [field, "omdb"])),
+    ...(readback ? { readback } : {})
+  };
+}
+
 async function processPage(notion, pageRef, options, cookie) {
   const page = await notion.pages.retrieve({ page_id: pageRef.id });
   const title = propText(page.properties.Title);
@@ -1259,38 +1342,8 @@ async function processPage(notion, pageRef, options, cookie) {
 
   if (subjectResult.status !== "ok") {
     const existingImdbId = (propText(page.properties["IMDb ID"]) || propText(page.properties.imdb)).match(/tt\d+/i)?.[0];
-    const omdbMetadata = options.noExternal ? undefined : await fetchOmdbMetadata(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
-    if (omdbMetadata) {
-      const identityConflict = metadataIdentityConflict(page.properties, omdbMetadata);
-      if (identityConflict) {
-        return { pageId: page.id, title, status: "skipped", reason: "metadata_identity_conflict", identityConflict };
-      }
-      const imdbRating = await fetchImdbRating(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
-      const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && omdbMetadata.posterUrl;
-      const posterFile = needsPosterUpload && options.dryRun
-        ? { name: notionFileName(`${cleanTitle(title)} poster - OMDb.jpg`), type: "file_upload", file_upload: { id: "dry-run" } }
-        : needsPosterUpload
-          ? await uploadPoster(notion, omdbMetadata, title)
-          : undefined;
-      const patch = buildPatch(page, omdbMetadata, imdbRating, posterFile, options);
-      if (Object.keys(patch).length === 0) {
-        return { pageId: page.id, title, status: "skipped", reason: "nothing_to_update", source: "omdb" };
-      }
-      let readback;
-      if (!options.dryRun) {
-        await notion.pages.update({ page_id: page.id, properties: patch });
-        const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
-        readback = Object.fromEntries(Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])]));
-      }
-      return {
-        pageId: page.id,
-        title,
-        status: options.dryRun ? "dry_run" : "updated",
-        source: "omdb",
-        fields: Object.keys(patch),
-        ...(readback ? { readback } : {})
-      };
-    }
+    const fallback = await processOmdbFallback(notion, page, options, title, existingImdbId);
+    if (fallback) return fallback;
     return {
       pageId: page.id,
       title,
@@ -1301,8 +1354,16 @@ async function processPage(notion, pageRef, options, cookie) {
   }
 
   await sleep(options.delayMs);
-  const metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie, searchTitle);
-  const identityConflict = metadataIdentityConflict(page.properties, metadata);
+  let metadata;
+  try {
+    metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie, searchTitle);
+  } catch (error) {
+    const existingImdbId = (propText(page.properties["IMDb ID"]) || propText(page.properties.imdb)).match(/tt\d+/i)?.[0];
+    const fallback = await processOmdbFallback(notion, page, options, title, existingImdbId);
+    if (fallback) return { ...fallback, doubanError: error.message };
+    return { pageId: page.id, title, status: "error", message: error.message, source: "douban" };
+  }
+  const identityConflict = metadataIdentityConflict(page.properties, metadata, { title });
   if (identityConflict) {
     return {
       pageId: page.id,
@@ -1359,6 +1420,7 @@ async function processPage(notion, pageRef, options, cookie) {
     status: options.dryRun ? "dry_run" : "updated",
     subjectId: metadata.subjectId,
     fields: Object.keys(patch),
+    updatedFieldSources: Object.fromEntries(Object.keys(patch).map((field) => [field, metadata.metadataSource ?? "douban"])),
     ...(readback ? { readback } : {})
   };
 }

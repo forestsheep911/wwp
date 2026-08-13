@@ -632,6 +632,21 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
           )
         )
         AND NOT EXISTS (SELECT 1 FROM variants WHERE variants.source_id=sources.id)
+        -- A collection source is only an intake container after it has been
+        -- split into independently tracked child sources. Do not offer the
+        -- parent directory for production again; its child files are the
+        -- real production candidates.
+        AND NOT (
+          sources.source_kind IN ('collection', 'season_member')
+          AND EXISTS (
+            SELECT 1
+            FROM sources AS child_sources
+            WHERE child_sources.id <> sources.id
+              AND child_sources.input_root_id=sources.input_root_id
+              AND child_sources.work_id=sources.work_id
+              AND child_sources.relative_path LIKE sources.relative_path || char(92) || '%'
+          )
+        )
         AND NOT EXISTS (
           SELECT 1 FROM variants AS pending_variants
           WHERE pending_variants.work_id=sources.work_id
@@ -770,10 +785,23 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       throw new Error(`unsupported workflow task status: ${status}`);
     }
     const at = timestamp();
+    const task = db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(taskId);
+    if (!task) throw new Error(`workflow task not found: ${taskId}`);
     const result = db.prepare(`UPDATE workflow_tasks SET status=?, reason=COALESCE(?, reason), last_error=?,
       next_run_at=?, updated_at=? WHERE id=?`).run(status, details.reason ?? null, details.lastError ?? null,
       details.nextRunAt ?? null, at, taskId);
-    if (result.changes === 0) throw new Error(`workflow task not found: ${taskId}`);
+    if (status === "done" && task.task_type === "metadata_backfill" && task.work_id) {
+      const work = db.prepare("SELECT next_review_at FROM works WHERE id=?").get(task.work_id);
+      if (work?.next_review_at && work.next_review_at <= at && details.nextRunAt == null) {
+        const nextReviewAt = new Date(new Date(at).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
+        db.prepare("UPDATE works SET next_review_at=?, updated_at=? WHERE id=?")
+          .run(nextReviewAt, at, task.work_id);
+        insertEvent.run("work", task.work_id, "metadata_review_scheduled", stableJson({
+          nextReviewAt,
+          reason: "Completed metadata maintenance; schedule the next bounded review"
+        }), at);
+      }
+    }
     insertEvent.run("workflow_task", taskId, "workflow_task_status_changed", stableJson({ status, ...details }), at);
     return db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(taskId);
   }

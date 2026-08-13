@@ -18,3 +18,9 @@ test("scaled HDR tone mapping uses CUDA pre-scaling without changing SDR default
   assert.match(script, /scale_cuda=w=\$\{options\.scale\.width\}:h=\$\{options\.scale\.height\}/u);
   assert.match(script, /gpuHdrPreScale \? \["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"\]/u);
 });
+
+test("full encodes can place intermediate files on a separate temp volume", () => {
+  assert.match(script, /--temp-dir/u);
+  assert.match(script, /const tempDir = options\.tempDir/u);
+  assert.match(script, /copyFileSync\(part, output\)/u);
+});
