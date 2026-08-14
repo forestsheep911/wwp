@@ -506,13 +506,8 @@ function DesktopBrowseSidebar({
       if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
 
       const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-      const cannotScroll = maxScrollTop <= 1;
-      const movingPastTop = deltaY < 0 && element.scrollTop <= 0;
-      const movingPastBottom = deltaY > 0 && element.scrollTop >= maxScrollTop - 1;
-
-      if (cannotScroll || movingPastTop || movingPastBottom) {
-        event.preventDefault();
-      }
+      event.preventDefault();
+      element.scrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + deltaY));
     };
 
     element.addEventListener("touchstart", handleTouchStart, { passive: true });
@@ -553,7 +548,7 @@ function DesktopBrowseSidebar({
   return (
     <div className="hidden min-w-0 lg:block">
       <div
-        className="fixed bottom-4 left-8 top-[4.75rem] z-20 w-[220px] overflow-y-auto overscroll-contain xl:left-10"
+        className="fixed bottom-4 left-8 top-[4.75rem] z-20 w-[220px] touch-none overflow-y-auto overscroll-contain xl:left-10"
         data-desktop-library-sidebar
         ref={scrollRef}
       >

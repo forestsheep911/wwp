@@ -42,10 +42,10 @@ test("desktop library navigation stays fixed and contains touch scrolling", () =
   assert.match(librarySource, /data-desktop-library-sidebar/);
   assert.match(
     librarySource,
-    /className="[^"\n]*fixed[^"\n]*bottom-4[^"\n]*top-\[4\.75rem\][^"\n]*overflow-y-auto[^"\n]*overscroll-contain[^"\n]*"/,
+    /className="[^"\n]*fixed[^"\n]*bottom-4[^"\n]*top-\[4\.75rem\][^"\n]*touch-none[^"\n]*overflow-y-auto[^"\n]*overscroll-contain[^"\n]*"/,
   );
   assert.doesNotMatch(librarySource, /lg:sticky/);
   assert.match(librarySource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
-  assert.match(librarySource, /cannotScroll \|\| movingPastTop \|\| movingPastBottom/);
   assert.match(librarySource, /event\.preventDefault\(\)/);
+  assert.match(librarySource, /element\.scrollTop = Math\.max\(0, Math\.min\(maxScrollTop, element\.scrollTop \+ deltaY\)\)/);
 });
