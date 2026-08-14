@@ -5555,7 +5555,9 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
-    const posterMatch = pathname.match(/^\/api\/posters\/([^/]+)$/);
+    // Static Web Apps' BFF decodes %2F before forwarding, so Azure Blob poster
+    // keys arrive as `posters/...` rather than as one encoded path segment.
+    const posterMatch = pathname.match(/^\/api\/posters\/(.+)$/);
     if ((request.method === "GET" || request.method === "HEAD") && posterMatch) {
       await handleLocalPoster(decodeURIComponent(posterMatch[1]), request, response);
       return;
