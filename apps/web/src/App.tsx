@@ -1,4 +1,4 @@
-import { lazy, Suspense, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AccessRole,
   AdminCacheJobEntry,
@@ -476,18 +476,15 @@ function CinemaApp() {
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeTab !== "library" || !detailAssetKey) {
       return;
     }
 
-    const frame = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    });
-    return () => window.cancelAnimationFrame(frame);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [activeTab, detailAssetKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeTab !== "library" || detailAssetKey) {
       return;
     }
@@ -519,9 +516,7 @@ function CinemaApp() {
       frame = window.requestAnimationFrame(restore);
     };
 
-    frame = window.requestAnimationFrame(() => {
-      frame = window.requestAnimationFrame(restore);
-    });
+    restore();
     return () => window.cancelAnimationFrame(frame);
   }, [
     activeTab,

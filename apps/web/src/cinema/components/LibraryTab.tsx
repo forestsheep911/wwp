@@ -178,6 +178,7 @@ export function LibraryTab({
     loading: false,
     error: ""
   });
+  const [preserveListDuringDetail, setPreserveListDuringDetail] = useState(false);
 
   async function loadMovieSummary(result: ResultWithCache, mode: MovieSummaryMode) {
     setSummaryDialog({
@@ -223,6 +224,7 @@ export function LibraryTab({
   }
 
   function openDetailResult(result: ResultWithCache) {
+    setPreserveListDuringDetail(true);
     setDetailResult(result);
     onOpenDetail(result);
   }
@@ -251,6 +253,11 @@ export function LibraryTab({
     }
   }, [browseResults, focusedAssetKey, onFocusedAssetHandled, results]);
 
+  const displayedDetailResult = detailAssetKey ? detailResult : undefined;
+  const detailVisible = Boolean(displayedDetailResult || (detailAssetKey && detailLoading));
+  const browseHomeVisible = !hasQuery && results.length === 0;
+  const renderListSurface = !detailVisible || preserveListDuringDetail;
+
   return (
     <div className="grid gap-5">
       {error ? (
@@ -259,14 +266,14 @@ export function LibraryTab({
         </div>
       ) : null}
 
-      {detailResult ? (
+      {displayedDetailResult ? (
         <MovieDetailView
           creditPolicy={creditPolicy}
-          result={detailResult}
+          result={displayedDetailResult}
           pendingAssetKeys={pendingAssetKeys}
           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
           favoriteAssetKeys={favoriteAssetKeys}
-          collectionEntry={collectionMarksByAssetKey.get(detailResult.assetKey)}
+          collectionEntry={collectionMarksByAssetKey.get(displayedDetailResult.assetKey)}
           trackedByAssetKey={trackedByAssetKey}
           onBack={onCloseDetail}
           backLabel={copy.library.backToList}
@@ -281,113 +288,123 @@ export function LibraryTab({
         <div className="flex min-h-64 items-center justify-center text-sm text-slate-400">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 正在打开条目
         </div>
-      ) : !hasQuery && results.length === 0 ? (
-        <LibraryHome
-          creditPolicy={creditPolicy}
-          browseChannel={browseChannel}
-          browseResults={browseResults}
-          browseLoading={browseLoading}
-          browseLoadingMore={browseLoadingMore}
-          browseHasMore={browseHasMore}
-          browseLoadMode={browseLoadMode}
-          historyItems={historyItems}
-          pendingAssetKeys={pendingAssetKeys}
-          pendingDownloadAssetKeys={pendingDownloadAssetKeys}
-          favoriteAssetKeys={favoriteAssetKeys}
-          trackedByAssetKey={trackedByAssetKey}
-          browseView={browseView}
-          onBrowsePresetChange={onBrowsePresetChange}
-          onBrowseViewChange={onBrowseViewChange}
-          onRefreshBrowse={onRefreshBrowse}
-          onOpenDetail={openDetailResult}
-          onSummarize={openMovieSummary}
-          onToggleFavorite={onToggleFavorite}
-          onSelect={onSelect}
-          onDownload={onDownload}
-        />
-      ) : (
-        <>
-          {hasQuery ? (
-            <div className="flex flex-col gap-3 rounded-xl border border-emerald-300/20 bg-emerald-300/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-lg">
-              <div className="min-w-0">
-                <p className="text-xs font-bold tracking-wide text-emerald-200">搜索结果</p>
-                <p className="mt-1 truncate text-sm font-semibold text-slate-100">{copy.library.searchResults(query.trim(), results.length)}</p>
-              </div>
-              <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onClearSearch}>
-                {copy.library.clearSearch}
-              </Button>
-            </div>
-          ) : null}
+      ) : null}
 
-          <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
-            <Button
-              className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
-              type="button"
-              size="sm"
-              variant={viewMode === "gallery" ? "secondary" : "ghost"}
-              onClick={() => onViewModeChange("gallery")}
-              title={copy.library.galleryView}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              {copy.library.gallery}
-            </Button>
-            <Button
-              className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
-              type="button"
-              size="sm"
-              variant={viewMode === "list" ? "secondary" : "ghost"}
-              onClick={() => onViewModeChange("list")}
-              title={copy.library.listView}
-            >
-              <List className="h-4 w-4" />
-              {copy.library.list}
-            </Button>
-          </div>
-
-          {viewMode === "gallery" ? (
-            <div className="gallery-results">
-              <div className="gallery-results-grid grid gap-4">
-                {results.length === 0 ? (
-                  <div className="col-span-full">
-                    <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesFound} />
-                  </div>
-                ) : (
-                  results.map((result) => (
-                    <MovieCard
-                      creditPolicy={creditPolicy}
-                      key={result.assetKey}
-                      result={result}
-                      pendingAssetKeys={pendingAssetKeys}
-                      pendingDownloadAssetKeys={pendingDownloadAssetKeys}
-                      favoriteAssetKeys={favoriteAssetKeys}
-                      trackedByAssetKey={trackedByAssetKey}
-                      onOpenDetail={openDetailResult}
-                      onSummarize={openMovieSummary}
-                      onToggleFavorite={onToggleFavorite}
-                      onSelect={onSelect}
-                      onDownload={onDownload}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          ) : (
-            <MovieListView
+      {renderListSurface ? (
+        <div
+          className={detailVisible ? "hidden" : "contents"}
+          data-library-list-surface
+          aria-hidden={detailVisible || undefined}
+        >
+          {browseHomeVisible ? (
+            <LibraryHome
               creditPolicy={creditPolicy}
-              results={results}
+              browseChannel={browseChannel}
+              browseResults={browseResults}
+              browseLoading={browseLoading}
+              browseLoadingMore={browseLoadingMore}
+              browseHasMore={browseHasMore}
+              browseLoadMode={browseLoadMode}
+              historyItems={historyItems}
               pendingAssetKeys={pendingAssetKeys}
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
+              browseView={browseView}
+              onBrowsePresetChange={onBrowsePresetChange}
+              onBrowseViewChange={onBrowseViewChange}
+              onRefreshBrowse={onRefreshBrowse}
               onOpenDetail={openDetailResult}
               onSummarize={openMovieSummary}
               onToggleFavorite={onToggleFavorite}
               onSelect={onSelect}
               onDownload={onDownload}
             />
+          ) : (
+            <>
+              {hasQuery ? (
+                <div className="flex flex-col gap-3 rounded-xl border border-emerald-300/20 bg-emerald-300/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:rounded-lg">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold tracking-wide text-emerald-200">搜索结果</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-100">{copy.library.searchResults(query.trim(), results.length)}</p>
+                  </div>
+                  <Button className="w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={onClearSearch}>
+                    {copy.library.clearSearch}
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="flex w-full rounded-xl border border-slate-800 bg-slate-950 p-1 sm:w-fit sm:rounded-md">
+                <Button
+                  className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
+                  type="button"
+                  size="sm"
+                  variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                  onClick={() => onViewModeChange("gallery")}
+                  title={copy.library.galleryView}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                  {copy.library.gallery}
+                </Button>
+                <Button
+                  className="flex-1 rounded-lg sm:flex-none sm:rounded-md"
+                  type="button"
+                  size="sm"
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  onClick={() => onViewModeChange("list")}
+                  title={copy.library.listView}
+                >
+                  <List className="h-4 w-4" />
+                  {copy.library.list}
+                </Button>
+              </div>
+
+              {viewMode === "gallery" ? (
+                <div className="gallery-results">
+                  <div className="gallery-results-grid grid gap-4">
+                    {results.length === 0 ? (
+                      <div className="col-span-full">
+                        <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesFound} />
+                      </div>
+                    ) : (
+                      results.map((result) => (
+                        <MovieCard
+                          creditPolicy={creditPolicy}
+                          key={result.assetKey}
+                          result={result}
+                          pendingAssetKeys={pendingAssetKeys}
+                          pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+                          favoriteAssetKeys={favoriteAssetKeys}
+                          trackedByAssetKey={trackedByAssetKey}
+                          onOpenDetail={openDetailResult}
+                          onSummarize={openMovieSummary}
+                          onToggleFavorite={onToggleFavorite}
+                          onSelect={onSelect}
+                          onDownload={onDownload}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <MovieListView
+                  creditPolicy={creditPolicy}
+                  results={results}
+                  pendingAssetKeys={pendingAssetKeys}
+                  pendingDownloadAssetKeys={pendingDownloadAssetKeys}
+                  favoriteAssetKeys={favoriteAssetKeys}
+                  trackedByAssetKey={trackedByAssetKey}
+                  onOpenDetail={openDetailResult}
+                  onSummarize={openMovieSummary}
+                  onToggleFavorite={onToggleFavorite}
+                  onSelect={onSelect}
+                  onDownload={onDownload}
+                />
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+      ) : null}
 
       <MovieSummaryDialog
         state={summaryDialog}
@@ -2516,6 +2533,7 @@ function DesktopMovieCard({
       <button
         ref={cardRef}
         className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 md:grid"
+        data-gallery-card
         type="button"
         onClick={() => onOpenDetail(result)}
         onMouseEnter={() => showPreview()}
@@ -3085,7 +3103,7 @@ function MovieDetailView({
   return (
     <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4 lg:mx-auto lg:w-full lg:max-w-6xl">
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
-        <Button className="w-full justify-start sm:w-auto" type="button" variant="ghost" size="sm" onClick={onBack}>
+        <Button className="w-full justify-start sm:w-auto" data-detail-back type="button" variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft className="h-4 w-4" />
           {backLabel}
         </Button>
