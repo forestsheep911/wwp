@@ -1,7 +1,7 @@
 export type PosterImageEvent = "load" | "error";
 
 const notionTemporaryPosterPattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
-const localPosterPattern = /^\/api\/posters\/[a-f0-9]{32}$/i;
+const localPosterPattern = /^\/api\/posters\/[^/]+$/i;
 
 export function posterUrlPriority(url: string) {
   if (localPosterPattern.test(url)) {

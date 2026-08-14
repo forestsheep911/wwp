@@ -3359,14 +3359,25 @@ async function handleLocalPoster(
   response.statusCode = 200;
   response.setHeader("Content-Type", poster.contentType);
   response.setHeader("Content-Length", poster.contentLength);
-  response.setHeader("Cache-Control", "private, max-age=86400");
+  response.setHeader("Cache-Control", "private, max-age=2592000, immutable");
   if (request.method === "HEAD") {
     response.end();
     return;
   }
 
+  if (poster.content) {
+    response.end(poster.content);
+    return;
+  }
+
+  const absolutePath = poster.absolutePath;
+  if (!absolutePath) {
+    sendJson(response, 404, { error: "Poster content was not found." });
+    return;
+  }
+
   await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(poster.absolutePath);
+    const stream = createReadStream(absolutePath);
     stream.once("error", reject);
     response.once("close", resolve);
     response.once("finish", resolve);

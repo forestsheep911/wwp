@@ -52,7 +52,7 @@ import type {
   DeleteCacheEntryInput,
   DeleteCacheEntryResult,
   LocalMediaFile,
-  LocalPosterFile
+  PosterFile
 } from "./types.js";
 
 const terminalStatuses: CacheStatus[] = ["ready", "failed"];
@@ -732,7 +732,7 @@ export class FilesystemCacheStore implements CacheStore {
     }
   }
 
-  async getPosterFile(posterKey: string): Promise<LocalPosterFile | undefined> {
+  async getPosterFile(posterKey: string): Promise<PosterFile | undefined> {
     if (!/^[a-f0-9]{32}$/.test(posterKey)) return undefined;
     const filePath = path.join(this.posterRoot, `${posterKey}.bin`);
     const metadataPath = path.join(this.posterRoot, `${posterKey}.json`);

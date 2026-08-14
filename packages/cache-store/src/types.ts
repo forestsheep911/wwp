@@ -15,7 +15,12 @@ export interface LocalMediaFile {
   contentType: string;
 }
 
-export interface LocalPosterFile extends LocalMediaFile {}
+export interface PosterFile {
+  contentLength: number;
+  contentType: string;
+  absolutePath?: string;
+  content?: Uint8Array;
+}
 
 export interface CleanupExpiredResult {
   scannedAssets: number;
@@ -70,6 +75,6 @@ export interface CacheStore {
   hydrateMoviePosterUrls(result: SearchResult): Promise<SearchResult>;
   getPlayback(assetKey: string): Promise<PlaybackResponse | undefined>;
   getMediaFile?(assetKey: string): Promise<LocalMediaFile | undefined>;
-  getPosterFile?(posterKey: string): Promise<LocalPosterFile | undefined>;
+  getPosterFile?(posterKey: string): Promise<PosterFile | undefined>;
   cleanupExpired(now?: Date): Promise<CleanupExpiredResult>;
 }

@@ -968,9 +968,7 @@ export class AzureCacheStore implements CacheStore {
       return result;
     }
 
-    const expiresOn = new Date(Date.now() + this.config.posterSasMinutes * 60 * 1000);
-    const hydratedPosters = await Promise.all(
-      posters.map(async (poster) => {
+    const hydratedPosters = posters.map((poster) => {
         if (!poster.blobName) {
           return poster;
         }
@@ -978,10 +976,9 @@ export class AzureCacheStore implements CacheStore {
         return {
           ...poster,
           source: "blob" as const,
-          url: await this.createBlobReadUrl(poster.blobName, expiresOn)
+          url: `/api/posters/${encodeURIComponent(poster.blobName)}`
         };
-      })
-    );
+      });
 
     return {
       ...result,
@@ -991,6 +988,34 @@ export class AzureCacheStore implements CacheStore {
         posters: hydratedPosters
       }
     };
+  }
+
+  async getPosterFile(posterKey: string) {
+    if (!posterKey.startsWith("posters/") || posterKey.includes("..")) {
+      return undefined;
+    }
+
+    await this.ensureReady();
+    const blockBlob = this.containerClient.getBlockBlobClient(posterKey);
+    try {
+      const [properties, content] = await Promise.all([
+        blockBlob.getProperties(),
+        blockBlob.downloadToBuffer()
+      ]);
+      const contentType = properties.contentType?.startsWith("image/")
+        ? properties.contentType
+        : "image/jpeg";
+      return {
+        content,
+        contentLength: content.length,
+        contentType
+      };
+    } catch (error) {
+      if ((error as { statusCode?: number }).statusCode === 404) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private async cacheMoviePoster(
