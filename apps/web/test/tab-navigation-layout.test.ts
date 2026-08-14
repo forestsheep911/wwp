@@ -36,12 +36,16 @@ test("the account menu does not lock or reposition the document scroll", () => {
   assert.match(layoutSource, /<DropdownMenu modal=\{false\} open=\{open\}/);
 });
 
-test("desktop library navigation stays in the viewport and scrolls independently", () => {
+test("desktop library navigation stays fixed and contains touch scrolling", () => {
   assert.match(layoutSource, /className="min-w-0 overflow-x-clip"/);
   assert.doesNotMatch(layoutSource, /className="min-w-0 overflow-hidden"/);
   assert.match(librarySource, /data-desktop-library-sidebar/);
   assert.match(
     librarySource,
-    /className="[^"\n]*lg:sticky[^"\n]*lg:top-\[4\.75rem\][^"\n]*lg:h-\[calc\(100dvh-5\.75rem\)\][^"\n]*lg:overflow-y-auto[^"\n]*lg:overscroll-contain"/,
+    /className="[^"\n]*fixed[^"\n]*bottom-4[^"\n]*top-\[4\.75rem\][^"\n]*overflow-y-auto[^"\n]*overscroll-contain[^"\n]*"/,
   );
+  assert.doesNotMatch(librarySource, /lg:sticky/);
+  assert.match(librarySource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
+  assert.match(librarySource, /cannotScroll \|\| movingPastTop \|\| movingPastBottom/);
+  assert.match(librarySource, /event\.preventDefault\(\)/);
 });

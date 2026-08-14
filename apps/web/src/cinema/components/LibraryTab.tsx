@@ -479,6 +479,49 @@ function DesktopBrowseSidebar({
   onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
 }) {
   const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    let previousTouchX = 0;
+    let previousTouchY = 0;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      previousTouchX = event.touches[0].clientX;
+      previousTouchY = event.touches[0].clientY;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+
+      const touch = event.touches[0];
+      const deltaX = previousTouchX - touch.clientX;
+      const deltaY = previousTouchY - touch.clientY;
+      previousTouchX = touch.clientX;
+      previousTouchY = touch.clientY;
+
+      if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
+
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const cannotScroll = maxScrollTop <= 1;
+      const movingPastTop = deltaY < 0 && element.scrollTop <= 0;
+      const movingPastBottom = deltaY > 0 && element.scrollTop >= maxScrollTop - 1;
+
+      if (cannotScroll || movingPastTop || movingPastBottom) {
+        event.preventDefault();
+      }
+    };
+
+    element.addEventListener("touchstart", handleTouchStart, { passive: true });
+    element.addEventListener("touchmove", handleTouchMove, { passive: false });
+    return () => {
+      element.removeEventListener("touchstart", handleTouchStart);
+      element.removeEventListener("touchmove", handleTouchMove);
+    };
+  }, []);
 
   function renderPresetButton(
     channel: BrowseChannel,
@@ -508,41 +551,44 @@ function DesktopBrowseSidebar({
   }
 
   return (
-    <div
-      className="hidden min-w-0 self-start lg:sticky lg:top-[4.75rem] lg:block lg:h-[calc(100dvh-5.75rem)] lg:max-h-[calc(100dvh-5.75rem)] lg:overflow-y-auto lg:overscroll-contain"
-      data-desktop-library-sidebar
-    >
-      <aside className="min-h-full min-w-0 rounded-xl border border-slate-800/90 bg-slate-950/72 p-3 shadow-2xl shadow-black/10 backdrop-blur">
-        <nav aria-label="影片快速筛选" className="grid gap-5">
-          <section className="grid gap-1">
-            <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">片库</h2>
-            {browseChannels.map((channel) => (
-              renderPresetButton(
-                channel.id,
-                "newGood",
-                channel.label,
-                channel.label,
-                channel.icon,
-                activeChannel === channel.id && !hasActiveRanking
-              )
-            ))}
-          </section>
+    <div className="hidden min-w-0 lg:block">
+      <div
+        className="fixed bottom-4 left-8 top-[4.75rem] z-20 w-[220px] overflow-y-auto overscroll-contain xl:left-10"
+        data-desktop-library-sidebar
+        ref={scrollRef}
+      >
+        <aside className="min-h-full min-w-0 rounded-xl border border-slate-800/90 bg-slate-950/72 p-3 shadow-2xl shadow-black/10 backdrop-blur">
+          <nav aria-label="影片快速筛选" className="grid gap-5">
+            <section className="grid gap-1">
+              <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">片库</h2>
+              {browseChannels.map((channel) => (
+                renderPresetButton(
+                  channel.id,
+                  "newGood",
+                  channel.label,
+                  channel.label,
+                  channel.icon,
+                  activeChannel === channel.id && !hasActiveRanking
+                )
+              ))}
+            </section>
 
-          <section className="grid gap-1 border-t border-slate-800/80 pt-4">
-            <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">榜单</h2>
-            {rankingViews.map((view) => (
-              renderPresetButton(
-                "movie",
-                view.id,
-                view.label,
-                view.detail,
-                view.icon,
-                activeChannel === "movie" && activeView === view.id
-              )
-            ))}
-          </section>
-        </nav>
-      </aside>
+            <section className="grid gap-1 border-t border-slate-800/80 pt-4">
+              <h2 className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-600">榜单</h2>
+              {rankingViews.map((view) => (
+                renderPresetButton(
+                  "movie",
+                  view.id,
+                  view.label,
+                  view.detail,
+                  view.icon,
+                  activeChannel === "movie" && activeView === view.id
+                )
+              ))}
+            </section>
+          </nav>
+        </aside>
+      </div>
     </div>
   );
 }
