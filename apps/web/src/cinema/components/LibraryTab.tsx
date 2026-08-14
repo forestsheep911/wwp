@@ -367,10 +367,11 @@ export function LibraryTab({
                         <EmptyState icon={<Film className="h-5 w-5" />} title={copy.library.noTitlesFound} />
                       </div>
                     ) : (
-                      results.map((result) => (
+                      results.map((result, position) => (
                         <MovieCard
                           creditPolicy={creditPolicy}
                           key={result.assetKey}
+                          priority={position < 12}
                           result={result}
                           pendingAssetKeys={pendingAssetKeys}
                           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
@@ -1124,10 +1125,11 @@ function LibraryHome({
           <>
             <div className="gallery-results">
               <div className="gallery-results-grid grid gap-4">
-                {visibleResults.map((result) => (
+                {visibleResults.map((result, position) => (
                   <MovieCard
                     creditPolicy={creditPolicy}
                     key={result.assetKey}
+                    priority={position < 12}
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
                     pendingDownloadAssetKeys={pendingDownloadAssetKeys}
@@ -2156,7 +2158,7 @@ function detailTags(result: SearchResult) {
   return genreTags(result);
 }
 
-function MoviePoster({ result }: { result: SearchResult }) {
+function MoviePoster({ result, priority = false }: { result: SearchResult; priority?: boolean }) {
   return (
     <div className="relative aspect-[2/3] overflow-hidden rounded-md bg-slate-900">
       <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-slate-900 to-emerald-950 text-4xl font-black text-emerald-100">
@@ -2165,6 +2167,7 @@ function MoviePoster({ result }: { result: SearchResult }) {
       <PosterImage
         alt={result.title}
         className="absolute inset-0 h-full w-full object-cover"
+        priority={priority}
         result={result}
       />
     </div>
@@ -2457,10 +2460,12 @@ function sortedVariants(variants: MediaVariant[]) {
 
 function DesktopMovieCard({
   result,
-  onOpenDetail
+  onOpenDetail,
+  priority
 }: {
   result: ResultWithCache;
   onOpenDetail: (result: ResultWithCache) => void;
+  priority: boolean;
 }) {
   const tags = genreTags(result);
   const posterTags = tags.slice(0, 2);
@@ -2544,7 +2549,7 @@ function DesktopMovieCard({
         aria-label={`${result.title}，${compositeRating ? `评分 ${compositeRating.score}` : "暂无评分"}`}
       >
         <div className="relative overflow-hidden rounded-lg border border-slate-800 bg-slate-950 shadow-xl shadow-black/20 transition duration-200 group-hover:-translate-y-1 group-hover:scale-[1.015] group-hover:border-slate-600 group-hover:shadow-2xl group-focus-visible:border-emerald-400">
-          <MoviePoster result={result} />
+          <MoviePoster priority={priority} result={result} />
           <span className="absolute right-2 top-2 z-20 inline-flex items-baseline gap-1 rounded-md border border-white/10 bg-slate-950/82 px-2 py-1 text-[10px] font-bold tracking-wide text-slate-300 shadow-lg shadow-black/30 backdrop-blur">
             {compositeRating ? (
               <span className="text-sm leading-none text-amber-200">{compositeRating.score}</span>
@@ -2661,7 +2666,8 @@ function MovieCard({
   onToggleFavorite,
   onSelect,
   onDownload,
-  variantLimit
+  variantLimit,
+  priority = false
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
@@ -2675,6 +2681,7 @@ function MovieCard({
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
   variantLimit?: number;
+  priority?: boolean;
 }) {
   const tags = cardTags(result);
   const summary = bestSummary(result);
@@ -2682,7 +2689,7 @@ function MovieCard({
 
   return (
     <>
-      <DesktopMovieCard result={result} onOpenDetail={onOpenDetail} />
+      <DesktopMovieCard priority={priority} result={result} onOpenDetail={onOpenDetail} />
       <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 md:hidden">
       <div className="group relative">
         <button
@@ -2691,7 +2698,7 @@ function MovieCard({
           onClick={() => onOpenDetail(result)}
           title={copy.library.viewDetails}
         >
-          <MoviePoster result={result} />
+          <MoviePoster priority={priority} result={result} />
         </button>
         <PosterActions
           favorite={favoriteAssetKeys.has(result.assetKey)}

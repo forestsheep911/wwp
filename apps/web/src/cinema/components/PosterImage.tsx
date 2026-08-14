@@ -33,19 +33,22 @@ function posterUrls(result: SearchResult) {
 export function PosterImage({
   alt,
   className,
-  result
+  result,
+  priority = false
 }: {
   alt: string;
   className: string;
   result: SearchResult;
+  priority?: boolean;
 }) {
-  const urls = useMemo(() => posterUrls(result), [result]);
+  const urlKey = posterUrls(result).join("\n");
+  const urls = useMemo(() => urlKey ? urlKey.split("\n") : [], [urlKey]);
   const [posterIndex, setPosterIndex] = useState<number | undefined>(0);
   const src = posterIndex === undefined ? undefined : urls[posterIndex];
 
   useEffect(() => {
     setPosterIndex(0);
-  }, [result.assetKey, urls]);
+  }, [result.assetKey, urlKey]);
 
   if (!src) {
     return null;
@@ -55,7 +58,8 @@ export function PosterImage({
     <img
       alt={alt}
       className={className}
-      loading="lazy"
+      fetchPriority={priority ? "high" : "auto"}
+      loading={priority ? "eager" : "lazy"}
       referrerPolicy="no-referrer"
       src={src}
       onLoad={() => {

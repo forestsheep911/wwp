@@ -998,12 +998,13 @@ export class AzureCacheStore implements CacheStore {
     await this.ensureReady();
     const blockBlob = this.containerClient.getBlockBlobClient(posterKey);
     try {
-      const [properties, content] = await Promise.all([
-        blockBlob.getProperties(),
-        blockBlob.downloadToBuffer()
-      ]);
-      const contentType = properties.contentType?.startsWith("image/")
-        ? properties.contentType
+      // `download()` returns both the blob metadata and the bytes. Avoid a
+      // separate getProperties() request for every browser cache miss: a gallery
+      // can otherwise turn one visible row into dozens of concurrent Blob calls.
+      const download = await blockBlob.download();
+      const content = await streamToBuffer(download.readableStreamBody);
+      const contentType = download.contentType?.startsWith("image/")
+        ? download.contentType
         : "image/jpeg";
       return {
         content,
