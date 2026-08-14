@@ -3298,7 +3298,6 @@ function CinemaApp() {
       />
       <CinemaLayout
         activeTab={activeTab}
-        activeBrowseChannel={browseChannel}
         accountDetail={accountDetail}
         accountLabel={accountLabel}
         canChangePasscode={role === "member"}
@@ -3307,7 +3306,6 @@ function CinemaApp() {
         showAdmin={showAdmin}
         theme={theme}
         onActiveTabChange={navigateToTab}
-        onBrowseChannelChange={openBrowseChannel}
         onLock={lockCinema}
         onOpenHome={() => openBrowseChannel("recommended")}
         onOpenPeople={() => navigateToTab("people")}

@@ -6,8 +6,16 @@ const source = readFileSync(
   new URL("../src/cinema/components/LibraryTab.tsx", import.meta.url),
   "utf8"
 );
+const layoutSource = readFileSync(
+  new URL("../src/cinema/components/CinemaLayout.tsx", import.meta.url),
+  "utf8"
+);
+const stylesSource = readFileSync(
+  new URL("../src/styles.css", import.meta.url),
+  "utf8"
+);
 
-test("mobile library navigation mirrors the desktop library and ranking sections", () => {
+test("phone and portrait tablet navigation mirrors the desktop library and ranking sections", () => {
   const mobileNavigation = source.slice(
     source.indexOf("function MobileBrowseNavigation"),
     source.indexOf("function DesktopBrowseFilter")
@@ -16,7 +24,19 @@ test("mobile library navigation mirrors the desktop library and ranking sections
   assert.match(mobileNavigation, /aria-label="电影榜单"/);
   assert.match(mobileNavigation, /onBrowsePresetChange\(channel\.id, "newGood"\)/);
   assert.match(mobileNavigation, /onBrowsePresetChange\("movie", view\.id\)/);
-  assert.match(mobileNavigation, /sm:hidden/);
+  assert.match(mobileNavigation, /lg:hidden/);
+  assert.doesNotMatch(mobileNavigation, /sm:hidden/);
+  assert.doesNotMatch(layoutSource, /aria-label=\{copy\.layout\.browseLabel\}/);
+  assert.doesNotMatch(source, /sm:block lg:hidden/);
+});
+
+test("portrait tablets use the poster gallery instead of detailed mobile cards", () => {
+  assert.match(source, /focus-visible:ring-emerald-400 md:grid/);
+  assert.match(source, /sm:rounded-lg sm:p-4 md:hidden/);
+  assert.match(
+    stylesSource,
+    /@media \(min-width: 768px\) and \(max-width: 1023px\)[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/
+  );
 });
 
 test("the shared library filter is available on mobile and starts collapsed", () => {

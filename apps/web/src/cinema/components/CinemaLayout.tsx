@@ -37,18 +37,10 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { Tabs, TabsContent } from "../../components/ui/tabs";
 import { copy } from "../i18n";
-import type { AppTab, AppTheme, BrowseChannel } from "../types";
-
-const browseChannels: Array<{ id: BrowseChannel; label: string }> = [
-  { id: "recommended", label: copy.layout.browseChannels.recommended },
-  { id: "movie", label: copy.layout.browseChannels.movie },
-  { id: "tv", label: copy.layout.browseChannels.tv },
-  { id: "animation", label: copy.layout.browseChannels.animation }
-];
+import type { AppTab, AppTheme } from "../types";
 
 interface CinemaLayoutProps {
   activeTab: AppTab;
-  activeBrowseChannel: BrowseChannel;
   accountLabel: string;
   accountDetail: string;
   canChangePasscode: boolean;
@@ -70,7 +62,6 @@ interface CinemaLayoutProps {
   admin?: ReactNode;
   showAdmin: boolean;
   onActiveTabChange: (value: AppTab) => void;
-  onBrowseChannelChange: (value: BrowseChannel) => void;
   onLock: () => void;
   onOpenHome: () => void;
   onOpenPeople: () => void;
@@ -92,7 +83,6 @@ interface CinemaLayoutProps {
 
 export function CinemaLayout({
   activeTab,
-  activeBrowseChannel,
   accountLabel,
   accountDetail,
   canChangePasscode,
@@ -114,7 +104,6 @@ export function CinemaLayout({
   admin,
   showAdmin,
   onActiveTabChange,
-  onBrowseChannelChange,
   onLock,
   onOpenHome,
   onOpenPeople,
@@ -152,36 +141,6 @@ export function CinemaLayout({
                 <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">{copy.app.name}</h1>
               </span>
             </button>
-
-            {activeTab === "library" ? <nav
-              aria-label={copy.layout.browseLabel}
-              className="scrollbar-none order-3 col-span-2 -mx-1 hidden min-w-0 snap-x snap-mandatory items-center gap-2 overflow-x-auto px-1 pb-0.5 sm:flex lg:hidden"
-            >
-              {browseChannels.map((channel) => {
-                const active = activeTab === "library" && activeBrowseChannel === channel.id;
-                return (
-                  <button
-                    className={`relative min-h-10 flex-none snap-start rounded-full border px-4 text-sm font-semibold transition-colors ${
-                      active
-                        ? "border-emerald-300/45 bg-emerald-300/10 text-emerald-100"
-                        : "border-slate-800 bg-slate-950/75 text-slate-300 hover:border-slate-700 hover:text-slate-100"
-                    }`}
-                    key={channel.id}
-                    type="button"
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => onBrowseChannelChange(channel.id)}
-                  >
-                    {channel.label}
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-x-4 -bottom-0.5 h-0.5 rounded-full transition-colors ${
-                        active ? "bg-emerald-300" : "bg-transparent"
-                      }`}
-                    />
-                  </button>
-                );
-              })}
-            </nav> : null}
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2">
               <Button type="button" variant="outline" size="icon" onClick={onOpenPeople} title="人物索引">

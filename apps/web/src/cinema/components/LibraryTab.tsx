@@ -600,7 +600,7 @@ function MobileBrowseNavigation({
   const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
 
   return (
-    <section className="grid gap-3 sm:hidden" aria-label="片库导航">
+    <section className="grid gap-3 lg:hidden" aria-label="片库导航">
       <nav className="grid gap-1.5" aria-label="片库分类">
         <span className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">片库</span>
         <div className="grid grid-cols-4 gap-1 rounded-xl border border-slate-800 bg-slate-950/75 p-1">
@@ -1072,71 +1072,6 @@ function LibraryHome({
           onChange={setBrowseFilter}
         />
 
-      <div className="hidden max-w-full overflow-x-clip sm:block lg:hidden">
-        <div className="scrollbar-none flex max-w-none flex-nowrap gap-2 overflow-x-auto overscroll-x-contain rounded-md border border-slate-800 bg-slate-950 p-1">
-          {channelViews.map((view) => {
-            const Icon = view.icon;
-            if (view.id === "lucky") {
-              return (
-                <div className="flex flex-none overflow-hidden rounded-lg border border-slate-800 bg-slate-950 sm:rounded-md" key={view.id}>
-                  <Button
-                    className="min-w-11 rounded-none border-r border-slate-800 px-3 sm:min-w-8 sm:px-2"
-                    type="button"
-                    size="sm"
-                    variant={activeSortView === view.id ? "secondary" : "ghost"}
-                    onClick={() => {
-                      setActiveView(view.id);
-                      setViewSeed(randomBrowseSeed());
-                      onBrowseViewChange(view.id, { refresh: true });
-                    }}
-                    title={copy.library.browseViews.lucky.detail}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span className="sr-only">{copy.library.browseViews.lucky.detail}</span>
-                  </Button>
-                  <Button
-                    className="rounded-none px-3 sm:px-2"
-                    type="button"
-                    size="sm"
-                    variant={activeSortView === view.id ? "secondary" : "ghost"}
-                    onClick={() => {
-                      if (activeSortView !== view.id) {
-                        setActiveView(view.id);
-                        onBrowseViewChange(view.id);
-                      }
-                    }}
-                    title={view.label}
-                  >
-                    {view.label}
-                  </Button>
-                </div>
-              );
-            }
-
-            return (
-              <Button
-                className="flex-none"
-                key={view.id}
-                type="button"
-                size="sm"
-                variant={activeSortView === view.id ? "secondary" : "ghost"}
-                onClick={() => {
-                  if (activeSortView !== view.id) {
-                    setActiveView(view.id);
-                    setViewSeed(randomBrowseSeed());
-                    onBrowseViewChange(view.id);
-                  }
-                }}
-                title={view.label}
-              >
-                <Icon className="h-4 w-4" />
-                {view.label}
-              </Button>
-            );
-          })}
-        </div>
-      </div>
-
       <div className="grid min-w-0 gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 sm:rounded-lg sm:p-4">
         {showingTspdtRank ? (
           <>
@@ -1273,7 +1208,7 @@ function BrowseLoadingGrid() {
       <div className="gallery-results-grid grid gap-4">
         {Array.from({ length: 6 }).map((_, index) => (
           <article
-            className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4 lg:grid-cols-1 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none"
+            className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4 md:grid-cols-1 md:border-0 md:bg-transparent md:p-0 md:shadow-none"
             key={index}
           >
             <div className="aspect-[2/3] animate-pulse rounded-md bg-slate-800/70" />
@@ -1288,7 +1223,7 @@ function BrowseLoadingGrid() {
                 <div className="h-6 w-16 animate-pulse rounded-full bg-slate-800/60" />
               </div>
             </div>
-            <div className="col-span-2 grid min-w-0 gap-3 lg:hidden">
+            <div className="col-span-2 grid min-w-0 gap-3 md:hidden">
               <div className="space-y-2">
                 <div className="h-4 w-full animate-pulse rounded bg-slate-800/60" />
                 <div className="h-4 w-11/12 animate-pulse rounded bg-slate-800/50" />
@@ -2580,7 +2515,7 @@ function DesktopMovieCard({
     <>
       <button
         ref={cardRef}
-        className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 lg:grid"
+        className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 md:grid"
         type="button"
         onClick={() => onOpenDetail(result)}
         onMouseEnter={() => showPreview()}
@@ -2730,7 +2665,7 @@ function MovieCard({
   return (
     <>
       <DesktopMovieCard result={result} onOpenDetail={onOpenDetail} />
-      <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 lg:hidden">
+      <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 md:hidden">
       <div className="group relative">
         <button
           className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
