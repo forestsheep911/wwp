@@ -10,7 +10,7 @@ import type {
 import { normalizePersonExternalIds, normalizePersonNameSearchKey } from "@wwpdw/shared";
 import { rebuildDerivedPersonIndexes, type PersonCatalogStore } from "@wwpdw/cache-store";
 import type { NotionPeopleChange, NotionPeopleSnapshot } from "./notion-people-source.js";
-import { reviewChineseBiography, reviewEnglishBiography, splitBiographySourceRefs } from "./person-biography-quality.js";
+import { reviewChineseBiography, reviewEnglishBiography, reviewPersonCoreProfile, splitBiographySourceRefs } from "./person-biography-quality.js";
 
 export interface PeopleNotionSyncCheckpoint {
   schemaVersion: 1;
@@ -241,7 +241,7 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
   } : undefined;
   const existingImages = (current.profileImages ?? []).filter((image) => image.source !== "notion");
   const notionImage = row.profileUrl ? [{ url: row.profileUrl, source: "notion" as const, observedAt: row.lastEditedTime }] : [];
-  return {
+  const profile: PersonProfile = {
     ...current,
     names: uniqueNames([...notionNames, ...names]),
     departments: [...new Set<MovieCreditDepartment>(row.primaryDepartments)].sort(),
@@ -259,6 +259,20 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
       updatedAt: row.lastEditedTime
     },
     updatedAt: row.lastEditedTime
+  };
+  const coreReview = reviewPersonCoreProfile(profile);
+  const retainedIssues = (current.dataQuality.issues ?? []).filter((issue) => !issue.startsWith("missing_verified_") && issue !== "missing_stable_external_id");
+  return {
+    ...profile,
+    dataQuality: {
+      status: row.dataStatus === "conflict"
+        ? "conflict"
+        : coreReview.eligibleForVerified ? "verified" : row.dataStatus === "draft" ? "draft" : "partial",
+      ...([...retainedIssues, ...coreReview.issues].length
+        ? { issues: [...new Set([...retainedIssues, ...coreReview.issues])] }
+        : {}),
+      updatedAt: row.lastEditedTime
+    }
   };
 }
 

@@ -49,6 +49,13 @@ After the current new-arrival coverage round is releaseable or waiting on extern
 
 Do not build a Cartesian product of every bitrate, audio, subtitle, and cut. Select the smallest set that preserves distinct viewing or fan value. A low-value watch-once film may close expansion after one good compact release.
 
+An existing compact or lower-bitrate variant is retained as a useful viewing
+option and historical production evidence. If its recorded size or title was a
+planned estimate, correct that variant from measured final bytes; do not delete
+or relabel it as the new high tier. A high-bitrate supplement uses a new unique
+ledger variant and a new Notion spec page, with its own upload and Media Assets
+record.
+
 For every source with more than one audio track, explicitly check for a director, filmmaker, historian, or other commentary track before closing the candidate decision. If one is usable with Chinese subtitles or Chinese assistance, record the selected audio ordinal/title and schedule the commentary branch. If it is skipped, record the concrete blocking reason in the workflow note.
 
 ## Chinese-Dub Selection

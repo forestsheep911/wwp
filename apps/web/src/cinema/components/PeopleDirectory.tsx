@@ -110,8 +110,8 @@ function PersonCard({ person, onOpen }: { person: PublicPersonSummary; onOpen: (
         <div className="mt-3 flex flex-wrap gap-1.5">{person.departments.slice(0, 3).map((department) => <Badge key={department} variant="secondary">{personDepartmentLabel(department)}</Badge>)}</div>
         <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-500">{person.representativeWorks.join(" · ") || "作品关系正在整理"}</p>
         <div className="mt-auto flex items-center justify-between gap-2 pt-3 text-[11px]">
-          <span className={person.dataStatus === "verified" ? "text-emerald-300" : "text-amber-200/75"}>{person.dataStatus === "verified" ? "资料已核对" : "资料补充中"}</span>
-          <span className="text-slate-600">{person.workCount} 部作品{biographyLabels.length ? ` · 小传 ${biographyLabels.join("/")}` : ""}</span>
+          <span className="text-slate-500">{biographyLabels.length ? `小传 ${biographyLabels.join(" / ")}` : "小传待整理"}</span>
+          <span className="text-slate-600">WWP 收录 {person.workCount} 部</span>
         </div>
       </div>
     </button>

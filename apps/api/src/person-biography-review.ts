@@ -1,7 +1,7 @@
 import type { PersonEnrichmentReport } from "./person-enrichment.js";
 import type { PersonNameEntry, PersonProfile } from "@wwpdw/shared";
 import { normalizePersonNameSearchKey } from "@wwpdw/shared";
-import { reviewChineseBiography, reviewEnglishBiography } from "./person-biography-quality.js";
+import { reviewChineseBiography, reviewEnglishBiography, reviewPersonCoreProfile } from "./person-biography-quality.js";
 
 export interface ReviewedChineseBiography {
   personId: string;
@@ -76,7 +76,7 @@ function applyReview(profile: PersonProfile, review: ReviewedChineseBiography, o
     ...(review.originalName ? [manualName(review.originalName, undefined, "original", observedAt)] : []),
     ...profile.names
   ];
-  return {
+  const reviewed: PersonProfile = {
     ...profile,
     names: uniqueNames(names),
     biography: {
@@ -107,7 +107,22 @@ function applyReview(profile: PersonProfile, review: ReviewedChineseBiography, o
       ...(profile.sourceRefs ?? []),
       ...review.sourceRefs.map((url) => ({ source: "external" as const, url, observedAt }))
     ],
+    dataQuality: {
+      ...profile.dataQuality,
+      updatedAt: observedAt
+    },
     updatedAt: observedAt
+  };
+  const coreReview = reviewPersonCoreProfile(reviewed);
+  return {
+    ...reviewed,
+    dataQuality: {
+      status: profile.dataQuality.status === "conflict"
+        ? "conflict"
+        : coreReview.eligibleForVerified ? "verified" : "partial",
+      ...(coreReview.issues.length ? { issues: coreReview.issues } : {}),
+      updatedAt: observedAt
+    }
   };
 }
 

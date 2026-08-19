@@ -1,9 +1,10 @@
-import { ArrowLeft, Film, Loader2, UserRound } from "lucide-react";
+import { ArrowLeft, ExternalLink, Film, Loader2, UserRound } from "lucide-react";
 import { selectPersonBiographyTexts, type PublicPersonDetail, type SearchResult } from "@wwpdw/shared";
 
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { groupPersonWorksByWork, personDepartmentLabel } from "../person-route";
+import { formatPersonDate, getPersonExternalLinks } from "../person-meta";
 import { PosterImage } from "./PosterImage";
 
 export function PersonDetail({
@@ -40,6 +41,18 @@ export function PersonDetail({
   const resultByWorkId = new Map(works.map((work) => [work.metadata?.work?.workId ?? work.metadata?.workId, work]));
   const filmography = groupPersonWorksByWork(person.works);
   const biography = selectPersonBiographyTexts(person.biography);
+  const birthDate = formatPersonDate(person.biography?.birthDate);
+  const deathDate = formatPersonDate(person.biography?.deathDate);
+  const originalName = person.names.original && ![person.names.primary, person.names.english].includes(person.names.original)
+    ? person.names.original
+    : undefined;
+  const externalLinks = getPersonExternalLinks(person.externalIds);
+  const facts = [
+    birthDate ? { label: "出生", value: birthDate } : undefined,
+    deathDate ? { label: "逝世", value: deathDate } : undefined,
+    person.biography?.birthPlace ? { label: "出生地", value: person.biography.birthPlace } : undefined,
+    originalName ? { label: "原名", value: originalName } : undefined
+  ].filter((fact): fact is { label: string; value: string } => Boolean(fact));
   return (
     <section className="grid gap-6 rounded-xl border border-slate-800 bg-slate-950/70 p-4 lg:mx-auto lg:max-w-6xl">
       <Button className="w-fit" variant="ghost" onClick={onBack}><ArrowLeft className="h-4 w-4" />{backLabel}</Button>
@@ -52,21 +65,44 @@ export function PersonDetail({
           {[person.names.english, person.names.original].filter((value, index, values) => value && value !== person.names.primary && values.indexOf(value) === index).map((name) => <p className="mt-1 text-sm text-slate-400" key={name}>{name}</p>)}
           <div className="mt-3 flex flex-wrap gap-2">
             {person.departments.map((department) => <Badge key={department} variant="secondary">{personDepartmentLabel(department)}</Badge>)}
-            <Badge variant="muted" className={person.dataStatus === "verified" ? "border-emerald-400/30 text-emerald-200" : "border-amber-300/25 text-amber-200/80"}>{person.dataStatus === "verified" ? "资料已核对" : "资料补充中"}</Badge>
           </div>
-          {biography.chinese || biography.english ? (
-            <div className="mt-4 grid max-w-3xl gap-4">
-              {biography.chinese ? <div><p className="text-xs font-semibold tracking-wide text-slate-500">中文小传</p><p className="mt-1 whitespace-pre-wrap text-sm leading-7 text-slate-300">{biography.chinese}</p></div> : null}
-              {biography.english ? <div lang="en"><p className="text-xs font-semibold tracking-wide text-slate-500">English biography</p><p className="mt-1 whitespace-pre-wrap text-sm leading-7 text-slate-400">{biography.english}</p></div> : null}
-            </div>
-          ) : biography.fallback ? <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-7 text-slate-300">{biography.fallback}</p> : <p className="mt-4 text-sm text-slate-500">中英文小传待核对后补充。</p>}
-          <p className="mt-3 text-xs text-slate-500">WWP 收录作品 {person.workCount} 部</p>
+          {(facts.length > 0 || externalLinks.length > 0) && (
+            <dl className="mt-4 grid max-w-3xl gap-x-6 gap-y-2 border-y border-slate-800/80 py-3 text-sm sm:grid-cols-2">
+              {facts.map((fact) => (
+                <div className="grid min-w-0 grid-cols-[3.75rem_minmax(0,1fr)] gap-2" key={fact.label}>
+                  <dt className="text-slate-500">{fact.label}</dt>
+                  <dd className="min-w-0 text-slate-300">{fact.value}</dd>
+                </div>
+              ))}
+              {externalLinks.length > 0 && (
+                <div className="grid grid-cols-[3.75rem_minmax(0,1fr)] gap-2 sm:col-span-2">
+                  <dt className="text-slate-500">资料</dt>
+                  <dd className="flex flex-wrap gap-2">
+                    {externalLinks.map((link) => (
+                      <a
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-emerald-300/50 hover:text-emerald-200"
+                        href={link.url}
+                        key={link.label}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {link.label}<ExternalLink className="h-3 w-3" aria-hidden="true" />
+                      </a>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
+          {biography.chinese
+            ? <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-7 text-slate-300">{biography.chinese}</p>
+            : <p className="mt-4 text-sm text-slate-500">人物小传待核对后补充。</p>}
         </div>
       </header>
 
-      <section className="grid gap-3" aria-label="作品履历">
+      <section className="grid gap-3" aria-label="WWP 收录作品">
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-800 pb-2">
-          <h2 className="text-sm font-semibold tracking-wide text-slate-200">作品履历</h2>
+          <h2 className="text-sm font-semibold tracking-wide text-slate-200">WWP 收录作品</h2>
           <span className="text-xs text-slate-600">{filmography.length} 部</span>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

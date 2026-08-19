@@ -7,6 +7,10 @@ test("local output audit classifies playable, QC, and work artifacts", () => {
   assert.equal(classifyLocalMedia("_qc/Film.subtitle-smoke.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("Film.sample.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("The.Wire.S03E09.diagnostic-60s.mp4"), "qc_artifact");
+  assert.equal(classifyLocalMedia("iron.man.2008.overlaycuda70.mkv"), "qc_artifact");
+  assert.equal(classifyLocalMedia("iron.man.2008.thread-ac3.mkv"), "qc_artifact");
+  assert.equal(classifyLocalMedia("iron.man.2008.tonemap-simple.mkv"), "qc_artifact");
+  assert.equal(classifyLocalMedia("iron.man.2008.proper-no-sub.mkv"), "qc_artifact");
   assert.equal(classifyLocalMedia("Film.full.work.mkv"), "work_intermediate");
 });
 

@@ -301,6 +301,53 @@ test("importScan does not reopen a resolved collection parent when a bound membe
   }
 });
 
+test("importScan recognizes resolved collection members stored below a season path", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-season-cleanup-"));
+  try {
+    const member = path.join(root, "Collection", "Season2", "member.mkv");
+    mkdirSync(path.dirname(member), { recursive: true });
+    writeFileSync(member, "fixture");
+    const collection = entry({
+      name: "Collection",
+      relativePath: "Collection",
+      fileCount: 1,
+      mediaCount: 1,
+      totalBytes: 7,
+      largestMedia: [{ relativePath: "Collection\\Season2\\member.mkv", bytes: 7, extension: ".mkv" }]
+    });
+    importScan(f.repo, { root, entries: [collection] });
+    const parent = f.db.prepare("SELECT * FROM sources WHERE relative_path='Collection'").get();
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: parent.input_root_id,
+      relativePath: "Season2\\member.mkv",
+      absolutePath: member,
+      fingerprint: "member",
+      sourceKind: "episode_member",
+      missing: false
+    });
+    const work = f.repo.ensureWork({ canonicalTitle: "Resolved Episode", year: 2026, workType: "series" });
+    f.repo.bindSourceToWork(child.id, work.id);
+    f.repo.transitionWorkflowTask(
+      f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`).id,
+      "done",
+      { reason: "Collection members resolved" }
+    );
+
+    rmSync(member);
+    importScan(f.repo, {
+      root,
+      entries: [{ ...collection, fileCount: 0, mediaCount: 0, totalBytes: 0, largestMedia: [] }]
+    });
+
+    const parentTask = f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`);
+    assert.equal(parentTask.status, "done");
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Windows input roots normalize drive case and trailing separators while POSIX remains case-sensitive", () => {
   const f = fixture();
   try {

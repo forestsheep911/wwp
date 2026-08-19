@@ -60,6 +60,11 @@ function asId(value, flag = "--variant") {
   return id;
 }
 
+function sameNotionId(left, right) {
+  const normalize = (value) => String(value ?? "").replaceAll("-", "").toLowerCase();
+  return normalize(left) !== "" && normalize(left) === normalize(right);
+}
+
 function output(value, json, human) {
   if (json) process.stdout.write(`${JSON.stringify(value)}\n`);
   else process.stdout.write(`${human ?? JSON.stringify(value)}\n`);
@@ -401,8 +406,15 @@ async function main() {
       if (!["selected", "encoding", "qc_passed"].includes(variant.production_state)) {
         throw new Error("Notion target requires selected, encoding, or qc_passed production state");
       }
-      const target = repo.registerNotionTarget(id, { workPageId: requireOption(options, "work_page", "--work-page"),
-        seasonPageId: options.season_page,
+      const workPageId = requireOption(options, "work_page", "--work-page");
+      // A season-page ID equal to the work page is a duplicate level, not a
+      // real parent. Store it as empty so series structure verification uses
+      // work -> spec -> episode for season-root work pages.
+      const seasonPageId = options.season_page !== undefined && sameNotionId(options.season_page, workPageId)
+        ? ""
+        : options.season_page;
+      const target = repo.registerNotionTarget(id, { workPageId,
+        seasonPageId,
         specPageId: requireOption(options, "spec_page", "--spec-page"), episodePageId: options.episode_page,
         expectedFilename: options.expected_filename, mediaBlockId: options.media_block_id,
         replaceExpectedFilename: options.replace_expected_filename === true });

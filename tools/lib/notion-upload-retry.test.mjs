@@ -9,6 +9,7 @@ test("recognizes transient Notion and network failures", () => {
   assert.equal(isTransientNotionUploadError({ status: 502 }), true);
   assert.equal(isTransientNotionUploadError({ status: 524 }), true);
   assert.equal(isTransientNotionUploadError({ status: 409, message: "Failed to upload file. Please try again later." }), true);
+  assert.equal(isTransientNotionUploadError({ status: 409, message: "Failed to finalize the multi-part file upload. Please try again later." }), true);
   assert.equal(isTransientNotionUploadError({ code: "ECONNRESET" }), true);
   assert.equal(isTransientNotionUploadError(new Error("fetch failed")), true);
   assert.equal(isTransientNotionUploadError({ status: 400 }), false);

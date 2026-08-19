@@ -45,7 +45,7 @@ function listMediaFiles(root) {
 
 export function classifyLocalMedia(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
-  if (normalized.startsWith("_qc/") || /(?:\.sample|diagnostic(?:[-_.]\d+(?:s|sec)?)?|smoke(?:[-_.]\d+(?:s|sec)?)?)\.(?:mp4|m4v|mov|mkv)$/u.test(normalized)) return "qc_artifact";
+  if (normalized.startsWith("_qc/") || /(?:\.sample|diagnostic(?:[-_.]\d+(?:s|sec)?)?|smoke(?:[-_.]\d+(?:s|sec)?)?|(?:overlay|thread|threads|tonemap)[a-z0-9]*(?:[-_.][a-z0-9]+)*|proper[-_.]no[-_.]sub)\.(?:mp4|m4v|mov|mkv)$/u.test(normalized)) return "qc_artifact";
   if (/\.work\.mkv$/u.test(normalized)) return "work_intermediate";
   return "playable_candidate";
 }

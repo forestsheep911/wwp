@@ -68,6 +68,13 @@ node --import tsx tools/person-batch-compose.mjs --config .local-data/people/<ba
 
 Prepare `biography-reviews.json` with the reviewed bilingual text, source references, statuses, methods, and any credit-name corrections expected by the existing review tool. Compare each entry against the corresponding composed profile before running:
 
+The prose must be person-centred and independent of the current WWP holdings.
+Reject a review that reads like a credit audit, mentions database verification,
+lists only the selected discovery works, or uses vague award filler instead of
+specific facts. Build a factual brief first: career stages, important
+collaborations, representative works, contribution or style, and precise awards
+when well supported. Use the source/status fields for provenance.
+
 ```powershell
 node --import tsx tools/person-biography-review.mjs --report .local-data/people/<batch-slug>/composed-report.json --reviews .local-data/people/<batch-slug>/biography-reviews.json --output .local-data/people/<batch-slug>/reviewed-report.json
 ```
@@ -145,7 +152,9 @@ Open the deployed people directory and at least three changed person routes, inc
 
 - the public count increased by the expected number;
 - Chinese names and biographies use simplified Chinese;
-- English biographies are substantive and factual;
+- the public page shows only the simplified-Chinese biography; English biographies remain substantive and factual in the reviewed report and Notion/catalog;
+- supported birth/death dates, simplified-Chinese birthplace, original name, and stable external links render without empty placeholder rows;
+- uncurated aliases, provider popularity, and external full filmographies are not exposed;
 - roles are grouped under each work, so one work is not repeated for director/editor/writer credits;
 - clicking a person shows all linked works through the reverse index;
 - search/query state does not leak into the canonical person URL;

@@ -9,7 +9,10 @@ export function isTransientNotionUploadError(error) {
   const message = `${error?.message ?? ""} ${error?.cause?.message ?? ""}`;
   // Notion uses 409 for both real resource conflicts and a recoverable
   // multipart-transfer failure. Only the latter is safe to retry.
-  if (Number(error?.status) === 409 && /failed to upload file.*try again later/i.test(message)) return true;
+  if (
+    Number(error?.status) === 409 &&
+    /failed to (?:upload file|finalize (?:the )?multi-part file upload).*try again later/i.test(message)
+  ) return true;
   return /fetch failed|socket hang up|connection reset|timed out|timeout occurred|bad gateway/i.test(message);
 }
 

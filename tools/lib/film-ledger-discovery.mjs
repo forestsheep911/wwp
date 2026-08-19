@@ -80,12 +80,20 @@ function sourceKindFor(entry) {
 }
 
 function isResolvedCollectionShrink(repo, inputRootId, parentSource) {
-  const prefix = `${parentSource.relative_path}\\`.toLowerCase();
+  const relativePrefix = `${parentSource.relative_path}\\`.toLowerCase();
+  const parentAbsolute = normalizeLedgerPath(parentSource.absolute_path).replace(/[\\/]+$/u, "").toLowerCase();
+  const absolutePrefix = `${parentAbsolute}\\`;
+  const isDescendant = (source) => {
+    const relative = source.relative_path.toLowerCase();
+    const absolute = normalizeLedgerPath(source.absolute_path).toLowerCase();
+    return relative.startsWith(relativePrefix) || absolute.startsWith(absolutePrefix);
+  };
   const descendants = repo.listSourcesForRoot(inputRootId)
     .filter((source) => source.id !== parentSource.id
-      && source.relative_path.toLowerCase().startsWith(prefix));
+      && isDescendant(source));
   const leaves = descendants.filter((source) => !descendants.some((other) => other.id !== source.id
-    && other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())));
+    && (other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())
+      || normalizeLedgerPath(other.absolute_path).toLowerCase().startsWith(`${normalizeLedgerPath(source.absolute_path).replace(/[\\/]+$/u, "").toLowerCase()}\\`))));
 
   return leaves.length > 0
     && leaves.every((source) => source.work_id != null)

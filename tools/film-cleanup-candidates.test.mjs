@@ -3,7 +3,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectCleanupCandidates, collectManifestMatches, collectSourceCleanupCandidates, moveCleanupCandidates } from "./film-cleanup-candidates.mjs";
+import { collectCleanupCandidates, collectManifestMatches, collectSourceCleanupCandidates, moveCleanupCandidates, selectCleanupCandidates } from "./film-cleanup-candidates.mjs";
+
+test("cleanup selection can limit one candidate class without mixing outputs and sources", () => {
+  const candidates = [
+    { candidate_type: "playable_output", eligible: true, id: "output-1" },
+    { candidate_type: "source_input", eligible: true, id: "source-1" },
+    { candidate_type: "playable_output", eligible: true, id: "output-2" }
+  ];
+  assert.deepEqual(
+    selectCleanupCandidates(candidates, { candidateType: "source_input", limit: 10 }).map((row) => row.id),
+    ["source-1"]
+  );
+});
 
 function mockDb(rows) {
   return { prepare: () => ({ all: () => rows }) };
@@ -90,7 +102,7 @@ test("successful upload manifest independently authorizes playable-output quaran
     assert.equal(candidate.eligible, true);
     assert.equal(candidate.mediaBlockId, "block-1");
     const moved = moveCleanupCandidates([{ candidate_type: "uploaded_output", ...candidate }], { quarantineDir: path.join(root, "quarantine") });
-    assert.equal(moved.length, 1);
+    assert.equal(moved.moved.length, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -119,6 +131,31 @@ test("source cleanup treats a cancelled planned variant as closed", () => {
   }
 });
 
+test("source cleanup remains blocked while the work has an open expansion marker", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-expansion-"));
+  const sourcePath = path.join(root, "source.mkv");
+  fs.writeFileSync(sourcePath, "source");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 13,
+      absolute_path: sourcePath,
+      relative_path: "source.mkv",
+      source_kind: "file",
+      canonical_title: "Open expansion",
+      workflow_status: "待 AI 处理",
+      workflow_note: "[规格扩展:OPEN] 待补充台配版本",
+      linked_variant_count: 1,
+      sync_ready_count: 1,
+      closed_variant_count: 1,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, false);
+    assert.deepEqual(candidate.reasons, ["source_expansion_open"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cleanup move quarantines only eligible candidates without deleting them", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-move-"));
   const quarantine = path.join(root, "quarantine");
@@ -131,9 +168,42 @@ test("cleanup move quarantines only eligible candidates without deleting them", 
       { candidate_type: "playable_output", variantId: 5, path: eligible, eligible: true },
       { candidate_type: "playable_output", variantId: 6, path: blocked, eligible: false }
     ], { quarantineDir: quarantine });
-    assert.equal(moved.length, 1);
+    assert.equal(moved.moved.length, 1);
+    assert.equal(moved.failed.length, 0);
     assert.equal(fs.existsSync(eligible), false);
-    assert.equal(fs.existsSync(moved[0].destination), true);
+    assert.equal(fs.existsSync(moved.moved[0].destination), true);
     assert.equal(fs.existsSync(blocked), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("cleanup move records a locked candidate and continues", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-failure-"));
+  const quarantine = path.join(root, "quarantine");
+  const eligible = path.join(root, "ready.mp4");
+  fs.writeFileSync(eligible, "ready");
+  try {
+    const result = moveCleanupCandidates([
+      { candidate_type: "playable_output", variantId: 7, path: path.join(root, "missing.mp4"), eligible: true },
+      { candidate_type: "playable_output", variantId: 8, path: eligible, eligible: true }
+    ], { quarantineDir: quarantine });
+    assert.equal(result.failed.length, 1);
+    assert.equal(result.moved.length, 1);
+    assert.equal(fs.existsSync(result.moved[0].destination), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("cleanup move skips duplicate logical records for one physical path", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-duplicate-"));
+  const quarantine = path.join(root, "quarantine");
+  const source = path.join(root, "shared.mkv");
+  fs.writeFileSync(source, "shared");
+  try {
+    const result = moveCleanupCandidates([
+      { candidate_type: "source_input", sourceId: 10, path: source, eligible: true },
+      { candidate_type: "source_input", sourceId: 11, path: source, eligible: true }
+    ], { quarantineDir: quarantine });
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.failed.length, 0);
+    assert.deepEqual(result.skipped, [{ candidateType: "source_input", path: source, reason: "duplicate_physical_path" }]);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

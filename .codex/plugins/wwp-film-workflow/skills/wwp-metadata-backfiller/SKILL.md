@@ -79,6 +79,7 @@ node tools/notion-metadata-backfill.mjs --page-id <page-id> --douban-subject <pa
 - `Human Issue` preserves human-authored and migrated legacy issues. AI automation must treat it as read-only. `AI Issue` is limited to unresolved findings from AI inspections; do not use it as a run log or copy successfully resolved findings into it.
 - `Last AI Check Time` records a completed AI inspection, including no-change checks. Use it to avoid repeat work and schedule later rating refreshes; newly released or airing works, missing fields, and unresolved issues may be checked sooner than stable completed works.
 - For family-age fields, run the AI advisory enrichment after sourced metadata is present so the model sees title, year, genres, summary, rating, runtime, and credits.
+- Review the family-age preview before applying it, then pass that same preview JSON as `--plan` to the apply run. Do not call the model a second time for the same reviewed page, because even low-temperature responses can change the age, risk tags, or `Needs Review` decision.
 - `TMDB ID` and `TMDB URL` must come from TMDb or a trusted existing hint. Do not generate them with AI. A verified IMDb ID may resolve through Wikidata `P4947` (movie) or `P4983` (TV); write only a unique single-kind match with the corresponding `/movie/` or `/tv/` URL. Ambiguous, multi-valued, and unresolved results remain blank for review.
 
 ## Guardrails

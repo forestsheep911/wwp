@@ -9,7 +9,8 @@ Source/original-disc work is optional and guarded. It is different from playable
 
 ## Default Position
 
-- New film production does not automatically upload original discs or source archives.
+- Current WWP production does not retain or automatically upload original discs or source archives after their useful specification expansion is exhausted.
+- Do not create or retain 7z source packages in the ordinary or complete production workflow. Enter source packaging/upload only when the user explicitly requests it in the current task.
 - If the user manually uploaded source files, align manifests and Media Assets rather than uploading again.
 - Source-only availability must not be presented as playable availability.
 
@@ -27,11 +28,12 @@ Source/original-disc work is optional and guarded. It is different from playable
 
 - Large source uploads must not silently switch to a bandwidth-expensive or proxy-heavy path.
 - Do not remove operational prefixes such as download-only labels merely because source files exist.
-- Keep source/archive manifests under `.local-data/source-archives/` unless the user specifies another local state path.
+- Keep source/archive manifests and lightweight operational logs under `.local-data/source-archives/` unless the user specifies another local state path. Never use this directory as long-term storage for generated 7z volumes.
 - For local disk cleanup, run `node tools/film-cleanup-candidates.mjs --output-root <directory> --json`. It reports eligible finished playable outputs and source inputs whose linked variants are all closed. Do not use a Notion status alone as cleanup proof.
 - A finished playable output has an independent cleanup gate. Either (a) the exact ledger path exists, its recorded byte size matches, and `publication_state=sync_ready`, or (b) a successful upload release manifest identifies the exact local basename and accepted Notion media block. In both cases it may be quarantined without waiting for parent `Workflow Status=已完成`, metadata completion, website sync, or source expansion. These are separate gates and must continue independently.
 - Treat source expansion as open whenever any bound supplemental variant is `selected`, `deferred`, encoding, QC-pending, or publication-pending. A first playable release and work-level `已完成` do not make that source cleanup-eligible.
 - Require the latest expansion decision to be explicit before source cleanup: `[规格扩展:CLOSED]` with a value-exhausted reason and no open linked variants. `[规格扩展:OPEN]` means retain the source even when all currently published outputs are safe to quarantine independently.
+- Once source expansion is explicitly closed and no linked variant remains open, move the original source to the same-volume `待人工删除` quarantine instead of retaining it as an archive. Existing generated 7z volumes are disposable staging artifacts and may be quarantined when the user authorizes that file class; they are not retained-source evidence.
 - After cleanup authorization, run `node tools/film-cleanup-candidates.mjs --output-root <directory> --apply --json`. It moves only eligible items to the same-volume `待人工删除` directory by default; use `--quarantine-dir` only when an explicit destination is required. It never deletes files, preserves the original basename with a ledger-ID suffix, and reports every moved path. Never use `E:\video_made\待人工删除`.
 - When reconciling the local output ledger, run `node tools/film-output-ledger-audit.mjs --root <directory> --json`. A `sync_ready` variant that is absent from its original output path but present in the same-volume `待人工删除` path with its `.variant-<id>` suffix is an archived finished output, not a missing output. Only the audit's `registeredOutputsMissing` list needs historical follow-up.
 - Treat a local media file with no exact ledger record as a legacy exception, not a cleanup candidate. Keep it in place until a published replacement is proven to cover its intended audio, subtitle, and browser-compatibility role, or the user explicitly authorizes that file class. Record the reason before moving it to `待人工删除`.

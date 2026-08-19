@@ -429,6 +429,10 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
     assert.equal(prepared.status, 0, prepared.stderr);
     assert.equal(JSON.parse(prepared.stdout).spec_page_id, "spec");
 
+    const normalizedSeason = run(["--db", dbPath, "register-target", "--variant", String(variant.id), "--work-page", "work", "--season-page", "work", "--spec-page", "spec", "--episode-page", "episode", "--json"], dir);
+    assert.equal(normalizedSeason.status, 0, normalizedSeason.stderr);
+    assert.equal(JSON.parse(normalizedSeason.stdout).season_page_id, "");
+
     const qc = run(["--db", dbPath, "record-qc", "--variant", String(variant.id), "--pass", "--output-path", "out.mp4", "--output-size", "1000", "--json"], dir);
     assert.equal(qc.status, 0, qc.stderr);
     assert.equal(JSON.parse(qc.stdout).production_state, "qc_passed");

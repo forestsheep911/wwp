@@ -37,7 +37,30 @@ Biographies are multilingual evidence, not one translated blob. `Biography ZH` a
 4. Set `Biography ZH Method` to `editorial-rewrite`. Keep `source-summary`, `source-excerpt`, or `machine-translation` for unfinished material only.
 5. Set `Biography ZH Status=verified` only after the rewritten text has at least two independent source families recorded. Otherwise keep it `partial`. `Data Status` continues to describe the completeness of the whole person profile independently.
 
-The Notion sync enforces this gate. If `Biography ZH Status` claims `verified` while the Chinese biography is not marked `editorial-rewrite` or has fewer than two independent source families, the biography remains `provisional` and a `biography_verification_incomplete` issue is published for review. The profile's overall `Data Status` is not silently changed. Empty `Biography ZH` values do not block verification of unrelated person fields.
+The Notion sync enforces this gate. If `Biography ZH Status` claims `verified` while the Chinese biography is not marked `editorial-rewrite` or has fewer than two independent source families, the biography remains `provisional` and a `biography_verification_incomplete` issue is published for review. The profile's overall runtime status is recalculated from the explicit core checklist below. Empty `Biography ZH` values do not block verification of unrelated person fields, but they do keep the core profile incomplete.
+
+Reader-facing biographies are person-centred career summaries, not WWP credit
+audits. Do not mention that a relationship was checked, that text was rewritten
+from sources, or that the person appears in the current WWP holdings. Cover the
+career arc, important collaborations, representative works, contribution or
+artistic character, and only precise supported awards. The quality gate rejects
+the retired workflow-template phrases in both Chinese and English.
+
+`Data Status=verified` now has a concrete core meaning: at least one stable
+external identity, verified Chinese and English names, a verified department,
+and verified bilingual editorial biographies backed by two independent source
+families, with no identity conflict. Portrait, exact dates, birthplace, native
+name, additional aliases, education, and detailed awards are enhancements and
+do not keep an otherwise verified core profile permanently partial. This is an
+editorial/admin status and is not shown on the public person page.
+
+### Public person metadata
+
+The person page may show exact or partial birth/death dates, a simplified-Chinese birthplace, a distinct original name, portrait, and stable TMDB/IMDb/Wikidata links. Every value is optional and unsupported rows are omitted. Dates preserve source precision: a known year must never be expanded into an invented month or day.
+
+Primary departments remain the public career labels and are not repeated as a separate occupation row. Aliases remain backend search evidence until they have been deduplicated, language-labelled, and checked for simplified-Chinese suitability. Provider popularity, gender inferred from presentation, and an external provider's full filmography are not public WWP metadata. The works section continues to mean only titles actually held by WWP.
+
+TMDB is a useful structured-data lead, not a sole verifier for disputed biographical facts. Cross-check material claims against another independent source family, record all useful URLs in `Sources`, and refresh provider-derived cached facts within the provider's allowed retention period. The website carries TMDB attribution in its help/credits area.
 
 ## Safe commands
 
@@ -129,7 +152,7 @@ The successful checkpoint and latest secret-safe report are stored under `WWPDW_
 ## Editorial rules
 
 - Lock `Chinese Name`, `English Name`, `Original Name`, `Biography ZH`, `Biography EN`, or `Profile URL` in Notion before making a manual correction that enrichment must preserve.
-- Keep the Chinese and English biographies independently sourced. A missing Chinese biography may fall back to English on the website, but an automatic translation must not be marked verified without review.
+- Keep the Chinese and English biographies independently sourced. The fixed Chinese website never falls back to English; a missing Chinese biography renders a short pending placeholder. English remains available in Notion/catalog, and an automatic translation must not be marked verified without review.
 - Use Douban as a fact lead, not as publishable biography copy. A verified biography must be backed by at least two independent source families recorded as separate URLs or stable IDs in the shared `Sources` field.
 - `Hide from Website` and `Developer Memo` are always editor-owned.
 - A formal public Chinese name must be `verified` or entity-linked `strong`. Generated transliterations stay `provisional`.

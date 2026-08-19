@@ -82,7 +82,8 @@ test("downgrades a claimed verified Chinese biography until cross-source rewrite
   })]);
   const profile = plan.nextCatalog.people[personId].profile;
   const chineseBiography = profile.biography?.texts?.find((entry) => entry.language === "zh-CN");
-  assert.equal(profile.dataQuality.status, "verified");
+  assert.equal(profile.dataQuality.status, "partial");
+  assert.match(profile.dataQuality.issues?.join(" ") ?? "", /missing_verified_chinese_biography/);
   assert.equal(chineseBiography?.status, "provisional");
   assert.equal(plan.summary.issueCount, 1);
   assert.equal(plan.nextCatalog.issues[0].kind, "biography_verification_incomplete");

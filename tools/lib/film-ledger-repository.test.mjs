@@ -230,6 +230,41 @@ test("completed due metadata maintenance schedules the next review instead of re
   } finally { f.close(); }
 });
 
+test("deferred metadata maintenance stays deferred until its next run time", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "DeferredDue");
+    f.db.prepare("UPDATE works SET next_review_at=? WHERE id=?").run("2026-07-19T00:00:00.000Z", work.id);
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "deferred", {
+      reason: "waiting for a better source",
+      nextRunAt: "2026-08-01T00:00:00.000Z"
+    });
+
+    assert.deepEqual(f.repo.refreshDueMetadataTasks({ now: "2026-07-20T00:00:00.000Z" }), []);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "deferred");
+    assert.equal(f.repo.refreshDueMetadataTasks({ now: "2026-08-02T00:00:00.000Z" }).length, 1);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("deferred metadata tasks requeue from task next_run_at even without work next_review_at", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "TaskOnlyDue");
+    f.db.prepare("UPDATE works SET next_review_at=NULL WHERE id=?").run(work.id);
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "deferred", {
+      reason: "waiting for a better source",
+      nextRunAt: "2026-07-21T00:00:00.000Z"
+    });
+
+    assert.deepEqual(f.repo.refreshDueMetadataTasks({ now: "2026-07-20T00:00:00.000Z" }), []);
+    assert.equal(f.repo.refreshDueMetadataTasks({ now: "2026-07-22T00:00:00.000Z" }).length, 1);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "pending");
+  } finally { f.close(); }
+});
+
 test("null-year works and renamed sources remain idempotent", () => {
   const f = fixture();
   try {
@@ -466,6 +501,28 @@ test("production queue excludes a split collection parent when child sources exi
   } finally { f.close(); }
 });
 
+test("production queue excludes a collection_member container when child sources exist", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Collection Member Season", year: 2025, priorityScore: 70 });
+    const parent = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Season 4",
+      absolutePath: "X:\\queue\\Season 4", fingerprint: "collection-member-parent", sourceKind: "collection_member",
+      qualityState: "acceptable"
+    });
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Season 4\\Episode 01.mkv",
+      absolutePath: "X:\\queue\\Season 4\\Episode 01.mkv", fingerprint: "collection-member-child", sourceKind: "episode_file",
+      qualityState: "acceptable"
+    });
+
+    const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
+    assert.equal(candidates.some((row) => row.source_id === parent.id), false);
+    assert.equal(candidates.some((row) => row.source_id === child.id), true);
+  } finally { f.close(); }
+});
+
 test("production queue prioritizes first-release coverage and keeps completed-work supplements queryable", () => {
   const f = fixture();
   try {
@@ -500,6 +557,28 @@ test("production queue prioritizes first-release coverage and keeps completed-wo
     assert.equal(queue[0].release_covered, 0);
     assert.equal(queue.at(-1).id, supplement.id);
     assert.equal(queue.at(-1).release_covered, 1);
+  } finally { f.close(); }
+});
+
+test("split series folder parent is not offered after child sources are tracked", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queueSeries");
+    const work = f.repo.ensureWork({ canonicalTitle: "Split Series Folder", year: 2025, priorityScore: 70 });
+    const parent = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "TV-EP001-EP101",
+      absolutePath: "X:\\queueSeries\\TV-EP001-EP101", fingerprint: "series-folder-parent", sourceKind: "series_folder",
+      qualityState: "acceptable"
+    });
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "TV-EP001-EP101\\Episode 101.mkv",
+      absolutePath: "X:\\queueSeries\\TV-EP001-EP101\\Episode 101.mkv", fingerprint: "series-folder-child", sourceKind: "episode_file",
+      qualityState: "acceptable"
+    });
+
+    const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
+    assert.equal(candidates.some((row) => row.source_id === parent.id), false);
+    assert.equal(candidates.some((row) => row.source_id === child.id), true);
   } finally { f.close(); }
 });
 

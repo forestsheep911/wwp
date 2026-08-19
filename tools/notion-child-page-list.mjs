@@ -62,7 +62,7 @@ async function walk(notion, blockId, depth, path = []) {
   const blocks = await children(notion, blockId);
   const entries = [];
   for (const block of blocks) {
-    const entry = { id: block.id, type: block.type, title: title(block), path: [...path, `${block.type}:${title(block)}`] };
+    const entry = { id: block.id, type: block.type, title: title(block), ...(block.type === "video" ? { video: block.video } : {}), path: [...path, `${block.type}:${title(block)}`] };
     entries.push(entry);
     if (depth > 0 && block.has_children) entries.push(...await walk(notion, block.id, depth - 1, entry.path));
   }

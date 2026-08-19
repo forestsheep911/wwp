@@ -45,7 +45,8 @@ Give every external request a finite timeout (20 seconds by default), retry at m
 ### 3. Review identity before prose
 
 - Match by stable Wikidata, TMDB, IMDb, or equally strong identity evidence. Never merge by a name alone.
-- Verify simplified Chinese display name, stable English name, original/native name, aliases, dates, and the work relationship.
+- Verify simplified Chinese display name, stable English name, original/native name, aliases, dates, birthplace, external IDs, portrait, and the work relationship. Treat each optional public meta value as a separate factual claim; never infer a missing month, day, place, or native name.
+- Normalize a public birthplace into natural simplified Chinese while retaining the provider value in evidence. Curate and deduplicate aliases before public use; traditional-only, duplicated, transliterated, or language-ambiguous aliases remain backend evidence.
 - Keep generated transliterations provisional. Use the formal, source-supported simplified Chinese name when available.
 - Exclude non-human entities and quarantine conflicting external IDs or ambiguous aliases.
 - Preserve an immutable `person_<uuid>` once allocated; do not manufacture or recycle IDs.
@@ -60,10 +61,16 @@ Require zero unresolved identity conflicts for every profile that will be publis
 
 - Synthesize an original factual English biography from the collected evidence when no authoritative reusable original exists.
 - Translate and edit that mother text into natural simplified Chinese, verifying names, works, institutions, places, awards, and other proper nouns separately.
+- Write about the person's career, not about WWP's database relationship. Establish who the person is, their career arc, important collaborations, representative work, contribution or artistic character, and only precisely verified awards when relevant.
+- Do not enumerate only the works currently held by WWP. The biography must remain useful if WWP adds or removes a linked title.
+- Never publish workflow prose such as “相关作品关系由稳定外部身份记录核对”, “本小传依据资料综合改写”, “linking their profile to the film”, or vague filler such as “与某奖有关的荣誉或提名”. Provenance belongs in source and status fields, not reader-facing prose.
+- Use natural Chinese film titles in Chinese prose and natural English titles in English prose. Do not mechanically append an English title inside every Chinese book-title mark.
 - If an authoritative English text is used as factual input, still avoid copying protected prose; summarize it unless reuse rights clearly allow otherwise.
 - Use Douban as a Chinese research lead, never as the sole verifier or as text to copy.
 - Record 3–4 useful source URLs when available, spanning at least two independent source families. Sources are shared across languages; language status and method remain separate.
 - Mark Chinese biography `verified` only after editorial rewrite and multi-source verification. Never label machine translation as reviewed.
+- Mark the whole person profile `verified` when stable external identity, verified Chinese and English names, at least one verified department, and verified bilingual editorial biographies are all present with no identity conflict. Portrait, exact dates, birthplace, native name, aliases, education, and award detail are valuable enhancements but are not mandatory for core verification.
+- Keep structured person facts independent from biography prose. Publish supported dates, birthplace, original name, portrait, and external IDs even when other optional facts are absent; the website hides missing rows rather than substituting placeholders.
 
 Apply reviewed biography and credit-name edits with `tools/person-biography-review.mjs`. Inspect the resulting report directly before any write.
 
@@ -80,7 +87,7 @@ Never apply an offline diagnostic report or a report containing identity conflic
 3. Apply the same reviewed report to the person catalog and search index.
 4. For production, explicitly set both `PERSON_CATALOG_BACKEND=azure` and `SEARCH_INDEX_BACKEND=azure`; do not trust local `.env` defaults.
 5. Run Notion-to-catalog sync as dry-run, apply, then a fresh dry-run. Require convergence with zero unexpected writes or issues.
-6. Open the live people directory and several changed person routes. Verify biography language, roles, deduplicated works, reverse lookup, desktop layout, and mobile layout.
+6. Open the live people directory and several changed person routes. Verify the simplified-Chinese biography, optional meta rows, external source links, roles, deduplicated works, reverse lookup, desktop layout, and mobile layout. English biography remains in Notion/catalog and is not rendered on the fixed Chinese website.
 
 The production `job-ww-people-index` later carries safe Notion edits for known
 people into Azure. It does not replace reviewed first publication, create an

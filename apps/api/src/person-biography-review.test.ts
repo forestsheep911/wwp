@@ -13,7 +13,7 @@ const profile: PersonProfile = {
   updatedAt: "2026-08-01T00:00:00Z"
 };
 
-test("adds a verified editorial Chinese biography without promoting the whole profile", () => {
+test("keeps the profile partial until all core identity fields are verified", () => {
   const report = applyReviewedChineseBiographies({ proposedProfiles: [profile] }, [{
     personId: profile.personId,
     chineseName: "新名",
@@ -28,6 +28,25 @@ test("adds a verified editorial Chinese biography without promoting the whole pr
   assert.equal(next.biography?.texts?.[1].language, "en");
   assert.equal(next.biography?.texts?.[1].status, "verified");
   assert.equal(next.dataQuality.status, "partial");
+  assert.match(next.dataQuality.issues?.join(" ") ?? "", /missing_stable_external_id/);
+});
+
+test("promotes a fully reviewed core profile without requiring optional portrait or dates", () => {
+  const complete = {
+    ...profile,
+    externalIds: { wikidata: "Q1" },
+    departments: ["acting" as const]
+  };
+  const report = applyReviewedChineseBiographies({ proposedProfiles: [complete] }, [{
+    personId: profile.personId,
+    chineseName: "新名",
+    englishName: "New Name",
+    biographyZh: "这是一段以人物生涯、主要合作和代表作品为中心的原创中文小传。",
+    biographyEn: "This is an original person-centred biography covering a career, major collaborations, and representative work.",
+    sourceRefs: ["https://movie.douban.com/celebrity/1/", "https://www.wikidata.org/wiki/Q1"]
+  }], "2026-08-11T00:00:00Z");
+  assert.equal(report.proposedProfiles[0].dataQuality.status, "verified");
+  assert.deepEqual(report.proposedProfiles[0].dataQuality.issues, undefined);
 });
 
 test("rejects a single-source biography review", () => {

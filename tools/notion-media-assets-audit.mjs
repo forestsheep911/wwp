@@ -25,7 +25,8 @@ function parseArgs() {
     reportPath: ".local-data/notion-media-assets-audit.json",
     limitPerQuery: 2,
     maxSpecsPerPage: 80,
-    resolveIp: ""
+    resolveIp: "",
+    noProxy: false
   };
 
   const args = process.argv.slice(2);
@@ -38,6 +39,7 @@ function parseArgs() {
     else if (name === "--limit-per-query") options.limitPerQuery = Number(value());
     else if (name === "--max-specs-per-page") options.maxSpecsPerPage = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -60,7 +62,7 @@ This is read-only. It inspects representative Notion work pages and proposes
 candidate Media Assets rows for playable specs and source/original-disc pages.
 
 Network workaround:
-  node tools/notion-media-assets-audit.mjs --resolve-ip 208.103.161.1
+  node tools/notion-media-assets-audit.mjs --resolve-ip 208.103.161.1 --no-proxy
 `);
 }
 
@@ -91,8 +93,8 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token) {
-  const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
+function createNotionClient(token, noProxy = false) {
+  const proxyUrl = noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
   if (proxyUrl) {
     options.fetch = nodeFetch;
@@ -473,7 +475,7 @@ async function main() {
   const token = dotenv("NOTION_READ_ONLY_TOKEN") || dotenv("NOTION_TOKEN") || dotenv("NOTION_WRITE_TOKEN");
   if (!token) throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_TOKEN, or NOTION_WRITE_TOKEN.");
 
-  const notion = createNotionClient(token);
+  const notion = createNotionClient(token, options.noProxy);
   const dataSource = await loadMainDataSource(notion);
   const seen = new Set();
   const pages = [];

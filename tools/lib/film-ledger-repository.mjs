@@ -208,7 +208,13 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       priorityScore: work.priority_score,
       reason: "Work-level metadata should be checked independently of playable media readiness"
     });
-    if (work.next_review_at && work.next_review_at <= timestamp()) {
+    const metadataTask = db.prepare("SELECT status, next_run_at FROM workflow_tasks WHERE task_key=?")
+      .get(`metadata:work:${work.id}`);
+    const metadataDeferredUntil = metadataTask?.status === "deferred" && metadataTask.next_run_at
+      ? metadataTask.next_run_at
+      : null;
+    if (work.next_review_at && work.next_review_at <= timestamp()
+      && (!metadataDeferredUntil || metadataDeferredUntil <= timestamp())) {
       requeueMetadataTask(work.id, { reason: "Scheduled work-level metadata maintenance is due" });
     }
     return work;
@@ -637,14 +643,17 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         -- parent directory for production again; its child files are the
         -- real production candidates.
         AND NOT (
-          sources.source_kind IN ('collection', 'season_member')
+          sources.source_kind IN ('collection', 'collection_member', 'season_member', 'series_folder')
           AND EXISTS (
             SELECT 1
             FROM sources AS child_sources
             WHERE child_sources.id <> sources.id
               AND child_sources.input_root_id=sources.input_root_id
               AND child_sources.work_id=sources.work_id
-              AND child_sources.relative_path LIKE sources.relative_path || char(92) || '%'
+              AND (
+                child_sources.relative_path LIKE sources.relative_path || char(92) || '%'
+                OR child_sources.absolute_path LIKE sources.absolute_path || char(92) || '%'
+              )
           )
         )
         AND NOT EXISTS (
@@ -768,14 +777,33 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .all(...values, normalizeLimit(limit, 3, 3));
   }
 
-    function refreshDueMetadataTasks({ now = timestamp(), limit = 20 } = {}) {
-    const dueWorks = db.prepare(`SELECT works.id, works.priority_score
+  function refreshDueMetadataTasks({ now = timestamp(), limit = 20 } = {}) {
+    const dueWorks = db.prepare(`SELECT works.id, works.priority_score,
+        'Scheduled catalog maintenance is due' AS reason
       FROM works
       WHERE works.next_review_at IS NOT NULL AND works.next_review_at <= ?
-      ORDER BY works.priority_score DESC, works.next_review_at ASC
-      LIMIT ?`).all(now, normalizeLimit(limit, 1, 20));
-    return dueWorks.map((work) => requeueMetadataTask(work.id, {
-      reason: "Scheduled catalog maintenance is due",
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_tasks
+          WHERE workflow_tasks.task_key = 'metadata:work:' || works.id
+            AND workflow_tasks.status = 'deferred'
+            AND workflow_tasks.next_run_at IS NOT NULL
+            AND workflow_tasks.next_run_at > ?
+        )
+      UNION ALL
+      SELECT workflow_tasks.work_id AS id,
+        COALESCE(workflow_tasks.priority_score, works.priority_score) AS priority_score,
+        'Deferred metadata review is due' AS reason
+      FROM workflow_tasks
+      JOIN works ON works.id=workflow_tasks.work_id
+      WHERE workflow_tasks.task_type='metadata_backfill'
+        AND workflow_tasks.status='deferred'
+        AND workflow_tasks.next_run_at IS NOT NULL
+        AND workflow_tasks.next_run_at <= ?`).all(now, now, now);
+    const uniqueDueWorks = [...new Map(dueWorks.map((work) => [work.id, work])).values()]
+      .sort((left, right) => (right.priority_score - left.priority_score) || (left.id - right.id))
+      .slice(0, normalizeLimit(limit, 1, 20));
+    return uniqueDueWorks.map((work) => requeueMetadataTask(work.id, {
+      reason: work.reason,
       priorityScore: work.priority_score
     }));
   }

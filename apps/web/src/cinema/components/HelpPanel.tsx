@@ -161,6 +161,22 @@ function HelpHome() {
           {copy.help.flowBody}
         </p>
       </section>
+
+      <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/72 p-4 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-center sm:rounded-lg">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-100">{copy.help.sourcesTitle}</h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{copy.help.sourcesBody}</p>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">{copy.help.tmdbNotice}</p>
+        </div>
+        <a
+          className="justify-self-start rounded-md p-2 transition hover:bg-slate-900 sm:justify-self-end"
+          href="https://www.themoviedb.org"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <img className="h-auto w-40" src="/tmdb-logo.svg" alt="TMDB" />
+        </a>
+      </section>
     </div>
   );
 }

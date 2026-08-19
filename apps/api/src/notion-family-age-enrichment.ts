@@ -24,6 +24,7 @@ interface FamilyAgeOptions {
   databaseId?: string;
   rootPageId?: string;
   candidateCache?: string;
+  planPath?: string;
   writeCandidateCache?: string;
   progressPath: string;
   failureProgressPath: string;
@@ -160,6 +161,7 @@ function parseArgs(): FamilyAgeOptions {
     databaseId: extractNotionId(value("--database-id", "")) ?? undefined,
     rootPageId: extractNotionId(value("--root-page-id", "")) ?? undefined,
     candidateCache: value("--candidate-cache", "").trim() || undefined,
+    planPath: value("--plan", "").trim() || undefined,
     writeCandidateCache: value("--write-candidate-cache", "").trim() || undefined,
     progressPath: value("--progress", ".local-data/notion-family-age-progress.jsonl").trim(),
     failureProgressPath: value("--failure-progress", ".local-data/notion-family-age-failures.jsonl").trim()
@@ -509,14 +511,29 @@ function isLegacyPageTitle(title: string) {
   return /\[(?:旧媒体承载页|旧重复条目|旧错误结构)[^\]]*\]/u.test(title);
 }
 
-async function planPage(page: JsonRecord, refresh = false): Promise<PagePlan> {
+async function loadAiPlan(planPath?: string) {
+  if (!planPath) return new Map<string, FamilyAgePayload>();
+  const parsed = JSON.parse(await readFile(planPath, "utf8")) as JsonRecord;
+  const entries = asArray(parsed.sample);
+  const plan = new Map<string, FamilyAgePayload>();
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    const pageId = asString(record?.pageId);
+    const ai = normalizeAiPayload(record?.ai);
+    if (pageId && ai) plan.set(pageId, ai);
+  }
+  if (plan.size === 0) throw new Error(`AI plan has no valid page plans: ${planPath}`);
+  return plan;
+}
+
+async function planPage(page: JsonRecord, refresh = false, aiPlan = new Map<string, FamilyAgePayload>()): Promise<PagePlan> {
   const properties = asRecord(page.properties) ?? {};
   const title = titleFromProperties(properties);
   const pageId = asString(page.id);
   if (!refresh && !pageNeedsFamilyAge(properties)) {
     return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
   }
-  const ai = await askFamilyAgeModel(title, properties);
+  const ai = aiPlan.get(pageId) ?? await askFamilyAgeModel(title, properties);
   const updates = {
     "AI建议最低年龄": pagePropertyValue("AI建议最低年龄", ai.minimumAge),
     "AI年龄建议置信度": pagePropertyValue("AI年龄建议置信度", ai.confidence),
@@ -563,6 +580,7 @@ async function main() {
   const library = options.candidateCache
     ? await loadCachedLibrary(options.candidateCache)
     : await loadLibrary(notion, options);
+  const aiPlan = await loadAiPlan(options.planPath);
   const completedPageIds = await readProgress(options.progressPath);
   const failedPageIds = await readProgress(options.failureProgressPath);
   const candidatePages = (await collectPages(notion, library, options)).filter((page) => {
@@ -588,7 +606,7 @@ async function main() {
   let applied = 0;
   for (const page of pages) {
     try {
-      const plan = await planPage(page, options.refresh || Boolean(options.refreshRiskTag));
+      const plan = await planPage(page, options.refresh || Boolean(options.refreshRiskTag), aiPlan);
       plans.push(plan);
       if (plan.skipped) skipped[plan.skipped] = (skipped[plan.skipped] ?? 0) + 1;
       if (options.apply && Object.keys(plan.updates).length > 0) {
@@ -628,6 +646,7 @@ async function main() {
     limit: options.limit,
     maxUpdates: options.maxUpdates,
     candidateSource: options.candidateCache ?? "notion",
+    planPath: options.planPath,
     refreshRiskTag: options.refreshRiskTag,
     candidateCount: candidatePages.length,
     planned: plans.filter((plan) => plan.updateFields.length > 0).length,
