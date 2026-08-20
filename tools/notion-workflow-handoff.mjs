@@ -168,8 +168,19 @@ async function main() {
   if (!token) throw new Error(options.apply ? "NOTION_WRITE_TOKEN or NOTION_TOKEN is required" : "A Notion token is required");
   installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
   const clientOptions = { auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 120000) };
+  let lastRequestStartedAt = 0;
+  let requestQueue = Promise.resolve();
+  clientOptions.fetch = (...args) => {
+    const request = requestQueue.then(async () => {
+      const waitMs = Math.max(0, 1000 - (Date.now() - lastRequestStartedAt));
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastRequestStartedAt = Date.now();
+      return nodeFetch(...args);
+    });
+    requestQueue = request.then(() => undefined, () => undefined);
+    return request;
+  };
   if (options.local_address) {
-    clientOptions.fetch = nodeFetch;
     clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.local_address });
     console.log(`direct local address: ${options.local_address}`);
   }

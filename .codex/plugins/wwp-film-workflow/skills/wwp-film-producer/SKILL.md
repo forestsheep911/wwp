@@ -127,9 +127,18 @@ toggle, callout, or base-like visual containers.
   bytes, but retain its local output, Notion page, and Media Assets history. A
   high-bitrate version must be a new ledger variant with a new spec child page,
   upload filename, and Media Assets row; never overwrite the old variant.
+  For an already completed variant whose measured size or filename was only
+  estimated, use the ledger metadata-correction path; it must preserve
+  `qc_passed`/`sync_ready` and re-reconcile the exact Notion target afterward.
 - Verified finished outputs are moved to `E:\待人工删除` for later human
   deletion. Never place the quarantine directory under `E:\video_made`, and do
   not delete source files or quarantine files as part of normal completion.
+- Moving a source to a same-volume `待人工删除` directory disables routine
+  input-root discovery only. For a known original-audio, dubbed-audio,
+  commentary, subtitle, compact, or higher-bitrate gap, resolve and probe the
+  exact quarantined source from the ledger before declaring the expansion
+  impossible or safe to delete. Quarantine location is not an expansion
+  decision.
 - Each cycle must report all lanes: handoff, intake, metadata maintenance,
   playable production, publication/Media Assets, and source/archive follow-up.
   An empty publication queue or a rate-limited Notion request never ends the
@@ -191,6 +200,7 @@ The cycle may end only after these work areas have been checked and the next bou
 - Before creating any work page, run the multi-alias identity preflight in `../../references/work-title-identity-rules.md`. Search Chinese, English, original, regional, filename/source, season, yearless, and temporary-title forms plus all known external IDs. A weak or noncanonical old title is still an existing work and must be repaired instead of duplicated.
 - Canonicalize work titles from the verified Douban display title when available; otherwise use a verified authoritative fallback and include the foreign/original title and release year. Title cleanup is independent from playable readiness.
 - Spec backfill can be as important as new-film creation when the existing specs are weak.
+- For foreign-language works, treat original-language playable coverage as the baseline and dubbing as supplemental. A completed dubbed branch does not close source expansion while compact original audio, or a justified high-bitrate original branch for a high-value film, remains neither produced nor concretely deferred with a blocker.
 - Metadata collection is not gated by playable readiness. If a scanned work is worth cataloging, create or repair its work-level metadata even when no video is ready to upload.
 - Do not block work-page creation and sourced metadata backfill on video upload readiness. Playable Media Assets rows still require real uploaded/probed media evidence.
 - Avoid root-level manual upload cleanup by preparing the page structure early. Because uploaded media blocks cannot be moved by Notion API, a planned movie encode must have a target spec child page, and a planned series encode must have a target spec page plus Episode child pages, before upload. If the target pages cannot be prepared, do not start automatic upload or invite manual upload yet.

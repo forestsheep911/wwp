@@ -28,7 +28,7 @@ function parse(argv) {
   const positionals = [];
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--season-page", "--spec-page", "--episode-page",
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
-    "--output-path", "--output-size", "--target-size", "--spec-key", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--compact-decision", "--compact-detail",
+    "--output-path", "--output-size", "--target-size", "--spec-key", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail",
     "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
     "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
@@ -302,6 +302,23 @@ async function main() {
       const canonicalId = asId(requireOption(options, "canonical_variant", "--canonical-variant"), "--canonical-variant");
       const variant = repo.mergeDuplicateVariant(duplicateId, canonicalId);
       output(variant, options.json, `merged variant ${duplicateId} into ${canonicalId}`);
+    } else if (command === "correct-variant-metadata") {
+      const variantId = asId(requireOption(options, "variant", "--variant"));
+      if (!options.spec_key && !options.output_spec && !options.audio_variant && !options.subtitle_variant
+        && !options.cut_variant && !options.output_path && !options.output_size && !options.expected_filename) {
+        throw new Error("correct-variant-metadata requires at least one metadata field");
+      }
+      const result = repo.correctVariantMetadata(variantId, {
+        specKey: options.spec_key,
+        displayTitle: options.output_spec,
+        audioVariant: options.audio_variant,
+        subtitleVariant: options.subtitle_variant,
+        cutVariant: options.cut_variant,
+        outputPath: options.output_path,
+        outputSizeBytes: options.output_size == null ? undefined : asId(options.output_size, "--output-size"),
+        expectedFilename: options.expected_filename
+      });
+      output(result, options.json, `corrected variant metadata ${variantId}`);
     } else if (command === "update-source") {
       const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
       const parseJsonOption = (key) => options[key] == null ? undefined : JSON.parse(options[key]);
@@ -417,6 +434,7 @@ async function main() {
         seasonPageId,
         specPageId: requireOption(options, "spec_page", "--spec-page"), episodePageId: options.episode_page,
         expectedFilename: options.expected_filename, mediaBlockId: options.media_block_id,
+        mediaAssetPageId: options.media_asset_page_id,
         replaceExpectedFilename: options.replace_expected_filename === true });
       if (variant.publication_state === "not_ready") repo.transitionPublication(id, "structure_pending", { targetRegistered: true });
       output(target, options.json, `registered Notion target for variant ${id}`);

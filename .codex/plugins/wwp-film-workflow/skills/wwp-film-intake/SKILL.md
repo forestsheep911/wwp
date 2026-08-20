@@ -28,9 +28,10 @@ When one discovered directory contains several independently catalogued seasons,
 3. For each new or changed source, identify the work using filename, folder, season/episode, original-language title, year, and known external IDs.
    If one directory is a collection, box set, multi-disc package, or contains multiple standalone film ISOs, split it into member sources before binding any work. Never bind a collection directory itself to one arbitrary film; each member keeps its own work identity, source evidence, and production decision. Duplicate 2D/3D or alternate-disc members may bind to the same work as separate sources.
    For series, verify the mapped integer span against the canonical external episode count before binding. When files exceed that count, treat the excess as an identity incident requiring a sequel/season/part/extras decision, not as additional episodes of the first matching work.
-4. Search existing Notion coverage through multi-alias identity preflight before creating anything. Preserve possible duplicates for review instead of silently creating a second work page.
-5. Create or repair a work-level metadata task even when playable production is unsuitable, missing subtitles, deferred, or blocked by color/quality risk.
-6. Route the source to one of: metadata-only, production evaluation, source/archive handling, series handling, deferred user decision, or rejected with reason.
+4. Before evaluating subtitles, quality, or bitrate expansion, verify that the source path contains a media payload: a playable video file, a playlist with referenced media, or a complete disc structure. A directory containing only sidecar subtitles, artwork, or release notes is not a source. Record `missing_media_payload` with any discovered subtitle clues and keep it out of production candidates until the media itself returns.
+5. Search existing Notion coverage through multi-alias identity preflight before creating anything. Preserve possible duplicates for review instead of silently creating a second work page.
+6. Create or repair a work-level metadata task even when playable production is unsuitable, missing subtitles, deferred, or blocked by color/quality risk.
+7. Route the source to one of: metadata-only, production evaluation, source/archive handling, series handling, deferred user decision, or rejected with reason.
 
 ## Queue Contract
 

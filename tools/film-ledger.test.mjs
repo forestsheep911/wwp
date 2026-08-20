@@ -438,15 +438,18 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
     assert.equal(JSON.parse(qc.stdout).production_state, "qc_passed");
     assert.equal(JSON.parse(qc.stdout).publication_state, "structure_pending");
 
-    const target = run(["--db", dbPath, "register-target", "--variant", String(variant.id), "--work-page", "work", "--spec-page", "spec", "--episode-page", "episode", "--json"], dir);
+    const target = run(["--db", dbPath, "register-target", "--variant", String(variant.id), "--work-page", "work", "--spec-page", "spec", "--episode-page", "episode", "--media-block-id", "block", "--media-asset-page-id", "asset", "--json"], dir);
     assert.equal(target.status, 0, target.stderr);
     assert.equal(JSON.parse(target.stdout).episode_page_id, "episode");
+    assert.equal(JSON.parse(target.stdout).media_block_id, "block");
+    assert.equal(JSON.parse(target.stdout).media_asset_page_id, "asset");
 
     const show = run(["--db", dbPath, "show", "--variant", String(variant.id), "--json"], dir);
     assert.equal(show.status, 0, show.stderr);
     const shown = JSON.parse(show.stdout);
     assert.equal(shown.variant.publication_state, "structure_pending");
     assert.equal(shown.target.spec_page_id, "spec");
+    assert.equal(shown.target.media_asset_page_id, "asset");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

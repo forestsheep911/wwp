@@ -105,8 +105,19 @@ function installNotionDnsOverride(resolveIp) {
 function createNotionClient(token, localAddress = "", noProxy = false) {
   const proxyUrl = noProxy ? "" : dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  let lastRequestStartedAt = 0;
+  let requestQueue = Promise.resolve();
+  options.fetch = (...args) => {
+    const request = requestQueue.then(async () => {
+      const waitMs = Math.max(0, 1000 - (Date.now() - lastRequestStartedAt));
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastRequestStartedAt = Date.now();
+      return nodeFetch(...args);
+    });
+    requestQueue = request.then(() => undefined, () => undefined);
+    return request;
+  };
   if (localAddress) {
-    options.fetch = nodeFetch;
     options.agent = new https.Agent({ keepAlive: true, localAddress });
     console.log(`direct local address: ${localAddress}`);
   } else if (proxyUrl) {
@@ -118,7 +129,7 @@ function createNotionClient(token, localAddress = "", noProxy = false) {
 }
 
 function plainText(items = []) {
-  return items.map((item) => item.plain_text ?? "").join("").trim();
+  return items.map((item) => item.plain_text ?? item.text?.content ?? "").join("").trim();
 }
 
 function pageTitle(page) {
@@ -503,7 +514,7 @@ async function auditPage(notion, page, maxSpecsPerPage, sourcePageId = "", targe
   // itself rather than its inaccessible work-page parent. Treat direct media
   // on that page as one playable spec while preserving a manifest Work override.
   if (children.some(isPlayableMedia)) {
-    await auditPlayableSpecPage({ id: page.id, child_page: { title } });
+    await auditPlayableSpecPage({ id: page.id, type: "child_page", child_page: { title } });
   }
 
   return {
@@ -737,6 +748,7 @@ async function createAsset(notion, dataSource, candidate) {
 }
 
 const SAFE_REPLACE_EXISTING_FIELDS = new Set([
+  "Name",
   "Display Label",
   "Episode Number",
   "Resolution",
@@ -768,6 +780,7 @@ function normalizeReplaceExistingFields(value, label = "metadata override") {
 
 function propertyMatchesPayload(existingProperty, payload) {
   if (!existingProperty || !payload) return false;
+  if (existingProperty.type === "title") return propertyPlainText(existingProperty) === plainText(payload.title ?? []);
   if (existingProperty.type === "select") return (existingProperty.select?.name ?? "") === (payload.select?.name ?? "");
   if (existingProperty.type === "multi_select") {
     const current = (existingProperty.multi_select ?? []).map((item) => item.name).sort();
@@ -942,6 +955,13 @@ async function processWorkPage(notion, mediaAssetsDataSource, options, workPage,
       if (fields.length > 0) {
         if (options.apply) {
           await notion.pages.update({ page_id: existing.id, properties: patch });
+          const readback = await notion.pages.retrieve({ page_id: existing.id });
+          const mismatches = fields.filter((name) =>
+            !propertyMatchesPayload(readback.properties?.[name], patch[name])
+          );
+          if (mismatches.length > 0) {
+            throw new Error(`Media Assets correction readback failed for ${existing.id}: ${mismatches.join(", ")}`);
+          }
           actions.push({ action: "corrected_existing", pageId: existing.id, candidate, fields });
         } else {
           actions.push({ action: "would_correct_existing", pageId: existing.id, candidate, fields, properties: patch });

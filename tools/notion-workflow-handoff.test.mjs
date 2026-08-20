@@ -37,3 +37,9 @@ test("workflow handoff accepts bounded exact pages for reconciliation", () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("workflow handoff serializes Notion requests at one-second intervals", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /let requestQueue = Promise\.resolve\(\)/);
+  assert.match(source, /1000 - \(Date\.now\(\) - lastRequestStartedAt\)/);
+});

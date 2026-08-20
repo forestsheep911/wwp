@@ -563,6 +563,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         reason: "Recorded Notion target identity changed; previous structure, media, and asset verification is stale.",
         at
       });
+      if (targetChanged && input.mediaAssetPageId != null) {
+        db.prepare("UPDATE notion_targets SET media_asset_page_id=?, updated_at=? WHERE variant_id=?")
+          .run(input.mediaAssetPageId, at, variantId);
+      }
       insertEvent.run("variant", variantId, "notion_target_registered", stableJson(input), at);
       return db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variantId);
     });
@@ -992,12 +996,55 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
+  function correctVariantMetadata(variantId, correction = {}) {
+    return withTransaction(db, () => {
+      const current = getVariant.get(variantId);
+      if (!current) throw new Error(`variant not found: ${variantId}`);
+      const desired = {
+        specKey: correction.specKey ?? current.spec_key,
+        displayTitle: correction.displayTitle ?? current.display_title,
+        audioVariant: correction.audioVariant ?? current.audio_variant,
+        subtitleVariant: correction.subtitleVariant ?? current.subtitle_variant,
+        cutVariant: correction.cutVariant ?? current.cut_variant,
+        outputPath: correction.outputPath ?? current.output_path,
+        outputSizeBytes: correction.outputSizeBytes ?? current.output_size_bytes
+      };
+      const target = db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variantId);
+      const expectedFilename = correction.expectedFilename ?? target?.expected_filename ?? null;
+      const unchanged = desired.specKey === current.spec_key
+        && desired.displayTitle === current.display_title
+        && desired.audioVariant === current.audio_variant
+        && desired.subtitleVariant === current.subtitle_variant
+        && desired.cutVariant === current.cut_variant
+        && desired.outputPath === current.output_path
+        && desired.outputSizeBytes === current.output_size_bytes
+        && expectedFilename === (target?.expected_filename ?? null);
+      if (unchanged) return { row: current, target, applied: false };
+      const at = timestamp();
+      db.prepare(`UPDATE variants SET spec_key=?, display_title=?, audio_variant=?, subtitle_variant=?, cut_variant=?,
+        output_path=?, output_size_bytes=?, updated_at=? WHERE id=?`)
+        .run(desired.specKey, desired.displayTitle, desired.audioVariant, desired.subtitleVariant, desired.cutVariant,
+          desired.outputPath, desired.outputSizeBytes, at, variantId);
+      if (target && correction.expectedFilename != null) {
+        db.prepare("UPDATE notion_targets SET expected_filename=?, updated_at=? WHERE variant_id=?")
+          .run(expectedFilename, at, variantId);
+      }
+      insertEvent.run("variant", variantId, "variant_metadata_corrected", stableJson({
+        from: { specKey: current.spec_key, displayTitle: current.display_title, audioVariant: current.audio_variant,
+          subtitleVariant: current.subtitle_variant, cutVariant: current.cut_variant, outputPath: current.output_path,
+          outputSizeBytes: current.output_size_bytes, expectedFilename: target?.expected_filename ?? null },
+        correction: { ...correction, expectedFilename }
+      }), at);
+      return { row: getVariant.get(variantId), target: db.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variantId), applied: true };
+    });
+  }
+
   return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
-    findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection,
+    findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection, correctVariantMetadata,
     ensureWorkflowTask, requeueMetadataTask, requeueIntakeTask, listWorkflowTasks,
     getWorkflowTaskSummary, refreshDueMetadataTasks, refreshDueIntakeTasks, transitionWorkflowTask,
     recordWorkHandoff, recordWorkHandoffByNotionPage, listWorkHandoffs };

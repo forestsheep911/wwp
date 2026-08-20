@@ -13,11 +13,24 @@
 
 ## Spec Titles
 
-Use positive labels in spec page titles: work title, subtitle/language label, and measured file size. Example movie shape: `Work Title 简英 1.16GB`. For series, default to measured per-episode size or range, for example `Work Title 简英 H.265 0.4-0.6GB/集`; do not use a season total. Use `/合集` only for explicitly approved collection delivery.
+Use one canonical grammar for every newly created or currently touched spec page:
 
-Treat the ordinary theatrical cut as the implicit default. Do not write `theatrical`/`院线版` into `Edition / Version`, spec titles, or display labels when it is the work's only cut. Record and display the theatrical label only when the same work also has a materially different cut such as a director's cut, extended cut, or restored version and the label is needed to distinguish the sibling variants. Non-default cut labels always require explicit source evidence.
+- Movie: `<short work title> [edition when needed] <audio label> <subtitle label> <resolution> <codec> <measured decimal GB>`
+- Series: `<short work/season title> [edition when needed] <audio label> <subtitle label> <resolution> <codec> <measured decimal GB/集 or range/集>`
 
-Do not encode hidden technical truth in title text. Media Assets is the authoritative structured record for codec, duration, resolution, frame rate, audio, subtitle, source lineage, and availability.
+The short work title is the canonical Chinese display title used by the parent work page, without repeating the parent English/original title or year. The parent already owns full work identity; the child title exists to compare playable variants.
+
+Audio is always explicit. Use `<language>原声` for an original-language track, such as `英语原声`, `波斯语原声`, `意大利语原声`, `国语原声`, or `粤语原声`. Use `国配`, `台配`, `粤配`, or another verified regional dub label for dubbed tracks. Do not use ambiguous `中文原声`, bare `英语`, or generic `中文` when the source evidence supports a precise label.
+
+Use one subtitle vocabulary: `简体烧录`, `繁体烧录`, `简英烧录`, `繁英烧录`, or `无字`. A source-burned subtitle still uses the corresponding `烧录` label; source lineage remains in Media Assets and the production manifest. Include measured resolution and codec in every touched title, normally `1080p H.265`, even though Media Assets remains authoritative technical truth. Use the exact final decimal-byte size rounded to two decimal places for movie display, retaining a trailing zero such as `1.60GB`; never use a target estimate or filename residue. Series per-episode values and range endpoints use the same two-decimal display rule.
+
+Example movie titles: `猩球崛起2：黎明之战 英语原声 简体烧录 1080p H.265 4.24GB`, `雷神 国配 简英烧录 1080p H.265 4.41GB`, and `一次别离 波斯语原声 简体烧录 1080p H.265 1.60GB`. Do not put internal tier words such as high/medium/low into the title; measured size expresses the tier.
+
+For series, default to measured per-episode size or range, for example `北斗神拳 日语原声 简体烧录 960p H.265 0.12-0.16GB/集`; do not use a season total. Use `/合集` only for explicitly approved collection delivery.
+
+Treat the ordinary theatrical cut as the implicit default. Do not write `theatrical`/`院线版` into `Edition / Version`, spec titles, or display labels when it is the work's only cut. Record and display the theatrical label only when the same work also has a materially different cut such as a director's cut, extended cut, or restored version and the label is needed to distinguish the sibling variants. When displayed, put the verified edition immediately after the short work title and before the audio label. Non-default cut labels always require explicit source evidence.
+
+Do not encode hidden technical truth in title text. Media Assets is the authoritative structured record for codec, duration, resolution, frame rate, audio, subtitle, source lineage, and availability. For every newly created, renamed, or currently touched spec, its Media Assets `Name` and `Display Label` must both exactly match the canonical spec-page title. A correct spec page paired with an empty or stale Media Assets title is not release-ready; website ingestion may otherwise expose `Untitled Notion page` or an obsolete label.
 
 Title QA is bounded: after a current production, rename, structure-preparation, or manual-upload handoff, check only the exact recent targets recorded for that run, normally at most three. Do not scan the whole Notion library to find historical title mistakes; older untouched specs can wait for a user-directed repair.
 
@@ -35,7 +48,7 @@ Title QA is bounded: after a current production, rename, structure-preparation, 
 - Manual Notion uploads may produce a hosted video/file block with no caption and only an opaque signed URL. Accept it without a filename match only when the ledger points to the exact destination page and that page contains exactly one unnamed media block. Record its block ID immediately. Never use this fallback when multiple unnamed blocks exist or when a named block disagrees with the expected filename.
 - When the writer supports batch manifests, use page IDs and expected-title guards for apply runs. Put ffprobe-confirmed values in the manifest `metadata` object when filename/page parsing would be lossy or ambiguous.
 - For series rows, use the episode-aware writer and pass a metadata manifest when local final-file `ffprobe` data is available. Store `Episode Number` for normal single episodes; store inclusive `Episode End` only for explicitly approved collections. Match overrides by `Media Block ID` when known, otherwise by `Source Page ID` plus original filename.
-- When visual QC or ffprobe proves that an existing generated series asset has a wrong technical value, use `--correct-existing` with exact Media Block IDs and manifest-declared `replaceExistingFields`. Only the writer's technical allowlist may be replaced; Name, Work, Playback Verified, and Hide from Website remain protected. Require a coherent dry-run, apply, direct sample readback, and an idempotent rerun.
+- When visual QC or ffprobe proves that an existing generated asset has a wrong technical value, use an exact Media Block ID and manifest-declared `replaceExistingFields`. Technical fields remain allowlisted. `Name` and `Display Label` may be corrected only together to the exact canonical spec-page title after the same Work relation and Media Block are proven; `Work`, `Playback Verified`, and `Hide from Website` remain protected. Require a coherent dry-run, apply, direct readback, and an idempotent rerun.
 - Run writers in dry-run mode first when available.
 - The ledger reconciler must locate an asset through the exact recorded `Media Block ID` first, then `Source Page ID` as fallback, and validate the work relation locally. Do not depend on a nested `Work AND (Source OR Media Block)` Notion filter, because that compound query can return no rows even when the writer can find the same asset by its trace ID.
 - Apply only after the dry-run matches the intended work/spec/page.

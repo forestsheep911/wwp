@@ -24,3 +24,17 @@ test("full encodes can place intermediate files on a separate temp volume", () =
   assert.match(script, /const tempDir = options\.tempDir/u);
   assert.match(script, /copyFileSync\(part, output\)/u);
 });
+
+test("playable outputs can retain an explicit audio language", () => {
+  assert.match(script, /--audio-language/u);
+  assert.match(script, /language=\$\{options\.audioLanguage\}/u);
+  assert.match(script, /three-letter ISO 639-2 code/u);
+});
+
+test("slow source audio can be encoded separately without truncating copied video", () => {
+  assert.match(script, /--split-audio/u);
+  assert.match(script, /"encode-video-mkv"/u);
+  assert.match(script, /"encode-audio-m4a"/u);
+  assert.match(script, /options\.splitAudio \? "1:a:0" : "0:a:0"/u);
+  assert.doesNotMatch(script.match(/if \(options\.splitAudio\)[\s\S]*?\} else \{/u)?.[0] ?? "", /-shortest/u);
+});

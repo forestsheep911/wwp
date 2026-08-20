@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { validateReleaseCandidate } from "./notion-media-assets-release.mjs";
+
+test("release writer serializes Notion requests at one-second intervals", () => {
+  const source = fs.readFileSync(path.resolve("tools/notion-media-assets-release.mjs"), "utf8");
+  assert.match(source, /let requestQueue = Promise\.resolve\(\)/);
+  assert.match(source, /1000 - \(Date\.now\(\) - lastRequestStartedAt\)/);
+});
 
 function property(type, value) {
   if (type === "select") return { type, select: { name: value } };

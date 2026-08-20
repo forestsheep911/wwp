@@ -2,7 +2,7 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
-## Stable Contract (0.1.28)
+## Stable Contract (0.1.34)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as
@@ -35,7 +35,7 @@ retain the source even after the first release. The local output may move to
 `E:\\待人工删除` after its exact playable evidence is safe, but the source cannot
 move while any linked expansion variant remains open.
 
-The 0.1.28 production policy is release-first coverage. For a newly arrived
+The 0.1.29 production policy is release-first coverage. For a newly arrived
 batch, start one releaseable spec for every eligible work before using the
 constrained encoder for additional specs on an already covered work. Compact is
 the normal fast first release. A definitely planned high tier may be encoded
@@ -225,6 +225,7 @@ playable file, and no Media Assets.
 - For series, normal publication is one playable file per Episode page. Multi-episode collections are opt-in exceptions and must not be produced merely to reduce upload count.
 - A local output/source file is deletable only after the ledger and Notion evidence show that the required asset is already accounted for, or the user explicitly authorizes deletion of that specific class of file.
 - For verified finished outputs approved for cleanup, use `E:\待人工删除` as the default quarantine directory. Keep it outside the production output root: do not place it under `E:\video_made`. Moving to quarantine is not final deletion and does not itself authorize deletion.
+- A source moved to a same-volume `待人工删除` directory exits normal input-root scanning, but it does not lose expansion value. Before final human deletion or when repairing a known spec gap, resolve the exact quarantined source from the ledger and recheck useful original audio, dubbed audio, commentary, subtitle, compact, and higher-bitrate branches. Directory placement alone must never close or cancel a supplemental variant.
 
 ## Stop condition
 

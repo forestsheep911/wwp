@@ -43,6 +43,7 @@ function printHelp() {
   console.log(`Usage:
   node tools/notion-media-assets-release.mjs --manifest .local-data/release.json
   node tools/notion-media-assets-release.mjs --manifest .local-data/release.json --apply --report .local-data/release-apply.json
+  node tools/notion-media-assets-release.mjs --manifest .local-data/release.json --release-work-page <work-page-id> --apply
 
 The manifest must identify every Media Assets page and its expected Work, source
 page, media block, episode, resolution, codec, container, and decimal-GB size.
@@ -53,7 +54,7 @@ after all evidence matches and verifies the updated row by direct readback.
 Network workaround:
   --resolve-ip <api-ip> --local-address <lan-ip>
 
-Use --release-work-page only after every manifest item has passed its exact
+Pass the exact Work page ID to --release-work-page only after every manifest item has passed its exact
 Media Assets readback. It releases the matching work page after confirming all
 items belong to that page and the work has no Human Issue.`);
 }
@@ -241,8 +242,19 @@ async function main() {
   const auth = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN") || dotenv("NOTION_API_KEY");
   if (!auth) throw new Error("NOTION_WRITE_TOKEN, NOTION_TOKEN, or NOTION_API_KEY is required.");
   const clientOptions = { auth, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  let lastRequestStartedAt = 0;
+  let requestQueue = Promise.resolve();
+  clientOptions.fetch = (...args) => {
+    const request = requestQueue.then(async () => {
+      const waitMs = Math.max(0, 1000 - (Date.now() - lastRequestStartedAt));
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastRequestStartedAt = Date.now();
+      return nodeFetch(...args);
+    });
+    requestQueue = request.then(() => undefined, () => undefined);
+    return request;
+  };
   if (options.localAddress) {
-    clientOptions.fetch = nodeFetch;
     clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
     console.log(`direct local address: ${options.localAddress}`);
   }

@@ -7,7 +7,8 @@ import { spawnSync } from "node:child_process";
 function usage() {
   console.log(`Usage:
   node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none>
-    [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-loudnorm]
+    [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-language <code>] [--audio-loudnorm]
+    [--split-audio]
     [--start <seconds>] [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
     [--max-bytes <bytes>] [--temp-dir <directory>] [--scale <width>x<height>] [--tone-map-sdr]
     [--tone-map-libplacebo]
@@ -17,6 +18,9 @@ absolute ffprobe stream index. Use "none" when subtitles are already burned into
 the source video. Use --subtitle-file for ASS/SSA/SRT text subtitles; this routes through
 the text-subtitle filter instead of the bitmap-subtitle overlay path. The encoder writes an MKV work
 file first, then stream-copy remuxes it to MP4 with hvc1 after the encode succeeds.
+Use --split-audio when decoding the selected source audio in the video pipeline
+causes severe slowdown. It encodes the complete video and audio independently,
+then muxes both without -shortest so the video stream is never truncated.
 Use --tone-map-sdr only for a source confirmed to be HDR or Dolby Vision. It converts
 the video to BT.709 before NVENC encoding; ordinary SDR sources must not use it.
 Use --tone-map-libplacebo with a libplacebo-enabled FFmpeg build for Dolby Vision
@@ -25,17 +29,18 @@ Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLoudnorm: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false };
+  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLanguage: null, audioLoudnorm: false, splitAudio: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--audio-loudnorm") options.audioLoudnorm = true;
+    else if (arg === "--split-audio") options.splitAudio = true;
     else if (arg === "--tone-map-sdr") options.toneMapSdr = true;
     else if (arg === "--tone-map-libplacebo") {
       options.toneMapSdr = true;
       options.toneMapLibplacebo = true;
     }
-    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--start", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
+    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       const key = arg.slice(2).replaceAll("-", "_");
@@ -54,6 +59,7 @@ function parseArgs(argv) {
   options.tempDir = options.temp_dir == null ? null : path.resolve(options.temp_dir);
   options.audioStream = options.audio_stream == null ? 0 : Number(options.audio_stream);
   options.audioChannels = options.audio_channels == null ? null : Number(options.audio_channels);
+  options.audioLanguage = options.audio_language == null ? null : String(options.audio_language).toLowerCase();
   options.start = options.start == null ? null : Number(options.start);
   options.duration = options.duration == null ? null : Number(options.duration);
   options.cq = options.cq == null ? 26 : Number(options.cq);
@@ -72,6 +78,9 @@ function parseArgs(argv) {
   }
   if (options.videoBitrate != null && !/^\d+(?:\.\d+)?[kKmMgG]$/.test(options.videoBitrate)) {
     throw new Error("--video-bitrate must be a value such as 3700k or 4M");
+  }
+  if (options.audioLanguage != null && !/^[a-z]{3}$/u.test(options.audioLanguage)) {
+    throw new Error("--audio-language must be a three-letter ISO 639-2 code such as eng or zho");
   }
   if (options.duration != null && (!Number.isFinite(options.duration) || options.duration <= 0)) {
     throw new Error("--duration must be a positive number");
@@ -176,9 +185,10 @@ function main() {
   fs.mkdirSync(tempDir, { recursive: true });
   const base = path.join(tempDir, path.basename(output, ".mp4"));
   const work = `${base}.work.mkv`;
+  const audioWork = `${base}.work-audio.m4a`;
   const part = `${base}.part.mp4`;
   const extractedSubtitle = `${base}.embedded-subtitle.srt`;
-  for (const file of [work, part, extractedSubtitle]) fs.rmSync(file, { force: true });
+  for (const file of [work, audioWork, part, extractedSubtitle]) fs.rmSync(file, { force: true });
   assertOutputSpace(tempDir, options.maxBytes * 2 + 512 * 1024 * 1024, options.duration);
   if (path.dirname(output).toLowerCase() !== tempDir.toLowerCase()) {
     assertOutputSpace(path.dirname(output), options.maxBytes + 512 * 1024 * 1024, options.duration);
@@ -250,7 +260,7 @@ function main() {
     ]),
     ...(options.audioLoudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [])
   ];
-  run(options.ffmpeg, [
+  const sharedInputArgs = [
     "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
     // Bitmap subtitle scaling/overlay and HDR tone mapping are CPU filter
     // stages even when decode and NVENC run on CUDA. Without explicit filter
@@ -260,18 +270,40 @@ function main() {
     ...(gpuHdrPreScale ? ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] : []),
     ...seekArgs, "-i", input,
     ...durationArgs,
-    ...videoArgs, "-map", `0:a:${options.audioStream}`,
+    ...videoArgs
+  ];
+  const videoEncodeArgs = [
+    ...sharedInputArgs,
     "-c:v", "hevc_nvenc", "-preset", "p5", ...rateArgs,
-    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", ...audioArgs,
-    ...(options.duration == null ? ["-shortest"] : []), work
-  ], "encode-mkv");
+    "-pix_fmt", "yuv420p"
+  ];
+  if (options.splitAudio) {
+    run(options.ffmpeg, [...videoEncodeArgs, "-an", work], "encode-video-mkv");
+    run(options.ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
+      ...seekArgs, "-i", input, ...durationArgs, "-map", `0:a:${options.audioStream}`, "-vn",
+      "-c:a", "aac", "-b:a", "256k", ...audioArgs,
+      ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
+      audioWork
+    ], "encode-audio-m4a");
+  } else {
+    run(options.ffmpeg, [
+      ...videoEncodeArgs, "-map", `0:a:${options.audioStream}`,
+      "-c:a", "aac", "-b:a", "256k", ...audioArgs,
+      ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
+      ...(options.duration == null ? ["-shortest"] : []), work
+    ], "encode-mkv");
+  }
 
   run(options.ffmpeg, [
     "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y", "-i", work,
+    ...(options.splitAudio ? ["-i", audioWork] : []),
     // Keep only the playable video/audio streams. Text-subtitle filters can
     // leave an auxiliary data stream in the MKV work file; copying all streams
     // into MP4 makes browser probing noisy and can trigger timestamp warnings.
-    "-map", "0:v:0", "-map", "0:a:0", "-dn", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", "-tag:v", "hvc1", "-movflags", "+faststart", part
+    "-map", "0:v:0", "-map", options.splitAudio ? "1:a:0" : "0:a:0", "-dn", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", "-tag:v", "hvc1",
+    ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
+    "-movflags", "+faststart", part
   ], "remux-mp4");
 
   const size = fs.statSync(part).size;
@@ -285,9 +317,10 @@ function main() {
     fs.rmSync(part, { force: true });
   }
   fs.rmSync(work, { force: true });
+  fs.rmSync(audioWork, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLoudnorm: options.audioLoudnorm, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
+  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
 }
 
 try {

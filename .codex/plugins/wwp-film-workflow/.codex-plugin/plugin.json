@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.28",
+  "version": "0.1.34",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"

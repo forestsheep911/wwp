@@ -54,6 +54,14 @@ Raise priority for:
 - existing works that have only high-bitrate files but lack a compact 1.0-1.8GB-ish playable for easier streaming
 - newly arrived input-directory entries detected by a queue watcher, after they pass the same subtitle, quality, Notion-state, and risk gates
 
+## Original-Audio Baseline
+
+- For a foreign-language work, the verified original-language audio branch is the normal playable baseline. A dubbed branch is supplemental and never substitutes for an omitted original-language branch.
+- Apply the Chinese-subtitle hard gate to that original-language branch. When the source and Chinese-subtitle evidence pass, select or explicitly defer a compact original-audio variant before expanding dubbed variants.
+- For a high-value foreign film whose source materially supports a higher-bitrate version, evaluate and normally select a higher-bitrate original-audio variant before an equivalent dubbed high-bitrate expansion. A dubbed higher-bitrate variant may still be valuable, but it must not be the only higher-bitrate branch without a recorded blocker for the original audio.
+- Children's, animation, and family works may produce Mandarin early for accessibility, but the original-language branch remains part of the same source-expansion decision when usable Chinese subtitles exist.
+- Record the exact blocker when original audio cannot proceed, such as missing Chinese subtitles, bad color, failed QC, unavailable source stream, or materially duplicate existing coverage. Do not silently close the source merely because a dubbed playable already exists.
+
 ## Mandarin-Dub Decision
 
 - Default to producing a verified Mandarin-dubbed spec for children's, animation, and family works when the normal source, QC, duplicate, capacity, and upload gates pass.

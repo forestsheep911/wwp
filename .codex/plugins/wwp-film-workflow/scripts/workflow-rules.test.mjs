@@ -32,6 +32,44 @@ test("the exception does not waive subtitles for foreign-original-audio playback
   assert.match(acquirer, /foreign-\s*original-audio branch/u);
 });
 
+test("foreign films prioritize original audio before dubbed expansion", () => {
+  const decisionRules = read("references/decision-rules.md");
+  const selector = read("skills/wwp-film-candidate-selector/SKILL.md");
+  const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+
+  assert.match(decisionRules, /original-language audio branch is the normal playable baseline/u);
+  assert.match(decisionRules, /higher-bitrate original-audio variant before an equivalent dubbed high-bitrate expansion/u);
+  assert.match(selector, /dubbed release may improve accessibility, but it does not satisfy or close original-audio coverage/u);
+  assert.match(encoder, /dubbed high tier may coexist but cannot silently replace it/u);
+  assert.match(producer, /completed dubbed branch does not close source expansion/u);
+});
+
+test("touched spec titles use one explicit factual grammar", () => {
+  const notionRules = read("references/notion-media-assets.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+
+  assert.match(notionRules, /<short work title> \[edition when needed\] <audio label> <subtitle label> <resolution> <codec> <measured decimal GB>/u);
+  assert.match(notionRules, /Use `<language>原声` for an original-language track/u);
+  assert.match(notionRules, /`简体烧录`, `繁体烧录`, `简英烧录`, `繁英烧录`, or `无字`/u);
+  assert.match(notionRules, /rounded to two decimal places for movie display, retaining a trailing zero/u);
+  assert.match(notionRules, /put the verified edition immediately after the short work title and before the audio label/u);
+  assert.match(notionRules, /Do not put internal tier words such as high\/medium\/low into the title/u);
+  assert.match(publisher, /short canonical Chinese work title, explicit original\/dubbed audio label/u);
+  assert.match(publisher, /normalize every touched sibling spec to the same token order/u);
+});
+
+test("touched spec titles stay synchronized with Media Assets labels", () => {
+  const notionRules = read("references/notion-media-assets.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+
+  assert.match(notionRules, /Media Assets `Name` and `Display Label` must both exactly match the canonical spec-page title/u);
+  assert.match(notionRules, /website ingestion may otherwise expose `Untitled Notion page`/u);
+  assert.match(notionRules, /`Name` and `Display Label` may be corrected only together/u);
+  assert.match(publisher, /both fields must exactly equal the canonical spec-page title/u);
+  assert.match(publisher, /require direct readback and an idempotent rerun/u);
+});
+
 test("plugin revision records the updated subtitle gate contract", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   const cycle = read("references/workflow-cycle.md");
@@ -82,6 +120,51 @@ test("expansion marker uses concrete ledger variants instead of a new Notion pro
   assert.match(selector, /human-visible marker, not a new Notion property/u);
   assert.match(handoff, /supplemental work does not keep a verified first release hidden/u);
   assert.match(publisher, /exact selected\/deferred ledger variants remain the queryable machine queue/u);
+});
+
+test("quarantined sources retain explicit expansion value", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(producer, /Moving a source to a same-volume `待人工删除` directory disables routine\s+input-root discovery only/u);
+  assert.match(producer, /Quarantine location is not an expansion\s+decision/u);
+  assert.match(cycle, /Directory placement alone must never close or cancel a supplemental variant/u);
+});
+
+test("compact derivation verifies burned subtitle pixels before inheriting labels", () => {
+  const encoding = read("references/encoding-rules.md");
+  const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+
+  assert.match(encoding, /sample real dialogue frames from the parent and identify the visible Chinese script/u);
+  assert.match(encoding, /correct the parent spec, parent Media Asset, ledger variant, and the planned compact variant/u);
+  assert.match(encoder, /Do not inherit `简`\/`繁`\/bilingual labels from filenames, old spec titles, or ledger text/u);
+});
+
+test("audio-only variants reuse an exact visual parent and remain below the upload cap", () => {
+  const encoding = read("references/encoding-rules.md");
+  const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+
+  assert.match(encoding, /same cut, complete duration, framing, resolution, color\/tone-map result, and burned-subtitle pixels/u);
+  assert.match(encoding, /never use `-shortest`/u);
+  assert.match(encoding, /project the replacement audio bytes from duration and target bitrate before mux/u);
+  assert.match(encoder, /direct decoding of a source track such as TrueHD makes the full video pipeline slow/u);
+  assert.match(encoder, /verify that the copied video duration and packet hash match the parent/u);
+});
+
+test("large upload retries preserve accepted parts and bind the physical direct route", () => {
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+
+  assert.match(publisher, /retry the same resumable manifest with `--resolve-ip <api-ip> --local-address <physical-lan-ip> --no-proxy`/u);
+  assert.match(publisher, /Previously accepted multipart parts must be reused/u);
+  assert.match(publisher, /retain concurrency 1/u);
+});
+
+test("unproduced useful audio branches keep a source out of cleanup", () => {
+  const archive = read("skills/wwp-source-archive-operator/SKILL.md");
+
+  assert.match(archive, /Completing original-audio high\/compact variants does not exhaust a source/u);
+  assert.match(archive, /Mandarin, Taiwan Mandarin, Cantonese, or commentary branch/u);
+  assert.match(archive, /Keep the source and record the remaining branch/u);
 });
 
 test("metadata task completion requires exact core and poster evidence", () => {

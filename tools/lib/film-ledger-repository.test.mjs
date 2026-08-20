@@ -648,9 +648,11 @@ test("Notion target upsert preserves verification for the same target and invali
     assert.equal(target.work_page_id, "w");
     assert.equal(target.structure_verified_at, "2026-07-11T00:00:00.000Z");
     assert.deepEqual(f.repo.listPublicationCandidates({ limit: 3 }), []);
-    f.repo.registerNotionTarget(variant.id, { workPageId: "w2", specPageId: "s2" });
+    f.repo.registerNotionTarget(variant.id, { workPageId: "w2", specPageId: "s2", mediaBlockId: "b2", mediaAssetPageId: "a2" });
     const replaced = f.db.prepare("SELECT * FROM notion_targets WHERE variant_id = ?").get(variant.id);
     assert.equal(replaced.structure_verified_at, null);
+    assert.equal(replaced.media_block_id, "b2");
+    assert.equal(replaced.media_asset_page_id, "a2");
     assert.equal(replaced.next_check_at, "2026-07-12T00:00:00.000Z");
     assert.equal(f.repo.listPublicationCandidates({ limit: 3 })[0].id, variant.id);
   } finally { f.close(); }

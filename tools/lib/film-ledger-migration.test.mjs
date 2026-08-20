@@ -125,6 +125,34 @@ test("review correction can repair the display title and subtitle variant idempo
   } finally { f.close(); }
 });
 
+test("completed variant metadata correction keeps audio and subtitle facts aligned", () => {
+  const f = fixture();
+  try {
+    const work = f.repo.ensureWork({ canonicalTitle: "Aligned facts", year: 2025, workType: "movie" });
+    const variant = f.repo.ensureVariant({
+      workId: work.id,
+      specKey: "old",
+      displayTitle: "Old title",
+      audioVariant: "English",
+      subtitleVariant: "Traditional"
+    });
+    const first = f.repo.correctVariantMetadata(variant.id, {
+      specKey: "new",
+      displayTitle: "New title",
+      audioVariant: "英语原声",
+      subtitleVariant: "简英烧录"
+    });
+    assert.equal(first.row.audio_variant, "英语原声");
+    assert.equal(first.row.subtitle_variant, "简英烧录");
+    assert.equal(f.repo.correctVariantMetadata(variant.id, {
+      specKey: "new",
+      displayTitle: "New title",
+      audioVariant: "英语原声",
+      subtitleVariant: "简英烧录"
+    }).applied, false);
+  } finally { f.close(); }
+});
+
 test("green Dolby Vision correction never imports as qc_passed", () => {
   const f = fixture();
   try {
