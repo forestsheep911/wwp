@@ -618,60 +618,55 @@ function MobileBrowseNavigation({
   const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
 
   return (
-    <section className="grid gap-3 lg:hidden" aria-label="片库导航">
-      <nav className="grid gap-1.5" aria-label="片库分类">
-        <span className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">片库</span>
-        <div className="grid grid-cols-4 gap-1 rounded-xl border border-slate-800 bg-slate-950/75 p-1">
-          {browseChannels.map((channel) => {
-            const Icon = channel.icon;
-            const active = activeChannel === channel.id && !hasActiveRanking;
-            return (
-              <button
-                aria-current={active ? "page" : undefined}
-                className={`flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-xs font-semibold transition-colors ${
-                  active
-                    ? "bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/25"
-                    : "text-slate-400 active:bg-slate-900 active:text-slate-100"
-                }`}
-                key={channel.id}
-                type="button"
-                onClick={() => onBrowsePresetChange(channel.id, "newGood")}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span className="truncate">{channel.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+    <nav
+      className="scrollbar-none flex max-w-full snap-x snap-mandatory items-center gap-2 overflow-x-auto pb-1 pr-3 lg:hidden"
+      aria-label="影片快捷筛选"
+    >
+      {browseChannels.map((channel) => {
+        const Icon = channel.icon;
+        const active = activeChannel === channel.id && !hasActiveRanking;
+        return (
+          <button
+            aria-current={active ? "page" : undefined}
+            className={`flex min-h-11 flex-none snap-start items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold transition-colors ${
+              active
+                ? "border-emerald-300/35 bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/25"
+                : "border-slate-800 bg-slate-950/75 text-slate-400 active:border-slate-700 active:bg-slate-900 active:text-slate-100"
+            }`}
+            key={channel.id}
+            type="button"
+            onClick={() => onBrowsePresetChange(channel.id, "newGood")}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {channel.label}
+          </button>
+        );
+      })}
 
-      <nav className="grid gap-1.5" aria-label="电影榜单">
-        <span className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">榜单</span>
-        <div className="scrollbar-none flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 pr-3">
-          {rankingViews.map((view) => {
-            const Icon = view.icon;
-            const active = activeChannel === "movie" && activeView === view.id;
-            return (
-              <button
-                aria-current={active ? "page" : undefined}
-                className={`flex min-h-10 flex-none snap-start items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors ${
-                  active
-                    ? "border-emerald-300/35 bg-emerald-300 text-slate-950"
-                    : "border-slate-800 bg-slate-950/75 text-slate-400 active:border-slate-700 active:text-slate-100"
-                }`}
-                key={view.id}
-                title={view.detail}
-                type="button"
-                onClick={() => onBrowsePresetChange("movie", view.id)}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {view.label}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-    </section>
+      <span className="h-6 w-px flex-none bg-slate-800" aria-hidden="true" />
+
+      {rankingViews.map((view) => {
+        const Icon = view.icon;
+        const active = activeChannel === "movie" && activeView === view.id;
+        return (
+          <button
+            aria-current={active ? "page" : undefined}
+            className={`flex min-h-11 flex-none snap-start items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold transition-colors ${
+              active
+                ? "border-emerald-300/35 bg-emerald-300 text-slate-950 shadow-sm shadow-emerald-950/25"
+                : "border-slate-800 bg-slate-950/75 text-slate-400 active:border-slate-700 active:bg-slate-900 active:text-slate-100"
+            }`}
+            key={view.id}
+            title={view.detail}
+            type="button"
+            onClick={() => onBrowsePresetChange("movie", view.id)}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {view.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 

@@ -15,16 +15,20 @@ const stylesSource = readFileSync(
   "utf8"
 );
 
-test("phone and portrait tablet navigation mirrors the desktop library and ranking sections", () => {
+test("phone and portrait tablet navigation presents library and ranking presets as one filter rail", () => {
   const mobileNavigation = source.slice(
     source.indexOf("function MobileBrowseNavigation"),
     source.indexOf("function DesktopBrowseFilter")
   );
-  assert.match(mobileNavigation, /aria-label="片库分类"/);
-  assert.match(mobileNavigation, /aria-label="电影榜单"/);
+  assert.match(mobileNavigation, /aria-label="影片快捷筛选"/);
   assert.match(mobileNavigation, /onBrowsePresetChange\(channel\.id, "newGood"\)/);
   assert.match(mobileNavigation, /onBrowsePresetChange\("movie", view\.id\)/);
+  assert.match(mobileNavigation, /overflow-x-auto/);
   assert.match(mobileNavigation, /lg:hidden/);
+  assert.doesNotMatch(mobileNavigation, />片库<\/span>/);
+  assert.doesNotMatch(mobileNavigation, />榜单<\/span>/);
+  assert.doesNotMatch(mobileNavigation, /aria-label="片库分类"/);
+  assert.doesNotMatch(mobileNavigation, /aria-label="电影榜单"/);
   assert.doesNotMatch(mobileNavigation, /sm:hidden/);
   assert.doesNotMatch(layoutSource, /aria-label=\{copy\.layout\.browseLabel\}/);
   assert.doesNotMatch(source, /sm:block lg:hidden/);
