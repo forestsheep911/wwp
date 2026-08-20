@@ -725,6 +725,15 @@ function CinemaApp() {
     }), "push");
   }
 
+  function libraryDetailHref(result: ResultWithCache) {
+    return routeUrl(routeForCurrentView({
+      tab: "library",
+      personId: undefined,
+      detailAssetKey: result.assetKey,
+      playerAssetKey: undefined
+    }));
+  }
+
   async function loadLibraryDetail(nextAssetKey: string) {
     const requestId = ++detailRequestRef.current;
     setDetailLoading(true);
@@ -3359,6 +3368,7 @@ function CinemaApp() {
             detailAssetKey={detailAssetKey}
             detailResult={routedDetailResult}
             detailLoading={detailLoading}
+            getDetailHref={libraryDetailHref}
             onOpenDetail={openLibraryDetail}
             onOpenPerson={(nextPersonId) => openPersonDetail(nextPersonId, "library")}
             onCloseDetail={closeLibraryDetail}

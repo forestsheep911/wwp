@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   CalendarDays,
@@ -65,6 +65,7 @@ import {
 } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
+import { shouldOpenDetailInCurrentTab } from "../detail-link";
 import { resultMatchesBrowseChannel } from "../browse-channel";
 import { moviePreviewCredits } from "../movie-credits";
 import {
@@ -116,6 +117,7 @@ interface LibraryTabProps {
   detailAssetKey?: string;
   detailResult?: ResultWithCache;
   detailLoading?: boolean;
+  getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   onOpenPerson: (personId: string) => void;
   onCloseDetail: () => void;
@@ -124,6 +126,19 @@ interface LibraryTabProps {
   onViewModeChange: (value: LibraryViewMode) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
+}
+
+function openDetailFromLink(
+  event: ReactMouseEvent<HTMLAnchorElement>,
+  result: ResultWithCache,
+  onOpenDetail: (result: ResultWithCache) => void
+) {
+  if (!shouldOpenDetailInCurrentTab(event)) {
+    return;
+  }
+
+  event.preventDefault();
+  onOpenDetail(result);
 }
 
 export function LibraryTab({
@@ -155,6 +170,7 @@ export function LibraryTab({
   detailAssetKey,
   detailResult: routedDetailResult,
   detailLoading = false,
+  getDetailHref,
   onOpenDetail,
   onOpenPerson,
   onCloseDetail,
@@ -310,6 +326,7 @@ export function LibraryTab({
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
+              getDetailHref={getDetailHref}
               browseView={browseView}
               onBrowsePresetChange={onBrowsePresetChange}
               onBrowseViewChange={onBrowseViewChange}
@@ -377,6 +394,7 @@ export function LibraryTab({
                           pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                           favoriteAssetKeys={favoriteAssetKeys}
                           trackedByAssetKey={trackedByAssetKey}
+                          getDetailHref={getDetailHref}
                           onOpenDetail={openDetailResult}
                           onSummarize={openMovieSummary}
                           onToggleFavorite={onToggleFavorite}
@@ -395,6 +413,7 @@ export function LibraryTab({
                   pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                   favoriteAssetKeys={favoriteAssetKeys}
                   trackedByAssetKey={trackedByAssetKey}
+                  getDetailHref={getDetailHref}
                   onOpenDetail={openDetailResult}
                   onSummarize={openMovieSummary}
                   onToggleFavorite={onToggleFavorite}
@@ -887,6 +906,7 @@ function LibraryHome({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
+  getDetailHref,
   browseView,
   onBrowsePresetChange,
   onBrowseViewChange,
@@ -909,6 +929,7 @@ function LibraryHome({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  getDetailHref: (result: ResultWithCache) => string;
   browseView: BrowseViewId;
   onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
   onBrowseViewChange: (view: BrowseViewId, options?: { refresh?: boolean }) => void;
@@ -1098,6 +1119,7 @@ function LibraryHome({
               pendingDownloadAssetKeys={pendingDownloadAssetKeys}
               favoriteAssetKeys={favoriteAssetKeys}
               trackedByAssetKey={trackedByAssetKey}
+              getDetailHref={getDetailHref}
               totalCount={tspdtItems.length}
               onOpenDetail={onOpenDetail}
               onSummarize={onSummarize}
@@ -1130,6 +1152,7 @@ function LibraryHome({
                     pendingDownloadAssetKeys={pendingDownloadAssetKeys}
                     favoriteAssetKeys={favoriteAssetKeys}
                     trackedByAssetKey={trackedByAssetKey}
+                    getDetailHref={getDetailHref}
                     onOpenDetail={onOpenDetail}
                     onSummarize={onSummarize}
                     onToggleFavorite={onToggleFavorite}
@@ -1270,6 +1293,7 @@ function TspdtRankView({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
+  getDetailHref,
   totalCount,
   onOpenDetail,
   onSummarize,
@@ -1286,6 +1310,7 @@ function TspdtRankView({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  getDetailHref: (result: ResultWithCache) => string;
   totalCount: number;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
@@ -1320,6 +1345,7 @@ function TspdtRankView({
             pendingDownloadAssetKeys={pendingDownloadAssetKeys}
             favoriteAssetKeys={favoriteAssetKeys}
             trackedByAssetKey={trackedByAssetKey}
+            getDetailHref={getDetailHref}
             onOpenDetail={onOpenDetail}
             onSummarize={onSummarize}
             onToggleFavorite={onToggleFavorite}
@@ -1339,6 +1365,7 @@ function TspdtRankRow({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
+  getDetailHref,
   onOpenDetail,
   onSummarize,
   onToggleFavorite,
@@ -1351,6 +1378,7 @@ function TspdtRankRow({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
@@ -1375,14 +1403,14 @@ function TspdtRankRow({
     <article className="grid gap-3 rounded-md border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 lg:grid-cols-[4.5rem_84px_minmax(0,1fr)_minmax(260px,0.72fr)]">
       <RankNumber align="top" rank={entry.rank} />
       <div className="group relative hidden lg:block">
-        <button
+        <a
           className="block w-full overflow-hidden rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-          type="button"
-          onClick={() => onOpenDetail(result)}
+          href={getDetailHref(result)}
+          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
           title={copy.library.viewDetails}
         >
           <MoviePoster result={result} />
-        </button>
+        </a>
         <PosterActions
           favorite={favoriteAssetKeys.has(result.assetKey)}
           onSummarize={() => onSummarize(result)}
@@ -1390,16 +1418,16 @@ function TspdtRankRow({
         />
       </div>
       <div className="grid min-w-0 content-start gap-2">
-        <button
+        <a
           className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-          type="button"
-          onClick={() => onOpenDetail(result)}
+          href={getDetailHref(result)}
+          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
           title={copy.library.viewDetails}
         >
           <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 hover:text-emerald-100">
             {title}
           </h3>
-        </button>
+        </a>
         <p className="text-xs text-slate-500">{metadataLine(result)}</p>
         <div className="flex items-center gap-1 lg:hidden">
           <AiSummaryButton onClick={() => onSummarize(result)} />
@@ -2455,10 +2483,12 @@ function sortedVariants(variants: MediaVariant[]) {
 
 function DesktopMovieCard({
   result,
+  getDetailHref,
   onOpenDetail,
   priority
 }: {
   result: ResultWithCache;
+  getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   priority: boolean;
 }) {
@@ -2473,7 +2503,7 @@ function DesktopMovieCard({
   const previewCredits = moviePreviewCredits(result);
   const hasPreviewCredits = previewCredits.directors.length > 0 || previewCredits.writers.length > 0 || previewCredits.cast.length > 0;
   const previewTimerRef = useRef<number | undefined>(undefined);
-  const cardRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLAnchorElement>(null);
   const [previewPosition, setPreviewPosition] = useState<{
     left: number;
     top: number;
@@ -2530,12 +2560,12 @@ function DesktopMovieCard({
 
   return (
     <>
-      <button
+      <a
         ref={cardRef}
         className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 md:grid"
         data-gallery-card
-        type="button"
-        onClick={() => onOpenDetail(result)}
+        href={getDetailHref(result)}
+        onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
         onMouseEnter={() => showPreview()}
         onMouseLeave={hidePreview}
         onFocus={() => showPreview(0)}
@@ -2573,7 +2603,7 @@ function DesktopMovieCard({
             <span className="text-[11px] text-slate-600">未分类</span>
           )}
         </div>
-      </button>
+      </a>
 
       {previewPosition && typeof document !== "undefined"
         ? createPortal(
@@ -2656,6 +2686,7 @@ function MovieCard({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
+  getDetailHref,
   onOpenDetail,
   onSummarize,
   onToggleFavorite,
@@ -2670,6 +2701,7 @@ function MovieCard({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
@@ -2684,17 +2716,17 @@ function MovieCard({
 
   return (
     <>
-      <DesktopMovieCard priority={priority} result={result} onOpenDetail={onOpenDetail} />
+      <DesktopMovieCard getDetailHref={getDetailHref} priority={priority} result={result} onOpenDetail={onOpenDetail} />
       <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 md:hidden">
       <div className="group relative">
-        <button
+        <a
           className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
-          type="button"
-          onClick={() => onOpenDetail(result)}
+          href={getDetailHref(result)}
+          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
           title={copy.library.viewDetails}
         >
           <MoviePoster priority={priority} result={result} />
-        </button>
+        </a>
         <PosterActions
           favorite={favoriteAssetKeys.has(result.assetKey)}
           onSummarize={() => onSummarize(result)}
@@ -2702,16 +2734,16 @@ function MovieCard({
         />
       </div>
       <div className="grid min-w-0 content-start gap-3">
-        <button
+        <a
           className="min-h-12 min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0"
-          type="button"
-          onClick={() => onOpenDetail(result)}
+          href={getDetailHref(result)}
+          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
           title={copy.library.viewDetails}
         >
           <h2 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:line-clamp-3 sm:text-lg">
             {result.title}
           </h2>
-        </button>
+        </a>
 
         <CompactRatingBadges result={result} />
         {info ? <p className="line-clamp-2 text-xs leading-5 text-slate-500">{info}</p> : null}
@@ -2727,9 +2759,11 @@ function MovieCard({
       </div>
 
       <div className="col-span-2 grid grid-cols-3 gap-2 sm:hidden">
-        <Button className="min-h-11 gap-1 px-2 text-xs" type="button" variant="secondary" onClick={() => onOpenDetail(result)}>
-          查看版本
-          <ChevronRight className="h-3.5 w-3.5" />
+        <Button asChild className="min-h-11 gap-1 px-2 text-xs" variant="secondary">
+          <a href={getDetailHref(result)} onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}>
+            查看版本
+            <ChevronRight className="h-3.5 w-3.5" />
+          </a>
         </Button>
         <Button className="min-h-11 gap-1 px-2 text-xs" type="button" variant="outline" onClick={() => onSummarize(result)}>
           <Sparkles className="h-3.5 w-3.5" />
@@ -2952,6 +2986,7 @@ function MovieListView({
   pendingDownloadAssetKeys,
   favoriteAssetKeys,
   trackedByAssetKey,
+  getDetailHref,
   onOpenDetail,
   onSummarize,
   onToggleFavorite,
@@ -2964,6 +2999,7 @@ function MovieListView({
   pendingDownloadAssetKeys: string[];
   favoriteAssetKeys: Set<string>;
   trackedByAssetKey: Map<string, TrackedCacheItem>;
+  getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   onSummarize: (result: ResultWithCache) => void;
   onToggleFavorite: (result: ResultWithCache) => void;
@@ -2994,24 +3030,24 @@ function MovieListView({
               <tr key={result.assetKey} className="border-b border-slate-900/80 align-top last:border-0">
                 <td className="px-4 py-4">
                   <div className="flex gap-3">
-                    <button
+                    <a
                       className="w-14 shrink-0 overflow-hidden rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                      type="button"
-                      onClick={() => onOpenDetail(result)}
+                      href={getDetailHref(result)}
+                      onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
                       title={copy.library.viewDetails}
                     >
                       <MoviePoster result={result} />
-                    </button>
+                    </a>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-start gap-2">
-                        <button
+                        <a
                           className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                          type="button"
-                          onClick={() => onOpenDetail(result)}
+                          href={getDetailHref(result)}
+                          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
                           title={copy.library.viewDetails}
                         >
                           <p className="line-clamp-2 font-semibold leading-5 text-slate-50 hover:text-emerald-100">{result.title}</p>
-                        </button>
+                        </a>
                         <AiSummaryButton onClick={() => onSummarize(result)} />
                       </div>
                       <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{bestSummary(result)}</p>
