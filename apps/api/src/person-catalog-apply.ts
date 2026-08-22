@@ -1,5 +1,6 @@
 import type {
   MovieCreditEntry,
+  MovieDataQuality,
   PersonCatalogIssue,
   PersonCatalogState,
   PersonCreditRef,
@@ -46,10 +47,12 @@ export function planReviewedPeopleReportApply(
   if (proposedIds.size !== report.proposedProfiles.length) throw new Error("Reviewed report contains duplicate personId profiles.");
   for (const profile of report.proposedProfiles) {
     assertStablePersonId(profile.personId);
+    const currentEntry = nextCatalog.people[profile.personId];
+    const mergedProfile = mergeReviewedProfileWithNotionOverlay(currentEntry?.profile, profile);
     nextCatalog.people[profile.personId] = {
-      profile: structuredClone(profile),
-      workIds: nextCatalog.people[profile.personId]?.workIds ?? [],
-      updatedAt: profile.updatedAt
+      profile: mergedProfile,
+      workIds: currentEntry?.workIds ?? [],
+      updatedAt: mergedProfile.updatedAt
     };
   }
 
@@ -90,12 +93,33 @@ export function planReviewedPeopleReportApply(
     const updated = structuredClone(original);
     const originalMetadata = original.metadata;
     const originalWork = original.metadata.work;
+    const workDataQuality = dataQualityAfterCreditRepair(
+      originalWork.dataQuality,
+      Boolean(Object.values(originalWork.externalIds ?? {}).some(Boolean)),
+      generatedAt
+    );
+    const metadataDataQuality = dataQualityAfterCreditRepair(
+      originalMetadata.dataQuality,
+      Boolean(Object.values(originalMetadata.externalIds ?? originalWork.externalIds ?? {}).some(Boolean)),
+      generatedAt
+    );
     updated.metadata = {
       ...originalMetadata,
       credits: structuredClone(work.credits),
-      work: { ...originalWork, credits: structuredClone(work.credits), updatedAt: generatedAt }
+      ...(metadataDataQuality ? { dataQuality: metadataDataQuality } : {}),
+      work: {
+        ...originalWork,
+        credits: structuredClone(work.credits),
+        ...(workDataQuality ? { dataQuality: workDataQuality } : {}),
+        updatedAt: generatedAt
+      }
     };
-    if (!sameJson(original.metadata.work.credits ?? [], work.credits) || !sameJson(original.metadata.credits ?? [], work.credits)) {
+    if (
+      !sameJson(original.metadata.work.credits ?? [], work.credits)
+      || !sameJson(original.metadata.credits ?? [], work.credits)
+      || !sameJson(original.metadata.dataQuality, metadataDataQuality)
+      || !sameJson(original.metadata.work.dataQuality, workDataQuality)
+    ) {
       originalResults.push(structuredClone(original));
       updatedResults.push(updated);
     }
@@ -140,6 +164,21 @@ export function planReviewedPeopleReportApply(
   };
 }
 
+function dataQualityAfterCreditRepair(
+  current: MovieDataQuality | undefined,
+  hasExternalIds: boolean,
+  updatedAt: string
+) {
+  if (!current?.missing?.includes("credits")) return current;
+  const missing = current.missing.filter((field) => field !== "credits");
+  return {
+    ...current,
+    status: current.status === "draft" && hasExternalIds ? "partial" : current.status,
+    missing,
+    updatedAt
+  } satisfies MovieDataQuality;
+}
+
 export async function applyPersonCatalogPlan(input: {
   plan: PersonCatalogApplyPlan;
   searchStore: { upsertResults(results: SearchResult[], indexedAt?: string): Promise<unknown> };
@@ -182,6 +221,45 @@ function dedupeCredits(credits: Array<MovieCreditEntry & { personId: string }>):
     values.set(key, ref);
   }
   return [...values.values()].sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER));
+}
+
+function mergeReviewedProfileWithNotionOverlay(current: PersonProfile | undefined, reviewed: PersonProfile): PersonProfile {
+  if (!current?.sourceRefs?.some((ref) => ref.source === "notion")) return structuredClone(reviewed);
+
+  const notionNames = current.names.filter((entry) => entry.source === "notion");
+  // Once a profile has a Notion overlay, the Notion sync owns the complete
+  // biography object, including any supplemental source texts it retained.
+  // Re-composing those texts from an older reviewed report makes replays
+  // oscillate by dropping or re-adding same-language source descriptions.
+  const biography = current.biography
+    ? structuredClone(current.biography)
+    : structuredClone(reviewed.biography);
+  const notionImages = (current.profileImages ?? []).filter((entry) => entry.source === "notion");
+  const notionSourceRefs = current.sourceRefs.filter((entry) => entry.source === "notion");
+  const profileImages = [...notionImages, ...(reviewed.profileImages ?? []).filter((entry) => entry.source !== "notion")];
+
+  return {
+    ...structuredClone(reviewed),
+    names: uniqueNameEntries([...notionNames, ...reviewed.names]),
+    departments: structuredClone(current.departments),
+    ...(biography ? { biography } : {}),
+    ...(profileImages.length || current.profileImages ? { profileImages } : {}),
+    sourceRefs: [...notionSourceRefs, ...(reviewed.sourceRefs ?? []).filter((entry) => entry.source !== "notion")],
+    ...(current.lockedFields ? { lockedFields: structuredClone(current.lockedFields) } : {}),
+    ...(current.hiddenFromWebsite !== undefined ? { hiddenFromWebsite: current.hiddenFromWebsite } : {}),
+    dataQuality: structuredClone(current.dataQuality),
+    updatedAt: current.updatedAt
+  };
+}
+
+function uniqueNameEntries(values: PersonProfile["names"]): PersonProfile["names"] {
+  const seen = new Set<string>();
+  return values.filter((entry) => {
+    const key = [normalizePersonNameSearchKey(entry.value), entry.language ?? "", entry.kind, entry.source, entry.status].join(":");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function assertStablePersonId(personId: string) {

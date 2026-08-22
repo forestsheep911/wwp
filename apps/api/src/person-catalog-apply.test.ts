@@ -59,6 +59,33 @@ test("keeps unlinked cast relations in the work while indexing only materialized
   assert.equal(plan.nextCatalog.creditsByWorkId["work-1"].length, 1);
 });
 
+test("clears the stale missing-credits marker when reviewed credits are published", () => {
+  const movie = result("work-1");
+  const existingCredits = structuredClone(report().proposedCredits[0].credits);
+  movie.metadata = {
+    ...movie.metadata,
+    credits: existingCredits,
+    externalIds: { tmdb: "100" },
+    dataQuality: { status: "draft", missing: ["credits"], updatedAt: "2026-08-01T00:00:00.000Z" },
+    work: {
+      ...movie.metadata!.work!,
+      credits: existingCredits,
+      externalIds: { tmdb: "100" },
+      dataQuality: { status: "draft", missing: ["credits"], updatedAt: "2026-08-01T00:00:00.000Z" }
+    }
+  };
+  const plan = planReviewedPeopleReportApply(
+    emptyPersonCatalogState(),
+    [movie],
+    report(),
+    "2026-08-10T01:00:00.000Z"
+  );
+  assert.deepEqual(plan.updatedResults[0].metadata?.dataQuality?.missing, []);
+  assert.equal(plan.updatedResults[0].metadata?.dataQuality?.status, "partial");
+  assert.deepEqual(plan.updatedResults[0].metadata?.work?.dataQuality?.missing, []);
+  assert.equal(plan.updatedResults[0].metadata?.work?.dataQuality?.status, "partial");
+});
+
 test("rejects missing search work and unresolved identity issues before writes", () => {
   assert.throws(() => planReviewedPeopleReportApply(emptyPersonCatalogState(), [], report()), /exactly one search result/);
   const unsafe = report();
@@ -97,4 +124,65 @@ test("replaying an already applied report performs no writes", async () => {
   let writes = 0;
   await applyPersonCatalogPlan({ plan: replay, searchStore: { async upsertResults() { writes += 1; } }, personStore: { async replaceState() { writes += 1; } } });
   assert.equal(writes, 0);
+});
+
+test("replaying a reviewed report preserves the authoritative Notion editorial overlay", () => {
+  const pilot = report();
+  pilot.proposedProfiles[0].biography = {
+    texts: [{
+      value: "外部审核版本",
+      language: "zh-CN",
+      source: "wikidata",
+      status: "verified",
+      method: "editorial-rewrite",
+      observedAt: "2026-08-10T00:00:00.000Z"
+    }]
+  };
+  const first = planReviewedPeopleReportApply(emptyPersonCatalogState(), [result("work-1")], pilot, "2026-08-10T01:00:00.000Z");
+  const synced = structuredClone(first.nextCatalog);
+  const syncedProfile = synced.people[personId].profile;
+  const editedAt = "2026-08-10T01:30:00.000Z";
+  syncedProfile.names.unshift({
+    value: "张三",
+    language: "zh-CN",
+    kind: "display",
+    source: "notion",
+    status: "verified",
+    sourceRef: "page-1",
+    observedAt: editedAt
+  });
+  syncedProfile.biography = {
+    ...syncedProfile.biography,
+    texts: [
+      {
+        value: "Notion 权威编辑版本",
+        language: "zh-CN",
+        source: "notion",
+        status: "verified",
+        method: "editorial-rewrite",
+        sourceRef: "page-1",
+        observedAt: editedAt
+      },
+      {
+        value: "Supplemental source description",
+        language: "zh-CN",
+        source: "wikidata",
+        status: "strong",
+        sourceRef: "https://www.wikidata.org/wiki/Q1",
+        observedAt: editedAt
+      }
+    ]
+  };
+  syncedProfile.sourceRefs = [{ source: "notion", id: "page-1", observedAt: editedAt }];
+  syncedProfile.lockedFields = ["biographyZh"];
+  syncedProfile.dataQuality.updatedAt = editedAt;
+  syncedProfile.updatedAt = editedAt;
+  synced.people[personId].updatedAt = editedAt;
+
+  const replay = planReviewedPeopleReportApply(synced, [first.updatedResults[0]], pilot, "2026-08-10T02:00:00.000Z");
+  assert.equal(replay.summary.catalogChanged, false);
+  assert.equal(replay.updatedResults.length, 0);
+  assert.equal(replay.nextCatalog.people[personId].profile.names[0].source, "notion");
+  assert.deepEqual(replay.nextCatalog.people[personId].profile.biography?.texts, syncedProfile.biography.texts);
+  assert.deepEqual(replay.nextCatalog.people[personId].profile.lockedFields, ["biographyZh"]);
 });

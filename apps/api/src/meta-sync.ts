@@ -18,6 +18,7 @@ import {
   type SearchIndexSyncMode
 } from "@wwpdw/cache-store";
 import { NotionSearchSource } from "./notion-source.js";
+import { preserveIndexedPersonCredits } from "./person-credit-index-merge.js";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000 } from "../../web/src/cinema/tspdt";
 import { tspdtImdbIds } from "../../web/src/cinema/tspdt-id-map";
 
@@ -187,10 +188,15 @@ export async function runMetaSync() {
   const publishPendingLocalResults = async () => {
     if (pendingLocalResults.length === 0) return;
     const batch = pendingLocalResults.splice(0, pendingLocalResults.length);
+    const personSafeBatch = await mapWithConcurrency(
+      batch,
+      options.concurrency,
+      async (result) => preserveIndexedPersonCredits(result, await searchIndex.getResult(result.assetKey))
+    );
     let posterCompleted = 0;
     const localResults = options.posterCacheEnabled
       ? await mapWithConcurrency(
-        batch,
+        personSafeBatch,
         options.concurrency,
         async (result) => {
           const cached = await cacheStore.cacheMoviePosters(result, {
@@ -202,14 +208,14 @@ export async function runMetaSync() {
               runId: run.id,
               completed: localPublished + posterCompleted,
               batchCompleted: posterCompleted,
-              batchSize: batch.length,
+              batchSize: personSafeBatch.length,
               durationMs: durationMs(startedAt)
             });
           }
           return cached;
         }
       )
-      : batch;
+      : personSafeBatch;
     await searchIndex.upsertResults(localResults);
     localPublished += localResults.length;
     logInfo("meta.sync.local_publish", {
