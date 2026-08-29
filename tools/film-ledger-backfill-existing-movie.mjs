@@ -11,7 +11,7 @@ const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 const DEFAULT_OUTPUT_ROOT = "E:\\video_made";
 
 function optionsFromArgs(args = process.argv.slice(2)) {
-  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, apply: false };
+  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, apply: false, allowUploadedOnly: false };
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
     const value = () => args[++index];
@@ -20,6 +20,7 @@ function optionsFromArgs(args = process.argv.slice(2)) {
     else if (option === "--db") options.db = path.resolve(value());
     else if (option === "--output-root") options.outputRoot = path.resolve(value());
     else if (option === "--apply") options.apply = true;
+    else if (option === "--allow-uploaded-only") options.allowUploadedOnly = true;
     else throw new Error(`Unknown option: ${option}`);
   }
   if (!options.workPageId || !Number.isInteger(options.workId) || options.workId < 1) {
@@ -74,17 +75,18 @@ async function mediaAssetsForWork(notion, dataSourceId, workPageId) {
   return rows;
 }
 
-export function movieCandidate(asset, specPageIds, outputRoot) {
+export function movieCandidate(asset, specPageIds, outputRoot, { allowUploadedOnly = false } = {}) {
   const properties = asset.properties ?? {};
   const specPageId = text(properties["Source Page ID"]);
   const fileName = text(properties["Original File Name"]);
   const outputPath = fileName ? path.join(outputRoot, fileName) : "";
+  const localExists = Boolean(outputPath && fs.existsSync(outputPath));
   const issues = [];
   if (!specPageId || !specPageIds.has(specPageId)) issues.push("spec_page_unmapped");
   if (!text(properties["Media Block ID"])) issues.push("media_block_missing");
-  if (!fileName || !fs.existsSync(outputPath)) issues.push("local_file_missing");
+  if (!fileName || (!localExists && !allowUploadedOnly)) issues.push("local_file_missing");
   if (properties["Playback Verified"]?.checkbox !== true || properties["Hide from Website"]?.checkbox === true || properties["Media Availability"]?.select?.name !== "playable" || properties["Asset Type"]?.select?.name !== "playable_video") issues.push("asset_not_released");
-  return { assetPageId: asset.id, specPageId, mediaBlockId: text(properties["Media Block ID"]), fileName, outputPath: outputPath || null, outputBytes: outputPath && fs.existsSync(outputPath) ? fs.statSync(outputPath).size : null, displayTitle: text(properties["Display Label"]) || fileName, audioVariant: (properties["Audio Languages"]?.multi_select ?? []).map((item) => item.name).join(",") || "unknown", subtitleVariant: (properties["Subtitle Languages"]?.multi_select ?? []).map((item) => item.name).join(",") || "none", issues };
+  return { assetPageId: asset.id, specPageId, mediaBlockId: text(properties["Media Block ID"]), fileName, outputPath: localExists ? outputPath : null, outputBytes: localExists ? fs.statSync(outputPath).size : null, displayTitle: text(properties["Display Label"]) || fileName, audioVariant: (properties["Audio Languages"]?.multi_select ?? []).map((item) => item.name).join(",") || "unknown", subtitleVariant: (properties["Subtitle Languages"]?.multi_select ?? []).map((item) => item.name).join(",") || "none", issues };
 }
 
 function completeVariant(repo, variantId, item, workPageId, at) {
@@ -104,7 +106,9 @@ async function main() {
   if (!token || !env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID) throw new Error("Notion token and NOTION_MEDIA_ASSETS_DATA_SOURCE_ID are required");
   const notion = new Client({ auth: token, timeoutMs: 120000 });
   const [pages, assets] = await Promise.all([specPages(notion, options.workPageId), mediaAssetsForWork(notion, env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID, options.workPageId)]);
-  const candidates = assets.map((asset) => movieCandidate(asset, pages, options.outputRoot));
+  const candidates = assets.map((asset) => movieCandidate(asset, pages, options.outputRoot, {
+    allowUploadedOnly: options.allowUploadedOnly
+  }));
   const accepted = candidates.filter((item) => item.issues.length === 0); const rejected = candidates.filter((item) => item.issues.length > 0);
   const report = { workPageId: options.workPageId, assets: assets.length, specPages: pages.size, accepted: accepted.length, rejected, apply: options.apply };
   if (!options.apply) return console.log(JSON.stringify(report, null, 2));

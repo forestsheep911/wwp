@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MoviePoster } from "@wwpdw/shared";
-import { posterDownloadCandidates, posterRequestHeaders } from "./poster-cache.js";
+import {
+  posterDownloadCandidates,
+  posterRequestHeaders,
+  posterRequestTimeoutMs
+} from "./poster-cache.js";
 
 test("posterDownloadCandidates retries a refreshed Notion file URL before external URLs", async () => {
   const original: MoviePoster = {
@@ -47,4 +51,12 @@ test("posterRequestHeaders does not spoof referer for non-Douban poster download
   const headers = posterRequestHeaders("https://example.com/poster.jpg");
 
   assert.equal(headers.Referer, undefined);
+});
+
+test("posterRequestTimeoutMs bounds poster downloads without accepting unsafe configuration", () => {
+  assert.equal(posterRequestTimeoutMs(undefined), 30_000);
+  assert.equal(posterRequestTimeoutMs("15000"), 15_000);
+  assert.equal(posterRequestTimeoutMs("999"), 30_000);
+  assert.equal(posterRequestTimeoutMs("120001"), 30_000);
+  assert.equal(posterRequestTimeoutMs("not-a-number"), 30_000);
 });

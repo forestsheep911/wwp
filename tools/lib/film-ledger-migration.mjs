@@ -160,7 +160,8 @@ export function importProductionManifest(repo, manifest) {
     specPageId: manifest.targetSpecPageId,
     episodePageId: manifest.episodePageId ?? null,
     expectedFilename: manifest.expectedFilename ?? path.basename(manifest.output),
-    mediaBlockId: manifest.mediaBlockId ?? null
+    mediaBlockId: manifest.mediaBlockId ?? null,
+    mediaAssetPageId: manifest.mediaAssetPageId ?? null
   });
   const current = repo.findVariantByOutputPath(manifest.output);
   if (current?.publication_state === "not_ready") repo.transitionPublication(variant.id, "structure_pending", { targetRegistered: true, importedManifest: true });

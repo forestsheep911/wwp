@@ -70,7 +70,7 @@ function printHelp() {
   node tools/notion-manual-upload-organizer.mjs --query "罪人"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB"
   node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --apply
-  node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --no-proxy --resolve-ip <notion-ip> --apply
+  node tools/notion-manual-upload-organizer.mjs --page-id <work-page-id> --spec-title "罪人 繁英 4.8GB" --apply
 
 Default mode is read-only and bounded to three recent pages. It scans WWP library
 pages for manual upload landing media, especially video/file blocks placed directly
@@ -252,7 +252,7 @@ function variantLabelFromName(name = "") {
 }
 
 function episodeRangeFromName(name = "") {
-  const text = String(name ?? "");
+  const text = String(name ?? "").normalize("NFKC");
   const rangeMatch = text.match(/\bS\d{1,2}E(\d{1,3})\s*[-~–—至到]\s*(?:S\d{1,2})?E?(\d{1,3})\b/iu)
     ?? text.match(/\bEpisode[\s._-]*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\b/iu)
     ?? text.match(/第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u);

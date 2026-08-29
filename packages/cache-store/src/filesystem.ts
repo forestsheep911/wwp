@@ -44,7 +44,11 @@ import {
   logError,
   logInfo
 } from "@wwpdw/shared";
-import { posterDownloadCandidates, posterRequestHeaders } from "./poster-cache.js";
+import {
+  posterDownloadCandidates,
+  posterRequestHeaders,
+  posterRequestTimeoutMs
+} from "./poster-cache.js";
 import type {
   CacheMoviePostersOptions,
   CacheStore,
@@ -964,7 +968,8 @@ export class FilesystemCacheStore implements CacheStore {
           try {
             const response = await fetch(candidate.url, {
               redirect: "follow",
-              headers: posterRequestHeaders(candidate.url)
+              headers: posterRequestHeaders(candidate.url),
+              signal: AbortSignal.timeout(posterRequestTimeoutMs())
             });
             if (!response.ok || !response.body) continue;
             const responseType = response.headers.get("content-type")?.split(";")[0];

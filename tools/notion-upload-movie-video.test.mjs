@@ -68,7 +68,10 @@ test("movie uploader installs an explicitly requested Notion DNS override before
       "罪人 繁英 1.6GB",
       "--prepare-only",
       "--resolve-ip",
-      "203.0.113.10"
+      "203.0.113.10",
+      "--local-address",
+      "192.0.2.10",
+      "--no-proxy"
     ], {
       cwd,
       encoding: "utf8",

@@ -6,12 +6,12 @@ import { spawnSync } from "node:child_process";
 
 function usage() {
   console.log(`Usage:
-  node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --subtitle-stream <ordinal|none>
+  node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --video-stream <ordinal> --subtitle-stream <ordinal|none>
     [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-language <code>] [--audio-loudnorm]
     [--split-audio]
     [--start <seconds>] [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
     [--max-bytes <bytes>] [--temp-dir <directory>] [--scale <width>x<height>] [--tone-map-sdr]
-    [--tone-map-libplacebo]
+    [--tone-map-libplacebo] [--cpu-tone-map]
 
 The subtitle ordinal is relative to subtitle streams (0:s:0, 0:s:1, ...), not the
 absolute ffprobe stream index. Use "none" when subtitles are already burned into
@@ -25,11 +25,14 @@ Use --tone-map-sdr only for a source confirmed to be HDR or Dolby Vision. It con
 the video to BT.709 before NVENC encoding; ordinary SDR sources must not use it.
 Use --tone-map-libplacebo with a libplacebo-enabled FFmpeg build for Dolby Vision
 Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
+Use --cpu-tone-map when CUDA pre-scaling or Vulkan/libplacebo is unavailable, or
+when a smoke sample shows a hardware color-path problem. It keeps the same
+BT.709 tone-map path but performs the HDR resize on the CPU.
 `);
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLanguage: null, audioLoudnorm: false, splitAudio: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false };
+  const options = { ffmpeg: "ffmpeg", videoStream: 0, subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLanguage: null, audioLoudnorm: false, splitAudio: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false, cpuToneMap: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
@@ -40,7 +43,8 @@ function parseArgs(argv) {
       options.toneMapSdr = true;
       options.toneMapLibplacebo = true;
     }
-    else if (["--input", "--output", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
+    else if (arg === "--cpu-tone-map") options.cpuToneMap = true;
+    else if (["--input", "--output", "--video-stream", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       const key = arg.slice(2).replaceAll("-", "_");
@@ -58,6 +62,7 @@ function parseArgs(argv) {
   options.subtitleCharenc = options.subtitle_charenc == null ? null : String(options.subtitle_charenc);
   options.tempDir = options.temp_dir == null ? null : path.resolve(options.temp_dir);
   options.audioStream = options.audio_stream == null ? 0 : Number(options.audio_stream);
+  options.videoStream = options.video_stream == null ? 0 : Number(options.video_stream);
   options.audioChannels = options.audio_channels == null ? null : Number(options.audio_channels);
   options.audioLanguage = options.audio_language == null ? null : String(options.audio_language).toLowerCase();
   options.start = options.start == null ? null : Number(options.start);
@@ -71,6 +76,7 @@ function parseArgs(argv) {
     options.scale = { width: Number(match[1]), height: Number(match[2]) };
   }
   if ((options.subtitleStream !== null && !Number.isFinite(options.subtitleStream))
+    || !Number.isInteger(options.videoStream) || options.videoStream < 0
     || ![options.audioStream, options.cq, options.maxBytes].every(Number.isFinite)
     || (options.start !== null && !Number.isFinite(options.start))
     || (options.audioChannels !== null && (!Number.isInteger(options.audioChannels) || options.audioChannels < 1 || options.audioChannels > 8))) {
@@ -98,10 +104,10 @@ function run(ffmpeg, args, label) {
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status}`);
 }
 
-function probeVideoDimensions(input) {
+function probeVideoDimensions(input, videoStream) {
   const result = spawnSync("ffprobe", [
     "-v", "error",
-    "-select_streams", "v:0",
+    "-select_streams", `v:${videoStream}`,
     "-show_entries", "stream=width,height",
     "-of", "json",
     input
@@ -197,7 +203,7 @@ function main() {
   const seekArgs = options.start == null ? [] : ["-ss", String(options.start)];
   const durationArgs = options.duration == null ? [] : ["-t", String(options.duration)];
   const sourceWindowArgs = [...seekArgs, ...durationArgs];
-  const sourceDimensions = probeVideoDimensions(input);
+  const sourceDimensions = probeVideoDimensions(input, options.videoStream);
   const subtitleCodec = probeSubtitleCodec(input, options.subtitleStream);
   const embeddedTextSubtitle = options.subtitleStream !== null
     && new Set(["ass", "mov_text", "srt", "ssa", "subrip", "text", "webvtt"]).has(subtitleCodec);
@@ -215,7 +221,7 @@ function main() {
   // full 4K frame before reducing it to the delivery resolution is needlessly
   // slow; the final CPU pad keeps the requested canvas dimensions without
   // distorting sources whose aspect ratio differs from the target.
-  const gpuHdrPreScale = options.toneMapSdr && options.scale != null
+  const gpuHdrPreScale = options.toneMapSdr && !options.toneMapLibplacebo && !options.cpuToneMap && options.scale != null
     ? `scale_cuda=w=${options.scale.width}:h=${options.scale.height}:force_original_aspect_ratio=decrease:format=p010,hwdownload,format=p010le`
     : null;
   const hdrPreScale = gpuHdrPreScale ?? scaleFilter ?? "null";
@@ -223,13 +229,22 @@ function main() {
     ? `,pad=${options.scale.width}:${options.scale.height}:(ow-iw)/2:(oh-ih)/2:color=black`
     : "";
   const baseVideo = options.toneMapLibplacebo
-    ? `[0:v:0]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p[base]`
+    ? `[0:v:${options.videoStream}]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p[base]`
     : options.toneMapSdr
-    ? `[0:v:0]${hdrPreScale},zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,format=yuv420p${hdrPostScale}[base]`
-    : `[0:v:0]${scaleFilter ?? "null"}[base]`;
+    ? `[0:v:${options.videoStream}]${hdrPreScale},zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,format=yuv420p${hdrPostScale}[base]`
+    : `[0:v:${options.videoStream}]${scaleFilter ?? "null"}[base]`;
   const effectiveSubtitleFile = options.subtitleFile ?? (embeddedTextSubtitle ? extractedSubtitle : null);
   const subtitleFilePath = effectiveSubtitleFile == null ? null : escapedSubtitlePath(effectiveSubtitleFile);
-  const subtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}`;
+  const rawSubtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}`;
+  // Input seeking resets the encoded clip to a zero-based timeline, while an
+  // external subtitle file still carries full-feature timestamps. Temporarily
+  // restore the source timeline around libass so bounded smoke tests render the
+  // same cues as a full encode, then return the clip to zero-based timestamps.
+  const subtitleFileFilter = rawSubtitleFileFilter == null
+    ? null
+    : options.subtitleFile != null && options.start != null && options.start > 0
+      ? `setpts=PTS+${options.start}/TB,${rawSubtitleFileFilter},setpts=PTS-${options.start}/TB`
+      : rawSubtitleFileFilter;
   // PGS subtitle canvases are often 16:9 even when the movie image is wider.
   // Resize only the subtitle canvas: subtitles may live in the source letterbox,
   // while the video itself must keep its original aspect ratio.
@@ -237,16 +252,16 @@ function main() {
     ? null
     : `[0:s:${options.subtitleStream}]scale=${options.scale?.width ?? sourceDimensions.width}:${options.scale?.height ?? sourceDimensions.height}[subs]`;
   const videoArgs = subtitleFileFilter != null && !options.toneMapSdr && scaleFilter === null
-    ? ["-vf", subtitleFileFilter, "-map", "0:v:0"]
+    ? ["-vf", subtitleFileFilter, "-map", `0:v:${options.videoStream}`]
     : subtitleFileFilter != null
       ? ["-filter_complex", `${baseVideo};[base]${subtitleFileFilter}[video]`, "-map", "[video]"]
       : options.subtitleStream === null && !options.toneMapSdr && scaleFilter === null
-    ? ["-map", "0:v:0"]
+    ? ["-map", `0:v:${options.videoStream}`]
     : options.subtitleStream === null
       ? ["-filter_complex", `${baseVideo};[base]null[video]`, "-map", "[video]"]
       : [
           "-filter_complex",
-          `${baseVideo};${bitmapSubtitleFilter};[base][subs]overlay=shortest=1:format=auto[v]`,
+          `${baseVideo};${bitmapSubtitleFilter};[base][subs]overlay=eof_action=pass:repeatlast=0:format=auto[v]`,
           "-map", "[v]"
         ];
   const rateArgs = options.videoBitrate == null
@@ -262,10 +277,9 @@ function main() {
   ];
   const sharedInputArgs = [
     "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
-    // Bitmap subtitle scaling/overlay and HDR tone mapping are CPU filter
-    // stages even when decode and NVENC run on CUDA. Without explicit filter
-    // threading, 4K PGS sources can fall below realtime for no good reason.
-    "-filter_threads", "8", "-filter_complex_threads", "8",
+    // Do not force filter worker counts here. On some 4K PGS/HDR sources,
+    // explicit filter threading serializes the CUDA/CPU handoff and can make
+    // the encode dramatically slower than FFmpeg's automatic scheduler.
     ...(options.toneMapLibplacebo ? ["-init_hw_device", "vulkan=vk:0", "-filter_hw_device", "vk"] : []),
     ...(gpuHdrPreScale ? ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] : []),
     ...seekArgs, "-i", input,
@@ -291,7 +305,7 @@ function main() {
       ...videoEncodeArgs, "-map", `0:a:${options.audioStream}`,
       "-c:a", "aac", "-b:a", "256k", ...audioArgs,
       ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
-      ...(options.duration == null ? ["-shortest"] : []), work
+      work
     ], "encode-mkv");
   }
 
@@ -301,6 +315,8 @@ function main() {
     // Keep only the playable video/audio streams. Text-subtitle filters can
     // leave an auxiliary data stream in the MKV work file; copying all streams
     // into MP4 makes browser probing noisy and can trigger timestamp warnings.
+    // The work MKV contains the selected/filtered video as its first video
+    // stream, regardless of which source video ordinal was selected.
     "-map", "0:v:0", "-map", options.splitAudio ? "1:a:0" : "0:a:0", "-dn", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", "-tag:v", "hvc1",
     ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
     "-movflags", "+faststart", part
@@ -320,7 +336,7 @@ function main() {
   fs.rmSync(audioWork, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo }));
+  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, videoStream: options.videoStream, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo, cpuToneMap: options.cpuToneMap }));
 }
 
 try {

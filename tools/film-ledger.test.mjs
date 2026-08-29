@@ -453,6 +453,51 @@ test("CLI next, show, record-qc, and register-target cover the ledger workflow",
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("register-target refuses a work page from another bound work before replacing evidence", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-target-identity-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const work = repo.ensureWork({
+      canonicalTitle: "Target Guard",
+      year: 2026,
+      workType: "movie",
+      notionWorkPageId: "11111111-1111-1111-1111-111111111111"
+    });
+    const variant = repo.ensureVariant({
+      workId: work.id,
+      specKey: "guarded",
+      displayTitle: "Target Guard 1.0GB",
+      outputPath: path.join(dir, "guarded.mp4")
+    });
+    repo.transitionProduction(variant.id, "evaluated");
+    repo.transitionProduction(variant.id, "selected");
+    repo.registerNotionTarget(variant.id, {
+      workPageId: "11111111-1111-1111-1111-111111111111",
+      specPageId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      expectedFilename: "guarded.mp4"
+    });
+    db.close();
+
+    const rejected = run([
+      "--db", dbPath, "register-target", "--variant", String(variant.id),
+      "--work-page", "22222222-2222-2222-2222-222222222222",
+      "--spec-page", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "--json"
+    ], dir);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /Notion target work page mismatch/u);
+
+    const reopened = openLedger(dbPath);
+    const target = reopened.prepare("SELECT * FROM notion_targets WHERE variant_id=?").get(variant.id);
+    assert.equal(target.work_page_id, "11111111-1111-1111-1111-111111111111");
+    assert.equal(target.spec_page_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI select-variant records a pre-encode target without treating it as completed output", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-select-variant-"));
   try {
@@ -476,6 +521,34 @@ test("CLI select-variant records a pre-encode target without treating it as comp
     assert.equal(row.output_size_bytes, null);
     assert.equal(row.target_size_bytes, 4400000000);
     assert.match(row.failure_detail, /Compact coverage decision: compact_deferred/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI select-variant separates series episodes when one source directory covers the season", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-series-episode-variant-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const scan = path.join(dir, "scan.json");
+    writeFileSync(scan, JSON.stringify({ root: "I:\\source", scannedAt: "2026-07-31T00:00:00.000Z", entries: [{
+      name: "Selected Series", relativePath: "season", fileCount: 2, mediaCount: 2, subtitleCount: 2,
+      nfoCount: 0, totalBytes: 200, largestMedia: [], flags: {}
+    }] }));
+    assert.equal(run(["--db", dbPath, "discover", "--scan", scan], dir).status, 0);
+    const routed = run(["--db", dbPath, "route-intake", "--source-id", "1", "--canonical-title", "Selected Series", "--year", "2025", "--work-type", "series", "--json"], dir);
+    assert.equal(routed.status, 0, routed.stderr);
+    const workId = JSON.parse(routed.stdout).work.id;
+    const select = (episode) => run(["--db", dbPath, "select-variant", "--work-id", String(workId), "--source-id", "1",
+      "--spec-key", "jpn-chs", "--episode-number", String(episode), "--output-spec", "日语 简 1080p H.265 1.0GB/集",
+      "--output-path", `E:\\video_made\\series.e${episode}.mp4`, "--json"], dir);
+    const first = select(1);
+    const second = select(2);
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(second.status, 0, second.stderr);
+    const firstRow = JSON.parse(first.stdout);
+    const secondRow = JSON.parse(second.stdout);
+    assert.notEqual(firstRow.id, secondRow.id);
+    assert.match(firstRow.spec_key, /:episode-1$/u);
+    assert.match(secondRow.spec_key, /:episode-2$/u);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

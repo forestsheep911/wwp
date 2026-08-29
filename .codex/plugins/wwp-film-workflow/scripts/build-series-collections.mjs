@@ -16,16 +16,16 @@ function usage() {
 
 Manifest:
 {
-  "sourceDir": "E:\\\\video_made",
+  "sourceDir": "<input-directory>",
   "filePattern": "Series.Title.S01E*.mp4",
-  "outputDir": "E:\\\\video_made",
+  "outputDir": "<output-directory>",
   "outputPrefix": "Series.Title",
   "season": 1
 }
 
 Alternatively, list inputs explicitly:
 {
-  "outputDir": "E:\\\\video_made",
+  "outputDir": "<output-directory>",
   "outputPrefix": "Series.Title",
   "season": 1,
   "episodes": [

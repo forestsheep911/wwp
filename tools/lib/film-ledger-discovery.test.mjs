@@ -141,24 +141,106 @@ test("importScan creates an intake task for a first-seen source", () => {
   } finally { f.close(); }
 });
 
-test("importScan marks a synthetic flat source missing when its derived path is absent", () => {
+test("importScan never turns unknown quarantine children into new intake", () => {
+  const f = fixture();
+  try {
+    const result = importScan(f.repo, {
+      root: "I:\\待人工删除",
+      scannedAt: "2026-07-12T00:00:00.000Z",
+      entries: [entry({ relativePath: "Archived.Movie.source-42" })]
+    });
+    assert.deepEqual(result.summary, {
+      inserted: 0,
+      unchanged: 0,
+      changed: 0,
+      missing: 0,
+      skippedQuarantine: 1
+    });
+    assert.equal(f.db.prepare("SELECT count(*) count FROM sources").get().count, 0);
+    assert.equal(f.db.prepare("SELECT count(*) count FROM workflow_tasks").get().count, 0);
+  } finally { f.close(); }
+});
+
+test("importScan keeps a synthetic flat identity but stores its real media path", () => {
   const f = fixture();
   const root = mkdtempSync(path.join(tmpdir(), "wwp-flat-source-"));
   try {
+    const mediaPath = path.join(root, "Movie.2025.mkv");
+    writeFileSync(mediaPath, "media");
     const result = importScan(f.repo, {
       root,
       entries: [entry({
         relativePath: "@flat/removed-title",
-        absolutePath: root,
+        absolutePath: mediaPath,
         mediaCount: 1
       })]
     });
     const source = f.db.prepare("SELECT absolute_path, missing FROM sources WHERE relative_path=?")
       .get("@flat/removed-title");
-    assert.equal(result.summary.missing, 1);
-    assert.match(source.absolute_path.replaceAll("\\", "/"), /@flat\/removed-title$/u);
-    assert.equal(source.missing, 1);
-    assert.equal(f.repo.listProductionSourceCandidates({ limit: 9 }).length, 0);
+    assert.equal(result.summary.missing, 0);
+    assert.equal(path.resolve(source.absolute_path).toLowerCase(), path.resolve(mediaPath).toLowerCase());
+    assert.equal(source.missing, 0);
+    assert.equal(f.repo.listWorkflowTasks({ taskType: "intake", limit: 9 }).length, 1);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("flat path migration preserves bound intake completion and reopens only an unbound source", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-flat-migration-"));
+  try {
+    const inputRoot = f.repo.upsertInputRoot(root);
+    const mediaPath = path.join(root, "Movie.2025.iso");
+    writeFileSync(mediaPath, "media");
+    const scanEntry = entry({
+      relativePath: "@flat/movie.2025",
+      absolutePath: mediaPath,
+      mediaCount: 1
+    });
+    const work = f.repo.ensureWork({ canonicalTitle: "Movie", year: 2025 });
+    const bound = f.repo.upsertDiscoveredSource({
+      inputRootId: inputRoot.id,
+      workId: work.id,
+      relativePath: scanEntry.relativePath,
+      absolutePath: path.join(root, "@flat", "movie.2025"),
+      fingerprint: fingerprintEntry(scanEntry),
+      sourceKind: "folder",
+      missing: true
+    });
+    const boundTask = f.repo.requeueIntakeTask(bound.id, { reason: "legacy flat source" });
+    f.repo.transitionWorkflowTask(boundTask.id, "done", { reason: "identity already resolved" });
+
+    const result = importScan(f.repo, { root, entries: [scanEntry] });
+    assert.equal(result.summary.unchanged, 1);
+    assert.equal(f.db.prepare("SELECT missing FROM sources WHERE id=?").get(bound.id).missing, 0);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?")
+      .get(`intake:source:${bound.id}`).status, "done");
+
+    const otherEntry = entry({
+      relativePath: "@flat/other.2025",
+      absolutePath: path.join(root, "Other.2025.mkv"),
+      mediaCount: 1
+    });
+    writeFileSync(otherEntry.absolutePath, "other");
+    const unbound = f.repo.upsertDiscoveredSource({
+      inputRootId: inputRoot.id,
+      relativePath: otherEntry.relativePath,
+      absolutePath: path.join(root, "@flat", "other.2025"),
+      fingerprint: fingerprintEntry(otherEntry),
+      sourceKind: "folder",
+      missing: true
+    });
+    const task = f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?")
+      .get(`intake:source:${unbound.id}`);
+    f.repo.transitionWorkflowTask(task.id, "done", { reason: "synthetic source was unreachable" });
+
+    importScan(f.repo, { root, entries: [scanEntry, otherEntry] });
+    const reopened = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?")
+      .get(`intake:source:${unbound.id}`);
+    assert.equal(reopened.status, "pending");
+    assert.match(reopened.reason, /path repaired/u);
   } finally {
     f.close();
     rmSync(root, { recursive: true, force: true });

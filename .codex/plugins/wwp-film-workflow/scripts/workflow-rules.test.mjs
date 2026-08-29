@@ -70,6 +70,16 @@ test("touched spec titles stay synchronized with Media Assets labels", () => {
   assert.match(publisher, /require direct readback and an idempotent rerun/u);
 });
 
+test("an undersized valid output and its remaining high-tier gap are separate variants", () => {
+  const encoding = read("references/encoding-rules.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+
+  assert.match(encoding, /QC-passed, playable output remains its own publishable actual-size variant/u);
+  assert.match(encoding, /true high tier as a separate deferred variant/u);
+  assert.match(encoding, /never change the valid existing output to `deferred`/u);
+  assert.match(producer, /reclassify and publish it at the measured size/u);
+});
+
 test("plugin revision records the updated subtitle gate contract", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   const cycle = read("references/workflow-cycle.md");
@@ -125,10 +135,40 @@ test("expansion marker uses concrete ledger variants instead of a new Notion pro
 test("quarantined sources retain explicit expansion value", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const cycle = read("references/workflow-cycle.md");
+  const scripts = read("references/script-map.md");
 
   assert.match(producer, /Moving a source to a same-volume `待人工删除` directory disables routine\s+input-root discovery only/u);
   assert.match(producer, /Quarantine location is not an expansion\s+decision/u);
   assert.match(cycle, /Directory placement alone must never close or cancel a supplemental variant/u);
+  assert.match(cycle, /partial specification with no such rows is production work/u);
+  assert.match(cycle, /Ignore explicit smoke\/sample files and special\/OVA\/SP specifications/u);
+  assert.match(cycle, /unknown children are skipped and never create a new source or intake task/u);
+  assert.match(scripts, /`待人工删除` is an audit\/quarantine root, never a discovery root/u);
+});
+
+test("source cleanup follows the latest append-only expansion marker", () => {
+  const archive = read("references/source-archive-rules.md");
+  assert.match(archive, /only the last `\[规格扩展:OPEN\]` or `\[规格扩展:CLOSED\]` marker represents the current expansion decision/u);
+  assert.match(archive, /older OPEN must not permanently block/u);
+});
+
+test("goal idle reporting accounts for every source left in an input root", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const archive = read("skills/wwp-source-archive-operator/SKILL.md");
+  const workflowCycle = read("references/workflow-cycle.md");
+  assert.match(producer, /auditing every\s+still-present source under every enabled input root/u);
+  assert.match(producer, /Never collapse these states into “没有新的可进行项”/u);
+  assert.match(archive, /source_quarantine_failed/u);
+  assert.match(workflowCycle, /complete disposition audit for every still-present/u);
+});
+
+test("completed outputs can return from staging before quarantine", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(producer, /relocate that output back to\s+the default root before quarantine/u);
+  assert.match(producer, /Verify the copied byte count,\s*remove the\s+old copy only after verification/u);
+  assert.match(cycle, /update the exact ledger path plus a relocation event atomically/u);
 });
 
 test("compact derivation verifies burned subtitle pixels before inheriting labels", () => {
@@ -138,6 +178,22 @@ test("compact derivation verifies burned subtitle pixels before inheriting label
   assert.match(encoding, /sample real dialogue frames from the parent and identify the visible Chinese script/u);
   assert.match(encoding, /correct the parent spec, parent Media Asset, ledger variant, and the planned compact variant/u);
   assert.match(encoder, /Do not inherit `简`\/`繁`\/bilingual labels from filenames, old spec titles, or ledger text/u);
+});
+
+test("color checks distinguish mixed-color films from monochrome sources", () => {
+  const encoding = read("references/encoding-rules.md");
+
+  assert.match(encoding, /at least three points distributed across the runtime \(early, middle, and late\)/u);
+  assert.match(encoding, /`color`, `monochrome`, `mixed`, or `unknown`/u);
+  assert.match(encoding, /A black-and-white opening, flashback, dream sequence, or isolated shot is not evidence that the whole source is monochrome/u);
+});
+
+test("legacy media labels are leads and uncovered valuable streams block cleanup", () => {
+  const encoding = read("references/encoding-rules.md");
+
+  assert.match(encoding, /historical filename, spec title, Media Assets label, and ledger label as a lead rather than stream truth/u);
+  assert.match(encoding, /actual source-to-output stream mapping/u);
+  assert.match(encoding, /unidentified but potentially valuable audio track remains an explicit deferred variant and blocks source cleanup/u);
 });
 
 test("audio-only variants reuse an exact visual parent and remain below the upload cap", () => {
@@ -151,12 +207,92 @@ test("audio-only variants reuse an exact visual parent and remain below the uplo
   assert.match(encoder, /verify that the copied video duration and packet hash match the parent/u);
 });
 
-test("large upload retries preserve accepted parts and bind the physical direct route", () => {
+test("large uploads stop before paid proxy fallback and bind fixed-IP retries to the physical direct route", () => {
   const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const sourceOperator = read("skills/wwp-source-archive-operator/SKILL.md");
+  const sourceRules = read("references/source-archive-rules.md");
+  const cycle = read("references/workflow-cycle.md");
+  const scriptMap = read("references/script-map.md");
+  const routeProbe = read("../../../tools/notion-upload-route-probe.mjs");
+  const routeWrapper = read("../../../tools/with-notion-upload-route.mjs");
+  const trafficMonitor = read("../../../tools/lib/vpn-traffic-monitor.mjs");
+  const uploadEntrypoints = [
+    read("../../../tools/notion-upload-movie-video.mjs"),
+    read("../../../tools/notion-upload-series-videos.mjs"),
+    read("../../../tools/notion-upload-movie-package.mjs")
+  ];
 
+  assert.match(publisher, /A non-`DIRECT` route is a hard stop unless the exact controlled Freedom s801 exception/u);
+  assert.match(publisher, /Never pass `--resolve-ip` by itself/u);
   assert.match(publisher, /retry the same resumable manifest with `--resolve-ip <api-ip> --local-address <physical-lan-ip> --no-proxy`/u);
   assert.match(publisher, /Previously accepted multipart parts must be reused/u);
+  assert.match(publisher, /resume the same `file_upload_id` from the last accepted `part_number`/u);
+  assert.match(publisher, /bounded number of fresh DIRECT connections[\s\S]*before considering s801/u);
   assert.match(publisher, /retain concurrency 1/u);
+  assert.match(routeProbe, /HttpsProxyAgent/u);
+  assert.match(routeProbe, /production uploader/u);
+  assert.match(routeProbe, /local Clash proxy[\s\S]*api\.notion\.com as DIRECT/u);
+  for (const entrypoint of uploadEntrypoints) {
+    assert.match(entrypoint, /--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy/u);
+    assert.match(entrypoint, /createVpnTrafficMonitor/u);
+  }
+  assert.match(routeProbe, /createVpnTrafficMonitor/u);
+  assert.match(publisher, /Traffic-counter growth is corroborating evidence, not a route verdict/u);
+  assert.match(publisher, /sustained growth projects exhaustion before the provider reset/u);
+  assert.match(publisher, /Notion -> JMS London 节点 -> JMS London s801 - Reality/u);
+  assert.match(publisher, /--expected-route jms-s801/u);
+  assert.match(routeProbe, /requireNotionUploadRoute/u);
+  assert.match(routeProbe, /--expected-route <direct\|jms-s801>/u);
+  assert.match(publisher, /Never assume a multiplier of 10/u);
+  assert.match(publisher, /proactively when a large transfer is unavoidable/u);
+  assert.match(publisher, /never infer upload accounting solely from that download example/u);
+  assert.match(publisher, /multiplier as unknown rather than infinite/u);
+  assert.match(cycle, /unavoidable large traffic makes protection of the normal allowance/u);
+  assert.match(scriptMap, /existing `Notion` and `JMS London 节点` nested selectors plus their selectable s801 member are sufficient/u);
+  assert.match(publisher, /selectable s801 member inside the existing node group is sufficient/u);
+  assert.match(cycle, /do not require or create a permanent dedicated routing rule or group/u);
+  assert.match(publisher, /Do not require or create a dedicated permanent s801 route/u);
+  assert.match(publisher, /stop when it is missing or ambiguous instead of guessing/u);
+  assert.match(publisher, /Restore and read back both saved selector values in a `finally`-style cleanup/u);
+  assert.match(publisher, /with-notion-upload-route\.mjs --route jms-s801 --reason <estimated-batch-size-or-direct-failure> --apply/u);
+  assert.match(publisher, /The s801 wrapper requires `--reason <text>`/u);
+  assert.match(publisher, /read the relevant selectors back before every file part/u);
+  for (const entrypoint of uploadEntrypoints) {
+    assert.match(entrypoint, /createNotionUploadSelectorGuard/u);
+    assert.match(entrypoint, /routeGuard\.assert/u);
+  }
+  assert.match(routeWrapper, /withTemporaryNotionRoute/u);
+  assert.match(routeWrapper, /NOTION_UPLOAD_EXPECTED_ROUTE/u);
+  assert.match(cycle, /restore plus read back both saved choices on success, failure, or interruption/u);
+  assert.match(publisher, /courtesy Freedom server[\s\S]*taken offline at any time/u);
+  assert.match(sourceOperator, /only non-DIRECT exception is a deliberately wrapped, probed, and traffic-monitored JMS Freedom `s801` batch/u);
+  assert.match(sourceOperator, /without a dedicated routing rule/u);
+  assert.match(sourceRules, /JMS Freedom `s801` is the sole controlled non-DIRECT exception/u);
+  assert.match(sourceRules, /do not require a dedicated permanent s801 route/u);
+  assert.match(publisher, /POSTER_CACHE_REQUEST_TIMEOUT_MS=30000/u);
+  assert.match(cycle, /single slow poster host must not hold unrelated completed media outside the website index/u);
+  assert.match(cycle, /recycle only that uploader's connection[\s\S]*fresh DIRECT connections first/u);
+  assert.doesNotMatch(trafficMonitor, /state[^]*endpoint\.url/u);
+});
+
+test("structured Media Assets are not truncated by the legacy variant cap", () => {
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const scriptMap = read("references/script-map.md");
+  const notionSource = read("../../../apps/api/src/notion-source.ts");
+
+  assert.match(publisher, /Relation-bounded structured Media Assets must bypass the legacy `NOTION_VARIANT_LIMIT` block-scan cap/u);
+  assert.match(scriptMap, /bypass the legacy `NOTION_VARIANT_LIMIT` block-scan cap/u);
+  assert.match(notionSource, /completeStructuredMediaAssetVariants/u);
+  assert.doesNotMatch(notionSource, /completeStructuredMediaAssetVariants\([^)]*\)\s*\.slice/u);
+});
+
+test("safe ledger title reconciliation is bounded and exact", () => {
+  const scriptMap = read("references/script-map.md");
+  assert.match(scriptMap, /film-ledger-reconcile-index-titles\.mjs/u);
+  assert.match(scriptMap, /exact page-ID match/u);
+  assert.match(scriptMap, /precisely the ledger title plus its recorded terminal `\(year\)` suffix/u);
+  assert.match(scriptMap, /terminal `updated`\/`skipped` record with a non-empty subject ID/u);
+  assert.match(scriptMap, /all remaining renames, year conflicts, and missing identities fail closed/u);
 });
 
 test("unproduced useful audio branches keep a source out of cleanup", () => {
@@ -175,6 +311,11 @@ test("metadata task completion requires exact core and poster evidence", () => {
   assert.match(metadata, /Complete the ledger `metadata_backfill` task only after that exact readback/u);
   assert.match(metadata, /Determine `movie` versus `series` before the first Notion metadata write/u);
   assert.match(metadata, /notion-create-work-page\.mjs --work-id <id>/u);
+  assert.match(metadata, /every later `notion-metadata-backfill\.mjs` pass must include `--preserve-existing-identity`/u);
+  assert.match(metadata, /structured `IMDb ID` property with the legacy linked `imdb` property/u);
+  assert.match(metadata, /do not let `--preserve-existing-identity` bypass the inconsistency/u);
+  assert.match(sources, /internal identity defect[\s\S]*notion-work-identity-correction\.mjs/u);
+  assert.match(metadata, /must not replace a verified Chinese-plus-original title with an English title/u);
   assert.match(metadata, /`missingCoreFields`/u);
   assert.match(metadata, /maintained `Poster URL` is usable and later website readback succeeds/u);
   assert.match(sources, /Complete the ledger\s+metadata task only for `Metadata Status=verified`/u);
@@ -189,4 +330,15 @@ test("multi-season shows use one database work page per season", () => {
   assert.match(seriesRules, /human must move each existing spec page/u);
   assert.match(seriesProducer, /one database work entry for each verified season/u);
   assert.match(seriesProducer, /parent-series page, another season page, or another work ID is a hard failure/u);
+});
+
+test("automatic goal continuations suppress duplicate no-change reports", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(producer, /automatic goal continuation as a scheduling opportunity/u);
+  assert.match(producer, /do not immediately run another full cycle or send another user-visible "no change" message/u);
+  assert.match(cycle, /automatic goal continuation is not itself a workflow-state change/u);
+  assert.match(cycle, /suppress a\s+duplicate user-visible status report/u);
+  assert.match(cycle, /reported once with its exact next\s+trigger or review time/u);
 });

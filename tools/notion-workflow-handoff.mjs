@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import https from "node:https";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
@@ -17,6 +18,8 @@ import {
   humanIssueFromPage,
   pageTitle,
   pendingHumanWorkflowNoteFromPage,
+  propertyText,
+  workReleaseBlockers,
   workflowNoteFromPage,
   workflowStateFromPage
 } from "./lib/notion-workflow-handoff.mjs";
@@ -32,9 +35,9 @@ function loadDotEnv() {
 }
 
 function parse(argv) {
-  const values = new Set(["--page-id", "--status", "--note", "--actor", "--limit", "--db", "--local-address"]);
+  const values = new Set(["--page-id", "--expected-title", "--status", "--note", "--actor", "--limit", "--db", "--local-address", "--hide-from-website"]);
   const repeated = new Set(["--page-id"]);
-  const booleans = new Set(["--apply", "--json"]);
+  const booleans = new Set(["--apply", "--json", "--release-work"]);
   const options = { db: DEFAULT_DB, apply: false, json: false };
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -46,7 +49,7 @@ function parse(argv) {
       if (repeated.has(arg)) (options[key] ??= []).push(value);
       else options[key] = value;
     } else if (booleans.has(arg)) {
-      options[arg.slice(2)] = true;
+      options[arg.slice(2).replaceAll("-", "_")] = true;
     } else if (arg.startsWith("--")) {
       throw new Error(`unknown argument: ${arg}`);
     } else {
@@ -57,6 +60,12 @@ function parse(argv) {
     throw new Error("command must be schema|scan|claim|set|reconcile");
   }
   const limit = normalizeLimit(options.limit, 3, 3);
+  if (options.hide_from_website != null) {
+    if (!["true", "false"].includes(options.hide_from_website)) {
+      throw new Error("--hide-from-website must be true or false");
+    }
+    options.hide_from_website = options.hide_from_website === "true";
+  }
   return { command: positionals[0], options: { ...options, limit } };
 }
 
@@ -123,10 +132,16 @@ function mirrorPage(repository, page, observedAt = new Date().toISOString()) {
 }
 
 function row(page, mirror) {
+  const properties = page.properties ?? {};
   return {
     pageId: page.id,
     title: pageTitle(page),
     status: workflowStateFromPage(page),
+    hideFromWebsite: properties["Hide from Website"]?.checkbox ?? null,
+    needsReview: properties["Needs Review"]?.checkbox ?? null,
+    metadataStatus: properties["Metadata Status"]?.select?.name ?? "",
+    humanIssue: humanIssueFromPage(page),
+    aiIssue: propertyText(properties["AI Issue"]),
     pendingHumanNote: pendingHumanWorkflowNoteFromPage(page),
     workflowNote: workflowNoteFromPage(page),
     mirror
@@ -143,16 +158,55 @@ async function queryActionable(notion, dataSourceId, limit) {
 }
 
 async function applySet(notion, page, options) {
+  const releaseWork = options.release_work === true;
+  const visibilityRequested = typeof options.hide_from_website === "boolean";
+  if (releaseWork && options.status !== "已完成") {
+    throw new Error("--release-work requires --status 已完成");
+  }
+  if (releaseWork && options.hide_from_website === true) {
+    throw new Error("--release-work cannot keep the work hidden");
+  }
+  if (options.hide_from_website === false && !releaseWork) {
+    throw new Error("Clearing Hide from Website requires --release-work");
+  }
+  if (visibilityRequested && page.properties?.["Hide from Website"]?.type !== "checkbox") {
+    throw new Error("Hide from Website checkbox is missing");
+  }
+  const releaseBlockers = releaseWork ? workReleaseBlockers(page) : [];
+  if (releaseBlockers.length) {
+    throw new Error(`Work release blocked: ${releaseBlockers.join(", ")}`);
+  }
   const update = buildWorkflowUpdate(page, {
     status: options.status,
     note: options.note,
     actor: options.actor ?? "ai",
     at: new Date().toISOString(),
-    enforceTransition: true
+    enforceTransition: !releaseWork
   });
+  if (releaseWork) update.properties["Hide from Website"] = { checkbox: false };
+  else if (visibilityRequested) update.properties["Hide from Website"] = { checkbox: options.hide_from_website };
   if (!options.apply) return { page, update, applied: false };
-  const updated = await notion.pages.update({ page_id: page.id, properties: update.properties });
-  return { page: updated, update, applied: true };
+  await notion.pages.update({ page_id: page.id, properties: update.properties });
+  const readback = await notion.pages.retrieve({ page_id: page.id });
+  if (workflowStateFromPage(readback) !== options.status) {
+    throw new Error(`Workflow status readback failed for ${page.id}`);
+  }
+  const expectedVisibility = releaseWork ? false : options.hide_from_website;
+  if (typeof expectedVisibility === "boolean"
+    && readback.properties?.["Hide from Website"]?.checkbox !== expectedVisibility) {
+    throw new Error(`Work visibility readback failed for ${page.id}`);
+  }
+  return { page: readback, update, applied: true };
+}
+
+export function assertExpectedPageTitle(page, expectedTitle) {
+  const expected = String(expectedTitle ?? "").trim();
+  if (!expected) throw new Error("set requires --expected-title");
+  const observed = pageTitle(page).trim();
+  if (observed !== expected) {
+    throw new Error(`Workflow page title mismatch: expected \"${expected}\", observed \"${observed}\" (${page.id})`);
+  }
+  return observed;
 }
 
 function output(value, json) {
@@ -223,8 +277,11 @@ async function main() {
 
     if (command === "set") {
       const pageId = extractId(options.page_id?.[0]);
-      if (!pageId || !options.status) throw new Error("set requires --page-id and --status");
+      if (!pageId || !options.status || !options.expected_title) {
+        throw new Error("set requires --page-id, --expected-title, and --status");
+      }
       const page = await notion.pages.retrieve({ page_id: pageId });
+      assertExpectedPageTitle(page, options.expected_title);
       const result = await applySet(notion, page, options);
       output({
         mode: options.apply ? "apply" : "dry-run",
@@ -258,7 +315,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

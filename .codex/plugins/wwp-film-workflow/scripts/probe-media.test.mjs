@@ -14,12 +14,22 @@ test("parses PGS language descriptors from Blu-ray CLPI", () => {
     bytes.write("eng", 24, "ascii");
     Buffer.from([0x12, 0xa1, 0x15, 0x90]).copy(bytes, 44);
     bytes.write("zho", 48, "ascii");
+    Buffer.from([0x11, 0x00, 0x15, 0x83, 0x61]).copy(bytes, 68);
+    bytes.write("eng", 73, "ascii");
+    Buffer.from([0x11, 0x01, 0x15, 0x81, 0x61]).copy(bytes, 92);
+    bytes.write("zho", 97, "ascii");
     writeFileSync(clip, bytes);
     assert.deepEqual(parseClipInfoPgsTracks(clip).pgsTracks, [
       { pid: "0x12a0", language: "eng" },
       { pid: "0x12a1", language: "zho" }
     ]);
+    assert.deepEqual(parseClipInfoPgsTracks(clip).audioTracks, [
+      { pid: "0x1100", codec: "truehd", language: "eng" },
+      { pid: "0x1101", codec: "ac3", language: "zho" }
+    ]);
     assert.equal(parseClipInfoPgsTracks(clip).hasChineseSubtitle, true);
+    assert.equal(parseClipInfoPgsTracks(clip).hasEnglishAudio, true);
+    assert.equal(parseClipInfoPgsTracks(clip).hasChineseAudio, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

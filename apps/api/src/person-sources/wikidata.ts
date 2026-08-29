@@ -4,7 +4,7 @@ import OpenCC from "opencc-js";
 import { fetchProviderJson, ProviderRateLimiter } from "./provider-http.js";
 import type { FetchLike, PersonEvidence } from "./types.js";
 
-interface WikidataValue { value?: string; time?: string }
+interface WikidataValue { value?: string; id?: string; time?: string }
 interface WikidataClaim { mainsnak?: { datavalue?: { value?: WikidataValue | string } } }
 interface WikidataEntity {
   labels?: Record<string, { value?: string }>;
@@ -17,6 +17,19 @@ interface WikidataPayload { entities?: Record<string, WikidataEntity> }
 export class NonHumanWikidataEntityError extends Error {
   constructor(readonly wikidataId: string) {
     super(`Wikidata entity ${wikidataId} is explicitly not a human.`);
+  }
+}
+
+export class WikidataRoleMismatchError extends Error {
+  constructor(readonly wikidataId: string, readonly expectedDepartments: readonly string[], readonly description: string) {
+    super(`Wikidata entity ${wikidataId} has a non-film description that conflicts with the expected credit department: ${description}`);
+  }
+}
+
+export function assertWikidataPersonRole(wikidataId: string, evidence: PersonEvidence, expectedDepartments: readonly string[] = []) {
+  const description = evidence.biography?.texts?.find((entry) => entry.language === "en")?.value;
+  if (description && isObviousRoleMismatch(description, evidence.externalIds.tmdb, evidence.externalIds.imdb, expectedDepartments)) {
+    throw new WikidataRoleMismatchError(wikidataId, expectedDepartments, description);
   }
 }
 
@@ -40,7 +53,7 @@ export class WikidataPersonSource {
     this.userAgent = options.userAgent ?? "WWPDW-People/0.1 (local catalog enrichment)";
   }
 
-  async fetchPersonEvidence(value: string): Promise<PersonEvidence> {
+  async fetchPersonEvidence(value: string, expectedDepartments: readonly string[] = []): Promise<PersonEvidence> {
     const wikidataId = normalizeWikidataId(value);
     if (!wikidataId) throw new Error(`Invalid Wikidata person id: ${value}`);
     const url = `https://www.wikidata.org/wiki/Special:EntityData/${wikidataId}.json`;
@@ -61,6 +74,10 @@ export class WikidataPersonSource {
     const image = claimString(entity, "P18");
     const descriptions = localizedBiographyDescriptions(entity.descriptions);
     const description = descriptions[0];
+    const englishDescription = descriptions.find((entry) => entry.language === "en")?.value;
+    if (englishDescription && isObviousRoleMismatch(englishDescription, tmdb, imdb, expectedDepartments)) {
+      throw new WikidataRoleMismatchError(wikidataId, expectedDepartments, englishDescription);
+    }
     return {
       externalIds: normalizePersonExternalIds({ wikidata: wikidataId, tmdb, imdb }),
       names: wikidataNames(entity, url, observedAt),
@@ -86,6 +103,15 @@ export class WikidataPersonSource {
       observedAt
     };
   }
+}
+
+function isObviousRoleMismatch(description: string, tmdb: string | undefined, imdb: string | undefined, expectedDepartments: readonly string[]) {
+  if (tmdb || imdb || expectedDepartments.length === 0) return false;
+  if (!expectedDepartments.some((department) => ["acting", "directing", "writing", "production", "music", "camera", "editing"].includes(department))) return false;
+  const normalized = description.toLocaleLowerCase("en-US");
+  const nonFilmOccupation = /\b(activist|politician|scientist|physicist|astronomer|athlete|wrestler|footballer|baseball player|basketball player|soccer player|racing driver|boxer|journalist|lawyer|professor|academic|businessman|businesswoman)\b/.test(normalized);
+  const filmOccupation = /\b(actor|actress|director|writer|screenwriter|producer|composer|animator|filmmaker|comedian|singer)\b/.test(normalized);
+  return nonFilmOccupation && !filmOccupation;
 }
 
 const languagePriority = ["zh-cn", "zh-hans", "zh-hant", "zh", "en"];
@@ -144,7 +170,9 @@ function claimTime(entity: WikidataEntity, property: string) {
 function claimEntityIds(entity: WikidataEntity, property: string) {
   return (entity.claims?.[property] ?? []).flatMap((claim) => {
     const value = claim.mainsnak?.datavalue?.value;
-    return typeof value === "object" && value.value?.trim() ? [value.value.trim()] : [];
+    if (typeof value !== "object") return [];
+    const id = value.value?.trim() || value.id?.trim();
+    return id ? [id] : [];
   });
 }
 

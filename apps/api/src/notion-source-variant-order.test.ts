@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MediaVariant } from "@wwpdw/shared";
-import { postersFromProperties, sortMediaAssetVariants } from "./notion-source.js";
+import {
+  completeStructuredMediaAssetVariants,
+  creditsFromProperties,
+  postersFromProperties,
+  sortMediaAssetVariants
+} from "./notion-source.js";
 
 function episodeVariant(episodeNumber: number): MediaVariant {
   return {
@@ -29,6 +34,16 @@ test("Media Assets variants are ordered by episode before applying a display lim
   );
 });
 
+test("structured Media Assets keep every episode and specification for large series", () => {
+  const variants = Array.from({ length: 456 }, (_, index) => episodeVariant((index % 114) + 1));
+
+  const completed = completeStructuredMediaAssetVariants(variants);
+
+  assert.equal(completed.length, 456);
+  assert.equal(completed[0]?.metadata?.episodeNumber, 1);
+  assert.equal(completed.at(-1)?.metadata?.episodeNumber, 114);
+});
+
 test("an explicit poster property takes precedence over a legacy page cover", () => {
   const posters = postersFromProperties(
     { cover: { type: "external", external: { url: "https://example.com/wrong-cover.jpg" } } },
@@ -45,5 +60,40 @@ test("an explicit poster property takes precedence over a legacy page cover", ()
     "https://example.com/correct-poster.jpg",
     "https://example.com/correct-poster-source.jpg",
     "https://example.com/wrong-cover.jpg"
+  ]);
+});
+
+test("OMDb comma-separated directors, writers, and cast become distinct structured credits", () => {
+  const richText = (value: string) => ({ type: "rich_text", rich_text: [{ plain_text: value }] });
+  const parsed = creditsFromProperties({
+    Directors: richText("Ron Howard"),
+    Writers: richText("Jim Lovell, Jeffrey Kluger, William Broyles Jr."),
+    Cast: richText("Tom Hanks, Bill Paxton, Kevin Bacon")
+  });
+
+  assert.deepEqual(parsed.credits.map((credit) => [credit.name, credit.department]), [
+    ["Ron Howard", "directing"],
+    ["Jim Lovell", "writing"],
+    ["Jeffrey Kluger", "writing"],
+    ["William Broyles Jr.", "writing"],
+    ["Tom Hanks", "acting"],
+    ["Bill Paxton", "acting"],
+    ["Kevin Bacon", "acting"]
+  ]);
+});
+
+test("legacy basic info credits seed structured credits when dedicated fields are empty", () => {
+  const richText = (value: string) => ({ type: "rich_text", rich_text: [{ plain_text: value }] });
+  const parsed = creditsFromProperties({
+    "基本信息": richText("导演: 蒂姆·米勒 / 罗伯特·瓦利 编剧: 约翰·斯卡尔齐 / 肉食部门 主演: 诺兰·诺斯 / 艾米丽·奥布莱恩 类型: 动画")
+  });
+
+  assert.deepEqual(parsed.credits.map((credit) => [credit.name, credit.department]), [
+    ["蒂姆·米勒", "directing"],
+    ["罗伯特·瓦利", "directing"],
+    ["约翰·斯卡尔齐", "writing"],
+    ["肉食部门", "writing"],
+    ["诺兰·诺斯", "acting"],
+    ["艾米丽·奥布莱恩", "acting"]
   ]);
 });

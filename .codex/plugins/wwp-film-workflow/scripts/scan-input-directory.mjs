@@ -161,7 +161,7 @@ function summarizeEntry(entryPath, root, maxSamples) {
 }
 
 function rootFileKey(filePath) {
-  const stem = path.basename(filePath, path.extname(filePath));
+  const stem = path.basename(filePath, path.extname(filePath)).normalize("NFKC");
   const seasonEpisode = stem.match(/^(.*?)[._ -]+s(\d{1,2})e\d{1,3}\b/iu);
   if (seasonEpisode) {
     return `${seasonEpisode[1]}.s${seasonEpisode[2].padStart(2, "0")}`.toLocaleLowerCase();
@@ -212,11 +212,13 @@ function main() {
     rootMediaGroups.set(key, group);
   }
   for (const [key, mediaFiles] of rootMediaGroups) {
-    const mediaFile = mediaFiles[0];
     const relatedFiles = rootFiles.filter((file) => rootFileKey(file) === key);
     const summary = summarizeFiles(key, `@flat/${key}`, relatedFiles, root, options.maxSamples);
-    // Flat output directories use a logical group key; the physical root remains the source location.
-    summary.absolutePath = root;
+    // Keep the synthetic key for stable grouping, but point the ledger at a
+    // real media file so a top-level MKV/ISO can be probed and later retired.
+    summary.physicalSourceRelativePath = summary.largestMedia[0]?.relativePath
+      ?? path.relative(root, mediaFiles[0]);
+    summary.absolutePath = path.resolve(root, summary.physicalSourceRelativePath);
     summary.memberRelativePaths = relatedFiles.map((file) => path.relative(root, file));
     entries.push(summary);
   }

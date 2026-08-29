@@ -9,7 +9,7 @@ const DEFAULT_OUTPUT_ROOT = "E:\\video_made";
 const DEFAULT_MANIFEST_DIR = path.resolve(".local-data");
 
 function parseArgs(args) {
-  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, manifestDir: DEFAULT_MANIFEST_DIR, json: false, apply: false, limit: null, candidateType: "all" };
+  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, manifestDir: DEFAULT_MANIFEST_DIR, json: false, apply: false, limit: null, candidateType: "all", variantId: null, sourceId: null };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--db") options.db = path.resolve(args[++index]);
@@ -17,17 +17,28 @@ function parseArgs(args) {
     else if (arg === "--manifest-dir") options.manifestDir = path.resolve(args[++index]);
     else if (arg === "--quarantine-dir") options.quarantineDir = path.resolve(args[++index]);
     else if (arg === "--limit") options.limit = Number(args[++index]);
+    else if (arg === "--variant-id") options.variantId = Number(args[++index]);
+    else if (arg === "--source-id") options.sourceId = Number(args[++index]);
+    else if (arg === "--coverage-reason") options.coverageReason = args[++index];
     else if (arg === "--candidate-type") options.candidateType = args[++index];
     else if (arg === "--apply") options.apply = true;
+    else if (arg === "--allow-reviewed-uncovered-media") options.allowReviewedUncoveredMedia = true;
     else if (arg === "--json") options.json = true;
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node tools/film-cleanup-candidates.mjs [--output-root E:\\video_made] [--manifest-dir .local-data] [--quarantine-dir <dir>] [--candidate-type all|playable_output|uploaded_output|source_input] [--limit <n>] [--apply] [--json]");
+      console.log("Usage: node tools/film-cleanup-candidates.mjs [--output-root E:\\video_made] [--manifest-dir .local-data] [--quarantine-dir <dir>] [--candidate-type all|playable_output|uploaded_output|source_input] [--variant-id <id>] [--source-id <id>] [--allow-reviewed-uncovered-media --coverage-reason <reason>] [--limit <n>] [--apply] [--json]");
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}`);
   }
   if (options.limit != null && (!Number.isInteger(options.limit) || options.limit < 1)) {
     throw new Error("--limit must be a positive integer");
   }
+  for (const [name, value] of [["--variant-id", options.variantId], ["--source-id", options.sourceId]]) {
+    if (value != null && (!Number.isInteger(value) || value < 1)) throw new Error(`${name} must be a positive integer`);
+  }
+  if (options.variantId != null && options.sourceId != null) throw new Error("--variant-id and --source-id are mutually exclusive");
+  if (options.allowReviewedUncoveredMedia && options.sourceId == null) throw new Error("--allow-reviewed-uncovered-media requires --source-id");
+  if (options.allowReviewedUncoveredMedia && !String(options.coverageReason ?? "").trim()) throw new Error("--allow-reviewed-uncovered-media requires --coverage-reason");
+  if (options.coverageReason && !options.allowReviewedUncoveredMedia) throw new Error("--coverage-reason requires --allow-reviewed-uncovered-media");
   if (!["all", "playable_output", "uploaded_output", "source_input"].includes(options.candidateType)) {
     throw new Error("--candidate-type must be all|playable_output|uploaded_output|source_input");
   }
@@ -49,6 +60,46 @@ function uniqueQuarantinePath(sourcePath, quarantineDir, prefix) {
     suffix += 1;
   }
   return destination;
+}
+
+function baseQuarantinePath(sourcePath, quarantineDir, prefix) {
+  const extension = path.extname(sourcePath);
+  const base = path.basename(sourcePath, extension);
+  return path.join(quarantineDir, `${base}.${prefix}${extension}`);
+}
+
+function mergeDirectoryIntoExisting(source, destination) {
+  const conflicts = [];
+  const pending = [[source, destination]];
+  while (pending.length > 0) {
+    const [sourceDir, destinationDir] = pending.pop();
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+      const sourceEntry = path.join(sourceDir, entry.name);
+      const destinationEntry = path.join(destinationDir, entry.name);
+      if (!fs.existsSync(destinationEntry)) continue;
+      const destinationStat = fs.statSync(destinationEntry);
+      if (entry.isDirectory() && destinationStat.isDirectory()) pending.push([sourceEntry, destinationEntry]);
+      else conflicts.push(path.relative(source, sourceEntry));
+    }
+  }
+  if (conflicts.length > 0) throw new Error(`partial quarantine has conflicting entries: ${conflicts.join(", ")}`);
+
+  function moveContents(sourceDir, destinationDir) {
+    fs.mkdirSync(destinationDir, { recursive: true });
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+      const sourceEntry = path.join(sourceDir, entry.name);
+      const destinationEntry = path.join(destinationDir, entry.name);
+      if (entry.isDirectory()) {
+        moveContents(sourceEntry, destinationEntry);
+        fs.rmdirSync(sourceEntry);
+      } else {
+        fs.renameSync(sourceEntry, destinationEntry);
+      }
+    }
+  }
+
+  moveContents(source, destination);
+  fs.rmdirSync(source);
 }
 
 export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
@@ -74,13 +125,23 @@ export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
       : candidate.sourceId != null
         ? `source-${candidate.sourceId}`
         : "uploaded";
-    const destination = uniqueQuarantinePath(candidate.path, root, prefix);
+    const baseDestination = baseQuarantinePath(candidate.path, root, prefix);
+    const sourceIsDirectory = fs.existsSync(candidate.path) && fs.statSync(candidate.path).isDirectory();
+    const resumesPartialDirectory = sourceIsDirectory
+      && fs.existsSync(baseDestination)
+      && fs.statSync(baseDestination).isDirectory();
+    const destination = resumesPartialDirectory
+      ? baseDestination
+      : uniqueQuarantinePath(candidate.path, root, prefix);
     try {
-      fs.renameSync(candidate.path, destination);
-      moved.push({ candidateType: candidate.candidate_type, path: candidate.path, destination, isDirectory: candidate.isDirectory ?? false });
+      if (resumesPartialDirectory) mergeDirectoryIntoExisting(candidate.path, destination);
+      else fs.renameSync(candidate.path, destination);
+      moved.push({ candidateType: candidate.candidate_type, variantId: candidate.variantId ?? null, sourceId: candidate.sourceId ?? null, path: candidate.path, destination, isDirectory: candidate.isDirectory ?? false });
     } catch (error) {
       failed.push({
         candidateType: candidate.candidate_type,
+        variantId: candidate.variantId ?? null,
+        sourceId: candidate.sourceId ?? null,
         path: candidate.path,
         errorCode: error?.code ?? "rename_failed",
         error: error?.message ?? String(error)
@@ -90,11 +151,83 @@ export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
   return { moved, failed, skipped };
 }
 
-export function selectCleanupCandidates(candidates, { candidateType = "all", limit = null } = {}) {
-  const filtered = candidateType === "all"
+export function recordMovedVariantPath(db, moved, at = new Date().toISOString()) {
+  for (const item of moved) {
+    if (item.candidateType !== "playable_output" || item.variantId == null) continue;
+    const previousPath = item.path;
+    const nextPath = path.resolve(item.destination);
+    db.prepare("UPDATE variants SET output_path=?, updated_at=? WHERE id=?")
+      .run(nextPath.replaceAll("/", "\\"), at, item.variantId);
+    db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("variant", item.variantId, "output_quarantined", JSON.stringify({ previousPath, nextPath, reason: "Moved after publication and retained for human deletion" }), at);
+    item.ledgerUpdated = true;
+    item.ledgerPath = nextPath;
+  }
+}
+
+export function recordMovedSourcePath(db, moved, at = new Date().toISOString()) {
+  for (const item of moved) {
+    if (item.candidateType !== "source_input" || item.sourceId == null) continue;
+    const previousPath = item.path;
+    const nextPath = path.resolve(item.destination);
+    db.prepare("UPDATE sources SET absolute_path=?, updated_at=? WHERE id=?")
+      .run(nextPath.replaceAll("/", "\\"), at, item.sourceId);
+    db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("source", item.sourceId, "source_quarantined", JSON.stringify({
+        previousPath,
+        nextPath,
+        reason: "Moved after all linked variants closed",
+        reviewedUncoveredMediaReason: item.coverageOverrideReason ?? null
+      }), at);
+    item.ledgerUpdated = true;
+    item.ledgerPath = nextPath;
+  }
+}
+
+export function recordCleanupMoveFailures(db, failed, at = new Date().toISOString()) {
+  const insert = db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)");
+  for (const item of failed) {
+    const entityType = item.sourceId != null ? "source" : item.variantId != null ? "variant" : null;
+    const entityId = item.sourceId ?? item.variantId ?? null;
+    if (!entityType || entityId == null) continue;
+    insert.run(entityType, entityId, `${entityType}_quarantine_failed`, JSON.stringify({
+      path: item.path,
+      errorCode: item.errorCode,
+      error: item.error
+    }), at);
+    item.ledgerRecorded = true;
+  }
+}
+
+export function applySourceCoverageOverride(candidates, { sourceId, reason } = {}) {
+  if (sourceId == null) return candidates;
+  const candidate = candidates.find((item) => item.candidate_type === "source_input" && item.sourceId === sourceId);
+  if (!candidate) throw new Error(`source ${sourceId} is not an active cleanup candidate`);
+  if (candidate.reasons.length !== 1 || candidate.reasons[0] !== "source_media_not_fully_covered") {
+    throw new Error(`source ${sourceId} cannot waive blockers: ${candidate.reasons.join(",") || "none"}`);
+  }
+  candidate.reasons = [];
+  candidate.eligible = true;
+  candidate.coverageOverrideReason = String(reason).trim();
+  candidate.waivedReason = "source_media_not_fully_covered";
+  return candidates;
+}
+
+export function selectCleanupCandidates(candidates, { candidateType = "all", variantId = null, sourceId = null, limit = null } = {}) {
+  let filtered = candidateType === "all"
     ? candidates
     : candidates.filter((item) => item.candidate_type === candidateType);
+  if (variantId != null) filtered = filtered.filter((item) => item.candidate_type === "playable_output" && item.variantId === variantId);
+  if (sourceId != null) filtered = filtered.filter((item) => item.candidate_type === "source_input" && item.sourceId === sourceId);
   return limit == null ? filtered : filtered.slice(0, limit);
+}
+
+export function cleanupReportSections(candidates) {
+  return {
+    candidates: candidates.filter((row) => row.candidate_type === "playable_output"),
+    sourceCandidates: candidates.filter((row) => row.candidate_type === "source_input"),
+    manifestMatches: candidates.filter((row) => row.candidate_type === "uploaded_output")
+  };
 }
 
 export function collectManifestMatches(manifestDir, outputRoot) {
@@ -133,6 +266,15 @@ export function collectManifestMatches(manifestDir, outputRoot) {
 function isInsideRoot(filePath, rootPath) {
   const relative = path.relative(rootPath, filePath);
   return relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+}
+
+function isSampleArtifact(filePath) {
+  return /(?:^|[._-])sample(?:[._-]|$)/iu.test(path.basename(filePath));
+}
+
+export function latestExpansionDecision(workflowNote) {
+  const matches = [...String(workflowNote ?? "").matchAll(/\[规格扩展:(OPEN|CLOSED)\]/gu)];
+  return matches.at(-1)?.[1] ?? null;
 }
 
 function countMediaFiles(directory) {
@@ -175,6 +317,7 @@ export function collectCleanupCandidates(db, outputRoot) {
       result.reasons.push("outside_output_root");
       return result;
     }
+    if (isSampleArtifact(filePath)) result.reasons.push("sample_artifact");
     if (!fs.existsSync(filePath)) {
       result.reasons.push("file_missing");
       return result;
@@ -190,6 +333,7 @@ export function collectCleanupCandidates(db, outputRoot) {
 export function collectSourceCleanupCandidates(db) {
   const rows = db.prepare(`
     SELECT sources.id AS source_id, sources.absolute_path, sources.relative_path, sources.source_kind,
+           input_roots.path AS input_root_path,
            works.canonical_title, works.workflow_status, works.workflow_note,
            COUNT(variants.id) AS linked_variant_count,
            SUM(CASE WHEN variants.publication_state='sync_ready' THEN 1 ELSE 0 END) AS sync_ready_count,
@@ -208,6 +352,7 @@ export function collectSourceCleanupCandidates(db) {
   `).all();
   return rows.map((row) => {
     const filePath = path.resolve(row.absolute_path);
+    if (row.input_root_path && !isInsideRoot(filePath, path.resolve(row.input_root_path))) return null;
     const result = {
       sourceId: row.source_id,
       title: row.canonical_title,
@@ -223,7 +368,9 @@ export function collectSourceCleanupCandidates(db) {
       reasons: []
     };
     if (row.active_variant_count > 0 || row.closed_variant_count !== row.linked_variant_count) result.reasons.push("linked_variants_not_closed");
-    if (/\[规格扩展:OPEN\]/u.test(String(row.workflow_note ?? ""))) result.reasons.push("source_expansion_open");
+    const expansionDecision = latestExpansionDecision(row.workflow_note);
+    if (expansionDecision === "OPEN") result.reasons.push("source_expansion_open");
+    else if (expansionDecision !== "CLOSED") result.reasons.push("source_expansion_unresolved");
     if (!fs.existsSync(filePath)) result.reasons.push("file_missing");
     else {
       const stats = fs.statSync(filePath);
@@ -236,7 +383,7 @@ export function collectSourceCleanupCandidates(db) {
     }
     result.eligible = result.reasons.length === 0;
     return result;
-  });
+  }).filter(Boolean);
 }
 
 export function main(args = process.argv.slice(2)) {
@@ -251,25 +398,45 @@ export function main(args = process.argv.slice(2)) {
       ...uniqueManifestMatches.map((row) => ({ candidate_type: "uploaded_output", ...row })),
       ...collectSourceCleanupCandidates(db).map((row) => ({ candidate_type: "source_input", ...row }))
     ];
+    if (options.allowReviewedUncoveredMedia) {
+      applySourceCoverageOverride(cleanupCandidates, { sourceId: options.sourceId, reason: options.coverageReason });
+    }
+    const scopedCandidates = selectCleanupCandidates(cleanupCandidates, {
+      candidateType: options.candidateType,
+      variantId: options.variantId,
+      sourceId: options.sourceId,
+      limit: options.limit
+    });
+    const sections = cleanupReportSections(scopedCandidates);
     const report = {
       generatedAt: new Date().toISOString(),
       outputRoot: path.resolve(options.outputRoot),
       deletePerformed: false,
       movePerformed: false,
-      candidates,
-      eligibleCount: candidates.filter(item => item.eligible).length,
-      sourceCandidates: cleanupCandidates.filter((row) => row.candidate_type === "source_input"),
-      manifestMatches: uniqueManifestMatches
+      candidates: sections.candidates,
+      eligibleCount: sections.candidates.filter(item => item.eligible).length,
+      sourceCandidates: sections.sourceCandidates,
+      manifestMatches: sections.manifestMatches
     };
     report.sourceEligibleCount = report.sourceCandidates.filter(item => item.eligible).length;
     if (options.apply) {
-      const eligible = cleanupCandidates.filter((item) => item.eligible);
-      const selected = selectCleanupCandidates(eligible, { candidateType: options.candidateType, limit: options.limit });
+      const selected = scopedCandidates.filter((item) => item.eligible);
       const result = moveCleanupCandidates(selected, { quarantineDir: options.quarantineDir });
       report.selectedForMove = selected;
       report.moved = result.moved;
       report.moveFailures = result.failed;
       report.moveSkipped = result.skipped;
+      try {
+        recordMovedVariantPath(db, report.moved);
+        recordMovedSourcePath(db, report.moved);
+      } catch (error) {
+        report.ledgerUpdateFailure = { errorCode: error?.code ?? "ledger_update_failed", error: error?.message ?? String(error) };
+      }
+      try {
+        recordCleanupMoveFailures(db, report.moveFailures);
+      } catch (error) {
+        report.failureRecordError = { errorCode: error?.code ?? "failure_record_failed", error: error?.message ?? String(error) };
+      }
       report.movePerformed = true;
     }
     console.log(options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2));

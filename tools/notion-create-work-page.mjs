@@ -9,6 +9,22 @@ import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { compareNotionMediaType, expectedNotionMediaType } from "./lib/work-media-type.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
+const DEFAULT_NOTION_INTERVAL_MS = 1000;
+
+export function createPacedFetch(fetchImpl, intervalMs = DEFAULT_NOTION_INTERVAL_MS) {
+  let lastRequestStartedAt = 0;
+  let requestQueue = Promise.resolve();
+  return (...args) => {
+    const request = requestQueue.then(async () => {
+      const waitMs = Math.max(0, intervalMs - (Date.now() - lastRequestStartedAt));
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastRequestStartedAt = Date.now();
+      return fetchImpl(...args);
+    });
+    requestQueue = request.then(() => undefined, () => undefined);
+    return request;
+  };
+}
 
 export function parseArgs(argv) {
   const options = { apply: false, db: DEFAULT_DB };
@@ -199,7 +215,11 @@ async function main() {
   installDnsOverride();
   const token = env("NOTION_WRITE_TOKEN") || env("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
-  const notion = new Client({ auth: token, timeoutMs: 120000 });
+  const notion = new Client({
+    auth: token,
+    timeoutMs: 120000,
+    fetch: createPacedFetch(globalThis.fetch.bind(globalThis))
+  });
   const library = await loadLibrary(notion);
   if (options.pageId) {
     const page = await notion.pages.retrieve({ page_id: options.pageId });

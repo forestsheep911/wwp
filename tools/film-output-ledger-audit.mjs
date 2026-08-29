@@ -33,6 +33,12 @@ function normalizePath(value) {
   return path.resolve(value).replaceAll("/", "\\").toLowerCase();
 }
 
+export function isPathWithinRoot(filePath, root) {
+  const normalizedFile = normalizePath(filePath);
+  const normalizedRoot = normalizePath(root).replace(/[\\]+$/u, "");
+  return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}\\`);
+}
+
 function listMediaFiles(root) {
   const result = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -45,7 +51,12 @@ function listMediaFiles(root) {
 
 export function classifyLocalMedia(relativePath) {
   const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
-  if (normalized.startsWith("_qc/") || /(?:\.sample|diagnostic(?:[-_.]\d+(?:s|sec)?)?|smoke(?:[-_.]\d+(?:s|sec)?)?|(?:overlay|thread|threads|tonemap)[a-z0-9]*(?:[-_.][a-z0-9]+)*|proper[-_.]no[-_.]sub)\.(?:mp4|m4v|mov|mkv)$/u.test(normalized)) return "qc_artifact";
+  const basename = path.basename(normalized);
+  if (normalized.startsWith("_qc/")
+    || /(?:^|[._-])sample(?:[._-]|$)/u.test(basename)
+    || /(?:^|[._-])(?:diagnostic|smoke)(?:[-_.][a-z0-9]+)*(?:\.(?:mp4|m4v|mov|mkv))$/u.test(basename)
+    || /(?:overlay|thread|threads|tonemap)[a-z0-9]*(?:[-_.][a-z0-9]+)*\.(?:mp4|m4v|mov|mkv)$/u.test(basename)
+    || /proper[-_.]no[-_.]sub\.(?:mp4|m4v|mov|mkv)$/u.test(basename)) return "qc_artifact";
   if (/\.work\.mkv$/u.test(normalized)) return "work_intermediate";
   return "playable_candidate";
 }
@@ -86,12 +97,13 @@ function main() {
       works.id AS work_id, works.canonical_title, works.workflow_status
       FROM sources JOIN works ON works.id=sources.work_id
       WHERE sources.relative_path LIKE '@flat/%'`).all().map((source) => ({ ...source, slug: flatSourceSlug(source.relative_path) })).filter((source) => source.slug);
-    const movedToPendingDeletion = variants.filter((variant) =>
+    const variantsInRoot = variants.filter((variant) => isPathWithinRoot(variant.output_path, root));
+    const movedToPendingDeletion = variantsInRoot.filter((variant) =>
       variant.publication_state === "sync_ready"
       && !fs.existsSync(variant.output_path)
       && fs.existsSync(pendingDeletionPath(root, variant))
     );
-    const registeredOutputsMissing = variants.filter((variant) =>
+    const registeredOutputsMissing = variantsInRoot.filter((variant) =>
       !fs.existsSync(variant.output_path)
       && !movedToPendingDeletion.some((moved) => moved.id === variant.id)
     );

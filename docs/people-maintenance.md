@@ -39,6 +39,9 @@ Biographies are multilingual evidence, not one translated blob. `Biography ZH` a
 
 The Notion sync enforces this gate. If `Biography ZH Status` claims `verified` while the Chinese biography is not marked `editorial-rewrite` or has fewer than two independent source families, the biography remains `provisional` and a `biography_verification_incomplete` issue is published for review. The profile's overall runtime status is recalculated from the explicit core checklist below. Empty `Biography ZH` values do not block verification of unrelated person fields, but they do keep the core profile incomplete.
 
+People publication must preserve the source work's complete credit list. A Wikidata pilot may identify only a stable subset of a larger Notion/movie-index cast list; apply `personId` only to matched reviewed credits and keep the remaining source names as unlinked legacy credits. Replacing the source list with the shorter pilot subset is a `source_credit_preservation_gate` failure and must be repaired before the work is considered covered.
+When merging, consume each pre-pilot source credit at most once; append each unmatched reviewed credit rather than matching it against an earlier appended pilot row. This preserves separate department/role credits for the same person. Collapsing reviewed role rows is a `source_credit_duplicate_preservation_gate` failure.
+
 Reader-facing biographies are person-centred career summaries, not WWP credit
 audits. Do not mention that a relationship was checked, that text was rewritten
 from sources, or that the person appears in the current WWP holdings. Cover the
@@ -59,6 +62,8 @@ editorial/admin status and is not shown on the public person page.
 The person page may show exact or partial birth/death dates, a simplified-Chinese birthplace, a distinct original name, portrait, and stable TMDB/IMDb/Wikidata links. Every value is optional and unsupported rows are omitted. Dates preserve source precision: a known year must never be expanded into an invented month or day.
 
 Primary departments remain the public career labels and are not repeated as a separate occupation row. Aliases remain backend search evidence until they have been deduplicated, language-labelled, and checked for simplified-Chinese suitability. Provider popularity, gender inferred from presentation, and an external provider's full filmography are not public WWP metadata. The works section continues to mean only titles actually held by WWP.
+
+Do not accept a localized provider label as a person's Chinese display name merely because it is tagged `zh-cn`. Check that the label is semantically a person's name and agrees with the English/native identity and occupation. A common-noun or machine-style label remains evidence only; use a source-supported Chinese alias that matches the person and record the `wikidata_nonsemantic_label_gate` when this condition is encountered.
 
 TMDB is a useful structured-data lead, not a sole verifier for disputed biographical facts. Cross-check material claims against another independent source family, record all useful URLs in `Sources`, and refresh provider-derived cached facts within the provider's allowed retention period. The website carries TMDB attribution in its help/credits area.
 

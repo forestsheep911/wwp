@@ -36,7 +36,11 @@ import {
   readyAssetIdleReference,
   sourceTraceFromResult
 } from "./jobs.js";
-import { posterDownloadCandidates, posterRequestHeaders } from "./poster-cache.js";
+import {
+  posterDownloadCandidates,
+  posterRequestHeaders,
+  posterRequestTimeoutMs
+} from "./poster-cache.js";
 import type {
   CacheMoviePostersOptions,
   CacheStore,
@@ -1086,7 +1090,8 @@ export class AzureCacheStore implements CacheStore {
     try {
       const response = await fetch(sourceUrl, {
         redirect: "follow",
-        headers: posterRequestHeaders(sourceUrl)
+        headers: posterRequestHeaders(sourceUrl),
+        signal: AbortSignal.timeout(posterRequestTimeoutMs())
       });
 
       if (!response.ok) {

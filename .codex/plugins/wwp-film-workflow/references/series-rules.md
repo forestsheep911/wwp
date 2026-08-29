@@ -37,6 +37,18 @@ Build a dry-run map before applying Notion changes:
 
 Do not proceed when Episode page mapping is ambiguous.
 
+Normalize Unicode full-width digits and punctuation before extracting episode
+numbers. A strongly identified series source may use numeric-only filenames
+such as `０１.mkv`; when the normalized integer sequence is continuous and the
+container folder has independent series evidence, map those files to the main
+episodes rather than treating them as unnumbered media. Embedded season labels
+are evidence to inspect, not authority: compare them with the filename
+sequence, canonical episode count, and the source title, and record a conflict
+instead of silently copying a wrong season label. Clearly named subfolders such
+as `OVA`, `Specials`, or `Extras` are separate supplemental sources and must not
+be appended to the main episode sequence without an explicit identity and
+destination decision.
+
 ### Canonical Episode Count Gate
 
 Before a series page, spec, Episode page, or Media Asset is created, compare the

@@ -23,6 +23,15 @@ class MemoryTable implements PersonCatalogTableClient {
   }
 }
 
+class BatchMemoryTable extends MemoryTable {
+  transactionWrites = 0;
+
+  async submitTransaction(actions: Parameters<NonNullable<PersonCatalogTableClient["submitTransaction"]>>[0]) {
+    this.transactionWrites += 1;
+    for (const [, entity] of actions) await this.upsertEntity(entity);
+  }
+}
+
 function state(): PersonCatalogState {
   return {
     schemaVersion: 1,
@@ -52,4 +61,17 @@ test("Azure person catalog returns an empty state when no manifest exists", asyn
   const result = await store.getState();
   assert.equal(result.schemaVersion, 1);
   assert.deepEqual(result.people, {});
+});
+
+test("Azure person catalog batches snapshot chunks and switches the manifest afterward", async () => {
+  const table = new BatchMemoryTable();
+  const store = new AzurePersonCatalogStore({ tableClient: table });
+  const largeState = state();
+  largeState.aliasIndex.large = ["x".repeat(100_000)];
+
+  await store.replaceState(largeState);
+
+  assert.equal(table.transactionWrites, 1);
+  assert.equal(table.manifestWrites, 1);
+  assert.deepEqual(await store.getState(), largeState);
 });

@@ -24,7 +24,8 @@ const roles: Array<{ property: string; department: MovieCreditDepartment; job: s
   { property: "P344", department: "camera", job: "Director of Photography" },
   { property: "P1040", department: "editing", job: "Editor" },
   { property: "P86", department: "music", job: "Original Music Composer" },
-  { property: "P161", department: "acting", job: "Actor" }
+  { property: "P161", department: "acting", job: "Actor" },
+  { property: "P725", department: "acting", job: "Voice Actor" }
 ];
 
 const labelLanguages = ["zh-cn", "zh-hans", "zh-hant", "zh", "en", "ja"];
@@ -68,7 +69,7 @@ export class WikidataWorkCreditsSource {
       const entity = people.get(ref.wikidataId);
       const name = preferredLabel(entity);
       if (!name) return [];
-      const originalName = entity?.labels?.ja?.value?.trim();
+      const originalName = entity?.labels?.en?.value?.trim() ?? entity?.labels?.ja?.value?.trim();
       return [{
         name,
         ...(originalName && originalName !== name ? { originalName } : {}),

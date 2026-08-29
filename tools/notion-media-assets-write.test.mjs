@@ -30,3 +30,14 @@ test("explicit corrections can repair the Media Assets title and verify readback
   assert.match(source, /item\.plain_text \?\? item\.text\?\.content/);
   assert.match(source, /Media Assets correction readback failed/);
 });
+
+test("explicit asset page corrections support historical empty titles without creating duplicates", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /if \(candidate\.assetPageId\)/);
+  assert.match(source, /is archived; preserve it as history/);
+  assert.match(source, /if \(page\.archived \|\| page\.in_trash\) return false/);
+  assert.match(source, /Explicit Media Asset .* does not relate to work/);
+  assert.match(source, /Source Page ID.*candidate\.sourcePageId/);
+  assert.match(source, /Media Block ID.*candidate\.mediaBlockId/);
+  assert.match(source, /Original File Name.*candidate\.originalFileName/);
+});

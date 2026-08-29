@@ -76,6 +76,30 @@ test("attachVariantSource repairs legacy links only within the same work", () =>
   } finally { f.close(); }
 });
 
+test("ensureVariant rejects a source belonging to another work", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const first = f.repo.ensureWork({ canonicalTitle: "First", year: 2025, workType: "movie" });
+    const second = f.repo.ensureWork({ canonicalTitle: "Second", year: 2025, workType: "movie" });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: first.id,
+      relativePath: "First",
+      absolutePath: "X:\\queue\\First",
+      fingerprint: "first-source",
+      sourceKind: "folder"
+    });
+    assert.throws(() => f.repo.ensureVariant({
+      workId: second.id,
+      sourceId: source.id,
+      specKey: "wrong-source",
+      displayTitle: "Wrong source"
+    }), /belongs to work .* not variant work/);
+    assert.equal(f.db.prepare("SELECT count(*) AS count FROM variants").get().count, 0);
+  } finally { f.close(); }
+});
+
 test("correctVariantSource records the actual encode input without losing source history", () => {
   const f = fixture();
   try {
@@ -374,6 +398,54 @@ test("source reconciliation lists one root and can mark missing then reopen", ()
   } finally { f.close(); }
 });
 
+test("reappeared unbound source reopens intake after a missing-source close", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const input = { inputRootId: root.id, relativePath: "reappeared", absolutePath: "X:\\queue\\reappeared", fingerprint: "reappeared", sourceKind: "folder" };
+    const source = f.repo.upsertDiscoveredSource(input);
+    f.repo.markSourceMissing(source.id);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+    const reopened = f.repo.upsertDiscoveredSource(input);
+    const task = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`);
+    assert.equal(reopened.missing, 0);
+    assert.equal(task.status, "pending");
+    assert.match(task.reason, /reappeared/u);
+  } finally { f.close(); }
+});
+
+test("reappeared completed collection parent does not reopen intake", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const input = { inputRootId: root.id, relativePath: "collection", absolutePath: "X:\\queue\\collection", fingerprint: "collection", sourceKind: "folder" };
+    const source = f.repo.upsertDiscoveredSource(input);
+    f.repo.transitionWorkflowTask(f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).id, "done", {
+      reason: "All collection member source(s) have verified work identities"
+    });
+    f.repo.markSourceMissing(source.id);
+    const reopened = f.repo.upsertDiscoveredSource(input);
+    const task = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`);
+    assert.equal(reopened.missing, 0);
+    assert.equal(task.status, "done");
+    assert.match(task.reason, /All collection member/);
+  } finally { f.close(); }
+});
+
+test("synthetic flat source does not reopen intake when it reappears", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const input = { inputRootId: root.id, relativePath: "@flat\\episode-01", absolutePath: "X:\\queue\\episode-01.mkv", fingerprint: "flat-1", sourceKind: "folder" };
+    const source = f.repo.upsertDiscoveredSource(input);
+    f.repo.markSourceMissing(source.id, true);
+    f.repo.transitionWorkflowTask(f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).id, "done", { reason: "synthetic scan cleanup" });
+    const reopened = f.repo.upsertDiscoveredSource({ ...input, missing: false });
+    const task = f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${reopened.id}`);
+    assert.equal(task.status, "done");
+  } finally { f.close(); }
+});
+
 test("qc-passed work leaves production and remains due for publication", () => {
   const f = fixture();
   try {
@@ -387,6 +459,28 @@ test("qc-passed work leaves production and remains due for publication", () => {
     assert.equal(events.at(-1).event_type, "publication_state_changed");
     assert.equal(events.at(-1).payload_json, '{"from":"not_ready","to":"structure_pending"}');
     assert.throws(() => f.repo.transitionProduction(variant.id, "selected"), /illegal production transition/);
+  } finally { f.close(); }
+});
+
+test("evidence correction can reopen a rejected variant without bypassing the audit trail", () => {
+  const f = fixture();
+  try {
+    const { variant } = seed(f.repo, "Reopen");
+    f.repo.transitionProduction(variant.id, "evaluated");
+    f.repo.transitionProduction(variant.id, "rejected", {
+      failureCode: "source_color_mismatch",
+      failureDetail: "initial sample appeared monochrome"
+    });
+    f.repo.transitionPublication(variant.id, "cancelled", { reason: "rejected source" });
+    const reopened = f.repo.reopenRejectedVariant(variant.id, {
+      reason: "Distributed color samples prove the source is mixed color, so the prior rejection was incorrect."
+    });
+    assert.equal(reopened.production_state, "evaluated");
+    assert.equal(reopened.publication_state, "not_ready");
+    assert.equal(reopened.failure_code, null);
+    assert.match(reopened.failure_detail, /Distributed color samples/);
+    assert.equal(f.repo.getEvents({ entityType: "variant", entityId: variant.id }).at(-1).event_type, "production_variant_reopened");
+    assert.throws(() => f.repo.reopenRejectedVariant(variant.id, { reason: "again" }), /requires rejected state/);
   } finally { f.close(); }
 });
 
@@ -560,6 +654,21 @@ test("production queue prioritizes first-release coverage and keeps completed-wo
   } finally { f.close(); }
 });
 
+test("variant metadata correction can replace a stale planned target size", () => {
+  const f = fixture();
+  try {
+    const seeded = seed(f.repo, "Measured tier correction");
+    f.db.prepare("UPDATE variants SET target_size_bytes=?, output_size_bytes=? WHERE id=?")
+      .run(4_700_000_000, 2_916_329_786, seeded.variant.id);
+    const result = f.repo.correctVariantMetadata(seeded.variant.id, { targetSizeBytes: 2_916_329_786 });
+    assert.equal(result.applied, true);
+    assert.equal(result.row.target_size_bytes, 2_916_329_786);
+    const [event] = f.repo.getEvents({ entityType: "variant", entityId: seeded.variant.id })
+      .filter((item) => item.event_type === "variant_metadata_corrected");
+    assert.equal(JSON.parse(event.payload_json).from.targetSizeBytes, 4_700_000_000);
+  } finally { f.close(); }
+});
+
 test("split series folder parent is not offered after child sources are tracked", () => {
   const f = fixture();
   try {
@@ -598,6 +707,27 @@ test("completed work re-enters source selection only after its intake is explici
 
     f.repo.requeueIntakeTask(source.id, { reason: "Source fingerprint changed" });
     assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === source.id), true);
+  } finally { f.close(); }
+});
+
+test("source selection excludes an explicitly subtitle-blocked foreign source", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Foreign subtitle gate", year: 2025, priorityScore: 70 });
+    const blocked = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "blocked", absolutePath: "X:\\queue\\blocked",
+      fingerprint: "blocked-subtitle", sourceKind: "folder", qualityState: "1080p_h264_blu-ray",
+      subtitleEvidence: { hardGate: "no_chinese_subtitles_on_sample" },
+      audioEvidence: { languages: ["English"] }
+    });
+    const unknown = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "unknown", absolutePath: "X:\\queue\\unknown",
+      fingerprint: "unknown-subtitle", sourceKind: "folder", qualityState: "1080p_h264_blu-ray"
+    });
+    const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
+    assert.equal(candidates.some((row) => row.source_id === blocked.id), false);
+    assert.equal(candidates.some((row) => row.source_id === unknown.id), true);
   } finally { f.close(); }
 });
 
@@ -655,6 +785,39 @@ test("Notion target upsert preserves verification for the same target and invali
     assert.equal(replaced.media_asset_page_id, "a2");
     assert.equal(replaced.next_check_at, "2026-07-12T00:00:00.000Z");
     assert.equal(f.repo.listPublicationCandidates({ limit: 3 })[0].id, variant.id);
+  } finally { f.close(); }
+});
+
+test("replacing only the Media Asset page invalidates inherited publication evidence", () => {
+  const f = fixture();
+  try {
+    const { variant } = seed(f.repo);
+    for (const state of ["evaluated", "selected", "encoding", "qc_passed"]) f.repo.transitionProduction(variant.id, state);
+    f.repo.transitionPublication(variant.id, "structure_pending");
+    f.repo.registerNotionTarget(variant.id, { workPageId: "w", specPageId: "s", mediaBlockId: "b" });
+    f.repo.recordNotionInspection(variant.id, {
+      structureVerified: true,
+      mediaVerified: true,
+      mediaBlockId: "b",
+      assetsVerified: true,
+      mediaAssetPageId: "old-asset"
+    });
+    for (const state of ["upload_pending", "upload_seen", "assets_pending", "verification_pending", "sync_ready"]) {
+      f.repo.transitionPublication(variant.id, state);
+    }
+    assert.equal(f.db.prepare("SELECT publication_state FROM variants WHERE id=?").get(variant.id).publication_state, "sync_ready");
+
+    const replaced = f.repo.registerNotionTarget(variant.id, {
+      workPageId: "w",
+      specPageId: "s",
+      mediaBlockId: "b",
+      mediaAssetPageId: "new-asset"
+    });
+    assert.equal(replaced.media_asset_page_id, "new-asset");
+    assert.equal(replaced.structure_verified_at, null);
+    assert.equal(replaced.media_verified_at, null);
+    assert.equal(replaced.assets_verified_at, null);
+    assert.equal(f.db.prepare("SELECT publication_state FROM variants WHERE id=?").get(variant.id).publication_state, "structure_pending");
   } finally { f.close(); }
 });
 

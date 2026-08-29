@@ -12,6 +12,7 @@ import { compareNotionMediaType } from "../../../../tools/lib/work-media-type.mj
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 const DEFAULT_REPORT = path.resolve(".local-data/metadata-completion-audit.json");
+const DEFAULT_STATE = path.resolve(".local-data/metadata-completion-audit-state.json");
 const CORE_FIELDS = [
   "Simplified Chinese Title",
   "Release Year",
@@ -43,6 +44,7 @@ function parseArgs(argv) {
     apply: false,
     db: DEFAULT_DB,
     report: DEFAULT_REPORT,
+    state: DEFAULT_STATE,
     limit: Number.POSITIVE_INFINITY,
     concurrency: 3,
     delayMs: 900
@@ -50,11 +52,12 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--apply") options.apply = true;
-    else if (["--db", "--report", "--limit", "--concurrency", "--delay-ms"].includes(arg)) {
+    else if (["--db", "--report", "--state", "--limit", "--concurrency", "--delay-ms"].includes(arg)) {
       const value = argv[++index];
       if (value == null) throw new Error(`${arg} requires a value`);
       if (arg === "--db") options.db = path.resolve(value);
       else if (arg === "--report") options.report = path.resolve(value);
+      else if (arg === "--state") options.state = path.resolve(value);
       else if (arg === "--limit") options.limit = Math.max(1, Number(value));
       else if (arg === "--concurrency") options.concurrency = Math.min(3, Math.max(1, Number(value)));
       else options.delayMs = Math.max(0, Number(value));
@@ -63,6 +66,21 @@ function parseArgs(argv) {
     }
   }
   return options;
+}
+
+function loadAuditState(statePath) {
+  if (!existsSync(statePath)) return { auditedTaskIds: [], updatedAt: null };
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, "utf8"));
+    return {
+      auditedTaskIds: Array.isArray(parsed.auditedTaskIds)
+        ? parsed.auditedTaskIds.map(Number).filter(Number.isInteger)
+        : [],
+      updatedAt: parsed.updatedAt ?? null
+    };
+  } catch (error) {
+    throw new Error(`invalid audit state ${statePath}: ${error?.message ?? error}`);
+  }
 }
 
 function propertyText(property) {
@@ -174,14 +192,19 @@ async function main() {
 
   const db = openLedger(options.db);
   const repository = createLedgerRepository(db);
-  const tasks = db.prepare(`SELECT workflow_tasks.id AS task_id, workflow_tasks.work_id,
+  const state = loadAuditState(options.state);
+  const auditedTaskIds = new Set(state.auditedTaskIds);
+  const candidateTasks = db.prepare(`SELECT workflow_tasks.id AS task_id, workflow_tasks.work_id,
       works.canonical_title, works.work_type, works.notion_work_page_id
     FROM workflow_tasks JOIN works ON works.id=workflow_tasks.work_id
     WHERE workflow_tasks.task_type='metadata_backfill'
       AND workflow_tasks.status='done'
       AND works.notion_work_page_id IS NOT NULL
     ORDER BY workflow_tasks.updated_at DESC, workflow_tasks.id ASC
-    LIMIT ?`).all(Number.isFinite(options.limit) ? options.limit : 1000000);
+    LIMIT ?`).all(1000000);
+  const tasks = candidateTasks
+    .filter(task => !auditedTaskIds.has(Number(task.task_id)))
+    .slice(0, Number.isFinite(options.limit) ? options.limit : undefined);
 
   const records = [];
   for (let index = 0; index < tasks.length; index += options.concurrency) {
@@ -198,10 +221,21 @@ async function main() {
     }
   }
 
+  for (const record of records) {
+    if (record.needsRequeue || record.derivedStatus === "unknown") continue;
+    auditedTaskIds.add(Number(record.taskId));
+  }
+  await mkdir(path.dirname(options.state), { recursive: true });
+  await writeFile(options.state, `${JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    auditedTaskIds: [...auditedTaskIds].sort((left, right) => left - right)
+  }, null, 2)}\n`, "utf8");
+
   const report = {
     generatedAt: new Date().toISOString(),
     apply: options.apply,
     database: options.db,
+    state: options.state,
     summary: {
       auditedDoneTasks: records.length,
       verifiedAndRecorded: records.length - requeue.length,

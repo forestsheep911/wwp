@@ -371,6 +371,7 @@ test("series writer consumes a bounded manual organizer report without another e
   const result = candidatesFromOrganizerPage(organizerPage);
   assert.equal(result.issues.length, 0);
   assert.equal(result.candidates.length, 2);
+  assert.equal(result.candidates[0].specPageId, "spec-page");
   assert.equal(result.candidates[0].sourcePageId, "episode-1");
   assert.equal(result.candidates[0].mediaBlockId, "media-1");
   assert.equal(result.candidates[0].metadata.episodeNumber, 1);

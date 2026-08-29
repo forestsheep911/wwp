@@ -11,6 +11,8 @@ import { selectExplicitChildTarget } from "./lib/notion-movie-target.mjs";
 import { assertEpisodeTargetIsEmpty } from "./lib/notion-series-target.mjs";
 import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
 import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
+import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
+import { createNotionUploadSelectorGuard } from "./lib/notion-upload-selector-guard.mjs";
 
 const DEFAULT_PAGE_ID = "39120ac12f0a80e69374d19602a6e59b";
 const DEFAULT_SOURCE_DIR = "C:\\Users\\fores\\OneDrive\\13_新时期\\boccaro\\trans";
@@ -42,7 +44,10 @@ function parseArgs() {
     allowCollections: false,
     resolveIp: "",
     localAddress: "",
-    noProxy: false
+    noProxy: false,
+    apiDelayMs: 1000,
+    uploadPartDelayMs: 1000,
+    uploadConcurrency: 1
   };
   let pageIdProvided = false;
   let sourceDirProvided = false;
@@ -81,6 +86,9 @@ function parseArgs() {
     else if (arg === "--resolve-ip") options.resolveIp = args[++index];
     else if (arg === "--local-address") options.localAddress = args[++index];
     else if (arg === "--no-proxy") options.noProxy = true;
+    else if (arg === "--api-delay-ms") options.apiDelayMs = Number(args[++index]);
+    else if (arg === "--upload-part-delay-ms") options.uploadPartDelayMs = Number(args[++index]);
+    else if (arg === "--upload-concurrency") options.uploadConcurrency = Number(args[++index]);
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -97,6 +105,9 @@ function parseArgs() {
     throw new Error("--spec-title requires --target-spec-page-id or --create-spec; refusing implicit spec-page selection.");
   }
   if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
+  if (options.resolveIp && (!options.localAddress || !options.noProxy)) {
+    throw new Error("--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy; refusing an unsafe raw-IP route.");
+  }
   if (options.episodeFrom != null && (!Number.isInteger(options.episodeFrom) || options.episodeFrom < 1)) {
     throw new Error("--episode-from must be a positive integer.");
   }
@@ -110,6 +121,9 @@ function parseArgs() {
     throw new Error("--episode-to must be greater than or equal to --episode-from.");
   }
   if (!Number.isInteger(options.episodeOffset)) throw new Error("--episode-offset must be an integer.");
+  if (!Number.isFinite(options.apiDelayMs) || options.apiDelayMs < 0) throw new Error("--api-delay-ms must be zero or positive.");
+  if (!Number.isFinite(options.uploadPartDelayMs) || options.uploadPartDelayMs < 0) throw new Error("--upload-part-delay-ms must be zero or positive.");
+  if (!Number.isInteger(options.uploadConcurrency) || options.uploadConcurrency < 1) throw new Error("--upload-concurrency must be a positive integer.");
   return options;
 }
 
@@ -138,6 +152,10 @@ Options:
   --episode-from <number>
   --episode-to <number>
                   Select an inclusive single-episode range, useful when resuming a partially uploaded season.
+  --api-delay-ms <number>
+                  Delay between episode-page API writes; defaults to 1000ms for Notion rate safety.
+  --upload-concurrency <number>
+                  Number of multipart parts sent concurrently; defaults to 1.
   --resolve-ip <ip>
                   Explicit api.notion.com DNS fallback; hostname routing is the default.
   --local-address <ip>
@@ -255,8 +273,10 @@ export function episodeNumber(fileName) {
 }
 
 export function episodeRange(fileName) {
-  const baseName = path.basename(fileName, path.extname(fileName));
-  const compactSeasonRange = fileName.match(/S\d+E\d{1,3}(?:E\d{1,3}){1,}/i);
+  // Normalize full-width letters, digits, and punctuation before parsing.
+  const normalizedFileName = String(fileName).normalize("NFKC");
+  const baseName = path.basename(normalizedFileName, path.extname(normalizedFileName));
+  const compactSeasonRange = normalizedFileName.match(/S\d+E\d{1,3}(?:E\d{1,3}){1,}/i);
   if (compactSeasonRange) {
     const episodes = [...compactSeasonRange[0].matchAll(/E(\d{1,3})/gi)].map((match) => Number(match[1]));
     if (episodes.length >= 2 && episodes.every((episode) => Number.isInteger(episode) && episode > 0)) {
@@ -264,9 +284,9 @@ export function episodeRange(fileName) {
     }
   }
   const rangeMatch =
-    fileName.match(/S\d+E(\d{1,3})\s*[-~–—至到]\s*(?:S\d+)?E?(\d{1,3})/i) ??
-    fileName.match(/E(?:pisode)?\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})/i) ??
-    fileName.match(/第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u);
+    normalizedFileName.match(/S\d+E(\d{1,3})\s*[-~–—至到]\s*(?:S\d+)?E?(\d{1,3})/i) ??
+    normalizedFileName.match(/E(?:pisode)?\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})/i) ??
+    normalizedFileName.match(/第\s*(\d{1,3})\s*[-~–—至到]\s*(\d{1,3})\s*[集话話]/u);
   if (rangeMatch) {
     const start = Number(rangeMatch[1]);
     const end = Number(rangeMatch[2]);
@@ -275,13 +295,13 @@ export function episodeRange(fileName) {
     }
   }
   const match =
-    fileName.match(/S\d+E(\d+)/i) ??
+    normalizedFileName.match(/S\d+E(\d+)/i) ??
     // Some older complete-season releases use S0401 for S04E01.
-    fileName.match(/S\d{2}(\d{2,3})(?=[._\s-]|$)/i) ??
-    fileName.match(/EP(?:isode)?[.\s_-]*(\d+)/i) ??
-    fileName.match(/E(?:pisode)?\s*(\d+)/i) ??
-    fileName.match(/OVA[.\s_-]*(\d+)/i) ??
-    fileName.match(/\[(\d{1,3})[)\]]/) ??
+    normalizedFileName.match(/S\d{2}(\d{2,3})(?=[._\s-]|$)/i) ??
+    normalizedFileName.match(/EP(?:isode)?[.\s_-]*(\d+)/i) ??
+    normalizedFileName.match(/E(?:pisode)?\s*(\d+)/i) ??
+    normalizedFileName.match(/OVA[.\s_-]*(\d+)/i) ??
+    normalizedFileName.match(/\[(\d{1,3})[)\]]/) ??
     baseName.match(/(?:^|[-_\s])(?:ep(?:isode)?[-_\s]*)?(\d{1,3})$/i) ??
     baseName.match(/^(\d{1,3})$/);
   const episode = match ? Number(match[1]) : undefined;
@@ -439,11 +459,23 @@ async function ensureChildPage(notion, parentPageId, title, apply) {
 
   console.log(`${apply ? "create" : "would create"} child page "${title}" under ${parentPageId}`);
   if (!apply) return { id: "(dry-run)", title };
-  const page = await notion.pages.create({
-    parent: { page_id: parentPageId },
-    properties: { title: { title: richText(title) } }
-  });
-  return { id: page.id, title };
+  try {
+    const page = await notion.pages.create({
+      parent: { page_id: parentPageId },
+      properties: { title: { title: richText(title) } }
+    });
+    return { id: page.id, title };
+  } catch (error) {
+    // A timed-out create may have reached Notion. Re-read before surfacing the
+    // error so a later retry cannot create a duplicate child page.
+    if (apply) {
+      await sleep(Math.max(1000, Number(process.env.NOTION_CREATE_RECHECK_DELAY_MS || 1500)));
+      const children = await listChildren(notion, parentPageId);
+      const existing = children.find((block) => block.type === "child_page" && blockTitle(block) === title);
+      if (existing) return { id: existing.id, title: blockTitle(existing) };
+    }
+    throw error;
+  }
 }
 
 async function findSpecPage(notion, pageId, options) {
@@ -527,7 +559,7 @@ async function updatePageTitle(notion, pageId, title, apply) {
   }
 }
 
-async function ensureEpisodePages(notion, specPageId, episodePages, selectedFiles, apply, enabled) {
+async function ensureEpisodePages(notion, specPageId, episodePages, selectedFiles, apply, enabled, apiDelayMs = 1000) {
   const missing = selectedFiles.filter((file) => !episodePages.has(episodeRangeKey(file.episode, file.episodeEnd)));
   if (missing.length === 0) return episodePages;
   if (!enabled) {
@@ -543,6 +575,7 @@ async function ensureEpisodePages(notion, specPageId, episodePages, selectedFile
   }
   for (const file of missing) {
     const episodeTitle = episodePageTitle(file.episode, file.episodeEnd);
+    if (apply && apiDelayMs > 0) await sleep(apiDelayMs);
     const page = await ensureChildPage(notion, specPageId, episodeTitle, apply);
     episodePages.set(episodeRangeKey(file.episode, file.episodeEnd), page);
   }
@@ -563,6 +596,11 @@ function isExpired(record) {
   return record.expiryTime && Date.parse(record.expiryTime) <= Date.now() + 60_000;
 }
 
+export function isStaleUploadedFileUploadError(error) {
+  return error?.code === "validation_error"
+    && /File upload with ID .* has a status of `uploaded`/u.test(String(error?.message ?? error));
+}
+
 async function readChunk(filePath, offset, length) {
   const handle = await fs.promises.open(filePath, "r");
   try {
@@ -574,7 +612,7 @@ async function readChunk(filePath, offset, length) {
   }
 }
 
-async function uploadVideo(notion, file, options, manifest, manifestPath) {
+async function uploadVideo(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard) {
   const contentType = "video/mp4";
   const partBytes = Math.max(1, Math.floor(options.partMiB)) * 1024 * 1024;
   const partCount = Math.ceil(file.size / partBytes);
@@ -628,6 +666,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
 
   if (record.mode === "single_part") {
     const data = await readChunk(file.path, 0, file.size);
+    await routeGuard.assert(`${file.name} part 1/1`);
     await withTransientNotionUploadRetry(() => notion.fileUploads.send({
         file_upload_id: record.fileUploadId,
         file: { filename: file.name, data: new Blob([data], { type: contentType }) }
@@ -637,28 +676,51 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
         )
       });
     record.sentParts = 1;
+    await trafficMonitor.noteUploaded(data.length, { file: file.name, part: 1, partCount: 1 });
   } else {
-    for (let part = (record.sentParts ?? 0) + 1; part <= record.partCount; part += 1) {
-      const offset = (part - 1) * partBytes;
-      const length = Math.min(partBytes, file.size - offset);
-      const data = await readChunk(file.path, offset, length);
+    const concurrency = Math.min(options.uploadConcurrency, record.partCount);
+    for (let firstPart = (record.sentParts ?? 0) + 1; firstPart <= record.partCount; firstPart += concurrency) {
+      const parts = Array.from(
+        { length: Math.min(concurrency, record.partCount - firstPart + 1) },
+        (_, index) => firstPart + index
+      );
       const startedAt = Date.now();
-      console.log(`send ${file.name} part ${part}/${record.partCount}`);
-      await withTransientNotionUploadRetry(() => notion.fileUploads.send({
-          file_upload_id: record.fileUploadId,
-          part_number: String(part),
-          file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-        }), {
-          onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
-            `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
-          )
-        });
-      record.sentParts = part;
-      record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
+      await Promise.all(parts.map(async (part) => {
+        const offset = (part - 1) * partBytes;
+        const length = Math.min(partBytes, file.size - offset);
+        const data = await readChunk(file.path, offset, length);
+        console.log(`send ${file.name} part ${part}/${record.partCount}`);
+        try {
+          await routeGuard.assert(`${file.name} part ${part}/${record.partCount}`);
+          await withTransientNotionUploadRetry(() => notion.fileUploads.send({
+              file_upload_id: record.fileUploadId,
+              part_number: String(part),
+              file: { filename: file.name, data: new Blob([data], { type: contentType }) }
+            }), {
+              onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
+                `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
+              )
+            });
+        } catch (error) {
+          // Notion can transition a slow multi-part upload to `uploaded` before
+          // all parts were sent. That upload cannot be resumed; restart the
+          // whole file on the next invocation rather than marking a gap done.
+          if (isStaleUploadedFileUploadError(error)) {
+            console.warn(`stale upload session ${file.name} ${record.fileUploadId}`);
+          }
+          throw error;
+        }
+      }));
+      record.sentParts = parts.at(-1);
+      record.lastBatchSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
       writeManifest(manifestPath, manifest);
-      // Keep one shared Notion upload lane below the repository's one-request-per-second default.
-      await sleep(1000);
+      const batchBytes = parts.reduce((sum, part) => {
+        const offset = (part - 1) * partBytes;
+        return sum + Math.min(partBytes, file.size - offset);
+      }, 0);
+      await trafficMonitor.noteUploaded(batchBytes, { file: file.name, parts, partCount: record.partCount });
+      await sleep(options.uploadPartDelayMs);
     }
     console.log(`complete ${file.name}`);
     await withTransientNotionUploadRetry(
@@ -680,7 +742,8 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
 async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply, replaceExistingVideo = false) {
   const existing = await listChildren(notion, episodePage.id);
   const comparable = comparableName(file.name);
-  if (existing.some((block) => block.type === "video" && comparableName(blockTitle(block)).includes(comparable))) {
+  const matchingVideo = existing.find((block) => block.type === "video" && comparableName(blockTitle(block)).includes(comparable));
+  if (matchingVideo && !replaceExistingVideo) {
     console.log(`video block already exists: ${episodePage.title} ${file.name}`);
     return;
   }
@@ -768,7 +831,7 @@ async function main() {
   // burned-in subtitle language can differ from tags inherited from a source.
   const specTitle = options.specTitle || specPage.title;
   validateSeriesSpecTitle(specTitle);
-  episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes);
+  episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes, options.apiDelayMs);
 
   console.log(`page: ${pageTitle(page)} ${page.id}`);
   console.log(`spec page: ${specPage.title} ${specPage.id}`);
@@ -798,16 +861,32 @@ async function main() {
 
   const manifestPath = path.join(".local-data", `notion-series-video-upload-${page.id.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
-  for (const file of selectedFiles) {
-    const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);
-    await appendEpisodeVideo(
-      notion,
-      episodePages.get(episodeRangeKey(file.episode, file.episodeEnd)),
-      file,
-      fileUploadId,
-      options.apply,
-      options.replaceExistingVideo
-    );
+  const trafficMonitor = createVpnTrafficMonitor({
+    envLookup: dotenv,
+    reportPath: `${manifestPath}.vpn-traffic.json`
+  });
+  const routeGuard = createNotionUploadSelectorGuard({
+    envLookup: (name) => process.env[name] || dotenv(name)
+  });
+  await trafficMonitor.start({
+    totalUploadBytes: selectedFiles.reduce((sum, file) => sum + file.size, 0),
+    uploader: "series",
+    files: selectedFiles.length
+  });
+  try {
+    for (const file of selectedFiles) {
+      const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard);
+      await appendEpisodeVideo(
+        notion,
+        episodePages.get(episodeRangeKey(file.episode, file.episodeEnd)),
+        file,
+        fileUploadId,
+        options.apply,
+        options.replaceExistingVideo
+      );
+    }
+  } finally {
+    await trafficMonitor.finish({ uploader: "series", files: selectedFiles.length });
   }
   console.log(`manifest written: ${manifestPath}`);
 }

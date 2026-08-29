@@ -66,9 +66,10 @@ node tools/notion-workflow-handoff.mjs schema --json
 node tools/notion-workflow-handoff.mjs schema --apply --json
 node tools/notion-workflow-handoff.mjs scan --limit 3 --json
 node tools/notion-workflow-handoff.mjs claim --limit 3 --apply --json
-node tools/notion-workflow-handoff.mjs set --page-id <id> --status "待人工上传" --actor ai --apply --json
+node tools/notion-workflow-handoff.mjs set --page-id <id> --expected-title "<exact work title>" --status "待人工上传" --actor ai --apply --json
+node tools/notion-workflow-handoff.mjs set --page-id <id> --expected-title "<exact work title>" --status "暂缓" --hide-from-website true --actor ai --apply --json
 node tools/notion-workflow-handoff.mjs reconcile --page-id <id> [--page-id <id> ...] --limit 3 --json
 node tools/film-ledger.mjs queue --stage handoff --limit 3 --json
 ```
 
-Run `schema` in dry-run mode before apply. `scan` queries only actionable statuses and mirrors matching work-page IDs into the local ledger. `reconcile` reads up to three explicit recorded IDs and mirrors their current state without changing Notion. `claim` is write-only and requires `--apply`.
+Run `schema` in dry-run mode before apply. `scan` queries only actionable statuses and mirrors matching work-page IDs into the local ledger. `reconcile` reads up to three explicit recorded IDs and mirrors their current state without changing Notion. `claim` is write-only and requires `--apply`. An explicit `set` also requires the exact current work title; the tool retrieves the page and rejects a mismatch before mutation so a stale or copied page ID cannot change another work. Use the exact boolean `--hide-from-website true` when a non-playable or incomplete work must remain out of the website. Clearing it with `false` is deliberately rejected unless the same command uses `--release-work` and passes the existing metadata/review release gates.

@@ -44,3 +44,17 @@ test("surfaces provider status and retry delay", async () => {
     (error: unknown) => error instanceof ProviderHttpError && error.status === 429 && error.retryAfterMs === 3_000
   );
 });
+
+test("aborts a provider request after the configured timeout", async () => {
+  const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+  });
+
+  await assert.rejects(fetchProviderJson({
+    url: "https://example.test",
+    provider: "Example",
+    fetchImpl,
+    limiter: new ProviderRateLimiter(0),
+    timeoutMs: 5
+  }), /timeout/i);
+});

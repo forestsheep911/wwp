@@ -90,8 +90,14 @@ function buildSummary(scan, cycle) {
   const intakeCandidates = (laneRows.intake ?? []).length;
   const metadataCandidates = (laneRows.catalogMaintenance ?? []).length;
   const productionCandidates = (laneRows.production ?? []).length;
+  const seriesCoverageGaps = (laneRows.productionCoverage ?? []).length;
   const publicationPending = (laneRows.publication ?? []).length;
   const cleanupCandidates = (laneRows.cleanup ?? []).length;
+  const sourceDisposition = cycle.sourceDisposition ?? {};
+  const residualSources = sourceDisposition.residualSourceCount ?? 0;
+  const humanConfirmations = sourceDisposition.needsHumanConfirmation ?? 0;
+  const cleanupMoveFailures = sourceDisposition.cleanupMoveFailed ?? 0;
+  const scheduledReviews = sourceDisposition.scheduledReview ?? 0;
   const unselectedSources = (laneRows.production ?? []).filter((row) => row.candidate_type === "source_selection").length;
   return {
     rootCount: roots.length,
@@ -102,8 +108,14 @@ function buildSummary(scan, cycle) {
     intakeCandidates,
     metadataCandidates,
     productionCandidates,
+    seriesCoverageGaps,
     publicationPending,
     cleanupCandidates,
+    residualSources,
+    humanConfirmations,
+    cleanupMoveFailures,
+    scheduledReviews,
+    sourceDisposition: sourceDisposition.byDisposition ?? {},
     registeredSourcesNeedingProductionReview: unselectedSources,
     discoveryMessage: newlyDiscoveredSources || changedSources
       ? `本轮发现 ${newlyDiscoveredSources} 个新输入、${changedSources} 个变化输入`
@@ -112,16 +124,21 @@ function buildSummary(scan, cycle) {
       intakeCandidates && `待识别 ${intakeCandidates}`,
       metadataCandidates && `待补资料 ${metadataCandidates}`,
       productionCandidates && `待制作 ${productionCandidates}`,
+      seriesCoverageGaps && `剧集规格覆盖缺口 ${seriesCoverageGaps}`,
       publicationPending && `待发布闭环 ${publicationPending}`,
       cleanupCandidates && `待清理 ${cleanupCandidates}`
-    ].filter(Boolean).join("；") || "当前没有待推进工作",
+    ].filter(Boolean).join("；") || (residualSources ? `当前无到期执行项，但输入目录仍有 ${residualSources} 个残留条目` : "当前没有待推进工作"),
+    residualMessage: residualSources
+      ? `输入目录残留 ${residualSources}：当前可推进 ${sourceDisposition.actionableNow ?? 0}，待人工确认 ${humanConfirmations}，移动失败 ${cleanupMoveFailures}，未到复核时间 ${scheduledReviews}。每项原因见 cycle.lanes.sourceFollowup。`
+      : "输入目录没有仍受流程管理的残留源条目",
     hasWorkBeyondNewDiscovery: [
       laneRows.intake,
       laneRows.catalogMaintenance,
       laneRows.production,
+      laneRows.productionCoverage,
       laneRows.publication,
       laneRows.cleanup
-    ].some((lane) => (lane ?? []).length > 0)
+    ].some((lane) => (lane ?? []).length > 0) || (sourceDisposition.actionableNow ?? 0) > 0 || humanConfirmations > 0
   };
 }
 

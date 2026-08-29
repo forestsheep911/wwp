@@ -73,7 +73,6 @@ export function planReviewedPeopleReportApply(
   for (const work of report.proposedCredits) {
     if (affectedWorkIds.has(work.workId)) throw new Error(`Reviewed report contains duplicate work: ${work.workId}`);
     affectedWorkIds.add(work.workId);
-    workTitles[work.workId] = work.title;
     const matches = resultsByWorkId.get(work.workId) ?? [];
     if (matches.length !== 1) throw new Error(`Expected exactly one search result for work ${work.workId}; found ${matches.length}.`);
 
@@ -93,6 +92,7 @@ export function planReviewedPeopleReportApply(
     const updated = structuredClone(original);
     const originalMetadata = original.metadata;
     const originalWork = original.metadata.work;
+    workTitles[work.workId] = originalWork.titles?.find((entry) => entry.kind === "primary")?.title ?? work.title;
     const workDataQuality = dataQualityAfterCreditRepair(
       originalWork.dataQuality,
       Boolean(Object.values(originalWork.externalIds ?? {}).some(Boolean)),

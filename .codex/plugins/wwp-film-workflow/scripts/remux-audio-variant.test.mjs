@@ -11,9 +11,13 @@ test("audio variant remux preserves the complete copied video stream", () => {
   }, "video.mp4", "source.m2ts", "output.part.mp4");
 
   assert.equal(args.includes("-shortest"), false);
+  assert.deepEqual(args.slice(args.indexOf("-map_chapters"), args.indexOf("-c:v")), [
+    "-map_chapters", "-1"
+  ]);
   assert.deepEqual(args.slice(args.indexOf("-map"), args.indexOf("-c:v")), [
     "-map", "0:v:0",
-    "-map", "1:a:12"
+    "-map", "1:a:12",
+    "-map_chapters", "-1"
   ]);
   assert.equal(args[args.indexOf("-c:v") + 1], "copy");
   assert.equal(args[args.indexOf("-tag:v") + 1], "hvc1");

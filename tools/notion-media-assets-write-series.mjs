@@ -923,6 +923,7 @@ export function candidatesFromOrganizerPage(page, metadataOverrides = []) {
     const workTitle = publicWorkTitle(page.title);
     candidates.push({
       workPageId: page.pageId,
+      specPageId: spec.pageId,
       workTitle,
       sourcePageId: episode.pageId,
       mediaBlockId: media.blockId,
@@ -952,6 +953,7 @@ function normalizeMetadataOverrides(manifestPath) {
     mediaBlockId: item.mediaBlockId,
     sourcePageId: item.sourcePageId,
     workPageId: item.workPageId,
+    specPageId: item.specPageId,
     workTitle: item.workTitle,
     developerMemo: item.developerMemo ?? defaults.developerMemo,
     replaceExistingFields: normalizeReplaceExistingFields(
@@ -993,6 +995,7 @@ function applyMetadataOverrides(candidates, overrides) {
     return {
       ...candidate,
       workPageId: override.workPageId ?? candidate.workPageId,
+      specPageId: override.specPageId ?? candidate.specPageId,
       workTitle: override.workTitle ?? candidate.workTitle,
       developerMemo: override.developerMemo ?? candidate.developerMemo,
       replaceExistingFields: override.replaceExistingFields,
@@ -1059,6 +1062,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
           const displayLabel = `${spec.title} / ${episodeLabel} / ${fileName || mediaBlock.id}`;
           directCandidates.push({
             workPageId: page.pageId,
+            specPageId: spec.pageId,
             workTitle,
             sourcePageId: spec.pageId,
             mediaBlockId: mediaBlock.id,
@@ -1121,6 +1125,7 @@ async function candidatesForSeriesPage(notion, page, options = {}) {
         const workTitle = publicWorkTitle(page.title);
         candidates.push({
           workPageId: page.pageId,
+          specPageId: spec.pageId,
           workTitle,
           sourcePageId: episode.pageId,
           mediaBlockId: mediaBlock.id,

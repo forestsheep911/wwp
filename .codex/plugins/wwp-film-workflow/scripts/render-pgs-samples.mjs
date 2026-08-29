@@ -6,20 +6,21 @@ import { spawnSync } from "node:child_process";
 
 function usage() {
   console.log(`Usage:
-  node scripts/render-pgs-samples.mjs --input <media> --subtitle-stream <ordinal> --output-dir <directory> [--events 3]
+  node scripts/render-pgs-samples.mjs --input <media> --subtitle-stream <ordinal> --output-dir <directory> [--events 3] [--start <seconds>]
 
 Extracts a bounded PGS subtitle sample, then renders the first distinct subtitle
-events over black images. It records evidence only: inspect the images before
-classifying subtitle language or selecting a production branch.
+events at or after the optional start time over black images. It records evidence
+only: inspect the images before classifying subtitle language or selecting a
+production branch.
 `);
 }
 
-function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", events: 3 };
+export function parseArgs(argv) {
+  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", events: 3, start: 0 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
-    else if (["--input", "--subtitle-stream", "--output-dir", "--events", "--ffmpeg", "--ffprobe"].includes(arg)) {
+    else if (["--input", "--subtitle-stream", "--output-dir", "--events", "--start", "--ffmpeg", "--ffprobe"].includes(arg)) {
       options[arg.slice(2).replaceAll("-", "_")] = argv[++index];
     } else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -28,9 +29,11 @@ function parseArgs(argv) {
     throw new Error("--input, --subtitle-stream, and --output-dir are required");
   }
   options.events = Number(options.events);
+  options.start = Number(options.start);
   options.subtitleStream = Number(options.subtitle_stream);
   if (!Number.isInteger(options.subtitleStream) || options.subtitleStream < 0) throw new Error("--subtitle-stream must be a non-negative ordinal");
   if (!Number.isInteger(options.events) || options.events < 1 || options.events > 12) throw new Error("--events must be 1-12");
+  if (!Number.isFinite(options.start) || options.start < 0) throw new Error("--start must be a non-negative number of seconds");
   return options;
 }
 
@@ -69,7 +72,8 @@ function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-pgs-"));
   const supPath = path.join(tempDir, "sample.sup");
   try {
-    run(options.ffmpeg, ["-y", "-v", "error", "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath]);
+    const seekArgs = options.start > 0 ? ["-ss", String(options.start)] : [];
+    run(options.ffmpeg, ["-y", "-v", "error", ...seekArgs, "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath]);
     const packetOutput = run(options.ffprobe, ["-v", "error", "-show_entries", "packet=pts_time", "-of", "csv=p=0", supPath]);
     const times = distinctEventTimes(packetOutput.split(/\r?\n/u), options.events);
     if (times.length === 0) throw new Error("No PGS subtitle events were extracted");
@@ -79,7 +83,7 @@ function main() {
       run(options.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=1:d=${duration}`, "-i", supPath, "-filter_complex", "[0:v][1:s]overlay", "-ss", String(time + 0.5), "-frames:v", "1", output]);
       return { eventTimeSeconds: time, output };
     });
-    process.stdout.write(`${JSON.stringify({ input, subtitleStream: options.subtitleStream, rendered }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ input, subtitleStream: options.subtitleStream, sourceStartSeconds: options.start, rendered }, null, 2)}\n`);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

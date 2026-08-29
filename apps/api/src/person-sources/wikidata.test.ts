@@ -107,3 +107,39 @@ test("rejects an entity explicitly classified as non-human", async () => {
   });
   await assert.rejects(source.fetchPersonEvidence("Q1"), /not a human/);
 });
+
+test("rejects real Wikidata entity-id shaped non-human claims", async () => {
+  const source = new WikidataPersonSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async () => Response.json({ entities: { Q124368201: {
+      labels: { en: { value: "Max" } },
+      descriptions: { en: { value: "animal actor" } },
+      claims: { P31: [{ mainsnak: { datavalue: { value: { "entity-type": "item", "numeric-id": 26401003, id: "Q26401003" } } } }] }
+    } } })
+  });
+  await assert.rejects(source.fetchPersonEvidence("Q124368201"), /not a human/);
+});
+
+test("rejects a same-name human entity whose non-film description conflicts with the credit role", async () => {
+  const source = new WikidataPersonSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async () => Response.json({ entities: { Q6828594: {
+      labels: { en: { value: "Michael Berg" } },
+      descriptions: { en: { value: "American activist and politician (born 1945)" } },
+      claims: { P31: [{ mainsnak: { datavalue: { value: { value: "Q5" } } } }] }
+    } } })
+  });
+  await assert.rejects(source.fetchPersonEvidence("Q6828594", ["writing"]), /conflicts with the expected credit department/);
+});
+
+test("rejects a same-name athlete entity described as a wrestler", async () => {
+  const source = new WikidataPersonSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async () => Response.json({ entities: { Q15996997: {
+      labels: { en: { value: "Carl Lund" } },
+      descriptions: { en: { value: "wrestler" } },
+      claims: { P31: [{ mainsnak: { datavalue: { value: { value: "Q5" } } } }] }
+    } } })
+  });
+  await assert.rejects(source.fetchPersonEvidence("Q15996997", ["writing"]), /conflicts with the expected credit department/);
+});

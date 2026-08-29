@@ -38,20 +38,40 @@ function plausibleLanguage(value) {
 export function parseClipInfoPgsTracks(clipInfoPath) {
   if (!clipInfoPath || !existsSync(clipInfoPath)) return undefined;
   const data = readFileSync(clipInfoPath);
-  const tracks = [];
-  for (let offset = 0; offset + 7 <= data.length; offset += 1) {
+  const pgsTracks = [];
+  const audioTracks = [];
+  const audioCodecs = new Map([
+    [0x80, "lpcm"],
+    [0x81, "ac3"],
+    [0x82, "dts"],
+    [0x83, "truehd"],
+    [0x84, "eac3"],
+    [0x85, "dts-hd"],
+    [0x86, "dts-hd-ma"]
+  ]);
+  for (let offset = 0; offset + 8 <= data.length; offset += 1) {
     const pid = data.readUInt16BE(offset);
     const descriptorLength = data[offset + 2];
     const codingType = data[offset + 3];
-    const language = plausibleLanguage(data.subarray(offset + 4, offset + 7).toString("ascii"));
-    if (pid < 0x1200 || pid > 0x12ff || descriptorLength !== 0x15 || codingType !== 0x90 || !language) continue;
-    const record = { pid: `0x${pid.toString(16)}`, language };
-    if (!tracks.some((track) => track.pid === record.pid && track.language === record.language)) tracks.push(record);
+    if (pid >= 0x1200 && pid <= 0x12ff && descriptorLength === 0x15 && codingType === 0x90) {
+      const language = plausibleLanguage(data.subarray(offset + 4, offset + 7).toString("ascii"));
+      const record = language ? { pid: `0x${pid.toString(16)}`, language } : undefined;
+      if (record && !pgsTracks.some((track) => track.pid === record.pid && track.language === record.language)) pgsTracks.push(record);
+      continue;
+    }
+    if (pid >= 0x1100 && pid <= 0x11ff && descriptorLength === 0x15 && audioCodecs.has(codingType)) {
+      const language = plausibleLanguage(data.subarray(offset + 5, offset + 8).toString("ascii"));
+      const record = language ? { pid: `0x${pid.toString(16)}`, codec: audioCodecs.get(codingType), language } : undefined;
+      if (record && !audioTracks.some((track) => track.pid === record.pid && track.codec === record.codec && track.language === record.language)) audioTracks.push(record);
+    }
   }
   return {
     path: clipInfoPath,
-    pgsTracks: tracks,
-    hasChineseSubtitle: tracks.some((track) => ["zho", "chi"].includes(track.language))
+    pgsTracks,
+    audioTracks,
+    hasChineseSubtitle: pgsTracks.some((track) => ["zho", "chi"].includes(track.language)),
+    hasChineseAudio: audioTracks.some((track) => ["zho", "chi", "cmn", "yue"].includes(track.language)),
+    hasEnglishAudio: audioTracks.some((track) => track.language === "eng")
   };
 }
 

@@ -7,6 +7,7 @@ import {
 export const WORKFLOW_STATUS_PROPERTY = "Workflow Status";
 export const WORKFLOW_NOTE_PROPERTY = "Workflow Note";
 export const HUMAN_ISSUE_PROPERTY = "Human Issue";
+export const AI_ISSUE_PROPERTY = "AI Issue";
 export const AI_NOTE_PREFIX = "【AI(^_^)";
 
 export const WORKFLOW_STATUS_OPTIONS = Object.freeze([
@@ -73,6 +74,18 @@ export function pendingHumanWorkflowNoteFromPage(page) {
 
 export function humanIssueFromPage(page) {
   return propertyText(page?.properties?.[HUMAN_ISSUE_PROPERTY]);
+}
+
+export function workReleaseBlockers(page) {
+  const properties = page?.properties ?? {};
+  const blockers = [];
+  if (properties["Hide from Website"]?.type !== "checkbox") blockers.push("hide_property_missing");
+  if (properties["Metadata Status"]?.select?.name !== "verified") blockers.push("metadata_not_verified");
+  if (properties["Needs Review"]?.checkbox !== false) blockers.push("needs_review");
+  if (humanIssueFromPage(page)) blockers.push("human_issue");
+  if (propertyText(properties[AI_ISSUE_PROPERTY])) blockers.push("ai_issue");
+  if (pendingHumanWorkflowNoteFromPage(page)) blockers.push("pending_human_note");
+  return blockers;
 }
 
 export function buildActionableWorkflowFilter(statuses = AI_ACTIONABLE_WORKFLOW_STATES) {

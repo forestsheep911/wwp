@@ -648,6 +648,34 @@ function relationIds(property) {
 }
 
 async function findExistingAsset(notion, dataSource, candidate) {
+  if (candidate.assetPageId) {
+    const page = await notion.pages.retrieve({ page_id: candidate.assetPageId });
+    if (page.archived || page.in_trash) {
+      throw new Error(`Explicit Media Asset ${page.id} is archived; preserve it as history and target or create an active row instead.`);
+    }
+    const properties = page.properties ?? {};
+    const normalizeId = (value) => String(value ?? "").replaceAll("-", "").toLowerCase();
+    const dataSourceParentId = page.parent?.data_source_id ?? page.parent?.database_id;
+    if (dataSourceParentId && normalizeId(dataSourceParentId) !== normalizeId(dataSource.id)) {
+      throw new Error(`Explicit Media Asset ${page.id} is not in the configured Media Assets data source.`);
+    }
+    if (!candidate.skipWorkRelation && candidate.workPageId
+      && !relationIds(properties.Work).some((id) => normalizeId(id) === normalizeId(candidate.workPageId))) {
+      throw new Error(`Explicit Media Asset ${page.id} does not relate to work ${candidate.workPageId}.`);
+    }
+    const expectedFacts = [
+      ["Source Page ID", candidate.sourcePageId],
+      ["Media Block ID", candidate.mediaBlockId],
+      ["Original File Name", candidate.originalFileName]
+    ];
+    for (const [name, expected] of expectedFacts) {
+      if (expected && propertyPlainText(properties[name]) !== expected) {
+        throw new Error(`Explicit Media Asset ${page.id} ${name} does not match the audited candidate.`);
+      }
+    }
+    return page;
+  }
+
   const nameProperty = titlePropertyName(dataSource);
   const responses = [];
 
@@ -687,6 +715,7 @@ async function findExistingAsset(notion, dataSource, candidate) {
   return pages.find((page) => {
     if (seen.has(page.id)) return false;
     seen.add(page.id);
+    if (page.archived || page.in_trash) return false;
     const properties = page.properties ?? {};
     const workMatches = relationIds(properties.Work).includes(candidate.workPageId);
     const titleMatches = propertyPlainText(properties[nameProperty]) === candidate.name;
@@ -846,6 +875,7 @@ function normalizeManifest(manifest, options) {
       expectedTitleContains: item.expectedTitleContains,
       sourcePageId: item.sourcePageId ?? defaults.sourcePageId,
       mediaBlockId: item.mediaBlockId,
+      assetPageId: item.assetPageId,
       previousOriginalFileName: item.previousOriginalFileName,
       previousDisplayLabel: item.previousDisplayLabel,
       expectedFilename: item.expectedFilename,
@@ -870,6 +900,7 @@ function applyManifestOverrides(candidate, item = {}) {
     !item.developerMemo &&
     !item.includeDefaultEdition &&
     item.replaceExistingFields === undefined &&
+    !item.assetPageId &&
     !item.previousOriginalFileName &&
     !item.previousDisplayLabel &&
     Object.keys(metadataOverrides).length === 0
@@ -882,6 +913,7 @@ function applyManifestOverrides(candidate, item = {}) {
     developerMemo: item.developerMemo,
     includeDefaultEdition: item.includeDefaultEdition,
     replaceExistingFields: item.replaceExistingFields,
+    assetPageId: item.assetPageId,
     previousOriginalFileName: item.previousOriginalFileName,
     previousDisplayLabel: item.previousDisplayLabel,
     metadata: {

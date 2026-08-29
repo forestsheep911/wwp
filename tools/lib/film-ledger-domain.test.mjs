@@ -19,10 +19,15 @@ test("qc_passed does not imply final sync readiness", () => {
   assert.equal(isSyncReady({ qcPassed: true, structureVerified: true, mediaVerified: true, assetsVerified: true }), true);
 });
 
+test("a sync-ready publication can be returned to structure_pending for invalidation", () => {
+  assert.equal(assertPublicationTransition("sync_ready", "structure_pending"), true);
+});
+
 test("production transitions enforce legal adjacency", () => {
   assert.deepEqual(PRODUCTION_STATES, ["discovered", "evaluated", "selected", "encoding", "qc_failed", "deferred", "qc_passed", "rejected"]);
   assert.equal(assertProductionTransition("discovered", "evaluated"), true);
   assert.equal(assertProductionTransition("qc_failed", "selected"), true);
+  assert.equal(assertProductionTransition("encoding", "deferred"), true);
   assert.equal(assertProductionTransition("deferred", "evaluated"), true);
   assert.equal(assertProductionTransition("qc_passed", "rejected"), true);
   assert.throws(() => assertProductionTransition("discovered", "qc_passed"), /illegal production transition/);

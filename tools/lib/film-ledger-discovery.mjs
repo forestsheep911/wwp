@@ -79,6 +79,11 @@ function sourceKindFor(entry) {
   return entry.flags?.looksSeries ? "series_folder" : "folder";
 }
 
+function isQuarantineRoot(rootPath) {
+  const normalized = normalizeLedgerPath(rootPath).replace(/[\\/]+$/u, "");
+  return path.win32.basename(normalized).toLowerCase() === "待人工删除";
+}
+
 function isResolvedCollectionShrink(repo, inputRootId, parentSource) {
   const relativePrefix = `${parentSource.relative_path}\\`.toLowerCase();
   const parentAbsolute = normalizeLedgerPath(parentSource.absolute_path).replace(/[\\/]+$/u, "").toLowerCase();
@@ -103,6 +108,7 @@ function isResolvedCollectionShrink(repo, inputRootId, parentSource) {
 export function importScan(repo, payload) {
   validatePayload(payload);
   const normalizedRoot = normalizeLedgerPath(payload.root);
+  const quarantineRoot = isQuarantineRoot(normalizedRoot);
   const root = repo.upsertInputRoot(normalizedRoot, { lastScanAt: payload.scannedAt ?? new Date().toISOString() });
   const existing = new Map(repo.listSourcesForRoot(root.id).map(source => [source.relative_path, source]));
   const seen = new Set();
@@ -111,11 +117,25 @@ export function importScan(repo, payload) {
   for (const entry of payload.entries) {
     const fingerprint = fingerprintEntry(entry);
     const previous = existing.get(entry.relativePath);
+    const resolvedAbsolutePath = resolvedEntryPath(normalizedRoot, entry.relativePath, entry.absolutePath);
+    // Quarantine is an audit location, not an intake source. Cleanup already
+    // records moved source paths in the ledger, so an unknown child here must
+    // never re-enter discovery as a new film.
+    if (quarantineRoot && !previous) {
+      summary.skippedQuarantine = (summary.skippedQuarantine ?? 0) + 1;
+      continue;
+    }
+    const fingerprintMatches = previous && (previous.fingerprint === fingerprint
+      || previous.fingerprint === migrationFingerprintEntry(entry)
+      || previous.fingerprint === legacyFingerprintEntry(entry));
+    const flatPathRepair = Boolean(previous
+      && previous.missing === 1
+      && previous.relative_path.toLowerCase().startsWith("@flat/")
+      && fingerprintMatches
+      && existsSync(resolvedAbsolutePath));
     const state = !previous
       ? "inserted"
-      : (previous.fingerprint === fingerprint
-        || previous.fingerprint === migrationFingerprintEntry(entry)
-        || previous.fingerprint === legacyFingerprintEntry(entry)) && previous.missing === 0
+      : fingerprintMatches && (previous.missing === 0 || flatPathRepair)
         ? "unchanged"
         : "changed";
     summary[state] += 1;
@@ -123,7 +143,7 @@ export function importScan(repo, payload) {
     const source = repo.upsertDiscoveredSource({
       inputRootId: root.id,
       relativePath: entry.relativePath,
-      absolutePath: resolvedEntryPath(normalizedRoot, entry.relativePath, entry.absolutePath),
+      absolutePath: resolvedAbsolutePath,
       fingerprint,
       sourceKind: sourceKindFor(entry),
       subtitleEvidence: {
@@ -142,11 +162,15 @@ export function importScan(repo, payload) {
       repo.markSourceMissing(source.id, true);
       summary.missing += 1;
     }
-    if (!syntheticMissing && state === "inserted") {
+    if (!quarantineRoot && !syntheticMissing && flatPathRepair && previous?.work_id == null) {
+      repo.requeueIntakeTask(source.id, {
+        reason: "Flat source path repaired; inspect the newly reachable media identity and Notion state"
+      });
+    } else if (!quarantineRoot && !syntheticMissing && state === "inserted") {
       repo.requeueIntakeTask(source.id, {
         reason: "New source discovered; inspect identity, duplicates, Notion state, and routing"
       });
-    } else if (!syntheticMissing && state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
+    } else if (!quarantineRoot && !syntheticMissing && state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
       repo.requeueIntakeTask(source.id, {
         reason: "Source contents changed; inspect added, replaced, or removed media before continuing"
       });

@@ -12,7 +12,7 @@ const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 const DEFAULT_OUTPUT_ROOT = "E:\\video_made";
 
 function optionsFromArgs(args = process.argv.slice(2)) {
-  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, episodeOffset: 0, apply: false };
+  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, episodeOffset: 0, delayMs: 1000, releaseManifest: "", apply: false, allowUploadedOnly: false };
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
     const value = () => args[++index];
@@ -21,9 +21,12 @@ function optionsFromArgs(args = process.argv.slice(2)) {
     else if (option === "--year") options.year = Number(value());
     else if (option === "--work-id") options.workId = Number(value());
     else if (option === "--episode-offset") options.episodeOffset = Number(value());
+    else if (option === "--delay-ms") options.delayMs = Number(value());
+    else if (option === "--release-manifest") options.releaseManifest = path.resolve(value());
     else if (option === "--db") options.db = path.resolve(value());
     else if (option === "--output-root") options.outputRoot = path.resolve(value());
     else if (option === "--apply") options.apply = true;
+    else if (option === "--allow-uploaded-only") options.allowUploadedOnly = true;
     else throw new Error(`Unknown option: ${option}`);
   }
   if (!options.workPageId || !options.workTitle || !Number.isInteger(options.year)) {
@@ -33,6 +36,7 @@ function optionsFromArgs(args = process.argv.slice(2)) {
     throw new Error("--work-id must be a positive integer");
   }
   if (!Number.isInteger(options.episodeOffset)) throw new Error("--episode-offset must be an integer");
+  if (!Number.isFinite(options.delayMs) || options.delayMs < 1000) throw new Error("--delay-ms must be at least 1000");
   return options;
 }
 
@@ -61,39 +65,54 @@ function text(property) {
   return (property?.rich_text ?? property?.title ?? []).map(item => item.plain_text ?? "").join("").trim();
 }
 
-async function listChildren(notion, pageId) {
+export function createRequestGate(minimumIntervalMs = 1000) {
+  let tail = Promise.resolve();
+  let lastStartedAt = 0;
+  return function request(operation) {
+    const run = tail.then(async () => {
+      const remaining = Math.max(0, minimumIntervalMs - (Date.now() - lastStartedAt));
+      if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      lastStartedAt = Date.now();
+      return operation();
+    });
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+async function listChildren(notion, pageId, request = operation => operation()) {
   const results = [];
   let cursor;
   do {
-    const response = await notion.blocks.children.list({ block_id: pageId, page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) });
+    const response = await request(() => notion.blocks.children.list({ block_id: pageId, page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }));
     results.push(...response.results);
     cursor = response.has_more ? response.next_cursor : undefined;
   } while (cursor);
   return results;
 }
 
-async function mediaAssetsForWork(notion, dataSourceId, workPageId) {
+async function mediaAssetsForWork(notion, dataSourceId, workPageId, request = operation => operation()) {
   const rows = [];
   let cursor;
   do {
-    const response = await notion.dataSources.query({
+    const response = await request(() => notion.dataSources.query({
       data_source_id: dataSourceId,
       page_size: 100,
       filter: { property: "Work", relation: { contains: workPageId } },
       ...(cursor ? { start_cursor: cursor } : {})
-    });
+    }));
     rows.push(...response.results);
     cursor = response.has_more ? response.next_cursor : undefined;
   } while (cursor);
   return rows;
 }
 
-export async function episodeSpecMap(notion, workPageId) {
+export async function episodeSpecMap(notion, workPageId, request = operation => operation()) {
   const mapping = new Map();
   const specs = [];
 
   async function collectSpecPages(parentId) {
-    const children = await listChildren(notion, parentId);
+    const children = await listChildren(notion, parentId, request);
     for (const child of children) {
       if (child.type === "child_page") {
         specs.push(child);
@@ -106,7 +125,7 @@ export async function episodeSpecMap(notion, workPageId) {
 
   await collectSpecPages(workPageId);
   for (const spec of specs) {
-    const episodes = await listChildren(notion, spec.id);
+    const episodes = await listChildren(notion, spec.id, request);
     for (const episode of episodes.filter(block => (
       block.type === "child_page" && /^Episode\s+\d+/iu.test(block.child_page?.title ?? "")
     ))) {
@@ -131,7 +150,7 @@ function localFiles(outputRoot) {
   return { byName, legacyEpisodes };
 }
 
-function candidate(asset, episodeToSpec, files, episodeOffset) {
+export function candidate(asset, episodeToSpec, files, episodeOffset, { allowUploadedOnly = false } = {}) {
   const properties = asset.properties ?? {};
   const episodePageId = text(properties["Source Page ID"]);
   const mediaBlockId = text(properties["Media Block ID"]);
@@ -140,6 +159,10 @@ function candidate(asset, episodeToSpec, files, episodeOffset) {
   const playbackVerified = properties["Playback Verified"]?.checkbox === true;
   const hidden = properties["Hide from Website"]?.checkbox === true;
   const availability = properties["Media Availability"]?.select?.name;
+  const resolution = properties.Resolution?.select?.name;
+  const videoCodec = properties["Video Codec"]?.select?.name;
+  const container = properties.Container?.select?.name;
+  const approximateSizeGb = properties["Approx Size GB"]?.number;
   const specPageId = episodeToSpec.get(episodePageId);
   const local = files.byName.get(fileName.toLocaleLowerCase())
     ?? (episodeOffset === 0 ? null : files.legacyEpisodes.get(episodeNumber + episodeOffset));
@@ -147,8 +170,10 @@ function candidate(asset, episodeToSpec, files, episodeOffset) {
   if (!Number.isInteger(episodeNumber) || episodeNumber < 1) issues.push("episode_number_missing");
   if (!episodePageId || !specPageId) issues.push("episode_page_unmapped");
   if (!mediaBlockId) issues.push("media_block_missing");
-  if (!fileName || !local) issues.push("local_file_missing");
-  if (!playbackVerified || hidden || availability !== "playable") issues.push("asset_not_released");
+  if (!fileName || (!local && !allowUploadedOnly)) issues.push("local_file_missing");
+  if (!playbackVerified) issues.push("playback_not_verified");
+  if (availability !== "playable") issues.push("asset_not_playable");
+  if (hidden) issues.push("asset_hidden");
   return {
     assetPageId: asset.id,
     episodePageId,
@@ -161,12 +186,33 @@ function candidate(asset, episodeToSpec, files, episodeOffset) {
     displayTitle: text(properties["Display Label"]) || `Episode ${String(episodeNumber).padStart(2, "0")}`,
     audioVariant: (properties["Audio Languages"]?.multi_select ?? []).map(item => item.name).join(",") || "unknown",
     subtitleVariant: (properties["Subtitle Languages"]?.multi_select ?? []).map(item => item.name).join(",") || "unknown",
+    resolution,
+    videoCodec,
+    container,
+    approximateSizeGb,
     issues
   };
 }
 
-function completeVariant(repo, variantId, evidence) {
-  let variant = repo.findVariantByOutputPath(evidence.outputPath) ?? null;
+export function releaseItemFromCandidate(item, workPageId) {
+  if (item.issues.length !== 1 || item.issues[0] !== "asset_hidden") return null;
+  const required = [item.assetPageId, item.episodePageId, item.mediaBlockId, item.resolution, item.videoCodec, item.container];
+  if (required.some(value => !value) || !Number.isFinite(item.approximateSizeGb)) return null;
+  return {
+    pageId: item.assetPageId,
+    expectedWorkPageId: workPageId,
+    expectedSourcePageId: item.episodePageId,
+    expectedMediaBlockId: item.mediaBlockId,
+    expectedEpisodeNumber: item.episodeNumber,
+    expectedResolution: item.resolution,
+    expectedVideoCodec: item.videoCodec,
+    expectedContainer: item.container,
+    expectedApproxSizeGb: item.approximateSizeGb
+  };
+}
+
+export function completeVariant(repo, variantId, evidence) {
+  let variant = evidence.outputPath ? repo.findVariantByOutputPath(evidence.outputPath) : null;
   if (!variant || variant.id !== variantId) {
     variant = repo.refreshProductionEvidence(variantId, { outputPath: evidence.outputPath, outputSizeBytes: evidence.outputBytes });
   }
@@ -196,7 +242,6 @@ function completeVariant(repo, variantId, evidence) {
     mediaAssetPageId: evidence.assetPageId
   }, evidence.at, null);
   const publicationStates = { not_ready: "structure_pending", structure_pending: "upload_pending", upload_pending: "upload_seen", upload_seen: "assets_pending", assets_pending: "verification_pending", verification_pending: "sync_ready" };
-  variant = repo.findVariantByOutputPath(evidence.outputPath);
   while (variant.publication_state !== "sync_ready") {
     variant = repo.transitionPublication(variant.id, publicationStates[variant.publication_state], { legacyBackfill: true });
   }
@@ -210,15 +255,34 @@ async function main() {
   const token = env.NOTION_READ_ONLY_TOKEN || env.NOTION_TOKEN || env.NOTION_WRITE_TOKEN;
   if (!token || !env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID) throw new Error("Notion token and NOTION_MEDIA_ASSETS_DATA_SOURCE_ID are required");
   const notion = new Client({ auth: token, timeoutMs: 120000 });
+  const request = createRequestGate(options.delayMs);
   const [episodeToSpec, assets] = await Promise.all([
-    episodeSpecMap(notion, options.workPageId),
-    mediaAssetsForWork(notion, env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID, options.workPageId)
+    episodeSpecMap(notion, options.workPageId, request),
+    mediaAssetsForWork(notion, env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID, options.workPageId, request)
   ]);
   const files = localFiles(options.outputRoot);
-  const candidates = assets.map(asset => candidate(asset, episodeToSpec, files, options.episodeOffset));
+  const candidates = assets.map(asset => candidate(asset, episodeToSpec, files, options.episodeOffset, {
+    allowUploadedOnly: options.allowUploadedOnly
+  }));
   const accepted = candidates.filter(item => item.issues.length === 0).sort((a, b) => a.episodeNumber - b.episodeNumber);
   const rejected = candidates.filter(item => item.issues.length > 0);
-  const report = { workPageId: options.workPageId, assets: assets.length, episodePages: episodeToSpec.size, episodeOffset: options.episodeOffset, accepted: accepted.length, rejected, apply: options.apply };
+  const releaseItems = candidates.map(item => releaseItemFromCandidate(item, options.workPageId)).filter(Boolean)
+    .sort((left, right) => left.expectedEpisodeNumber - right.expectedEpisodeNumber);
+  if (options.releaseManifest) {
+    fs.mkdirSync(path.dirname(options.releaseManifest), { recursive: true });
+    fs.writeFileSync(options.releaseManifest, `${JSON.stringify({ items: releaseItems }, null, 2)}\n`, "utf8");
+  }
+  const report = {
+    workPageId: options.workPageId,
+    assets: assets.length,
+    episodePages: episodeToSpec.size,
+    episodeOffset: options.episodeOffset,
+    accepted: accepted.length,
+    releaseCandidates: releaseItems.length,
+    releaseManifest: options.releaseManifest || null,
+    rejected,
+    apply: options.apply
+  };
   if (!options.apply) return console.log(JSON.stringify(report, null, 2));
 
   const db = openLedger(options.db);

@@ -16,3 +16,22 @@ test("movieCandidate accepts only an exact released local media asset", () => {
     assert.deepEqual(movieCandidate(asset, new Set(["spec"]), root).issues, ["asset_not_released"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("movieCandidate can backfill a verified uploaded asset after local cleanup", () => {
+  const asset = { id: "asset", properties: {
+    "Source Page ID": { rich_text: [{ plain_text: "spec" }] },
+    "Media Block ID": { rich_text: [{ plain_text: "block" }] },
+    "Original File Name": { rich_text: [{ plain_text: "movie.mp4" }] },
+    "Display Label": { rich_text: [{ plain_text: "Movie 1.6GB" }] },
+    "Playback Verified": { checkbox: true },
+    "Hide from Website": { checkbox: false },
+    "Media Availability": { select: { name: "playable" } },
+    "Asset Type": { select: { name: "playable_video" } }
+  } };
+  const missing = movieCandidate(asset, new Set(["spec"]), "C:\\missing-output");
+  assert.deepEqual(missing.issues, ["local_file_missing"]);
+  const uploadedOnly = movieCandidate(asset, new Set(["spec"]), "C:\\missing-output", { allowUploadedOnly: true });
+  assert.deepEqual(uploadedOnly.issues, []);
+  assert.equal(uploadedOnly.outputPath, null);
+  assert.equal(uploadedOnly.outputBytes, null);
+});

@@ -27,8 +27,19 @@ import {
   tmdbMovieUrl,
   type NotionMetadataHints
 } from "./notion-metadata-schema.js";
+import { ProviderRateLimiter } from "./person-sources/provider-http.js";
 
 type JsonRecord = Record<string, unknown>;
+
+type NotionFetch = typeof globalThis.fetch;
+
+export function createNotionPacedFetch(
+  fetchImpl: NotionFetch = globalThis.fetch,
+  limiter = new ProviderRateLimiter(1_000)
+): NotionFetch {
+  return ((input: Parameters<NotionFetch>[0], init?: Parameters<NotionFetch>[1]) =>
+    limiter.schedule(() => fetchImpl(input, init))) as NotionFetch;
+}
 
 interface MediaCandidate {
   url: string;
@@ -110,6 +121,7 @@ const infoPropertyPattern = /^(?:\u57fa\u672c\u4fe1\u606f|basic\s*info(?:rmation
 const releaseDatePropertyPattern = /^(?:\u4e0a\u6620\u65e5\u671f|\u9996\u64ad\u65e5\u671f)$/i;
 const genrePropertyPattern = /^(?:\u65e8\u8da3)$/i;
 const directorPropertyPattern = /\u5bfc\u6f14|\bdirectors?\b/i;
+const writerPropertyPattern = /\u7f16\u5267|\bwriters?|\bscreenplay\b/i;
 const peoplePropertyPattern = /\u4e3b\u6f14|\bcast\b|\bactors?\b|\bpeople\b/i;
 const productionCompaniesPropertyPattern = /^(?:production\s+compan(?:y|ies)|\u5236\u4f5c\u516c\u53f8|\u51fa\u54c1\u516c\u53f8)$/i;
 const distributorsPropertyPattern = /^(?:distributors?|distribution\s+compan(?:y|ies)|\u53d1\u884c\u516c\u53f8|\u767c\u884c\u516c\u53f8)$/i;
@@ -570,6 +582,12 @@ export function sortMediaAssetVariants(variants: MediaVariant[]) {
   });
 }
 
+export function completeStructuredMediaAssetVariants(variants: MediaVariant[]) {
+  // These rows are already relation-bounded to one work. Truncating them can
+  // hide later episodes or entire specifications on a large series.
+  return sortMediaAssetVariants(variants);
+}
+
 function pushUnique(target: string[], value: string | undefined) {
   if (value && !target.includes(value)) {
     target.push(value);
@@ -804,6 +822,15 @@ function listFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: n
   }
 
   return undefined;
+}
+
+function creditListFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit: number) {
+  const value = textFromNamedProperty(properties, pattern, 8_000);
+  if (!value) return [];
+  return [...new Set(value
+    .split(/\s*(?:\/|／|,|，|;|；|\n|\r)\s*/u)
+    .map(cleanText)
+    .filter(Boolean))].slice(0, limit);
 }
 
 function organizationListFromNamedProperty(properties: JsonRecord, pattern: RegExp, limit = 12) {
@@ -1140,7 +1167,7 @@ function movieWorkKindFromType(type?: string): MovieWorkKind {
   return "unknown";
 }
 
-function creditEntries(directors: string[], people: string[]) {
+function creditEntries(directors: string[], writers: string[], people: string[]) {
   const credits: MovieCreditEntry[] = [];
 
   directors.forEach((name, index) => {
@@ -1148,6 +1175,16 @@ function creditEntries(directors: string[], people: string[]) {
       name,
       department: "directing",
       job: "Director",
+      order: index,
+      source: "notion"
+    });
+  });
+
+  writers.forEach((name, index) => {
+    credits.push({
+      name,
+      department: "writing",
+      job: "Screenwriter",
       order: index,
       source: "notion"
     });
@@ -1164,6 +1201,51 @@ function creditEntries(directors: string[], people: string[]) {
   });
 
   return credits;
+}
+
+export function creditsFromProperties(properties: JsonRecord) {
+  const basicInfoCredits = creditsFromBasicInfo(properties);
+  const directors = creditListFromNamedProperty(properties, directorPropertyPattern, 30).length > 0
+    ? creditListFromNamedProperty(properties, directorPropertyPattern, 30)
+    : basicInfoCredits.directors;
+  const writers = creditListFromNamedProperty(properties, writerPropertyPattern, 50).length > 0
+    ? creditListFromNamedProperty(properties, writerPropertyPattern, 50)
+    : basicInfoCredits.writers;
+  const people = creditListFromNamedProperty(properties, peoplePropertyPattern, 100).length > 0
+    ? creditListFromNamedProperty(properties, peoplePropertyPattern, 100)
+    : basicInfoCredits.people;
+  return {
+    directors,
+    writers,
+    people,
+    credits: creditEntries(directors, writers, people)
+  };
+}
+
+function creditsFromBasicInfo(properties: JsonRecord) {
+  const value = textFromNamedProperty(properties, infoPropertyPattern, 8_000);
+  if (!value) return { directors: [], writers: [], people: [] };
+  return {
+    directors: basicInfoCreditList(value, ["导演"] , 30),
+    writers: basicInfoCreditList(value, ["编剧"], 50),
+    people: basicInfoCreditList(value, ["主演"], 100)
+  };
+}
+
+function basicInfoCreditList(value: string, labels: string[], limit: number) {
+  const labelPattern = labels.map((label) => escapeRegExp(label)).join("|");
+  const nextLabelPattern = "导演|编剧|主演|类型|制片国家/地区|语言|上映日期|片长|又名|IMDb";
+  const match = value.match(new RegExp(`(?:${labelPattern})\\s*[:：]\\s*(.*?)(?=(?:${nextLabelPattern})\\s*[:：]|$)`, "u"));
+  if (!match?.[1]) return [];
+  const segment = match[1].replace(/(?:\s*[/／])?\s*更多\.{0,3}\s*$/u, "");
+  return [...new Set(segment
+    .split(/\s*(?:\/|／|,|，|;|；|\n|\r)\s*/u)
+    .map(cleanText)
+    .filter(Boolean))].slice(0, limit);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | undefined) {
@@ -1240,13 +1322,11 @@ function movieMetadataFromPage(
   const type = listFromNamedProperty(properties, typePropertyPattern, 1)?.[0];
   const year = yearFromTitleOrDate(title, releaseDate);
   const genres = listFromNamedProperty(properties, genrePropertyPattern, 4) ?? [];
-  const directors = listFromNamedProperty(properties, directorPropertyPattern, 3) ?? [];
-  const people = listFromNamedProperty(properties, peoplePropertyPattern, 4) ?? [];
+  const { directors, people, credits } = creditsFromProperties(properties);
   const productionCompanies = organizationListFromNamedProperty(properties, productionCompaniesPropertyPattern);
   const distributors = organizationListFromNamedProperty(properties, distributorsPropertyPattern);
   const studios = organizationListFromNamedProperty(properties, studiosPropertyPattern);
   const ratings = ratingsFromProperties(properties);
-  const credits = creditEntries(directors, people);
   const kind = movieWorkKindFromType(type);
   const updatedAt = asString(page.last_edited_time) || new Date().toISOString();
   const pageId = asString(page.id);
@@ -1779,7 +1859,10 @@ export class NotionSearchSource {
     installNotionDnsOverride();
     this.notion = new Client({
       auth: process.env.NOTION_READ_ONLY_TOKEN,
-      timeoutMs: this.options.requestTimeoutMs
+      timeoutMs: this.options.requestTimeoutMs,
+      // A single work refresh can fan out into page, block, relation, and
+      // Media Assets reads. Pace the transport so all of them share one lane.
+      fetch: createNotionPacedFetch()
     });
     this.description = this.hasLibraryConfig()
       ? this.hasMediaAssetsConfig()
@@ -2454,10 +2537,9 @@ export class NotionSearchSource {
       Math.min(4, Math.max(1, Math.floor(this.options.mediaAssetConcurrency))),
       ({ page, index }) => this.mediaAssetPageToVariant(page, index, workTitle, workPageId)
     );
-    return sortMediaAssetVariants(
+    return completeStructuredMediaAssetVariants(
       resolved.filter((variant): variant is MediaVariant => Boolean(variant))
-    )
-      .slice(0, this.options.variantLimit);
+    );
   }
 
   private pageMatches(page: JsonRecord, query: string) {

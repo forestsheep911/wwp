@@ -283,11 +283,12 @@ export async function runMetaSync() {
         if (searchIndex.backend === "local") {
           pendingLocalResults.push(item.result);
         } else {
+          const personSafeResult = preserveIndexedPersonCredits(item.result, await searchIndex.getResult(item.result.assetKey));
           const result = options.posterCacheEnabled
-            ? await cacheStore.cacheMoviePosters(item.result, {
-              refreshPosters: refreshPostersForResult(item.result)
+            ? await cacheStore.cacheMoviePosters(personSafeResult, {
+              refreshPosters: refreshPostersForResult(personSafeResult)
             })
-            : item.result;
+            : personSafeResult;
           await searchIndex.upsertResult(result);
         }
         run.saved += 1;

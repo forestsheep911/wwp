@@ -6,6 +6,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
+import { createNotionUploadSelectorGuard } from "./lib/notion-upload-selector-guard.mjs";
 
 const DEFAULT_PART_MIB = 20;
 function parseArgs() {
@@ -17,6 +19,7 @@ function parseArgs() {
     originalTitle: "",
     year: undefined,
     videos: [],
+    targetSpecPageId: "",
     prepareSpecs: [],
     sourceArchiveDir: "",
     sourceArchiveName: "",
@@ -48,6 +51,7 @@ function parseArgs() {
     else if (arg === "--original-title") options.originalTitle = args[++index];
     else if (arg === "--year") options.year = Number(args[++index]);
     else if (arg === "--video") options.videos.push(path.resolve(args[++index]));
+    else if (arg === "--target-spec-page-id") options.targetSpecPageId = args[++index];
     else if (arg === "--prepare-spec") options.prepareSpecs.push(args[++index]);
     else if (arg === "--source-archive-dir") options.sourceArchiveDir = path.resolve(args[++index]);
     else if (arg === "--source-archive-name") options.sourceArchiveName = args[++index];
@@ -77,6 +81,9 @@ function parseArgs() {
 
   if (!options.pageId && !options.create) throw new Error("--page-id or --create is required.");
   if (!options.title) throw new Error("--title is required.");
+  if (options.resolveIp && (!options.localAddress || !options.noProxy)) {
+    throw new Error("--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy; refusing an unsafe raw-IP route.");
+  }
   if ((options.uploadVideos || options.uploadSource || options.uploadMeta) && !options.apply) {
     throw new Error("Upload flags require --apply.");
   }
@@ -96,6 +103,7 @@ function printHelp() {
 
 Useful flags:
   --video <mp4>                 repeatable
+  --target-spec-page-id <id>   upload videos into an existing spec child page
   --prepare-spec <title>       repeatable; create a spec child page without uploading a file
   --source-archive-dir <dir>    directory containing split .7z parts
   --source-archive-name <name>  base archive name, for example movie.7z
@@ -447,7 +455,7 @@ async function ensureVideoTarget(notion, pageId, title, apply) {
   return await ensurePageChild(notion, pageId, title, apply);
 }
 
-async function uploadFile(notion, file, options, manifest, manifestPath) {
+async function uploadFile(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard) {
   const contentType = contentTypeFor(file.name);
   const uploadFilename = uploadFilenameFor(file.name);
   const partBytes = Math.max(1, Math.floor(options.partMiB)) * 1024 * 1024;
@@ -484,11 +492,13 @@ async function uploadFile(notion, file, options, manifest, manifestPath) {
 
   if (record.mode === "single_part") {
     const data = await readChunk(file.path, 0, file.size);
+    await routeGuard.assert(`${file.name} part 1/1`);
     await notion.fileUploads.send({
       file_upload_id: record.fileUploadId,
       file: { filename: uploadFilename, data: new Blob([data], { type: contentType }) }
     });
     record.sentParts = 1;
+    await trafficMonitor.noteUploaded(data.length, { file: file.name, part: 1, partCount: 1 });
   } else {
     for (let part = (record.sentParts ?? 0) + 1; part <= partCount; part += 1) {
       const offset = (part - 1) * partBytes;
@@ -496,6 +506,7 @@ async function uploadFile(notion, file, options, manifest, manifestPath) {
       const data = await readChunk(file.path, offset, length);
       const startedAt = Date.now();
       console.log(`send ${file.name} part ${part}/${partCount}`);
+      await routeGuard.assert(`${file.name} part ${part}/${partCount}`);
       await notion.fileUploads.send({
         file_upload_id: record.fileUploadId,
         part_number: String(part),
@@ -505,6 +516,7 @@ async function uploadFile(notion, file, options, manifest, manifestPath) {
       record.lastPartSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
       writeManifest(manifestPath, manifest);
+      await trafficMonitor.noteUploaded(data.length, { file: file.name, part, partCount });
       await sleep(250);
     }
     console.log(`complete ${file.name}`);
@@ -615,15 +627,31 @@ async function main() {
   const fileManifestPath = path.join(".local-data", `notion-movie-package-files-${pageId.replace(/-/g, "")}.json`);
   const videoManifest = readManifest(videoManifestPath);
   const fileManifest = readManifest(fileManifestPath);
+  const archiveParts = collectArchiveParts(options);
+  const plannedUploadBytes = [
+    ...(options.uploadVideos ? options.videos.map((videoPath) => fs.statSync(videoPath).size) : []),
+    ...(options.uploadMeta && options.metaFile ? [fs.statSync(options.metaFile).size] : []),
+    ...(options.uploadSource ? archiveParts.slice(0, options.maxSourceFiles).map((file) => file.size) : [])
+  ].reduce((sum, size) => sum + size, 0);
+  const trafficMonitor = createVpnTrafficMonitor({
+    envLookup: dotenv,
+    reportPath: path.join(".local-data", `notion-movie-package-${pageId.replace(/-/g, "")}.vpn-traffic.json`)
+  });
+  const routeGuard = createNotionUploadSelectorGuard({
+    envLookup: (name) => process.env[name] || dotenv(name)
+  });
+  if (options.apply && plannedUploadBytes > 0) {
+    await trafficMonitor.start({ totalUploadBytes: plannedUploadBytes, uploader: "movie-package" });
+  }
 
   for (const videoPath of options.videos) {
     const file = fileFromPath(videoPath);
     const specTitle = `${localTitle} ${[specLabelFromFilename(file.name), humanGb(file.size)].filter(Boolean).join(" ")}`;
-    const targetPageId = await ensureVideoTarget(notion, pageId, specTitle, options.apply);
-    console.log(`video target: ${specTitle} ${targetPageId ?? "(dry-run)"}`);
+    const targetPageId = options.targetSpecPageId || await ensureVideoTarget(notion, pageId, specTitle, options.apply);
+    console.log(`video target: ${options.targetSpecPageId ? `${specTitle} (existing spec)` : specTitle} ${targetPageId ?? "(dry-run)"}`);
     if (options.uploadVideos) {
       if (!targetPageId) throw new Error("Video target page unavailable.");
-      const uploadId = await uploadFile(notion, file, options, videoManifest, videoManifestPath);
+      const uploadId = await uploadFile(notion, file, options, videoManifest, videoManifestPath, trafficMonitor, routeGuard);
       await appendVideoBlock(notion, targetPageId, file, uploadId, options.apply, videoManifest, videoManifestPath);
     }
   }
@@ -633,7 +661,6 @@ async function main() {
     console.log(`prepared video target: ${specTitle} ${targetPageId ?? "(dry-run)"}`);
   }
 
-  const archiveParts = collectArchiveParts(options);
   const needsBase = options.metaFile || archiveParts.length > 0 || options.sourceArchiveName;
   const base = needsBase ? await findBaseToggle(notion, pageId) : undefined;
   const baseId = base?.id;
@@ -646,7 +673,7 @@ async function main() {
     if (options.uploadMeta) {
       if (!metaPageId) throw new Error("Meta target page unavailable.");
       const file = fileFromPath(options.metaFile);
-      const uploadId = await uploadFile(notion, file, options, fileManifest, fileManifestPath);
+      const uploadId = await uploadFile(notion, file, options, fileManifest, fileManifestPath, trafficMonitor, routeGuard);
       await appendFileBlocks(notion, metaPageId, [file], new Map([[file.name, uploadId]]), options.apply, fileManifest, fileManifestPath);
     }
   }
@@ -667,7 +694,7 @@ async function main() {
       }
       const uploadedIds = new Map();
       for (const part of uploadParts) {
-        const uploadId = await uploadFile(notion, part, options, fileManifest, fileManifestPath);
+        const uploadId = await uploadFile(notion, part, options, fileManifest, fileManifestPath, trafficMonitor, routeGuard);
         uploadedIds.set(part.name, uploadId);
       }
       await appendFileBlocks(notion, sizePageId, uploadParts, uploadedIds, options.apply, fileManifest, fileManifestPath);
@@ -676,6 +703,9 @@ async function main() {
 
   console.log(`video manifest: ${videoManifestPath}`);
   console.log(`file manifest: ${fileManifestPath}`);
+  if (options.apply && plannedUploadBytes > 0) {
+    await trafficMonitor.finish({ uploader: "movie-package" });
+  }
 }
 
 main().catch((error) => {

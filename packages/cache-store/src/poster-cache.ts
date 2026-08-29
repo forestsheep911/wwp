@@ -2,6 +2,7 @@ import type { MoviePoster } from "@wwpdw/shared";
 
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const doubanImagePattern = /^https:\/\/img\d*\.doubanio\.com\//i;
+const defaultPosterRequestTimeoutMs = 30_000;
 
 export interface PosterRefreshOptions {
   poster: MoviePoster;
@@ -13,6 +14,15 @@ export interface PosterRefreshOptions {
 export interface PosterDownloadCandidate {
   poster: MoviePoster;
   url: string;
+}
+
+export function posterRequestTimeoutMs(value = process.env.POSTER_CACHE_REQUEST_TIMEOUT_MS) {
+  if (value == null || value.trim() === "") return defaultPosterRequestTimeoutMs;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1_000 || parsed > 120_000) {
+    return defaultPosterRequestTimeoutMs;
+  }
+  return Math.floor(parsed);
 }
 
 function sourceUrlForPoster(poster: MoviePoster) {

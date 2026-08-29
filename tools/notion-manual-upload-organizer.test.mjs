@@ -97,6 +97,27 @@ test("assignSuggestedTargets maps series root media to matching episode page", (
   });
 });
 
+test("manual upload episode mapping normalizes full-width episode tokens", () => {
+  const [media] = assignSuggestedTargets(
+    [{
+      playable: true,
+      name: "太空堡垒Ｅ０２.mkv",
+      suggestedSpecTitle: "太空堡垒 日语原声 简体 1080p H.265 1.0GB/集"
+    }],
+    [{
+      pageId: "spec-page",
+      title: "太空堡垒 日语原声 简体 1080p H.265 1.0GB/集",
+      path: ["太空堡垒", "child_page:太空堡垒 日语原声 简体 1080p H.265 1.0GB/集"],
+      episodePages: [
+        { pageId: "episode-02", title: "Episode 02", episodeNumber: 2 }
+      ]
+    }]
+  );
+
+  assert.equal(media.suggestedTarget?.kind, "episode_page");
+  assert.equal(media.suggestedTarget?.pageId, "episode-02");
+});
+
 test("summarizeEpisodeMedia detects playable media uploaded inside an episode page", () => {
   const media = summarizeEpisodeMedia(
     { type: "child_page", id: "episode-01", child_page: { title: "Episode 01" } },

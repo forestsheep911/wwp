@@ -48,6 +48,21 @@ function installDnsOverride(env) {
   };
 }
 
+export function createPacedFetch(fetchImpl, intervalMs = 1000) {
+  let lastRequestStartedAt = 0;
+  let requestQueue = Promise.resolve();
+  return (...args) => {
+    const request = requestQueue.then(async () => {
+      const waitMs = Math.max(0, intervalMs - (Date.now() - lastRequestStartedAt));
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      lastRequestStartedAt = Date.now();
+      return fetchImpl(...args);
+    });
+    requestQueue = request.then(() => undefined, () => undefined);
+    return request;
+  };
+}
+
 function plain(items = []) {
   return items.map((item) => item.plain_text ?? "").join("").trim();
 }
@@ -95,7 +110,11 @@ export function searchTerms(options) {
 async function loadLiveWorks(options) {
   const env = readEnv();
   installDnsOverride(env);
-  const notion = new Client({ auth: env.NOTION_WRITE_TOKEN || env.NOTION_TOKEN, timeoutMs: 120000 });
+  const notion = new Client({
+    auth: env.NOTION_WRITE_TOKEN || env.NOTION_TOKEN,
+    timeoutMs: 120000,
+    fetch: createPacedFetch(globalThis.fetch.bind(globalThis))
+  });
   let dataSourceId = env.NOTION_LIBRARY_DATA_SOURCE_ID || env.NOTION_DATA_SOURCE_ID;
   if (!dataSourceId) {
     const database = await notion.databases.retrieve({ database_id: env.NOTION_LIBRARY_DATABASE_ID || env.NOTION_DATABASE_ID });

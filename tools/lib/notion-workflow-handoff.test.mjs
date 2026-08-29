@@ -5,7 +5,8 @@ import {
   buildActionableWorkflowFilter,
   buildWorkflowUpdate,
   pendingHumanWorkflowNote,
-  richTextPayload
+  richTextPayload,
+  workReleaseBlockers
 } from "./notion-workflow-handoff.mjs";
 
 function page(status = "已上传待 AI 收尾", note = "已有说明") {
@@ -14,6 +15,20 @@ function page(status = "已上传待 AI 收尾", note = "已有说明") {
       Name: { type: "title", title: [{ plain_text: "Example" }] },
       "Workflow Status": { type: "select", select: status ? { name: status } : null },
       "Workflow Note": { type: "rich_text", rich_text: note ? [{ plain_text: note }] : [] }
+    }
+  };
+}
+
+function releasablePage(overrides = {}) {
+  return {
+    properties: {
+      ...page("待人工确认", "【AI(^_^) 2026-08-28T00:00:00.000Z】 发布门禁完成。").properties,
+      "Hide from Website": { type: "checkbox", checkbox: true },
+      "Metadata Status": { type: "select", select: { name: "verified" } },
+      "Needs Review": { type: "checkbox", checkbox: false },
+      "Human Issue": { type: "rich_text", rich_text: [] },
+      "AI Issue": { type: "rich_text", rich_text: [] },
+      ...overrides
     }
   };
 }
@@ -112,4 +127,20 @@ test("rich text payload chunks long notes for the Notion API", () => {
   const payload = richTextPayload("x".repeat(4000));
   assert.equal(payload.length, 3);
   assert.equal(payload.map((item) => item.text.content).join("").length, 4000);
+});
+
+test("work release gate accepts a verified page without pending issues", () => {
+  assert.deepEqual(workReleaseBlockers(releasablePage()), []);
+});
+
+test("work release gate rejects review, issue, and unacknowledged human input", () => {
+  const candidate = releasablePage({
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "海报待修" }] },
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-08-28T00:00:00.000Z】 已检查。\n请先保留隐藏。" }]
+    }
+  });
+  assert.deepEqual(workReleaseBlockers(candidate), ["needs_review", "ai_issue", "pending_human_note"]);
 });

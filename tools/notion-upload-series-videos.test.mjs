@@ -9,6 +9,7 @@ import {
   episodeRange,
   collectSourceFiles,
   filterEpisodeRange,
+  isStaleUploadedFileUploadError,
   validateCollectionOptIn,
   validateSeriesSpecTitle
 } from "./notion-upload-series-videos.mjs";
@@ -24,6 +25,17 @@ test("series uploader documents and accepts prepare-only mode", () => {
   assert.match(result.stdout, /--prepare-only/);
   assert.match(result.stdout, /before long encode or upload/i);
   assert.match(result.stdout, /--allow-collections/);
+});
+
+test("stale completed Notion upload sessions are restartable", () => {
+  assert.equal(isStaleUploadedFileUploadError({
+    code: "validation_error",
+    message: "File upload with ID `upload` has a status of `uploaded`. File uploads must be in a `pending` status"
+  }), true);
+  assert.equal(isStaleUploadedFileUploadError({
+    code: "validation_error",
+    message: "File upload with ID `upload` has a status of `pending`."
+  }), false);
 });
 
 test("prepare-only without a source directory requires an explicit episode range", () => {
@@ -112,6 +124,14 @@ test("episodeRange parses a series collection filename", () => {
     { start: 1, end: 5 }
   );
   assert.equal(episodeNumber("Teach.You.a.Lesson.S01E01-E05.2026.1080p.h265.cht.mp4"), 1);
+});
+
+test("episodeRange normalizes full-width season, episode, and digits", () => {
+  assert.deepEqual(
+    episodeRange("Show.Ｓ０１Ｅ０２-Ｅ０３.1080p.mkv"),
+    { start: 2, end: 3 }
+  );
+  assert.equal(episodeNumber("０１.mkv"), 1);
 });
 
 test("episodeRange parses concatenated season episode tokens as a collection", () => {

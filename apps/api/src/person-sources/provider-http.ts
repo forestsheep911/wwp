@@ -38,9 +38,13 @@ export async function fetchProviderJson<T>(input: {
   fetchImpl: FetchLike;
   limiter: ProviderRateLimiter;
   headers?: Record<string, string>;
+  timeoutMs?: number;
 }) {
   return input.limiter.schedule(async () => {
-    const response = await input.fetchImpl(input.url, { headers: input.headers });
+    const response = await input.fetchImpl(input.url, {
+      headers: input.headers,
+      signal: AbortSignal.timeout(input.timeoutMs ?? 20_000)
+    });
     if (!response.ok) {
       throw new ProviderHttpError(
         `${input.provider} request failed with HTTP ${response.status}.`,

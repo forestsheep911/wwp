@@ -5,7 +5,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
-import { canReuseIdentityMatch, ledgerWorkForOptions, parseArgs } from "./notion-create-work-page.mjs";
+import { canReuseIdentityMatch, createPacedFetch, ledgerWorkForOptions, parseArgs } from "./notion-create-work-page.mjs";
+
+test("Notion work-page requests share one paced fetch queue", async () => {
+  const starts = [];
+  const paced = createPacedFetch(async () => {
+    starts.push(Date.now());
+    return { ok: true };
+  }, 20);
+  await Promise.all([paced("a"), paced("b"), paced("c")]);
+  assert.equal(starts.length, 3);
+  assert.ok(starts[1] - starts[0] >= 15);
+  assert.ok(starts[2] - starts[1] >= 15);
+});
 
 test("work page creation requires a ledger work identity", () => {
   assert.throws(() => parseArgs(["--title", "Example"]), /--work-id is required/);

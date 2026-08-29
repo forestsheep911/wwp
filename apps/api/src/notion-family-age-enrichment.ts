@@ -1,9 +1,11 @@
 import "./env.js";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import dns from "node:dns";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
 import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -25,6 +27,8 @@ interface FamilyAgeOptions {
   rootPageId?: string;
   candidateCache?: string;
   planPath?: string;
+  contentEvidence?: string;
+  localAddress?: string;
   writeCandidateCache?: string;
   progressPath: string;
   failureProgressPath: string;
@@ -162,6 +166,8 @@ function parseArgs(): FamilyAgeOptions {
     rootPageId: extractNotionId(value("--root-page-id", "")) ?? undefined,
     candidateCache: value("--candidate-cache", "").trim() || undefined,
     planPath: value("--plan", "").trim() || undefined,
+    contentEvidence: value("--content-evidence", "").trim() || undefined,
+    localAddress: value("--local-address", "").trim() || undefined,
     writeCandidateCache: value("--write-candidate-cache", "").trim() || undefined,
     progressPath: value("--progress", ".local-data/notion-family-age-progress.jsonl").trim(),
     failureProgressPath: value("--failure-progress", ".local-data/notion-family-age-failures.jsonl").trim()
@@ -232,6 +238,12 @@ function responseText(payload: unknown): string | undefined {
   const choices = Array.isArray(record.choices) ? record.choices : [];
   const message = asRecord(asRecord(choices[0])?.message);
   if (typeof message?.content === "string") return message.content;
+  if (Array.isArray(message?.content)) {
+    const parts = message.content
+      .map((item) => asString(asRecord(item)?.text))
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join("\n");
+  }
   const output = Array.isArray(record.output) ? record.output : [];
   const parts: string[] = [];
   for (const item of output) {
@@ -286,12 +298,14 @@ function authHeaders(apiKey: string) {
   return { Authorization: `Bearer ${apiKey}` } as Record<string, string>;
 }
 
-export function promptForPage(title: string, properties: JsonRecord) {
+export function promptForPage(title: string, properties: JsonRecord, contentEvidence?: string) {
   const fields = {
+    currentDate: new Date().toISOString().slice(0, 10),
     title,
     englishTitle: propertyText(properties["English Title"]),
     originalTitle: propertyText(properties["Original Title"]),
     releaseYear: propertyText(properties["Release Year"]),
+    releaseDate: propertyText(properties["上映日期"]),
     countries: propertyText(properties.Countries),
     languages: propertyText(properties.Languages),
     genres: propertyText(properties["旨趣"]),
@@ -305,7 +319,8 @@ export function promptForPage(title: string, properties: JsonRecord) {
     basicInfo: propertyText(properties["基本信息"]),
     omdbRating: propertyText(properties["IMDB评分"]),
     metascore: propertyText(properties.Metascore),
-    rottenTomatoes: propertyText(properties["烂番茄新鲜度"])
+    rottenTomatoes: propertyText(properties["烂番茄新鲜度"]),
+    contentEvidence: contentEvidence || undefined
   };
 
   return `请为家庭观影网站评估这部影视作品的建议最低观看年龄。只输出 JSON，不要 Markdown。\n\n` +
@@ -326,22 +341,26 @@ export function promptForPage(title: string, properties: JsonRecord) {
     `- 死亡/丧亲：仅用于死亡、丧亲或哀悼是明确且重要的观看内容，并可能给儿童造成情绪压力；背景信息或普通动作片中的短暂角色死亡不自动使用此标签。\n` +
     `- 复杂伦理、政治、身份认同、人生阅历或沉重现实本身不属于内容风险标签；若它们确实提高理解门槛，应在 reason 中具体说明议题和所需理解能力。\n` +
     `- 儿童友好可以与轻度幻想暴力并存，但不要仅因反派或紧张桥段标记恐怖。\n\n` +
-    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。标签只描述明确、可观察且与儿童观看风险直接相关的内容，不表达“需要成年人观看”，也不把主题复杂等同于性内容。资料不足时降低 confidence 并加入 需人工复核；若无法排除资料可能漏记的裸露，也不要写“无性/裸露”，而应在 reason 中说明证据不足。reason 必须全部使用中文。\n\n` +
+    `评估原则：这是家庭内部的 AI 建议，不是官方分级。优先保护儿童；官方分级只是参考。标签只描述明确、可观察且与儿童观看风险直接相关的内容，不表达“需要成年人观看”，也不把主题复杂等同于性内容。资料不足时降低 confidence 并加入 需人工复核；若无法排除资料可能漏记的裸露，也不要写“无性/裸露”，而应在 reason 中说明证据不足。必须以 currentDate 和 releaseDate 判断是否已经上映；releaseDate 早于 currentDate 时不得声称作品尚未上映。contentEvidence 仅在明确提供时作为本次精确页面的补充证据。reason 必须全部使用中文，不得复制英文证据短语、英文引号内容或来源原文；先把证据含义翻译成中文再概括。\n\n` +
     `作品资料：\n${JSON.stringify(fields, null, 2)}`;
 }
 
 export function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
-  const minimumAge = Math.round(Number(record.minimumAge));
+  const minimumAge = Math.round(Number(record.minimumAge ?? record.minimum_age));
   const confidence = asString(record.confidence).toLowerCase();
-  const needsReview = record.needsReview === true;
-  let riskTags = asArray(record.riskTags)
+  const needsReview = record.needsReview === true || record.needs_review === true;
+  let riskTags = asArray(record.riskTags ?? record.risk_tags)
     .map((item) => asString(item).trim())
     .filter((item) => allowedRiskTags.has(item))
     .filter((item) => needsReview || item !== "需人工复核");
-  const reason = asString(record.reason).replace(/\bexplicit\b/giu, "明确的").trim().slice(0, 160);
-  if (/(?:成人主题|成人内容|成人向|成熟主题|少儿不宜|不适合未成年人)/u.test(reason)) return undefined;
+  const reason = asString(record.reason ?? record.recommendation_reason)
+    .replace(/\bexplicit\b/giu, "明确的").trim().slice(0, 160);
+  const vagueAdultPhrase = /(?:成人主题|成人内容|成人向|成熟主题|少儿不宜|不适合未成年人)/u;
+  const negatedAdultPhrase = /(?:无|没有|不含|并无).{0,8}(?:成人主题|成人内容|成人向|成熟主题|少儿不宜|不适合未成年人)/u;
+  const concreteAgeEvidence = /(?:裸露|性行为|亲密行为|脏话|自杀|自残|暴力|打斗|流血|伤口|尸体|丧亲|哀悼|毒品|犯罪|战争|歧视|仇恨)/u;
+  if (vagueAdultPhrase.test(reason) && !negatedAdultPhrase.test(reason) && !concreteAgeEvidence.test(reason)) return undefined;
   const explicitSelfHarm = /(?:自杀(?!倾向|暗示|象征)|自残(?!倾向|暗示|象征)|割腕|割脉|跳楼|跳河|服毒|上吊)/u.test(reason);
   const depictedWar = /(?:战争场面|战争伤亡|军事冲突|军事入侵|战役|战场|军队.{0,8}(?:战斗|交战)|部族冲突|(?:大规模|有组织|军事|军队).{0,8}武装冲突)/u.test(reason);
   const depictedBlood = /(?:血腥|流血|喷血|伤口|肢解|断肢|残肢|尸体细节|斩首|内脏)/u.test(reason);
@@ -372,10 +391,10 @@ export function normalizeAiPayload(value: unknown): FamilyAgePayload | undefined
   };
 }
 
-async function askFamilyAgeModel(title: string, properties: JsonRecord): Promise<FamilyAgePayload> {
+async function askFamilyAgeModel(title: string, properties: JsonRecord, contentEvidence?: string): Promise<FamilyAgePayload> {
   const config = aiConfig();
   if (!config.apiKey) throw new Error("Set OPENAI_API_KEY or BAILIAN_API_KEY before running family age enrichment.");
-  const userPrompt = promptForPage(title, properties);
+  const userPrompt = promptForPage(title, properties, contentEvidence);
   const systemPrompt = "You are a careful family media age-rating assistant. Return only valid JSON matching the requested schema.";
   const body = config.apiKind === "chat"
     ? {
@@ -526,14 +545,27 @@ async function loadAiPlan(planPath?: string) {
   return plan;
 }
 
-async function planPage(page: JsonRecord, refresh = false, aiPlan = new Map<string, FamilyAgePayload>()): Promise<PagePlan> {
+export function restrictPagesToAiPlan(
+  pages: JsonRecord[],
+  aiPlan: Map<string, FamilyAgePayload>,
+  planPath?: string
+) {
+  if (!planPath) return pages;
+  return pages.filter((page) => aiPlan.has(asString(page.id)));
+}
+
+async function planPage(page: JsonRecord, refresh = false, aiPlan = new Map<string, FamilyAgePayload>(), contentEvidence?: string): Promise<PagePlan> {
   const properties = asRecord(page.properties) ?? {};
   const title = titleFromProperties(properties);
   const pageId = asString(page.id);
   if (!refresh && !pageNeedsFamilyAge(properties)) {
     return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
   }
-  const ai = aiPlan.get(pageId) ?? await askFamilyAgeModel(title, properties);
+  const plannedAi = aiPlan.get(pageId);
+  if (aiPlan.size > 0 && !plannedAi) {
+    throw new Error(`AI plan does not contain page ${pageId}; refusing to call the model during plan apply.`);
+  }
+  const ai = plannedAi ?? await askFamilyAgeModel(title, properties, contentEvidence);
   const updates = {
     "AI建议最低年龄": pagePropertyValue("AI建议最低年龄", ai.minimumAge),
     "AI年龄建议置信度": pagePropertyValue("AI年龄建议置信度", ai.confidence),
@@ -567,6 +599,9 @@ async function main() {
   if (options.refresh && !options.pageId) {
     throw new Error("--refresh requires one explicit --page-id.");
   }
+  if (options.contentEvidence && !options.pageId) {
+    throw new Error("--content-evidence requires one explicit --page-id.");
+  }
   if (options.refreshRiskTag && options.refreshRiskTag !== "成人主题" && !allowedRiskTags.has(options.refreshRiskTag)) {
     throw new Error(`Unsupported --refresh-risk-tag: ${options.refreshRiskTag}`);
   }
@@ -576,14 +611,22 @@ async function main() {
   if (!notionToken) throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_WRITE_TOKEN, or NOTION_TOKEN.");
 
   installNotionDnsOverride();
-  const notion = new Client({ auth: notionToken, timeoutMs: notionRequestTimeoutMs });
+  const notionOptions = { auth: notionToken, timeoutMs: notionRequestTimeoutMs };
+  const notion = options.localAddress
+    ? new Client({
+        ...notionOptions,
+        fetch: nodeFetch as unknown as typeof globalThis.fetch,
+        agent: new https.Agent({ keepAlive: true, localAddress: options.localAddress })
+      })
+    : new Client(notionOptions);
+  if (options.localAddress) console.log(`direct local address: ${options.localAddress}`);
   const library = options.candidateCache
     ? await loadCachedLibrary(options.candidateCache)
     : await loadLibrary(notion, options);
   const aiPlan = await loadAiPlan(options.planPath);
   const completedPageIds = await readProgress(options.progressPath);
   const failedPageIds = await readProgress(options.failureProgressPath);
-  const candidatePages = (await collectPages(notion, library, options)).filter((page) => {
+  const candidatePages = restrictPagesToAiPlan((await collectPages(notion, library, options)).filter((page) => {
     const properties = asRecord(page.properties) ?? {};
     const title = titleFromProperties(properties);
     const refreshRiskTag = options.refreshRiskTag && propertyText(properties["内容风险标签"])
@@ -594,7 +637,7 @@ async function main() {
       (forceRefresh || !completedPageIds.has(asString(page.id))) &&
       (forceRefresh || !failedPageIds.has(asString(page.id))) &&
       (options.includeLegacyPages || !isLegacyPageTitle(title));
-  });
+  }), aiPlan, options.planPath);
   if (options.writeCandidateCache) {
     await mkdir(path.dirname(options.writeCandidateCache), { recursive: true });
     await writeFile(options.writeCandidateCache, `${JSON.stringify({ generatedAt: new Date().toISOString(), library, pages: candidatePages }, null, 2)}\n`, "utf8");
@@ -606,7 +649,7 @@ async function main() {
   let applied = 0;
   for (const page of pages) {
     try {
-      const plan = await planPage(page, options.refresh || Boolean(options.refreshRiskTag), aiPlan);
+      const plan = await planPage(page, options.refresh || Boolean(options.refreshRiskTag), aiPlan, options.contentEvidence);
       plans.push(plan);
       if (plan.skipped) skipped[plan.skipped] = (skipped[plan.skipped] ?? 0) + 1;
       if (options.apply && Object.keys(plan.updates).length > 0) {

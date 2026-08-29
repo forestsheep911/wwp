@@ -1,9 +1,10 @@
-import { TableClient } from "@azure/data-tables";
+import { TableClient, type TransactionAction } from "@azure/data-tables";
 import { DefaultAzureCredential } from "@azure/identity";
 import type { PersonCatalogState } from "@wwpdw/shared";
 import type { PersonCatalogStore } from "./person-catalog.js";
 
 interface PersonCatalogEntity {
+  [key: string]: unknown;
   partitionKey: string;
   rowKey: string;
   generationId?: string;
@@ -17,6 +18,7 @@ export interface PersonCatalogTableClient {
   createTable(): Promise<unknown>;
   getEntity<T extends object>(partitionKey: string, rowKey: string): Promise<T>;
   upsertEntity<T extends object>(entity: T, mode?: "Merge" | "Replace"): Promise<unknown>;
+  submitTransaction?(actions: TransactionAction[]): Promise<unknown>;
 }
 
 export interface AzurePersonCatalogStoreOptions {
@@ -31,6 +33,9 @@ const defaultTableName = "peoplecatalog";
 const partitionKey = "personcatalog";
 const manifestRowKey = "current";
 const payloadChunkChars = 30_000;
+// Azure Table transactions allow at most 100 actions and a 4 MiB payload.
+// Forty 30k-character entities stay below that payload cap even for UTF-8 text.
+const transactionChunkCount = 40;
 
 export class AzurePersonCatalogStore implements PersonCatalogStore {
   readonly description: string;
@@ -79,14 +84,24 @@ export class AzurePersonCatalogStore implements PersonCatalogStore {
     await this.ensureReady();
     const generationId = generationKey(state.generatedAt);
     const chunks = splitPayload(JSON.stringify(state));
-    for (let index = 0; index < chunks.length; index += 1) {
-      await this.tableClient.upsertEntity<PersonCatalogEntity>({
+    const entities = chunks.map((payload, index): PersonCatalogEntity => ({
         partitionKey,
         rowKey: chunkRowKey(generationId, index),
         generationId,
         chunkIndex: index,
-        payload: chunks[index]
-      }, "Replace");
+        payload
+    }));
+    if (this.tableClient.submitTransaction) {
+      for (let index = 0; index < entities.length; index += transactionChunkCount) {
+        const actions = entities
+          .slice(index, index + transactionChunkCount)
+          .map((entity): TransactionAction => ["upsert", entity, "Replace"]);
+        await this.tableClient.submitTransaction(actions);
+      }
+    } else {
+      for (const entity of entities) {
+        await this.tableClient.upsertEntity<PersonCatalogEntity>(entity, "Replace");
+      }
     }
     await this.tableClient.upsertEntity<PersonCatalogEntity>({
       partitionKey,

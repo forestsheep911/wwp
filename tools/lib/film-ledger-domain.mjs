@@ -56,7 +56,10 @@ const productionTransitions = Object.freeze({
   discovered: ["evaluated", "deferred", "rejected"],
   evaluated: ["selected", "deferred", "rejected"],
   selected: ["encoding", "deferred", "rejected"],
-  encoding: ["qc_failed", "qc_passed"],
+  // A bounded sample can reveal a better reusable-parent strategy before the
+  // full encode begins. Preserve that decision as deferred instead of falsely
+  // leaving the variant in an active encoding state or recording a QC defect.
+  encoding: ["qc_failed", "qc_passed", "deferred"],
   qc_failed: ["selected", "deferred", "rejected"],
   deferred: ["evaluated", "selected", "rejected"],
   // A QC-passed output may still be intentionally retired before upload.

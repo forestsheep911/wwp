@@ -1,7 +1,83 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPatch, candidateYearConflict, fetchImdbRating, metadataIdentityConflict, parseInfoPairs, preferredDoubanSubjectId } from "./notion-metadata-backfill.mjs";
+import { buildPatch, candidateYearConflict, existingImdbIdentity, fetchImdbRating, metadataGateSnapshot, metadataIdentityConflict, parseArgs, parseInfoPairs, preferredDoubanSubjectId, simplifiedChineseTitleFromDouban } from "./notion-metadata-backfill.mjs";
+
+test("parses physical direct access and the explicit timestamp recovery switch", () => {
+  const options = parseArgs(["--page-id", "page-1", "--local-address", "192.168.1.22", "--skip-metadata-updated-at", "--dry-run"]);
+  assert.deepEqual(options.pageIds, ["page-1"]);
+  assert.equal(options.localAddress, "192.168.1.22");
+  assert.equal(options.dryRun, true);
+  assert.equal(options.skipMetadataUpdatedAt, true);
+});
+
+test("metadata gate reports exact missing core fields", () => {
+  const properties = pageWithProperties({
+    "Simplified Chinese Title": filledRichText("测试片"),
+    "Release Year": { type: "number", number: 2021 },
+    "上映日期": { type: "date", date: { start: "2021-01-01" } },
+    Countries: { type: "multi_select", multi_select: [{ name: "美国" }] },
+    Languages: { type: "multi_select", multi_select: [{ name: "英语" }] },
+    "旨趣": { type: "multi_select", multi_select: [{ name: "剧情" }] },
+    "外部类型原文": filledRichText("剧情"),
+    "Runtime Minutes": { type: "number", number: 100 },
+    Directors: filledRichText("测试导演"),
+    Cast: filledRichText("测试演员"),
+    "Poster URL": { type: "url", url: "https://example.com/poster.jpg" },
+    "IMDb ID": filledRichText("tt1234567"),
+    "AI建议最低年龄": { type: "number", number: null },
+    "AI年龄建议置信度": { type: "number", number: null },
+    "内容风险标签": { type: "multi_select", multi_select: [] },
+    "AI年龄建议理由": { type: "rich_text", rich_text: [] }
+  }).properties;
+  const gate = metadataGateSnapshot(properties, {});
+  assert.deepEqual(gate.missingCoreFields, ["AI建议最低年龄", "AI年龄建议置信度", "内容风险标签", "AI年龄建议理由"]);
+  assert.equal(gate.eligible, false);
+});
+
+test("derives the structured Chinese title from a verified Douban display title", () => {
+  const properties = pageWithProperties({
+    "English Title": filledRichText("Finch"),
+    "Original Title": filledRichText("Finch")
+  }).properties;
+  assert.equal(simplifiedChineseTitleFromDouban(properties, {
+    doubanDisplayTitle: "芬奇 Finch (2021)",
+    releaseYear: 2021
+  }), "芬奇");
+});
+
+test("derives the Chinese title from a Douban title even when structured foreign fields are empty", () => {
+  assert.equal(simplifiedChineseTitleFromDouban(pageWithProperties().properties, {
+    doubanDisplayTitle: "触不可及 Intouchables (2011)",
+    releaseYear: 2011
+  }), "触不可及");
+});
+
+test("buildPatch writes a valid rich-text payload for the simplified Chinese title", () => {
+  const patch = buildPatch(pageWithProperties({
+    "English Title": filledRichText("Finch")
+  }), {
+    subjectId: "1234567",
+    doubanDisplayTitle: "芬奇 Finch (2021)",
+    releaseYear: 2021,
+    genres: []
+  }, undefined, undefined, { now: "2026-08-28" });
+
+  assert.equal(patch["Simplified Chinese Title"].rich_text[0].text.content, "芬奇");
+});
+
+test("forceDoubanFields repairs a mixed-language simplified Chinese title", () => {
+  const patch = buildPatch(pageWithProperties({
+    "Simplified Chinese Title": filledRichText("触不可及 Intouchables")
+  }), {
+    subjectId: "6786002",
+    doubanDisplayTitle: "触不可及 Intouchables (2011)",
+    releaseYear: 2011,
+    genres: []
+  }, undefined, undefined, { now: "2026-08-28", forceDoubanFields: true });
+
+  assert.equal(patch["Simplified Chinese Title"].rich_text[0].text.content, "触不可及");
+});
 
 test("fetchImdbRating falls back to IMDb when OMDb has no rating", async () => {
   const originalFetch = globalThis.fetch;
@@ -132,6 +208,19 @@ test("buildPatch fills structured Douban metadata fields", () => {
   assert.equal(patch["Metadata Confidence"].number, 0.9);
   assert.equal(patch["Needs Review"].checkbox, true);
   assert.equal(patch["Metadata Updated At"].date.start, "2026-07-07");
+});
+
+test("buildPatch maps Douban documentary genre to the catalog option", () => {
+  const patch = buildPatch(
+    pageWithProperties(),
+    { genres: ["纪录片"] },
+    undefined,
+    undefined,
+    { now: "2026-08-28" }
+  );
+
+  assert.deepEqual(patch["旨趣"].multi_select.map((item) => item.name), ["记录"]);
+  assert.equal(patch["未映射类型"], undefined);
 });
 
 test("forceDoubanFields replaces legacy non-Douban description and basic info", () => {
@@ -319,6 +408,16 @@ test("candidateYearConflict rejects same-title Douban candidates from another ye
   assert.equal(candidateYearConflict("1974", [{ id: "x", title: "Deadly Weapons", year: "1974" }]), false);
 });
 
+test("metadataIdentityConflict uses the title year when Release Year is empty", () => {
+  const conflict = metadataIdentityConflict(
+    {},
+    { imdbId: "tt1034303", releaseYear: "2008" },
+    { title: "太空堡垒卡拉狄加：反抗军 Battlestar Galactica: The Resistance (2006)" }
+  );
+
+  assert.deepEqual(conflict, { field: "Release Year", expected: "2006", actual: "2008" });
+});
+
 test("metadataIdentityConflict rejects a candidate that disagrees with an existing IMDb ID", () => {
   const conflict = metadataIdentityConflict(
     { "IMDb ID": filledRichText("tt0069952"), "Release Year": { type: "number", number: 1974 } },
@@ -327,11 +426,70 @@ test("metadataIdentityConflict rejects a candidate that disagrees with an existi
   assert.deepEqual(conflict, { field: "IMDb ID", expected: "tt0069952", actual: "tt0129027" });
 });
 
+test("existingImdbIdentity exposes conflicting structured and legacy IMDb fields", () => {
+  const identity = existingImdbIdentity({
+    "IMDb ID": filledRichText("tt2359704"),
+    imdb: filledRichText("tt3700148")
+  });
+
+  assert.deepEqual(identity, {
+    structuredImdbId: "tt2359704",
+    legacyImdbId: "tt3700148",
+    effectiveImdbId: "tt2359704",
+    conflict: {
+      field: "IMDb ID/imdb",
+      expected: "tt2359704",
+      actual: "tt3700148",
+      reason: "existing_fields_disagree"
+    }
+  });
+});
+
+test("metadata backfill cannot silently build a patch across conflicting existing IMDb fields", () => {
+  const page = pageWithProperties({
+    "IMDb ID": filledRichText("tt2359704"),
+    imdb: filledRichText("tt3700148")
+  });
+
+  assert.deepEqual(
+    metadataIdentityConflict(page.properties, { imdbId: "tt2359704" }),
+    {
+      field: "IMDb ID/imdb",
+      expected: "tt2359704",
+      actual: "tt3700148",
+      reason: "existing_fields_disagree"
+    }
+  );
+  assert.throws(
+    () => buildPatch(page, { imdbId: "tt2359704" }, undefined, undefined, {}),
+    /IMDb ID and imdb disagree/u
+  );
+});
+
+test("matching structured and legacy IMDb fields remain usable", () => {
+  const identity = existingImdbIdentity({
+    "IMDb ID": filledRichText("TT2359704"),
+    imdb: filledRichText("tt2359704")
+  });
+
+  assert.equal(identity.conflict, null);
+  assert.equal(identity.effectiveImdbId, "tt2359704");
+});
+
 test("metadataIdentityConflict preserves a verified series IMDb ID on season pages", () => {
   const conflict = metadataIdentityConflict(
     { "IMDb ID": filledRichText("tt0141842"), "Release Year": { type: "number", number: 2000 } },
     { imdbId: "tt0705250", releaseYear: 2000 },
     { title: "黑道家族 第二季 The Sopranos Season 2 (2000)" }
+  );
+
+  assert.equal(conflict, null);
+});
+
+test("metadataIdentityConflict allows regional release-year differences for the same IMDb work", () => {
+  const conflict = metadataIdentityConflict(
+    { "IMDb ID": filledRichText("tt0124595"), "Release Year": { type: "number", number: 1998 } },
+    { imdbId: "tt0124595", releaseYear: 1999 }
   );
 
   assert.equal(conflict, null);
@@ -425,6 +583,127 @@ test("buildPatch promotes draft metadata status after sourced Douban match", () 
   assert.equal(patch["Metadata Confidence"].number, 0.9);
 });
 
+test("buildPatch accepts verified year precision when the source has no exact release date", () => {
+  const page = pageWithProperties({
+    "Simplified Chinese Title": filledRichText("赫尔佐格吃他的鞋"),
+    "Release Year": { type: "number", number: 1980 },
+    "上映日期": { type: "date", date: null },
+    Countries: { type: "multi_select", multi_select: [{ name: "美国" }] },
+    Languages: { type: "multi_select", multi_select: [{ name: "英语" }] },
+    "旨趣": { type: "multi_select", multi_select: [{ name: "记录" }, { name: "短片" }] },
+    "外部类型原文": filledRichText("纪录片 / 短片"),
+    "Runtime Minutes": { type: "number", number: 20 },
+    Directors: filledRichText("莱斯·布兰克"),
+    Cast: filledRichText("沃纳·赫尔佐格"),
+    "Poster URL": { type: "url", url: "https://img.example/poster.jpg" },
+    "AI建议最低年龄": { type: "number", number: 12 },
+    "AI年龄建议置信度": { type: "select", select: { name: "high" } },
+    "内容风险标签": { type: "multi_select", multi_select: [{ name: "儿童友好" }] },
+    "AI年龄建议理由": filledRichText("需要理解行为的表演性。"),
+    "IMDb ID": filledRichText("tt0081746"),
+    "Douban Subject ID": filledRichText("1434233"),
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "Human Issue": filledRichText(""),
+    "AI Issue": filledRichText("")
+  });
+  const patch = buildPatch(page, {
+    subjectId: "1434233",
+    releaseDate: undefined,
+    genres: [],
+    unmappedGenres: [],
+    warnings: []
+  }, undefined, undefined, { now: "2026-08-28", preserveExistingIdentity: true });
+  assert.equal(patch["Metadata Status"].select.name, "verified");
+  assert.equal(patch["Needs Review"].checkbox, false);
+  assert.equal(patch["上映日期"], undefined);
+});
+
+test("buildPatch promotes a complete legacy partial page to verified", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      "Simplified Chinese Title": filledRichText("示例"),
+      "Release Year": { type: "number", number: 2000 },
+      "上映日期": { type: "date", date: { start: "2000-01-01" } },
+      Countries: { type: "multi_select", multi_select: [{ name: "美国" }] },
+      Languages: { type: "multi_select", multi_select: [{ name: "英语" }] },
+      "旨趣": { type: "multi_select", multi_select: [{ name: "剧情" }] },
+      "外部类型原文": filledRichText("剧情"),
+      "Runtime Minutes": { type: "number", number: 100 },
+      Directors: filledRichText("导演"),
+      Cast: filledRichText("演员"),
+      "Poster URL": { type: "url", url: "https://img.example/poster.jpg" },
+      "AI建议最低年龄": { type: "number", number: 12 },
+      "AI年龄建议置信度": { type: "select", select: { name: "high" } },
+      "内容风险标签": { type: "multi_select", multi_select: [{ name: "无" }] },
+      "AI年龄建议理由": filledRichText("无明显风险"),
+      "IMDb ID": filledRichText("tt0000001"),
+      "Metadata Status": { type: "select", select: { name: "partial" } },
+      "Needs Review": { type: "checkbox", checkbox: true },
+      "Human Issue": filledRichText(""),
+      "AI Issue": filledRichText("")
+    }),
+    {
+      subjectId: "26761325",
+      subjectUrl: "https://movie.douban.com/subject/26761325/",
+      posterUrl: "https://img.example/poster.jpg",
+      releaseYear: 2000,
+      releaseDate: "2000-01-01",
+      genres: ["剧情"],
+      imdbId: "tt0000001",
+      countries: ["美国"],
+      languages: ["英语"],
+      runtimeMinutes: 100,
+      directors: ["导演"],
+      cast: ["演员"],
+      description: "简介",
+      basicInfo: "基本信息"
+    },
+    undefined,
+    { now: "2026-08-26" }
+  );
+
+  assert.equal(patch["Metadata Status"].select.name, "verified");
+  assert.equal(patch["Needs Review"].checkbox, false);
+});
+
+test("buildPatch verifies metadata when the same patch fills the last core field", () => {
+  const page = pageWithProperties({
+    "Simplified Chinese Title": filledRichText("示例"),
+    "Release Year": { type: "number", number: 2000 },
+    "上映日期": { type: "date", date: { start: "2000-01-01" } },
+    Countries: { type: "multi_select", multi_select: [{ name: "美国" }] },
+    Languages: { type: "multi_select", multi_select: [{ name: "英语" }] },
+    "旨趣": { type: "multi_select", multi_select: [{ name: "剧情" }] },
+    "外部类型原文": emptyProperty("rich_text"),
+    "Runtime Minutes": { type: "number", number: 100 },
+    Directors: filledRichText("导演"),
+    Cast: filledRichText("演员"),
+    "Poster URL": { type: "url", url: "https://img.example/poster.jpg" },
+    "AI建议最低年龄": { type: "number", number: 12 },
+    "AI年龄建议置信度": { type: "select", select: { name: "high" } },
+    "内容风险标签": { type: "multi_select", multi_select: [{ name: "无" }] },
+    "AI年龄建议理由": filledRichText("无明显风险"),
+    "IMDb ID": filledRichText("tt0000001"),
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Needs Review": { type: "checkbox", checkbox: false },
+    "Human Issue": filledRichText(""),
+    "AI Issue": filledRichText("")
+  });
+
+  const patch = buildPatch(page, {
+    subjectId: "26761325",
+    externalGenreText: "剧情",
+    genres: ["剧情"],
+    unmappedGenres: [],
+    warnings: []
+  }, undefined, undefined, { now: "2026-08-28" });
+
+  assert.equal(patch["外部类型原文"].rich_text[0].text.content, "剧情");
+  assert.equal(patch["Metadata Status"].select.name, "verified");
+  assert.equal(patch["Needs Review"].checkbox, false);
+});
+
 test("buildPatch appends newly canonical genres and clears resolved unmapped genres", () => {
   const patch = buildPatch(
     pageWithProperties({
@@ -495,4 +774,28 @@ test("buildPatch does not overwrite a complete conflicting title", () => {
 
   assert.equal(patch.Title, undefined);
   assert.equal(patch["Needs Review"].checkbox, true);
+});
+
+test("OMDb supplemental metadata cannot rewrite an established canonical title", () => {
+  const patch = buildPatch(
+    pageWithProperties({
+      Title: {
+        type: "title",
+        title: [{
+          plain_text: "圣斗士星矢 黄金魂 -soul of gold- 聖闘士星矢 黄金魂 -soul of gold- (2015)",
+          text: { content: "圣斗士星矢 黄金魂 -soul of gold- 聖闘士星矢 黄金魂 -soul of gold- (2015)" }
+        }]
+      },
+      "Simplified Chinese Title": filledRichText("圣斗士星矢 黄金魂 -soul of gold-"),
+      "English Title": filledRichText("Saint Seiya Soul of Gold"),
+      "Original Title": filledRichText("聖闘士星矢 黄金魂 -soul of gold-"),
+      "Release Year": { type: "number", number: 2015 }
+    }),
+    { metadataSource: "omdb", imdbId: "tt4670988", releaseYear: 2015 },
+    undefined,
+    undefined,
+    { now: "2026-08-28" }
+  );
+
+  assert.equal(patch.Title, undefined);
 });

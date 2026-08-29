@@ -9,9 +9,11 @@ import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 import { importScan } from "./lib/film-ledger-discovery.mjs";
 import { createNotionTargetAdapter, reconcileDueTargets } from "./lib/film-ledger-notion.mjs";
 import { installNotionDnsOverride } from "./lib/notion-network.mjs";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 import { applyCorrectionsManifest, importProductionManifest, migrateOrganizerReport, migrateQueueState } from "./lib/film-ledger-migration.mjs";
 import { discoverRecentProductionManifests } from "./lib/film-manifest-reconciliation.mjs";
 import { collectCleanupCandidates, collectSourceCleanupCandidates } from "./film-cleanup-candidates.mjs";
+import { collectSourceDispositions } from "./lib/film-source-disposition.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
@@ -28,7 +30,7 @@ function parse(argv) {
   const positionals = [];
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--season-page", "--spec-page", "--episode-page",
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
-    "--output-path", "--output-size", "--target-size", "--spec-key", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail",
+    "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail",
     "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
     "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
@@ -82,7 +84,8 @@ function listCleanupQueue(db, outputRoot = "E:\\video_made", limit) {
 }
 
 function variantRecord(db, id) {
-  const row = db.prepare(`SELECT variants.*, works.canonical_title, works.year, works.work_type
+  const row = db.prepare(`SELECT variants.*, works.canonical_title, works.year, works.work_type,
+      works.notion_work_page_id
     FROM variants JOIN works ON works.id=variants.work_id WHERE variants.id=?`).get(id);
   if (!row) throw new Error(`variant not found: ${id}`);
   return row;
@@ -100,9 +103,13 @@ async function loadNotionAdapter() {
   if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
   installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
   const localAddress = process.env.NOTION_API_LOCAL_ADDRESS;
-  const clientOptions = { auth };
+  const clientOptions = {
+    auth,
+    // The adapter may request several exact pages at once. Pace the transport
+    // itself so every read still shares one serial one-request-per-second lane.
+    fetch: createPacedFetch(nodeFetch, { minIntervalMs: 1000 })
+  };
   if (localAddress) {
-    clientOptions.fetch = nodeFetch;
     clientOptions.agent = new https.Agent({ keepAlive: true, localAddress });
   }
   return createNotionTargetAdapter(new Client(clientOptions));
@@ -139,6 +146,7 @@ async function main() {
       const refreshedIntake = repo.refreshDueIntakeTasks({ limit });
       const refreshedMetadata = repo.refreshDueMetadataTasks({ limit });
       const workflowTasks = repo.getWorkflowTaskSummary();
+      const sourceDisposition = collectSourceDispositions(db);
       const result = {
         refreshedIntakeTasks: refreshedIntake.map(task => task.id),
         refreshedMetadataTasks: refreshedMetadata.map(task => task.id),
@@ -148,10 +156,13 @@ async function main() {
           intake: repo.listWorkflowTasks({ taskType: "intake", limit }),
           catalogMaintenance: repo.listWorkflowTasks({ taskType: "metadata_backfill", limit }),
           production: repo.listProductionQueue({ limit }),
+          productionCoverage: repo.listSeriesCoverageGaps({ limit }),
           publication: repo.listPublicationCandidates({ limit }),
-          cleanup: listCleanupQueue(db, options.output_root).filter((row) => row.eligible).slice(0, limit)
+          cleanup: listCleanupQueue(db, options.output_root).filter((row) => row.eligible).slice(0, limit),
+          sourceFollowup: sourceDisposition.items
         },
-        workflowTasks
+        workflowTasks,
+        sourceDisposition: sourceDisposition.summary
       };
       output(result, options.json, `intake=${result.lanes.intake.length} catalog=${result.lanes.catalogMaintenance.length} production=${result.lanes.production.length} publication=${result.lanes.publication.length} cleanup=${result.lanes.cleanup.length}`);
     } else if (command === "queue") {
@@ -159,10 +170,11 @@ async function main() {
       if (stage === "intake") output(repo.listWorkflowTasks({ taskType: "intake", limit: options.limit }), options.json);
       else if (stage === "metadata" || stage === "catalog") output(repo.listWorkflowTasks({ taskType: "metadata_backfill", limit: options.limit }), options.json);
       else if (stage === "production") output(repo.listProductionQueue({ limit: options.limit }), options.json);
+      else if (stage === "coverage") output(repo.listSeriesCoverageGaps({ limit: options.limit }), options.json);
       else if (stage === "publication") output(repo.listPublicationCandidates({ limit: options.limit }), options.json);
       else if (stage === "cleanup") output(listCleanupQueue(db, options.output_root, options.limit), options.json);
       else if (stage === "handoff" || stage === "collaboration") output(repo.listWorkHandoffs({ limit: options.limit }), options.json);
-      else throw new Error("--stage must be handoff|collaboration|intake|metadata|catalog|production|publication|cleanup");
+      else throw new Error("--stage must be handoff|collaboration|intake|metadata|catalog|production|coverage|publication|cleanup");
     } else if (command === "task-status") {
       output(repo.getWorkflowTaskSummary(), options.json);
     } else if (command === "complete-task") {
@@ -198,8 +210,8 @@ async function main() {
     } else if (command === "defer-production") {
       const id = asId(requireOption(options, "variant", "--variant"));
       const variant = variantRecord(db, id);
-      if (!["discovered", "evaluated", "selected", "qc_failed"].includes(variant.production_state)) {
-        throw new Error("production defer requires discovered, evaluated, selected, or qc_failed state");
+      if (!["discovered", "evaluated", "selected", "encoding", "qc_failed"].includes(variant.production_state)) {
+        throw new Error("production defer requires discovered, evaluated, selected, encoding, or qc_failed state");
       }
       output(repo.transitionProduction(id, "deferred", {
         failureCode: options.failure_code ?? "production_deferred",
@@ -213,6 +225,11 @@ async function main() {
         throw new Error("production retry requires qc_failed or deferred state");
       }
       output(repo.transitionProduction(id, "selected", { failureDetail: options.failure_detail ?? "Production retry selected" }), options.json, `variant ${id}: selected`);
+    } else if (command === "reopen-variant") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      output(repo.reopenRejectedVariant(id, {
+        reason: requireOption(options, "failure_detail", "--failure-detail")
+      }), options.json, `reopened rejected variant ${id}: evaluated`);
     } else if (command === "retire-variant") {
       const id = asId(requireOption(options, "variant", "--variant"));
       const variant = variantRecord(db, id);
@@ -234,6 +251,25 @@ async function main() {
         failureDetail
       });
       output(retired, options.json, `variant ${id}: rejected and publication cancelled`);
+    } else if (command === "invalidate-variant") {
+      const id = asId(requireOption(options, "variant", "--variant"));
+      const variant = variantRecord(db, id);
+      const failureDetail = requireOption(options, "failure_detail", "--failure-detail");
+      const failureCode = options.failure_code ?? "published_output_invalid";
+      if (!["qc_passed", "deferred", "rejected"].includes(variant.production_state)) {
+        throw new Error("variant invalidation requires qc_passed, deferred, or rejected state");
+      }
+      // A sync-ready result can become invalid after publication when a later
+      // review exposes a bad source or a playback defect. Invalidate the
+      // publication first, then close the production lane as rejected.
+      if (variant.publication_state === "sync_ready") {
+        repo.transitionPublication(id, "structure_pending", { failureCode, failureDetail, invalidated: true });
+      }
+      if (variant.production_state !== "rejected") {
+        repo.transitionProduction(id, "rejected", { failureCode, failureDetail, invalidated: true });
+      }
+      const invalidated = repo.transitionPublication(id, "cancelled", { failureCode, failureDetail, invalidated: true });
+      output(invalidated, options.json, `variant ${id}: invalidated and publication cancelled`);
     } else if (command === "route-intake") {
       const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
       const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");
@@ -263,7 +299,10 @@ async function main() {
       // A series spec is shared by episode pages, but each source episode
       // needs its own ledger variant so selection cannot overwrite a sibling.
       const rawSpecKey = requireOption(options, "spec_key", "--spec-key");
-      const specKey = work.work_type === "series" ? `${rawSpecKey}:source-${sourceId}` : rawSpecKey;
+      const episodeNumber = options.episode_number == null ? null : asId(options.episode_number, "--episode-number");
+      const specKey = work.work_type === "series"
+        ? `${rawSpecKey}:source-${sourceId}${episodeNumber == null ? "" : `:episode-${episodeNumber}`}`
+        : rawSpecKey;
       const compactDecision = options.compact_decision;
       const compactDetail = options.compact_detail?.trim();
       if (work.work_type === "movie") {
@@ -305,7 +344,7 @@ async function main() {
     } else if (command === "correct-variant-metadata") {
       const variantId = asId(requireOption(options, "variant", "--variant"));
       if (!options.spec_key && !options.output_spec && !options.audio_variant && !options.subtitle_variant
-        && !options.cut_variant && !options.output_path && !options.output_size && !options.expected_filename) {
+        && !options.cut_variant && !options.target_size && !options.output_path && !options.output_size && !options.expected_filename) {
         throw new Error("correct-variant-metadata requires at least one metadata field");
       }
       const result = repo.correctVariantMetadata(variantId, {
@@ -314,6 +353,7 @@ async function main() {
         audioVariant: options.audio_variant,
         subtitleVariant: options.subtitle_variant,
         cutVariant: options.cut_variant,
+        targetSizeBytes: options.target_size == null ? undefined : asId(options.target_size, "--target-size"),
         outputPath: options.output_path,
         outputSizeBytes: options.output_size == null ? undefined : asId(options.output_size, "--output-size"),
         expectedFilename: options.expected_filename
@@ -424,6 +464,11 @@ async function main() {
         throw new Error("Notion target requires selected, encoding, or qc_passed production state");
       }
       const workPageId = requireOption(options, "work_page", "--work-page");
+      if (variant.notion_work_page_id && !sameNotionId(variant.notion_work_page_id, workPageId)) {
+        throw new Error(
+          `Notion target work page mismatch: variant ${id} belongs to ${variant.notion_work_page_id}, not ${workPageId}`
+        );
+      }
       // A season-page ID equal to the work page is a duplicate level, not a
       // real parent. Store it as empty so series structure verification uses
       // work -> spec -> episode for season-root work pages.

@@ -5,10 +5,15 @@ import path from "node:path";
 import dns from "node:dns";
 import https from "node:https";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
+import { requireNotionUploadRoute, supportedNotionUploadRoutes } from "./lib/notion-upload-route-policy.mjs";
 
 const DEFAULT_PART_MIB = 20;
+const MIN_PART_MIB = 5;
 const CLASH_PIPE = "\\\\.\\pipe\\verge-mihomo";
 
 function loadDotEnv() {
@@ -28,12 +33,14 @@ function parseArgs(argv) {
     maxRestarts: 0,
     report: ".local-data/notion-upload-route-probe.json",
     complete: false,
+    noProxy: false,
     noResolveOverride: false,
     resolveIp: "",
-    localAddress: ""
+    localAddress: "",
+    expectedRoute: "direct"
   };
   const valueArgs = new Set([
-    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report", "--resolve-ip", "--local-address"
+    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report", "--resolve-ip", "--local-address", "--expected-route"
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -48,8 +55,11 @@ function parseArgs(argv) {
       else if (arg === "--report") options.report = path.resolve(value);
       else if (arg === "--resolve-ip") options.resolveIp = value;
       else if (arg === "--local-address") options.localAddress = value;
+      else if (arg === "--expected-route") options.expectedRoute = value;
     } else if (arg === "--complete") {
       options.complete = true;
+    } else if (arg === "--no-proxy") {
+      options.noProxy = true;
     } else if (arg === "--no-resolve-override") {
       options.noResolveOverride = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -58,13 +68,16 @@ function parseArgs(argv) {
 
 Options:
   --parts <n>          Number of sequential parts to send (default: 3)
-  --part-mib <n>       Part size in MiB (default: 20)
+  --part-mib <n>       Part size in MiB (minimum: 5; default: 20)
   --slow-seconds <n>   Close this process's Notion connection when an attempt exceeds n seconds
   --max-restarts <n>   Maximum connection restarts per part
+  --no-proxy           Bypass explicit HTTP(S) proxy variables; Clash TUN and selectors still apply
   --no-resolve-override
                         Keep api.notion.com as a hostname so Clash domain rules can match
   --resolve-ip <ip>     Override api.notion.com DNS for a direct-route probe
   --local-address <ip>  Bind the direct probe to a physical local interface
+  --expected-route <direct|jms-s801>
+                        Required exact Clash route (default: direct)
   --complete           Complete the unattached FileUpload after all parts are sent
   --report <path>      JSON report path
 `);
@@ -82,7 +95,16 @@ Options:
   })) {
     if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be zero or a positive number`);
   }
-  if (options.parts < 1 || options.partMiB < 1) throw new Error("--parts and --part-mib must be positive");
+  if (options.parts < 1) throw new Error("--parts must be positive");
+  if (options.partMiB < MIN_PART_MIB) {
+    throw new Error(`--part-mib must be at least ${MIN_PART_MIB} MiB because Notion rejects smaller non-final parts`);
+  }
+  if (!supportedNotionUploadRoutes().includes(options.expectedRoute)) {
+    throw new Error(`--expected-route must be one of: ${supportedNotionUploadRoutes().join(", ")}`);
+  }
+  if (options.expectedRoute === "jms-s801" && (options.localAddress || options.resolveIp)) {
+    throw new Error("--expected-route jms-s801 must preserve api.notion.com and cannot use --resolve-ip or --local-address");
+  }
   return options;
 }
 
@@ -160,6 +182,19 @@ async function connectionSnapshot(startedAfter) {
   }));
 }
 
+export function mergeConnectionSnapshots(...groups) {
+  const merged = new Map();
+  for (const connection of groups.flat()) {
+    if (!connection) continue;
+    const key = connection.id || JSON.stringify([connection.chains ?? [], connection.destination ?? ""]);
+    const current = merged.get(key);
+    if (!current || Number(connection.uploadedBytes ?? 0) >= Number(current.uploadedBytes ?? 0)) {
+      merged.set(key, connection);
+    }
+  }
+  return [...merged.values()];
+}
+
 async function readChunk(filePath, offset, length) {
   const handle = await fs.promises.open(filePath, "r");
   try {
@@ -175,6 +210,21 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
   const startedAt = Date.now();
   let restartTimer;
   let closed = [];
+  let sampling = true;
+  let observedConnections = [];
+  const sampler = (async () => {
+    while (sampling) {
+      try {
+        observedConnections = mergeConnectionSnapshots(
+          observedConnections,
+          await connectionSnapshot(startedAt)
+        );
+      } catch {
+        // Missing route evidence still fails closed after the upload attempt.
+      }
+      if (sampling) await sleep(250);
+    }
+  })();
   if (allowRestart && slowSeconds > 0) {
     restartTimer = setTimeout(async () => {
       try {
@@ -198,12 +248,18 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
     error = caught?.message ?? String(caught);
   } finally {
     if (restartTimer) clearTimeout(restartTimer);
+    sampling = false;
+    await sampler;
   }
   const seconds = (Date.now() - startedAt) / 1000;
+  observedConnections = mergeConnectionSnapshots(
+    observedConnections,
+    await connectionSnapshot(startedAt).catch(() => [])
+  );
   return {
     seconds: Number(seconds.toFixed(3)),
     mibPerSecond: Number(((data.length / 1024 / 1024) / seconds).toFixed(3)),
-    connections: await connectionSnapshot(startedAt).catch(() => []),
+    connections: observedConnections,
     closed,
     error
   };
@@ -216,6 +272,9 @@ async function main() {
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
   if (!fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);
   const resolveIp = options.noResolveOverride ? "" : (options.resolveIp || process.env.NOTION_API_RESOLVE_IP || "");
+  if (Boolean(resolveIp) !== Boolean(options.localAddress)) {
+    throw new Error("Direct fixed-IP probing requires both --resolve-ip <api-ip> and --local-address <physical-lan-ip>");
+  }
   if (resolveIp) installNotionDnsOverride(resolveIp);
 
   const stat = fs.statSync(options.file);
@@ -227,6 +286,20 @@ async function main() {
   if (options.localAddress) {
     notionOptions.fetch = nodeFetch;
     notionOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
+    console.log(`direct local address: ${options.localAddress}`);
+  } else {
+    // Match the production uploader: the local Clash proxy still receives
+    // the hostname and can classify api.notion.com as DIRECT.
+    const proxyUrl = options.noProxy
+      ? ""
+      : (process.env.NOTION_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
+    if (proxyUrl) {
+      notionOptions.fetch = nodeFetch;
+      notionOptions.agent = new HttpsProxyAgent(proxyUrl);
+      console.log(`proxy: ${proxyUrl}`);
+    } else if (options.noProxy) {
+      console.log("explicit proxy bypass; Clash TUN and selector routing remain active");
+    }
   }
   const notion = new Client(notionOptions);
   const upload = await notion.fileUploads.create({
@@ -249,10 +322,21 @@ async function main() {
     maxRestarts: options.maxRestarts,
     resolveOverride: resolveIp || null,
     localAddress: options.localAddress || null,
+    expectedRoute: options.expectedRoute,
     attempts: [],
     status: "pending"
   };
   fs.mkdirSync(path.dirname(options.report), { recursive: true });
+  const trafficMonitor = createVpnTrafficMonitor({
+    envLookup: (name) => process.env[name],
+    reportPath: `${options.report}.vpn-traffic.json`
+  });
+  await trafficMonitor.start({
+    totalUploadBytes: Math.min(stat.size, partCount * partBytes),
+    uploader: "route-probe",
+    parts: partCount
+  });
+  report.vpnTrafficReport = `${options.report}.vpn-traffic.json`;
 
   for (let part = 1; part <= partCount; part += 1) {
     const offset = (part - 1) * partBytes;
@@ -270,8 +354,30 @@ async function main() {
         attempt <= options.maxRestarts
       );
       report.attempts.push({ part, attempt, bytes: data.length, ...result });
+      let routeRejected = false;
+      if (!result.error) {
+        try {
+          if (options.localAddress && result.connections.length === 0) {
+            report.attempts.at(-1).route = {
+              accepted: true,
+              expectedRoute: "direct",
+              expectedChain: ["physical-interface", options.localAddress, resolveIp],
+              observedChains: [],
+              reason: "physical_interface_binding"
+            };
+          } else {
+            report.attempts.at(-1).route = requireNotionUploadRoute(result.connections, options.expectedRoute);
+          }
+        } catch (error) {
+          report.attempts.at(-1).route = { accepted: false, error: error?.message ?? String(error) };
+          result.error = report.attempts.at(-1).route.error;
+          report.attempts.at(-1).error = result.error;
+          routeRejected = true;
+        }
+      }
       fs.writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`, "utf8");
       console.log(JSON.stringify(report.attempts.at(-1)));
+      if (routeRejected) throw new Error(result.error);
       if (!result.error) {
         sent = true;
         break;
@@ -285,8 +391,11 @@ async function main() {
       await sleep(1000);
     }
     if (!sent) throw new Error(`Part ${part} did not complete after ${options.maxRestarts + 1} attempts`);
+    await trafficMonitor.noteUploaded(data.length, { uploader: "route-probe", part, partCount });
     await sleep(250);
   }
+
+  await trafficMonitor.finish({ uploader: "route-probe", parts: partCount });
 
   if (options.complete) {
     await notion.fileUploads.complete({ file_upload_id: upload.id });
@@ -304,7 +413,9 @@ async function main() {
   }));
 }
 
-main().catch(error => {
-  console.error(error?.stack ?? error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(error => {
+    console.error(error?.stack ?? error);
+    process.exitCode = 1;
+  });
+}

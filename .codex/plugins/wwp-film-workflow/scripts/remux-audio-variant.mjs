@@ -93,6 +93,10 @@ function assertBrowserPlayableMp4(output) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`ffprobe final output failed with exit code ${result.status}`);
   const streams = JSON.parse(result.stdout).streams ?? [];
+  const unexpected = streams.filter((stream) => !["video", "audio"].includes(stream.codec_type));
+  if (unexpected.length > 0) {
+    throw new Error(`final MP4 contains unexpected stream types: ${unexpected.map((stream) => stream.codec_type).join(", ")}`);
+  }
   const video = streams.find((stream) => stream.codec_type === "video");
   if (video?.codec_name === "hevc" && video.codec_tag_string !== "hvc1") {
     throw new Error("final HEVC MP4 is missing the required hvc1 sample entry");
@@ -121,6 +125,7 @@ export function buildFfmpegArgs(options, videoSource, audioSource, part) {
     "-i", audioSource,
     "-map", "0:v:0",
     "-map", `1:a:${options.audioStream}`,
+    "-map_chapters", "-1",
     "-c:v", "copy",
     "-tag:v", "hvc1",
     "-c:a", "aac",

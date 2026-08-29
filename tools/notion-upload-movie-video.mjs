@@ -9,6 +9,8 @@ import nodeFetch from "node-fetch";
 import { assertPreparedMovieTargetIsEmpty, notionVideoName, selectExplicitChildTarget } from "./lib/notion-movie-target.mjs";
 import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
 import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
+import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
+import { createNotionUploadSelectorGuard } from "./lib/notion-upload-selector-guard.mjs";
 
 const DEFAULT_PART_MIB = 20;
 
@@ -62,6 +64,9 @@ function parseArgs() {
   }
   if (!options.file && !options.prepareOnly) throw new Error("--file is required.");
   if (options.targetOnly && !options.targetPageId) throw new Error("--target-only requires --target-page-id.");
+  if (options.resolveIp && (!options.localAddress || !options.noProxy)) {
+    throw new Error("--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy; refusing an unsafe raw-IP route.");
+  }
   if (options.file) options.file = path.resolve(options.file);
   if (options.prepareOnly && !options.targetPageId && !options.targetTitle) {
     throw new Error("--prepare-only requires --target-title or --target-page-id.");
@@ -320,7 +325,7 @@ async function readChunk(filePath, offset, length) {
   }
 }
 
-async function uploadVideo(notion, file, options, manifest, manifestPath) {
+async function uploadVideo(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard) {
   const partBytes = Math.max(1, Math.floor(options.partMiB)) * 1024 * 1024;
   const partCount = Math.ceil(file.size / partBytes);
   const mode = partCount === 1 ? "single_part" : "multi_part";
@@ -368,6 +373,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
 
   if (record.mode === "single_part") {
     const data = await readChunk(file.path, 0, file.size);
+    await routeGuard.assert(`${file.name} part 1/1`);
     await withTransientNotionUploadRetry(() => notion.fileUploads.send({
         file_upload_id: record.fileUploadId,
         file: { filename: file.name, data: new Blob([data], { type: contentType }) }
@@ -377,6 +383,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
         )
       });
     record.sentParts = 1;
+    await trafficMonitor.noteUploaded(data.length, { file: file.name, part: 1, partCount: 1 });
   } else {
     const concurrency = Math.min(options.uploadConcurrency, record.partCount);
     for (let firstPart = (record.sentParts ?? 0) + 1; firstPart <= record.partCount; firstPart += concurrency) {
@@ -390,6 +397,7 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
         const length = Math.min(partBytes, file.size - offset);
         const data = await readChunk(file.path, offset, length);
         console.log(`send ${file.name} part ${part}/${record.partCount}`);
+        await routeGuard.assert(`${file.name} part ${part}/${record.partCount}`);
         await withTransientNotionUploadRetry(() => notion.fileUploads.send({
             file_upload_id: record.fileUploadId,
             part_number: String(part),
@@ -404,6 +412,11 @@ async function uploadVideo(notion, file, options, manifest, manifestPath) {
       record.lastBatchSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
       record.updatedAt = new Date().toISOString();
       writeManifest(manifestPath, manifest);
+      const batchBytes = parts.reduce((sum, part) => {
+        const offset = (part - 1) * partBytes;
+        return sum + Math.min(partBytes, file.size - offset);
+      }, 0);
+      await trafficMonitor.noteUploaded(batchBytes, { file: file.name, parts, partCount: record.partCount });
       await sleep(250);
     }
     console.log(`complete ${file.name}`);
@@ -527,7 +540,20 @@ async function main() {
   if (targetTitle) await updatePageTitle(notion, target.id, targetTitle, options.apply);
   const manifestPath = path.join(".local-data", `notion-movie-video-upload-${options.pageId.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
-  const fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath);
+  const trafficMonitor = createVpnTrafficMonitor({
+    envLookup: dotenv,
+    reportPath: `${manifestPath}.vpn-traffic.json`
+  });
+  const routeGuard = createNotionUploadSelectorGuard({
+    envLookup: (name) => process.env[name] || dotenv(name)
+  });
+  await trafficMonitor.start({ totalUploadBytes: file.size, uploader: "movie", file: file.name });
+  let fileUploadId;
+  try {
+    fileUploadId = await uploadVideo(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard);
+  } finally {
+    await trafficMonitor.finish({ uploader: "movie", file: file.name });
+  }
   if (options.replaceExistingVideo) await replaceVideoBlocks(notion, target.id, options.apply);
   const appended = await appendVideo(notion, target.id, file.name, fileUploadId, options.apply);
   if (appended) console.log(`media block id: ${appended.id}`);

@@ -2,7 +2,18 @@
 
 import fs from "node:fs";
 import dns from "node:dns";
+import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
+
+const NOTION_MINIMUM_INTERVAL_MS = 1000;
+let nextNotionRequestAt = 0;
+
+async function notionRequest(operation) {
+  const waitMs = Math.max(0, nextNotionRequestAt - Date.now());
+  if (waitMs > 0) await sleep(waitMs);
+  nextNotionRequestAt = Date.now() + NOTION_MINIMUM_INTERVAL_MS;
+  return operation();
+}
 
 const DEFAULT_TARGETS = [
   ["3a620ac1-2f0a-81a3-87c3-ea5f6a73f46b", "tt1187064"],
@@ -190,7 +201,7 @@ async function main() {
   const notion = new Client({ auth: env("NOTION_WRITE_TOKEN") || env("NOTION_TOKEN"), timeoutMs: 120000 });
   const report = { generatedAt: new Date().toISOString(), apply, records: [] };
   for (const [pageId, configuredImdbId] of targets) {
-    const page = await notion.pages.retrieve({ page_id: pageId });
+    const page = await notionRequest(() => notion.pages.retrieve({ page_id: pageId }));
     const imdbId = configuredImdbId || propText(page.properties, "IMDb ID") || propText(page.properties, "imdb");
     if (!imdbId) {
       report.records.push({ pageId, status: "error", message: "IMDb ID is missing; pass --imdb-id explicitly." });
@@ -205,8 +216,8 @@ async function main() {
     const patch = patchFor(page, payload);
     const record = { pageId, imdbId, title: propText(page.properties, "Title"), omdbTitle: payload.Title, fields: Object.keys(patch), status: apply ? "updated" : "dry_run" };
     if (apply && Object.keys(patch).length) {
-      await notion.pages.update({ page_id: pageId, properties: patch });
-      const readback = await notion.pages.retrieve({ page_id: pageId });
+      await notionRequest(() => notion.pages.update({ page_id: pageId, properties: patch }));
+      const readback = await notionRequest(() => notion.pages.retrieve({ page_id: pageId }));
       record.readback = Object.fromEntries(Object.keys(patch).map(name => {
         const property = readback.properties?.[name];
         return [name, property?.type === "rich_text" ? plain(property.rich_text) : property?.type === "number" ? property.number : property?.type === "select" ? property.select?.name : property?.type === "multi_select" ? property.multi_select.map(item => item.name) : property?.type === "date" ? property.date?.start : property?.type === "url" ? property.url : null];

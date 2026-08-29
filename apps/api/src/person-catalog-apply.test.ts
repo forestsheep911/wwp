@@ -36,7 +36,7 @@ test("plans one affected work while retaining unrelated catalog data", () => {
   const plan = planReviewedPeopleReportApply(current, [result("work-1"), untouched], report(), "2026-08-10T01:00:00.000Z");
   assert.equal(plan.updatedResults.length, 1);
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
-  assert.equal(plan.nextCatalog.creditsByPersonId[personId][0].workTitle, "作品一");
+  assert.equal(plan.nextCatalog.creditsByPersonId[personId][0].workTitle, "work-1");
   assert.ok(plan.nextCatalog.creditsByWorkId["work-2"]);
   assert.equal(untouched.metadata?.work?.credits, undefined);
 });

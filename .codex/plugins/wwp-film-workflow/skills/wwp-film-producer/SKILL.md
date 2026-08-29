@@ -66,6 +66,24 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 8. Before completing a released work, create exact ledger variants for every source-supported supplemental spec worth revisiting. Keep later variants `selected` or `deferred` with `next_review_at`, and mirror the latest decision in `Workflow Note` as `[规格扩展:OPEN] ...` or `[规格扩展:CLOSED] ...`. Do not create a new Notion property or a generic placeholder task for this marker.
 9. When work-level metadata is complete but no first playable specification can continue, set `Workflow Status=暂缓` with an AI-marked recovery condition. Do not use work-level `暂缓` merely because a released work still has deferred supplemental variants.
 
+## Goal Continuation Reporting
+
+- A goal round may say there is no due executable item only after auditing every
+  still-present source under every enabled input root. If any source remains,
+  report its exact disposition from `cycle.lanes.sourceFollowup`: ready to move,
+  move failed (including file-in-use/permission evidence), active AI work,
+  waiting for human confirmation/upload, scheduled review with its next time,
+  retained for an explicit open expansion, or missing identity/coverage/closure
+  evidence. Never collapse these states into “没有新的可进行项”.
+- `cleanup_ready` is executable work. Move that exact eligible source to its
+  same-volume `待人工删除` directory with the guarded cleanup tool. If the move
+  fails, persist and report the OS error and source path; do not silently leave
+  the item in the input queue or mark the goal idle.
+- Treat an automatic goal continuation as a scheduling opportunity, not as a request to repeat the last status message.
+- After one bounded cycle reports no filesystem delta and no due actionable item, do not immediately run another full cycle or send another user-visible "no change" message. Wait for a real trigger: new user input, a changed source fingerprint, a due ledger review, an active encode/upload transition, or an urgent Workflow Note handoff.
+- During long encoding or upload work, report only meaningful progress checkpoints, completion, failure, or a decision request. Do not emit heartbeat-style prose merely because the goal mechanism resumed the thread.
+- Before saying there is nothing to do, check all workflow lanes and distinguish `waiting until due` from `waiting for user evidence`. Report the concrete blocker once, with the next trigger or review time, and suppress identical follow-ups until that evidence changes.
+
 ## Stable Workflow Contract
 
 These are the current production defaults. A later user instruction may override
@@ -133,6 +151,18 @@ toggle, callout, or base-like visual containers.
 - Verified finished outputs are moved to `E:\待人工删除` for later human
   deletion. Never place the quarantine directory under `E:\video_made`, and do
   not delete source files or quarantine files as part of normal completion.
+- Same-volume quarantine is reversible organization, not capacity reclamation.
+  Before encoding, check free space for the selected output volume against the
+  expected batch size plus temporary muxing headroom. If the default
+  `E:\video_made` volume is full, use a user-approved alternate output or
+  staging root (for example on `I:`), record the actual output path in the
+  ledger, and do not create a partial file on the full volume. Never delete
+  quarantined files merely to make room without an explicit human decision.
+- If a finished, verified output was staged on another volume and
+  `E:\video_made` has recovered enough capacity, relocate that output back to
+  the default root before quarantine. Verify the copied byte count, remove the
+  old copy only after verification, and update the variant's exact ledger path
+  with a relocation event; do not move active work files or source inputs.
 - Moving a source to a same-volume `待人工删除` directory disables routine
   input-root discovery only. For a known original-audio, dubbed-audio,
   commentary, subtitle, compact, or higher-bitrate gap, resolve and probe the
@@ -147,6 +177,7 @@ toggle, callout, or base-like visual containers.
 ## Targeted Recent-Item Checks
 
 - Do not run a global Notion scan just to audit historical spec titles or page structure. Notion API rate limits make that an invalid default workflow.
+- When a completed output is smaller than its planned high-tier target but passes playback and QC, reclassify and publish it at the measured size. If a true high tier is still valuable, create a separate deferred variant for that gap. Never make the valid existing output deferred merely to represent an unmade supplement.
 - After a production, rename, structure preparation, or manual-upload handoff, inspect only the recent items touched by that run, with a default maximum of 3 exact work/spec targets.
 - Check those targets for per-episode size naming, language/audio labels, duplicate specs, episode mapping, and root-level media placement. Check per-collection naming and overlapping ranges only when collection delivery was explicitly enabled. Leave older untouched items for later user-directed repair; an incomplete historical audit is acceptable.
 - Prefer exact page IDs recorded in the local ledger. Do not substitute a broad title search or watcher scan when the target IDs are already known.

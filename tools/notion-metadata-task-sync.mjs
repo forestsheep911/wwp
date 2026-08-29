@@ -4,6 +4,7 @@ import https from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 
@@ -18,20 +19,26 @@ function loadDotEnv() {
 }
 
 function parseArgs(argv) {
-  const options = { db: DEFAULT_DB, limit: 3, apply: false, json: false };
+  const options = { db: DEFAULT_DB, limit: 3, apply: false, json: false, delayMs: 1000, pageIds: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--db") options.db = argv[++index];
+    else if (arg === "--page-id") options.pageIds.push(argv[++index]);
+    else if (arg === "--local-address") options.localAddress = argv[++index];
     else if (arg === "--limit") options.limit = Number(argv[++index]);
+    else if (arg === "--delay-ms") options.delayMs = Number(argv[++index]);
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--json") options.json = true;
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node tools/notion-metadata-task-sync.mjs [--limit 3] [--apply] [--json]");
+      console.log("Usage: node tools/notion-metadata-task-sync.mjs [--page-id <id>] [--local-address <ip>] [--limit 3] [--delay-ms 1000] [--apply] [--json]");
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 20) {
     throw new Error("--limit must be an integer between 1 and 20");
+  }
+  if (!Number.isFinite(options.delayMs) || options.delayMs < 1000) {
+    throw new Error("--delay-ms must be at least 1000 to preserve Notion request-rate safety");
   }
   return options;
 }
@@ -78,6 +85,12 @@ export function metadataReadbackDecision(page) {
   };
 }
 
+export function notionPageMissing(error) {
+  return error?.code === "object_not_found"
+    || error?.status === 404
+    || /Could not find page with ID:/u.test(error instanceof Error ? error.message : String(error));
+}
+
 async function main() {
   loadDotEnv();
   const options = parseArgs(process.argv.slice(2));
@@ -88,10 +101,21 @@ async function main() {
   // misreported as deleted pages.
   const token = process.env.NOTION_READ_ONLY_TOKEN || process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN;
   if (!token) throw new Error("NOTION_READ_ONLY_TOKEN, NOTION_WRITE_TOKEN, or NOTION_TOKEN is required.");
-  const notion = new Client({ auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000) });
+  const clientOptions = { auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 30000) };
+  if (options.localAddress) {
+    clientOptions.fetch = nodeFetch;
+    clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
+    console.log(`direct local address: ${options.localAddress}`);
+  }
+  const notion = new Client(clientOptions);
   const db = openLedger(options.db);
   const repo = createLedgerRepository(db);
-  const tasks = repo.listWorkflowTasks({ taskType: "metadata_backfill", limit: options.limit });
+  const requestedPageIds = new Set(options.pageIds.map((value) => value.replaceAll("-", "").toLowerCase()));
+  const tasks = repo.listWorkflowTasks({
+    taskType: "metadata_backfill",
+    limit: requestedPageIds.size > 0 ? 20 : options.limit
+  }).filter((task) => requestedPageIds.size === 0
+    || requestedPageIds.has(String(task.notion_work_page_id ?? "").replaceAll("-", "").toLowerCase()));
   const rows = [];
   for (const task of tasks) {
     const row = {
@@ -120,6 +144,14 @@ async function main() {
       }
     } catch (error) {
       row.reason = error instanceof Error ? error.message : String(error);
+      if (notionPageMissing(error)) {
+        row.action = options.apply ? "closed_missing_page" : "would_close_missing_page";
+        row.reason = "Notion work page no longer exists; historical metadata task closed without inventing metadata.";
+        if (options.apply) {
+          repo.transitionWorkflowTask(task.id, "done", { reason: row.reason });
+    }
+    if (task !== tasks[tasks.length - 1]) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+  }
     }
     rows.push(row);
   }

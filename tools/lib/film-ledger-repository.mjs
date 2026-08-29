@@ -8,6 +8,7 @@ import {
   normalizeLimit
 } from "./film-ledger-domain.mjs";
 import path from "node:path";
+import { analyzeSeriesVariantCoverage } from "./film-series-coverage.mjs";
 
 export function normalizeLedgerPath(value) {
   const input = String(value);
@@ -273,8 +274,22 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
           priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
       } else {
-        ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
-          reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
+        const intakeTask = db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?")
+          .get(`intake:source:${source.id}`);
+        const normalizedRelativePath = String(source.relative_path ?? "").replaceAll("\\", "/").toLowerCase();
+        const isSyntheticFlat = normalizedRelativePath.startsWith("@flat/");
+        if (isSyntheticFlat && intakeTask?.status === "done") {
+          // Synthetic flat entries are scan artifacts; once retired, they must stay out of intake.
+        } else if (!isSyntheticFlat && source.missing === 0 && intakeTask?.status === "done"
+          && intakeTask.reason === "Source is no longer present in the configured input root") {
+          requeueIntakeTask(source.id, { reason: "Source reappeared in an enabled input root; identity, duplicate, and Notion-state analysis is required" });
+        } else if (intakeTask?.status === "done") {
+          // A completed identity/collection decision remains complete when its
+          // source directory is merely seen again after a temporary absence.
+        } else {
+          ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
+            reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
+        }
       }
       return source;
     }
@@ -402,6 +417,14 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   function ensureVariant(input) {
     const at = timestamp();
     const outputPath = input.outputPath == null ? null : normalizeLedgerPath(input.outputPath);
+    if (input.sourceId != null) {
+      const source = db.prepare("SELECT work_id FROM sources WHERE id=?").get(input.sourceId);
+      if (!source) throw new Error(`source not found: ${input.sourceId}`);
+      if (source.work_id == null) throw new Error(`source ${input.sourceId} is not bound to a work`);
+      if (source.work_id !== input.workId) {
+        throw new Error(`source ${input.sourceId} belongs to work ${source.work_id}, not variant work ${input.workId}`);
+      }
+    }
     db.prepare(`INSERT INTO variants (work_id, source_id, spec_key, display_title, audio_variant, subtitle_variant, cut_variant,
         target_size_bytes, output_path, probe_path, next_review_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -489,6 +512,28 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
+  function reopenRejectedVariant(variantId, details = {}) {
+    return withTransaction(db, () => {
+      const current = getVariant.get(variantId);
+      if (!current) throw new Error(`variant not found: ${variantId}`);
+      if (current.production_state !== "rejected") {
+        throw new Error(`variant reopen requires rejected state; current=${current.production_state}`);
+      }
+      if (current.publication_state !== "cancelled") {
+        throw new Error(`variant reopen requires cancelled publication; current=${current.publication_state}`);
+      }
+      const reason = String(details.reason ?? "").trim();
+      if (!reason) throw new Error("variant reopen requires an evidence-based reason");
+      const at = timestamp();
+      db.prepare(`UPDATE variants SET production_state='evaluated', publication_state='not_ready',
+        failure_code=NULL, failure_detail=?, next_review_at=NULL, updated_at=? WHERE id=?`)
+        .run(reason, at, variantId);
+      insertEvent.run("variant", variantId, "production_variant_reopened",
+        stableJson({ fromProduction: current.production_state, fromPublication: current.publication_state, reason }), at);
+      return getVariant.get(variantId);
+    });
+  }
+
   function refreshProductionEvidence(variantId, details = {}) {
     return withTransaction(db, () => {
       const current = getVariant.get(variantId);
@@ -537,6 +582,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         || (input.episodePageId != null && existingTarget.episode_page_id !== input.episodePageId)
         || existingTarget.expected_filename !== finalExpectedFilename
         || existingTarget.media_block_id !== finalMediaBlockId
+        || (input.mediaAssetPageId != null && existingTarget.media_asset_page_id !== input.mediaAssetPageId)
       );
       db.prepare(`INSERT INTO notion_targets (variant_id, work_page_id, season_page_id, spec_page_id, episode_page_id, expected_filename,
           media_block_id, media_asset_page_id, structure_verified_at, media_verified_at, assets_verified_at,
@@ -627,7 +673,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         -- "Z (1969)"). Only the synthetic per-episode groups are excluded;
         -- otherwise a newly scanned movie can disappear after intake binding.
         AND sources.relative_path NOT LIKE '@flat/episode %'
-        AND sources.quality_state NOT IN ('unacceptable', 'rejected')
+        AND sources.quality_state NOT IN ('unacceptable', 'rejected', 'subtitle_missing')
+        -- A subtitle-dependent foreign-original source whose evidence already
+        -- proves that Chinese subtitles are absent must stay deferred. Unknown
+        -- or unprobed evidence remains selectable, and verified Mandarin
+        -- branches are handled by the non-blocking subtitle exception.
+        AND NOT (
+          lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%no_chinese_subtitles%'
+          OR lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%"verifiedchinese":false%'
+          OR lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%"verifiedchinesesubtitle":false%'
+        )
         AND (works.next_review_at IS NULL OR works.next_review_at <= ?)
         AND (
           COALESCE(works.workflow_status, '') NOT IN ('暂缓', '已完成')
@@ -678,6 +733,21 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         || Number(right.priority_score) - Number(left.priority_score)
         || String(left.discovered_at ?? left.created_at).localeCompare(String(right.discovered_at ?? right.created_at)))
       .slice(0, capped);
+  }
+
+  function listSeriesCoverageGaps({ limit = 20 } = {}) {
+    const rows = db.prepare(`SELECT works.id AS work_id, works.canonical_title,
+        variants.id AS variant_id, variants.source_id, variants.spec_key,
+        variants.display_title, variants.output_path, variants.production_state,
+        variants.publication_state, notion_targets.expected_filename,
+        COALESCE(sources.missing, 1) AS source_missing
+      FROM variants
+      JOIN works ON works.id=variants.work_id
+      LEFT JOIN sources ON sources.id=variants.source_id
+      LEFT JOIN notion_targets ON notion_targets.variant_id=variants.id
+      WHERE works.work_type='series'
+      ORDER BY works.id, variants.id`).all();
+    return analyzeSeriesVariantCoverage(rows).slice(0, normalizeLimit(limit, 20, 100));
   }
 
   function listPublicationCandidates({ limit } = {}) {
@@ -1006,6 +1076,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         audioVariant: correction.audioVariant ?? current.audio_variant,
         subtitleVariant: correction.subtitleVariant ?? current.subtitle_variant,
         cutVariant: correction.cutVariant ?? current.cut_variant,
+        targetSizeBytes: correction.targetSizeBytes ?? current.target_size_bytes,
         outputPath: correction.outputPath ?? current.output_path,
         outputSizeBytes: correction.outputSizeBytes ?? current.output_size_bytes
       };
@@ -1016,22 +1087,23 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         && desired.audioVariant === current.audio_variant
         && desired.subtitleVariant === current.subtitle_variant
         && desired.cutVariant === current.cut_variant
+        && desired.targetSizeBytes === current.target_size_bytes
         && desired.outputPath === current.output_path
         && desired.outputSizeBytes === current.output_size_bytes
         && expectedFilename === (target?.expected_filename ?? null);
       if (unchanged) return { row: current, target, applied: false };
       const at = timestamp();
       db.prepare(`UPDATE variants SET spec_key=?, display_title=?, audio_variant=?, subtitle_variant=?, cut_variant=?,
-        output_path=?, output_size_bytes=?, updated_at=? WHERE id=?`)
+        target_size_bytes=?, output_path=?, output_size_bytes=?, updated_at=? WHERE id=?`)
         .run(desired.specKey, desired.displayTitle, desired.audioVariant, desired.subtitleVariant, desired.cutVariant,
-          desired.outputPath, desired.outputSizeBytes, at, variantId);
+          desired.targetSizeBytes, desired.outputPath, desired.outputSizeBytes, at, variantId);
       if (target && correction.expectedFilename != null) {
         db.prepare("UPDATE notion_targets SET expected_filename=?, updated_at=? WHERE variant_id=?")
           .run(expectedFilename, at, variantId);
       }
       insertEvent.run("variant", variantId, "variant_metadata_corrected", stableJson({
         from: { specKey: current.spec_key, displayTitle: current.display_title, audioVariant: current.audio_variant,
-          subtitleVariant: current.subtitle_variant, cutVariant: current.cut_variant, outputPath: current.output_path,
+          subtitleVariant: current.subtitle_variant, cutVariant: current.cut_variant, targetSizeBytes: current.target_size_bytes, outputPath: current.output_path,
           outputSizeBytes: current.output_size_bytes, expectedFilename: target?.expected_filename ?? null },
         correction: { ...correction, expectedFilename }
       }), at);
@@ -1039,9 +1111,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction,
+  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
     refreshProductionEvidence,
-    transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listPublicationCandidates, listManualUploadHandoffs,
+    transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listSeriesCoverageGaps, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
     findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection, correctVariantMetadata,

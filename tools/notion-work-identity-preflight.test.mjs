@@ -4,11 +4,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { pageRow, searchTerms } from "./notion-work-identity-preflight.mjs";
+import { createPacedFetch, pageRow, searchTerms } from "./notion-work-identity-preflight.mjs";
 
 test("searchTerms keeps title aliases and external IDs within the bounded lookup set", () => {
   const terms = searchTerms({ title: "Title", aliases: ["Alias"], imdbId: "tt123" });
   assert.deepEqual(terms, ["Title", "Alias", "tt123"]);
+});
+
+test("createPacedFetch serializes concurrent Notion requests", async () => {
+  const started = [];
+  const fetch = createPacedFetch(async (value) => {
+    started.push({ value, at: Date.now() });
+    return value;
+  }, 20);
+  const values = await Promise.all([fetch("a"), fetch("b"), fetch("c")]);
+  assert.deepEqual(values, ["a", "b", "c"]);
+  assert.deepEqual(started.map(({ value }) => value), ["a", "b", "c"]);
+  assert.ok(started[1].at - started[0].at >= 15);
+  assert.ok(started[2].at - started[1].at >= 15);
 });
 
 test("pageRow retains structured identity fields from a searched work page", () => {
