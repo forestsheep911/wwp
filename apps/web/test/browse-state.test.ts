@@ -232,3 +232,13 @@ test("CinemaApp automatically retries a failed initial browse route", () => {
     /\[activeTab, browseChannel, browseResults\.length, browseRetryVersion, browseView, query, role, unlocked\]/
   );
 });
+
+test("CinemaApp carries browse revisions across append requests and replaces stale pages on reset", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const apiSource = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+
+  assert.match(appSource, /catalogRevision: response\.catalogRevision/);
+  assert.match(appSource, /revision: append \? browseCatalogRevision : undefined/);
+  assert.match(appSource, /mergeBrowsePage\(currentResults, response\.results, \{ append, reset: response\.reset \}\)/);
+  assert.match(apiSource, /params\.set\("revision", options\.revision\)/);
+});

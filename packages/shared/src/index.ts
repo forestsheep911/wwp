@@ -519,6 +519,8 @@ export interface SearchResponse {
   hasMore?: boolean;
   nextOffset?: number;
   mode?: "paged" | "random";
+  catalogRevision?: string;
+  reset?: boolean;
 }
 
 export interface LibraryAssetResponse {

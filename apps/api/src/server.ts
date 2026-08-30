@@ -69,6 +69,7 @@ import { createAccessStore, type AccessIdentity, type MemberCreditUsageList } fr
 import { AiSummaryConfigError, AiSummaryTimeoutError, summarizeMovie } from "./ai-summary.js";
 import { isDirectMediaDownloadUrl } from "./direct-download.js";
 import { stableBrowseTie } from "./browse-order.js";
+import { browseCatalogRevision, resolveBrowseOffset } from "./browse-pagination.js";
 import { BrowseSnapshotCache, defaultBrowseSnapshotTtlMs } from "./browse-snapshot.js";
 import { CacheWorkerTrigger } from "./job-trigger.js";
 import { getNowPlaying } from "./now-playing-source.js";
@@ -1863,7 +1864,8 @@ function sortBrowseResults(results: SearchResult[], view: BrowseViewId) {
 async function handleBrowseAssets(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const mode = url.searchParams.get("mode") === "random" ? "random" : "paged";
-  const offset = requestOffset(url);
+  const requestedOffset = requestOffset(url);
+  const requestedRevision = url.searchParams.get("revision")?.trim() || undefined;
   const channel = requestBrowseChannel(url);
   const view = requestBrowseView(url);
   const line = optionalPlaybackLine(url.searchParams.get("line"));
@@ -1883,7 +1885,8 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   if (!requestedPersonId && channel === "movie" && view === "tspdtRank" && mode === "paged") {
     const served = await serveStaticTspdtBrowse(response, context, {
       startedAt,
-      offset,
+      offset: requestedOffset,
+      requestedRevision,
       limit,
       channel,
       view,
@@ -1895,7 +1898,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     }
   }
 
-  const fetchLimit = channel === "recommended" && view === "lucky" ? offset + limit + 1 : 1_000_000;
+  const fetchLimit = channel === "recommended" && view === "lucky" ? requestedOffset + limit + 1 : 1_000_000;
   let searchResults: SearchResult[] = [];
   let browseSource = "live";
   const snapshotKey = `${channel}:${view}`;
@@ -1944,6 +1947,11 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
       return Boolean(workId && personWorkIds.has(workId));
     })
     : sortedResults;
+  const catalogRevision = browseCatalogRevision(identityFilteredResults);
+  const pagination = mode === "paged"
+    ? resolveBrowseOffset({ requestedOffset, requestedRevision, currentRevision: catalogRevision })
+    : { offset: 0, reset: false };
+  const offset = pagination.offset;
   const pageResults = mode === "random" ? identityFilteredResults.slice(0, limit) : identityFilteredResults.slice(offset, offset + limit);
   const hasMore = mode === "random" ? false : identityFilteredResults.length > offset + limit;
   rememberResults(pageResults);
@@ -1959,6 +1967,9 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     mode,
     limit,
     offset,
+    requestedOffset,
+    catalogRevision,
+    reset: pagination.reset,
     hasMore,
     personId: requestedPersonId,
     durationMs: durationMs(startedAt)
@@ -1970,9 +1981,13 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     limit,
     hasMore,
     nextOffset: hasMore ? offset + results.length : undefined,
-    mode
+    mode,
+    catalogRevision,
+    reset: pagination.reset
   }, {
-    "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+    "Cache-Control": requestedRevision
+      ? "private, no-cache"
+      : "private, max-age=60, stale-while-revalidate=300",
     Vary: "Cookie"
   });
 }
@@ -2047,6 +2062,7 @@ async function serveStaticTspdtBrowse(
   options: {
     startedAt: number;
     offset: number;
+    requestedRevision?: string;
     limit: number;
     channel: BrowseChannel;
     view: BrowseViewId;
@@ -2060,9 +2076,15 @@ async function serveStaticTspdtBrowse(
       return false;
     }
 
-    const pageEntries = state.entries.slice(options.offset, options.offset + options.limit);
+    const catalogRevision = `tspdt:${state.generatedAt}:${state.entries.length}`;
+    const pagination = resolveBrowseOffset({
+      requestedOffset: options.offset,
+      requestedRevision: options.requestedRevision,
+      currentRevision: catalogRevision
+    });
+    const pageEntries = state.entries.slice(pagination.offset, pagination.offset + options.limit);
     const pageResults = pageEntries.map((entry) => entry.result);
-    const hasMore = state.entries.length > options.offset + options.limit;
+    const hasMore = state.entries.length > pagination.offset + options.limit;
     rememberResults(pageResults);
     const results = await enrichResultsWithCache(pageResults, options.line);
 
@@ -2075,7 +2097,10 @@ async function serveStaticTspdtBrowse(
       view: options.view,
       mode: options.mode,
       limit: options.limit,
-      offset: options.offset,
+      offset: pagination.offset,
+      requestedOffset: options.offset,
+      catalogRevision,
+      reset: pagination.reset,
       hasMore,
       tspdtGeneratedAt: state.generatedAt,
       tspdtEntryCount: state.entries.length,
@@ -2084,11 +2109,13 @@ async function serveStaticTspdtBrowse(
 
     sendJson(response, 200, {
       results,
-      offset: options.offset,
+      offset: pagination.offset,
       limit: options.limit,
       hasMore,
-      nextOffset: hasMore ? options.offset + results.length : undefined,
-      mode: options.mode
+      nextOffset: hasMore ? pagination.offset + results.length : undefined,
+      mode: options.mode,
+      catalogRevision,
+      reset: pagination.reset
     });
     return true;
   } catch (error) {

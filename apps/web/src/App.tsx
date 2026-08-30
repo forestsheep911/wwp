@@ -136,6 +136,7 @@ import {
   writeJsonStorage
 } from "./cinema/storage";
 import { browseCacheKey, readBrowseCache, writeBrowseCache } from "./cinema/browse-cache";
+import { mergeBrowsePage } from "./cinema/browse-page";
 import {
   resolveBrowseRequest,
   type BrowseLoadMode
@@ -224,6 +225,7 @@ interface BrowseViewCacheEntry {
   hasMore: boolean;
   nextOffset: number;
   mode: BrowseLoadMode;
+  catalogRevision?: string;
 }
 
 const browseRetryDelaysMs = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
@@ -302,6 +304,7 @@ function CinemaApp() {
   const [libraryScrollRestoreVersion, setLibraryScrollRestoreVersion] = useState(0);
   const [browseHasMore, setBrowseHasMore] = useState(false);
   const [browseNextOffset, setBrowseNextOffset] = useState(0);
+  const [browseCatalogRevision, setBrowseCatalogRevision] = useState<string | undefined>();
   const [browseLoadMode, setBrowseLoadMode] = useState<BrowseLoadMode>("random");
   const browseViewCacheRef = useRef(new Map<string, BrowseViewCacheEntry>());
   const [job, setJob] = useState<CacheJob | undefined>();
@@ -1707,26 +1710,25 @@ function CinemaApp() {
     setBrowseHasMore(entry.hasMore);
     setBrowseNextOffset(entry.nextOffset);
     setBrowseLoadMode(entry.mode);
+    setBrowseCatalogRevision(entry.catalogRevision);
   }
 
   function applyBrowseResponse(
-    response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode },
+    response: { results: ResultWithCache[]; hasMore?: boolean; nextOffset?: number; mode?: BrowseLoadMode; catalogRevision?: string; reset?: boolean },
     append: boolean,
     mode: BrowseLoadMode,
     cacheKey?: string,
     persistentCacheKey?: string
   ) {
     setBrowseResults((currentResults) => {
-      const currentKeys = new Set(currentResults.map((result) => result.assetKey));
-      const nextResults = append
-        ? [...currentResults, ...response.results.filter((result) => !currentKeys.has(result.assetKey))]
-        : response.results;
+      const nextResults = mergeBrowsePage(currentResults, response.results, { append, reset: response.reset });
       if (cacheKey) {
         const entry = {
           results: nextResults,
           hasMore: Boolean(response.hasMore),
           nextOffset: response.nextOffset ?? 0,
-          mode: response.mode ?? mode
+          mode: response.mode ?? mode,
+          catalogRevision: response.catalogRevision
         };
         browseViewCacheRef.current.set(cacheKey, entry);
         if (persistentCacheKey) {
@@ -1738,6 +1740,7 @@ function CinemaApp() {
     setBrowseHasMore(Boolean(response.hasMore));
     setBrowseNextOffset(response.nextOffset ?? 0);
     setBrowseLoadMode(response.mode ?? mode);
+    setBrowseCatalogRevision(response.catalogRevision);
   }
 
   function refreshBrowseAssets(
@@ -1798,7 +1801,8 @@ function CinemaApp() {
         const response = await browseAssets(limit, offset, {
           mode,
           channel: requestChannel,
-          view: requestView
+          view: requestView,
+          revision: append ? browseCatalogRevision : undefined
         });
 
         if (!browseResponseIsCurrent(browseRequestStateRef.current.active, request)) {
@@ -2677,6 +2681,7 @@ function CinemaApp() {
     setBrowseLoadingMore(false);
     setBrowseHasMore(false);
     setBrowseNextOffset(0);
+    setBrowseCatalogRevision(undefined);
     setPlayback(undefined);
     setJob(undefined);
     setAsset(undefined);

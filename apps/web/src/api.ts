@@ -299,7 +299,7 @@ export function searchAssets(query: string, line?: PlaybackLine) {
 export function browseAssets(
   limit = 60,
   offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string } = {}
+  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string; revision?: string } = {}
 ) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (options.mode) {
@@ -316,6 +316,9 @@ export function browseAssets(
   }
   if (options.personId) {
     params.set("person", options.personId);
+  }
+  if (options.revision) {
+    params.set("revision", options.revision);
   }
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
 }
