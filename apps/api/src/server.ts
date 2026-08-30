@@ -44,7 +44,6 @@ import {
   type MemberCreditUsageResponse,
   type MemberNoticeListResponse,
   type MediaVariant,
-  type MoviePoster,
   type MovieSummaryRequest,
   type MovieRequestsResponse,
   type LibraryAssetResponse,
@@ -92,6 +91,7 @@ import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
 import { getPublicPerson, listPublicPeople, listPublicPersonIssues } from "./person-service.js";
 import { buildSiteStatistics, type SiteStatistics } from "./site-statistics.js";
+import { mergeCachedPosters } from "./poster-refresh.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
@@ -1020,47 +1020,6 @@ function resultHasMediaAssetsVariants(result: SearchResult) {
 
 function resultNeedsSourceRefreshOnHit(result: SearchResult) {
   return Boolean(result.sourcePageId) && !resultHasMediaAssetsVariants(result);
-}
-
-function posterStableKey(poster: MoviePoster) {
-  return poster.originalUrl ?? poster.url ?? poster.blobName;
-}
-
-function isCachedBlobPoster(poster: MoviePoster) {
-  return poster.source === "blob" && Boolean(poster.blobName);
-}
-
-function mergeCachedPosters(existing: SearchResult, refreshed: SearchResult) {
-  const existingPosters = existing.metadata?.posters ?? [];
-  const cachedPostersByKey = new Map(
-    existingPosters
-      .filter(isCachedBlobPoster)
-      .map((poster) => [posterStableKey(poster), poster] as const)
-      .filter(([key]) => Boolean(key))
-  );
-  if (cachedPostersByKey.size === 0) {
-    return refreshed;
-  }
-
-  const seen = new Set<string>();
-  const posters: MoviePoster[] = [];
-  for (const poster of refreshed.metadata?.posters ?? []) {
-    const key = posterStableKey(poster);
-    if (!key || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    posters.push(cachedPostersByKey.get(key) ?? poster);
-  }
-
-  return {
-    ...refreshed,
-    metadata: {
-      ...refreshed.metadata,
-      posterUrl: posters.find(isCachedBlobPoster)?.url ?? refreshed.metadata?.posterUrl,
-      posters
-    }
-  };
 }
 
 async function refreshIndexedMediaAssetResults(query: string, results: SearchResult[]) {
