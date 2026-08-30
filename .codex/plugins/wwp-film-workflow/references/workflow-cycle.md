@@ -2,7 +2,7 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
-## Stable Contract (0.1.46)
+## Stable Contract (0.1.47)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as

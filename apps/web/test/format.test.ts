@@ -167,6 +167,36 @@ test("variantSpecLabels hides a lone default theatrical edition", () => {
   assert.deepEqual(variantSpecLabels(variant), ["1080p", "简英", "1.01G"]);
 });
 
+test("variantSpecLabels keeps dubbed and original-audio variants visibly distinct", () => {
+  const base: MediaVariant = {
+    assetKey: "1917-1080p",
+    label: "1917 中英双语字幕烧录 1080p H.265 4.36GB",
+    sourceUrl: "https://example.local/1917.mp4",
+    kind: "file",
+    summary: "Structured Media Assets row.",
+    metadata: {
+      structuredSource: "media_assets",
+      resolution: "1080p",
+      subtitleLanguages: ["zh-Hans", "en"],
+      approximateSizeGb: 4.36
+    }
+  };
+
+  const mandarin: MediaVariant = {
+    ...base,
+    assetKey: "1917-mandarin-1080p",
+    metadata: { ...base.metadata, audioLanguages: ["zh-Mandarin"] }
+  };
+  const english: MediaVariant = {
+    ...base,
+    assetKey: "1917-english-1080p",
+    metadata: { ...base.metadata, audioLanguages: ["en"] }
+  };
+
+  assert.deepEqual(variantSpecLabels(mandarin), ["1080p", "国配", "简英", "4.36G"]);
+  assert.deepEqual(variantSpecLabels(english), ["1080p", "英语", "简英", "4.36G"]);
+});
+
 test("variantSpecLabels can show theatrical when sibling cuts require distinction", () => {
   const theatrical: MediaVariant = {
     assetKey: "film-theatrical",

@@ -342,3 +342,12 @@ test("automatic goal continuations suppress duplicate no-change reports", () => 
   assert.match(cycle, /suppress a\s+duplicate user-visible status report/u);
   assert.match(cycle, /reported once with its exact next\s+trigger or review time/u);
 });
+
+test("HDR color QC requires matched source-reference and final frames", () => {
+  const encoding = read("references/encoding-rules.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+
+  assert.match(encoding, /at least four distributed, content-bearing timestamps as matched pairs/u);
+  assert.match(encoding, /single output-only contact sheet cannot close this gate/u);
+  assert.match(producer, /matched source-reference\/final frames at distributed timestamps/u);
+});

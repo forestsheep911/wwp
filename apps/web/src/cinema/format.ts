@@ -378,6 +378,16 @@ const mediaLanguageLabels: Record<string, string> = {
   none: "无"
 };
 
+const mediaAudioLanguageLabels: Record<string, string> = {
+  "zh-Mandarin": "国配",
+  "zh-Cantonese": "粤配",
+  "zh-Taiwan": "台配",
+  en: "英语",
+  ja: "日语",
+  ko: "韩语",
+  commentary: "评论音轨"
+};
+
 const sourceLineageLabels: Record<string, string> = {
   encode: "压制版",
   remux: "Remux",
@@ -393,6 +403,13 @@ function labelList(values?: string[]) {
     ?.map((value) => mediaLanguageLabels[value] ?? sourceLineageLabels[value] ?? value)
     .filter(Boolean)
     .join("");
+}
+
+function audioLabelList(values?: string[]) {
+  return values
+    ?.map((value) => mediaAudioLanguageLabels[value] ?? mediaLanguageLabels[value] ?? value)
+    .filter(Boolean)
+    .join("+");
 }
 
 function uniqueDisplayLabels(values: Array<string | undefined>) {
@@ -584,11 +601,13 @@ export function variantSpecLabels(variant: MediaVariant, options: { compact?: bo
   const subtitles = metadata.noSubtitles
     ? "无"
     : labelList(metadata.subtitleLanguages);
+  const audio = audioLabelList(metadata.audioLanguages);
   const labels = uniqueDisplayLabels([
     includeEpisode ? variantEpisodeLabel(variant) : undefined,
     variantEditionLabel(variant, options),
     metadata.resolution,
     variantDurationLabel(variant),
+    audio,
     subtitles,
     includeSize ? variantSizeLabel(variant) : undefined
   ]);
@@ -605,6 +624,7 @@ export function variantSpecGroupLabels(variant: MediaVariant) {
   const subtitles = metadata.noSubtitles
     ? "无"
     : labelList(metadata.subtitleLanguages);
+  const audio = audioLabelList(metadata.audioLanguages);
   const sourceLabel = [
     variant.sourceBreadcrumb?.[1],
     metadata.sourceLabel,
@@ -615,7 +635,7 @@ export function variantSpecGroupLabels(variant: MediaVariant) {
   const resolution = metadata.resolution ?? sourceResolution;
   const sourceProfile = sourceSize ? `${sourceSize}G` : undefined;
 
-  return uniqueDisplayLabels([variantEditionLabel(variant), resolution, subtitles, sourceProfile]);
+  return uniqueDisplayLabels([variantEditionLabel(variant), resolution, audio, subtitles, sourceProfile]);
 }
 
 export function variantSpecGroupText(title: string, variant: MediaVariant) {
