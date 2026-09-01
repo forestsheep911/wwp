@@ -2291,7 +2291,7 @@ function VariantButtons({
             onClick={onShowAllVariants}
             title={copy.library.viewAllVariants}
           >
-            {copy.library.moreVariants(hiddenGroupCount)}
+            {copy.library.moreVariants(hiddenGroupCount, specGroups.length)}
           </Button>
         ) : null}
       </div>
@@ -2453,10 +2453,10 @@ function VariantButtons({
             onClick={onShowAllVariants}
             title={copy.library.viewAllVariants}
           >
-            {copy.library.moreVariants(hiddenVariantCount)}
+            {copy.library.moreVariants(hiddenVariantCount, variants.length)}
           </Button>
         ) : (
-          <Badge variant="secondary">{copy.library.moreVariants(hiddenVariantCount)}</Badge>
+          <Badge variant="secondary">{copy.library.moreVariants(hiddenVariantCount, variants.length)}</Badge>
         )
       ) : null}
     </div>
