@@ -9,6 +9,7 @@ import type {
 } from "@wwpdw/shared";
 import { normalizePersonExternalIds, normalizePersonNameSearchKey } from "@wwpdw/shared";
 import { rebuildDerivedPersonIndexes } from "@wwpdw/cache-store";
+import { assertVerifiedPersonProfileQuality } from "./person-biography-quality.js";
 
 export interface ReviewedPeopleReport {
   generatedAt: string;
@@ -47,6 +48,7 @@ export function planReviewedPeopleReportApply(
   if (proposedIds.size !== report.proposedProfiles.length) throw new Error("Reviewed report contains duplicate personId profiles.");
   for (const profile of report.proposedProfiles) {
     assertStablePersonId(profile.personId);
+    assertVerifiedPersonProfileQuality(profile);
     const currentEntry = nextCatalog.people[profile.personId];
     const mergedProfile = mergeReviewedProfileWithNotionOverlay(currentEntry?.profile, profile);
     nextCatalog.people[profile.personId] = {
@@ -76,7 +78,11 @@ export function planReviewedPeopleReportApply(
     const matches = resultsByWorkId.get(work.workId) ?? [];
     if (matches.length !== 1) throw new Error(`Expected exactly one search result for work ${work.workId}; found ${matches.length}.`);
 
-    const linked = work.credits.filter((credit): credit is MovieCreditEntry & { personId: string } => Boolean(credit.personId)).map((credit) => {
+    const original = matches[0];
+    if (!original.metadata?.work) throw new Error(`Search result for ${work.workId} has no structured work metadata.`);
+    const sourceCredits = structuredClone(original.metadata.work.credits ?? original.metadata.credits ?? []);
+    const mergedCredits = mergeReviewedCredits(sourceCredits, work.credits);
+    const linked = mergedCredits.filter((credit): credit is MovieCreditEntry & { personId: string } => Boolean(credit.personId)).map((credit) => {
       assertStablePersonId(credit.personId);
       if (!nextCatalog.people[credit.personId]) {
         throw new Error(`Credit ${credit.name} in ${work.workId} references missing person ${credit.personId}.`);
@@ -84,11 +90,9 @@ export function planReviewedPeopleReportApply(
       return credit;
     });
     linkedCreditCount += linked.length;
-    unlinkedCreditCount += work.credits.length - linked.length;
+    unlinkedCreditCount += mergedCredits.length - linked.length;
     nextCatalog.creditsByWorkId[work.workId] = dedupeCredits(linked);
 
-    const original = matches[0];
-    if (!original.metadata?.work) throw new Error(`Search result for ${work.workId} has no structured work metadata.`);
     const updated = structuredClone(original);
     const originalMetadata = original.metadata;
     const originalWork = original.metadata.work;
@@ -105,18 +109,18 @@ export function planReviewedPeopleReportApply(
     );
     updated.metadata = {
       ...originalMetadata,
-      credits: structuredClone(work.credits),
+      credits: structuredClone(mergedCredits),
       ...(metadataDataQuality ? { dataQuality: metadataDataQuality } : {}),
       work: {
         ...originalWork,
-        credits: structuredClone(work.credits),
+        credits: structuredClone(mergedCredits),
         ...(workDataQuality ? { dataQuality: workDataQuality } : {}),
         updatedAt: generatedAt
       }
     };
     if (
-      !sameJson(original.metadata.work.credits ?? [], work.credits)
-      || !sameJson(original.metadata.credits ?? [], work.credits)
+      !sameJson(original.metadata.work.credits ?? [], mergedCredits)
+      || !sameJson(original.metadata.credits ?? [], mergedCredits)
       || !sameJson(original.metadata.dataQuality, metadataDataQuality)
       || !sameJson(original.metadata.work.dataQuality, workDataQuality)
     ) {
@@ -205,6 +209,52 @@ export async function applyPersonCatalogPlan(input: {
   }
 }
 
+function mergeReviewedCredits(
+  sourceCredits: MovieCreditEntry[],
+  reviewedCredits: MovieCreditEntry[]
+): MovieCreditEntry[] {
+  const merged = structuredClone(sourceCredits);
+  const consumed = new Set<number>();
+  for (const reviewed of reviewedCredits) {
+    const sourceIndex = merged.findIndex((source, index) => !consumed.has(index) && sameCreditIdentity(source, reviewed));
+    if (!reviewed.personId) {
+      if (sourceIndex < 0) merged.push(structuredClone(reviewed));
+      continue;
+    }
+    if (sourceIndex < 0) {
+      merged.push(structuredClone(reviewed));
+      continue;
+    }
+    consumed.add(sourceIndex);
+    merged[sourceIndex] = {
+      ...merged[sourceIndex],
+      name: reviewed.name,
+      ...(reviewed.originalName ? { originalName: reviewed.originalName } : {}),
+      ...(reviewed.externalIds ? { externalIds: reviewed.externalIds } : {}),
+      personId: reviewed.personId
+    };
+  }
+  return merged;
+}
+
+function sameCreditIdentity(left: MovieCreditEntry, right: MovieCreditEntry) {
+  const leftIds = normalizePersonExternalIds(left.externalIds);
+  const rightIds = normalizePersonExternalIds(right.externalIds);
+  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+    if (leftIds[source] && rightIds[source] && leftIds[source] === rightIds[source]) return true;
+  }
+  const leftNames = [left.name, left.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
+  const rightNames = [right.name, right.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
+  const leftJob = normalizePersonNameSearchKey(left.job ?? "");
+  const rightJob = normalizePersonNameSearchKey(right.job ?? "");
+  const compatibleActingJobs = new Set(["actor", "voiceactor"]);
+  const sameJob = leftJob === rightJob
+    || (left.department === "acting" && compatibleActingJobs.has(leftJob) && compatibleActingJobs.has(rightJob));
+  return leftNames.some((name) => name && rightNames.includes(name))
+    && left.department === right.department
+    && sameJob;
+}
+
 function dedupeCredits(credits: Array<MovieCreditEntry & { personId: string }>): PersonCreditRef[] {
   const values = new Map<string, PersonCreditRef>();
   for (const credit of credits) {
@@ -226,7 +276,6 @@ function dedupeCredits(credits: Array<MovieCreditEntry & { personId: string }>):
 function mergeReviewedProfileWithNotionOverlay(current: PersonProfile | undefined, reviewed: PersonProfile): PersonProfile {
   if (!current?.sourceRefs?.some((ref) => ref.source === "notion")) return structuredClone(reviewed);
 
-  const notionNames = current.names.filter((entry) => entry.source === "notion");
   // Once a profile has a Notion overlay, the Notion sync owns the complete
   // biography object, including any supplemental source texts it retained.
   // Re-composing those texts from an older reviewed report makes replays
@@ -234,17 +283,21 @@ function mergeReviewedProfileWithNotionOverlay(current: PersonProfile | undefine
   const biography = current.biography
     ? structuredClone(current.biography)
     : structuredClone(reviewed.biography);
-  const notionImages = (current.profileImages ?? []).filter((entry) => entry.source === "notion");
-  const notionSourceRefs = current.sourceRefs.filter((entry) => entry.source === "notion");
-  const profileImages = [...notionImages, ...(reviewed.profileImages ?? []).filter((entry) => entry.source !== "notion")];
+  // Preserve the complete current collections as well. They may contain aliases,
+  // images, or references added by a later Notion sync or enrichment pass that
+  // were not present in the older reviewed report being replayed. A subsequent
+  // targeted Notion sync applies any newly reviewed editorial fields.
+  const names = structuredClone(current.names);
+  const profileImages = structuredClone(current.profileImages ?? []);
+  const sourceRefs = structuredClone(current.sourceRefs);
 
   return {
     ...structuredClone(reviewed),
-    names: uniqueNameEntries([...notionNames, ...reviewed.names]),
+    names,
     departments: structuredClone(current.departments),
     ...(biography ? { biography } : {}),
     ...(profileImages.length || current.profileImages ? { profileImages } : {}),
-    sourceRefs: [...notionSourceRefs, ...(reviewed.sourceRefs ?? []).filter((entry) => entry.source !== "notion")],
+    sourceRefs,
     ...(current.lockedFields ? { lockedFields: structuredClone(current.lockedFields) } : {}),
     ...(current.hiddenFromWebsite !== undefined ? { hiddenFromWebsite: current.hiddenFromWebsite } : {}),
     dataQuality: structuredClone(current.dataQuality),

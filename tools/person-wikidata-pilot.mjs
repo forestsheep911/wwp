@@ -10,6 +10,7 @@ import { JsonEvidenceCache, LocalRunLease, readCheckpoint, writeJsonAtomic } fro
 import { ProviderRateLimiter } from "../apps/api/src/person-sources/provider-http.ts";
 import { assertWikidataPersonRole, NonHumanWikidataEntityError, WikidataPersonSource, WikidataRoleMismatchError } from "../apps/api/src/person-sources/wikidata.ts";
 import { WikidataWorkCreditsSource } from "../apps/api/src/person-sources/wikidata-work.ts";
+import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args.stateDir ?? ".local-data/people/wikidata-pilot");
@@ -19,8 +20,21 @@ const cache = new JsonEvidenceCache(path.join(root, "cache"));
 const lease = new LocalRunLease(path.join(root, "pilot.lock"));
 const limiter = new ProviderRateLimiter(args.intervalMs);
 const catalogBackend = resolveCatalogBackend(args.searchBackend);
+const productionLock = acquireProductionLock({ owner: "person-wikidata-pilot", mode: "people-only" });
+
+let stopping = false;
+const handleTermination = async (signal) => {
+  if (stopping) return;
+  stopping = true;
+  await lease.release();
+  productionLock.release();
+  process.exit(signal === "SIGINT" ? 130 : 143);
+};
+process.once("SIGINT", () => void handleTermination("SIGINT"));
+process.once("SIGTERM", () => void handleTermination("SIGTERM"));
 
 await lease.acquire();
+const watchdog = setTimeout(() => void handleTermination("SIGTERM"), 120_000);
 try {
   const work = await loadWork(args);
   const checkpoint = await readCheckpoint(checkpointPath);
@@ -115,7 +129,11 @@ try {
     ratePolicy: report.ratePolicy
   }, null, 2)}\n`);
 } finally {
+  clearTimeout(watchdog);
+  process.removeAllListeners("SIGINT");
+  process.removeAllListeners("SIGTERM");
   await lease.release();
+  productionLock.release();
 }
 
 function selectProfileIds(credits, anchors = []) {
@@ -150,7 +168,19 @@ async function loadWork(options) {
     const snapshot = JSON.parse(await readFile(path.resolve(options.snapshot), "utf8"));
     return findWork(snapshot, options.workId);
   }
-  const results = await createSearchIndexStore(options.searchBackend).search(options.workId, 20);
+  const searchStore = createSearchIndexStore(options.searchBackend);
+  if (options.assetKey) {
+    const result = await searchStore.getResult(options.assetKey);
+    const work = result?.metadata?.work;
+    if (work?.workId === options.workId) {
+      return {
+        title: work.display?.title ?? work.titles?.[0]?.title ?? result.title ?? options.workId,
+        credits: work.credits ?? []
+      };
+    }
+    throw new Error(`Asset ${options.assetKey} did not contain work ${options.workId}.`);
+  }
+  const results = await searchStore.search(options.workId, 20);
   for (const result of results) {
     const work = result.metadata?.work;
     if (work?.workId !== options.workId) continue;
@@ -165,6 +195,7 @@ async function loadWork(options) {
 function parseArgs(values) {
   const result = {
     workId: undefined,
+    assetKey: undefined,
     wikidataId: undefined,
     kind: "movie",
     profileBudget: 10,
@@ -178,6 +209,7 @@ function parseArgs(values) {
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--work-id") result.workId = required(values[++index], value);
+    else if (value === "--asset-key") result.assetKey = required(values[++index], value);
     else if (value === "--wikidata-id") result.wikidataId = required(values[++index], value);
     else if (value === "--kind") result.kind = required(values[++index], value) === "series" ? "series" : "movie";
     else if (value === "--profile-budget") result.profileBudget = positiveInteger(values[++index], value);

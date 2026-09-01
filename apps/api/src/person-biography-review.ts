@@ -2,6 +2,7 @@ import type { PersonEnrichmentReport } from "./person-enrichment.js";
 import type { PersonNameEntry, PersonProfile } from "@wwpdw/shared";
 import { normalizePersonNameSearchKey } from "@wwpdw/shared";
 import { reviewChineseBiography, reviewEnglishBiography, reviewPersonCoreProfile } from "./person-biography-quality.js";
+import { withPersonQualityAssessment } from "./person-quality-score.js";
 
 export interface ReviewedChineseBiography {
   personId: string;
@@ -63,7 +64,8 @@ export function applyReviewedCreditNames<T extends Pick<PersonEnrichmentReport, 
       credits: work.credits.map((credit) => {
         const canonicalName = credit.personId ? canonicalByPersonId.get(credit.personId) : undefined;
         const overrideName = credit.externalIds?.wikidata ? externalOverrides[credit.externalIds.wikidata] : undefined;
-        return canonicalName || overrideName ? { ...credit, name: canonicalName ?? overrideName! } : credit;
+        const nextName = overrideName ?? canonicalName;
+        return nextName ? { ...credit, name: nextName } : credit;
       })
     }))
   };
@@ -114,7 +116,7 @@ function applyReview(profile: PersonProfile, review: ReviewedChineseBiography, o
     updatedAt: observedAt
   };
   const coreReview = reviewPersonCoreProfile(reviewed);
-  return {
+  return withPersonQualityAssessment({
     ...reviewed,
     dataQuality: {
       status: profile.dataQuality.status === "conflict"
@@ -123,7 +125,7 @@ function applyReview(profile: PersonProfile, review: ReviewedChineseBiography, o
       ...(coreReview.issues.length ? { issues: coreReview.issues } : {}),
       updatedAt: observedAt
     }
-  };
+  }, { reviewedAt: observedAt });
 }
 
 function manualName(value: string, language: string | undefined, kind: PersonNameEntry["kind"], observedAt: string): PersonNameEntry {

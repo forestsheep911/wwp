@@ -17,7 +17,9 @@ import { AzurePeopleNotionSyncStateStore } from "./person-notion-sync-state.js";
 export async function runPeopleNotionSyncFromEnvironment(options: {
   apply?: boolean;
   limit?: number;
+  maxApplied?: number;
   pageSize?: number;
+  personIds?: string[];
   stateDir?: string;
   beforeCheckpoint?: (context: {
     since?: string;
@@ -65,7 +67,9 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
       checkpoint,
       apply: options.apply ?? true,
       limit: options.limit,
+      maxApplied: options.maxApplied,
       pageSize: options.pageSize ?? numberOption("WWPDW_PEOPLE_NOTION_SYNC_PAGE_SIZE", 100),
+      personIds: options.personIds,
       overlapMinutes: numberOption("WWPDW_PEOPLE_NOTION_SYNC_OVERLAP_MINUTES", 10),
       beforeCheckpoint: options.beforeCheckpoint,
       persistCheckpoint: (value) => azureState

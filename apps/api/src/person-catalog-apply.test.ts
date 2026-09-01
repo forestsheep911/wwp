@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { emptyPersonCatalogState } from "@wwpdw/cache-store";
-import type { PersonProfile, SearchResult } from "@wwpdw/shared";
+import { emptyPersonCatalogState, rebuildDerivedPersonIndexes } from "@wwpdw/cache-store";
+import type { MovieCreditEntry, PersonProfile, SearchResult } from "@wwpdw/shared";
 import { applyPersonCatalogPlan, planReviewedPeopleReportApply, type ReviewedPeopleReport } from "./person-catalog-apply.js";
 
 const personId = "person_123e4567-e89b-42d3-a456-426614174000";
@@ -9,7 +9,7 @@ const profile: PersonProfile = {
   personId,
   names: [{ value: "张三", kind: "display", source: "tmdb", status: "verified", observedAt: "2026-08-10T00:00:00.000Z" }],
   externalIds: { tmdb: "10" },
-  dataQuality: { status: "verified", updatedAt: "2026-08-10T00:00:00.000Z" },
+  dataQuality: { status: "partial", updatedAt: "2026-08-10T00:00:00.000Z" },
   createdAt: "2026-08-10T00:00:00.000Z",
   updatedAt: "2026-08-10T00:00:00.000Z"
 };
@@ -57,6 +57,39 @@ test("keeps unlinked cast relations in the work while indexing only materialized
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 2);
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[1].personId, undefined);
   assert.equal(plan.nextCatalog.creditsByWorkId["work-1"].length, 1);
+});
+
+test("merges reviewed links into the complete canonical source credit list", () => {
+  const movie = result("work-1");
+  const sourceCredits: NonNullable<NonNullable<SearchResult["metadata"]>["work"]>["credits"] = [
+    { name: "张三", department: "directing", job: "Director", source: "tmdb" },
+    { name: "待补演员", department: "acting", job: "Actor", source: "tmdb" },
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    credits: structuredClone(sourceCredits),
+    work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) }
+  };
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], report());
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.summary.unlinkedCreditCount, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 2);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[1].personId, undefined);
+  assert.equal(plan.nextCatalog.creditsByWorkId["work-1"].length, 1);
+});
+
+test("matches voice-actor review credits to legacy actor rows without appending duplicates", () => {
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [{ name: "奥利维娅·科尔曼", department: "acting", job: "Actor", source: "tmdb" }];
+  movie.metadata = { ...movie.metadata, credits: structuredClone(sourceCredits), work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) } };
+  const reviewed = report();
+  reviewed.proposedProfiles[0].names[0].value = "奥利维娅·科尔曼";
+  reviewed.proposedCredits[0].credits = [{ personId, name: "奥利维娅·科尔曼", department: "acting", job: "Voice Actor", source: "wikidata", externalIds: { wikidata: "Q7088045" } }];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
 });
 
 test("clears the stale missing-credits marker when reviewed credits are published", () => {
@@ -151,6 +184,14 @@ test("replaying a reviewed report preserves the authoritative Notion editorial o
     sourceRef: "page-1",
     observedAt: editedAt
   });
+  syncedProfile.names.push({
+    value: "A later enriched alias",
+    language: "en",
+    kind: "alternate",
+    source: "wikidata",
+    status: "strong",
+    observedAt: editedAt
+  });
   syncedProfile.biography = {
     ...syncedProfile.biography,
     texts: [
@@ -178,11 +219,13 @@ test("replaying a reviewed report preserves the authoritative Notion editorial o
   syncedProfile.dataQuality.updatedAt = editedAt;
   syncedProfile.updatedAt = editedAt;
   synced.people[personId].updatedAt = editedAt;
+  rebuildDerivedPersonIndexes(synced);
 
   const replay = planReviewedPeopleReportApply(synced, [first.updatedResults[0]], pilot, "2026-08-10T02:00:00.000Z");
   assert.equal(replay.summary.catalogChanged, false);
   assert.equal(replay.updatedResults.length, 0);
   assert.equal(replay.nextCatalog.people[personId].profile.names[0].source, "notion");
+  assert.ok(replay.nextCatalog.people[personId].profile.names.some((entry) => entry.value === "A later enriched alias"));
   assert.deepEqual(replay.nextCatalog.people[personId].profile.biography?.texts, syncedProfile.biography.texts);
   assert.deepEqual(replay.nextCatalog.people[personId].profile.lockedFields, ["biographyZh"]);
 });

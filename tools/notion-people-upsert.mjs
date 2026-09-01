@@ -8,12 +8,15 @@ import { assertUniqueExternalIds, NotionPeopleSource } from "../apps/api/src/not
 import { ProviderRateLimiter } from "../apps/api/src/person-sources/provider-http.ts";
 import { LocalRunLease, writeJsonAtomic } from "../apps/api/src/person-enrichment.ts";
 import { installNotionDnsOverride, notionProxyUrl } from "../apps/api/src/notion-network.ts";
+import { assertVerifiedPersonProfileQuality } from "../apps/api/src/person-biography-quality.ts";
+import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const reportPath = path.resolve(args.report ?? ".local-data/people/dry-run-report.json");
 const report = JSON.parse(await readFile(reportPath, "utf8"));
 const profiles = (report.proposedProfiles ?? []).slice(0, args.limit ?? Number.MAX_SAFE_INTEGER);
 assertUniqueExternalIds(profiles);
+for (const profile of profiles) assertVerifiedPersonProfileQuality(profile);
 if (!args.apply) {
   process.stdout.write(`${JSON.stringify({
     mode: "dry-run",
@@ -51,9 +54,10 @@ const checkpointPath = path.resolve(args.checkpoint ?? path.join(stateDir, "noti
 const checkpoint = await readCheckpoint(checkpointPath);
 const summary = { created: 0, updated: 0, unchanged: 0, completed: [], failures: [] };
 const lease = new LocalRunLease(path.join(stateDir, "notion-people.lock"));
+const productionLock = acquireProductionLock({ owner: "notion-people-upsert", mode: "people-only" });
 
-await lease.acquire();
 try {
+  await lease.acquire();
   for (const profile of profiles) {
     try {
       const result = await source.upsert(profile);
@@ -69,6 +73,7 @@ try {
 } finally {
   proxyAgent?.destroy();
   await lease.release();
+  productionLock.release();
 }
 process.stdout.write(`${JSON.stringify({ mode: "applied", reportPath, checkpointPath, ...summary }, null, 2)}\n`);
 if (summary.failures.length) process.exitCode = 1;

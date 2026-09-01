@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { createPersonCatalogStore, createSearchIndexStore } from "@wwpdw/cache-store";
 import { LocalRunLease, writeJsonAtomic } from "../apps/api/src/person-enrichment.ts";
 import { applyPersonCatalogPlan, planReviewedPeopleReportApply } from "../apps/api/src/person-catalog-apply.ts";
+import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const reportPath = path.resolve(args.report ?? ".local-data/people/dry-run-report.json");
@@ -15,13 +16,18 @@ if (args.apply && !args.confirmReviewedPilot) {
 }
 
 const lease = new LocalRunLease(path.join(stateDir, "catalog-apply.lock"));
-await lease.acquire();
+const productionLock = acquireProductionLock({ owner: "person-catalog-apply", mode: "people-only" });
 try {
+  await lease.acquire();
   const report = JSON.parse(await readFile(reportPath, "utf8"));
   const personStore = createPersonCatalogStore();
   const searchStore = createSearchIndexStore();
   const currentCatalog = await personStore.getState();
-  const searchResults = await searchStore.search("", 1_000_000);
+  // Biography-only repair batches have no work credits to inspect or update.
+  // Avoid downloading the complete production movie index for those runs.
+  const searchResults = report.proposedCredits?.length
+    ? await searchStore.search("", 1_000_000)
+    : [];
   const generatedAt = new Date().toISOString();
   const plan = planReviewedPeopleReportApply(currentCatalog, searchResults, report, generatedAt);
 
@@ -51,6 +57,7 @@ try {
   }
 } finally {
   await lease.release();
+  productionLock.release();
 }
 
 function parseArgs(values) {

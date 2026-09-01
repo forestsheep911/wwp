@@ -42,6 +42,10 @@ does not contact Notion or external metadata providers:
 node --import tsx tools/people-work-coverage-audit.mjs --backend azure --candidate-limit 100 --output .local-data/people/<batch-slug>/coverage-audit.json
 ```
 
+Give this Azure read a finite operational window. If it stalls, interrupt only
+the audit, retain the completed batch artifacts, record the timeout, and resume
+from the last cached candidate list; do not rerun completed writes.
+
 Prioritize `missing_credits` works that already have a stable external work ID,
 then `unlinked_only`, then `partially_linked`. The audit is a queue, not proof
 that a person identity is correct. Refresh it after each published umbrella
@@ -151,7 +155,7 @@ Use `--kind series` for a series. Repeat the same command to resume from cache/c
 
 The network budget is approximately one work-credit request plus up to `profile-budget` person requests when the cache is cold. Additional biography-source checks are outside this number. Run works sequentially.
 
-For an explicitly requested large observation batch, keep one umbrella directory but create independently reviewable/publishable sub-batches of no more than 20 people. Apply and verify one sub-batch before advancing to the next. Every auxiliary biography/source collector must use a 20-second request timeout, at most one jittered retry, and a response checkpoint.
+For an explicitly requested large observation batch, keep one umbrella directory but create independently reviewable/publishable sub-batches of no more than 20 people. For Azure production applies, prefer 10-16 profiles per sub-batch once the catalog is large. If Azure Table `OperationTimedOut` occurs during `person-catalog-apply`, retain the generated backup, verify that the search index was rolled back, and retry the same reviewed report in a smaller sub-batch; never blindly rerun the original apply. Apply and verify one sub-batch before advancing to the next. Every auxiliary biography/source collector must use a 20-second request timeout, at most one jittered retry, and a response checkpoint.
 
 ## Compose a curated batch
 
@@ -201,6 +205,21 @@ specific facts. Build a factual brief first: career stages, important
 collaborations, representative works, contribution or style, and precise awards
 when well supported. Use the source/status fields for provenance.
 
+For `verified`, require at least 100 non-whitespace Chinese characters and 45
+English words. These are minimum evidence floors, not writing targets: do not
+pad a weak record with generic prose. The quality gate rejects the known
+Wikidata/credit templates (`公开人物资料来自 Wikidata`, `documented in Wikidata`,
+`is credited as`) and obvious machine grammar such as `is a actor`. A report
+whose profile claims `Data Status=verified` but lacks verified bilingual
+editorial biographies is rejected by both the Notion upsert and catalog apply
+entry points.
+
+When an existing Notion row already has a verified `editorial-rewrite`
+biography, an incoming weak or provider-summary biography must not replace it,
+even when the field is unlocked. A replacement is eligible only when it passes
+the same multi-source, method, template, and substantive-length gates. Work
+discovery may add departments and credits without rewriting the person's prose.
+
 ```powershell
 node --import tsx tools/person-biography-review.mjs --report .local-data/people/<batch-slug>/composed-report.json --reviews .local-data/people/<batch-slug>/biography-reviews.json --output .local-data/people/<batch-slug>/reviewed-report.json
 ```
@@ -210,10 +229,17 @@ Inspect `identityIssues`, `unresolved`, every `proposedProfile`, and every `prop
 ## Focused validation
 
 ```powershell
-node --test --import tsx apps/api/src/person-biography-review.test.ts apps/api/src/person-biography-quality.test.ts apps/api/src/person-enrichment.test.ts apps/api/src/person-catalog-apply.test.ts apps/api/src/person-materialization.test.ts apps/api/src/person-service.test.ts apps/api/src/person-notion-sync.test.ts apps/api/src/person-sources/provider-http.test.ts apps/api/src/person-sources/wikidata.test.ts apps/api/src/person-sources/wikidata-work.test.ts apps/api/src/person-sources/tmdb.test.ts apps/api/src/person-sources/imdb.test.ts
+node --test --import tsx apps/api/src/person-quality-score.test.ts apps/api/src/people-repair-audit.test.ts apps/api/src/notion-people-schema.test.ts apps/api/src/notion-people-source.test.ts apps/api/src/person-biography-review.test.ts apps/api/src/person-biography-quality.test.ts apps/api/src/person-enrichment.test.ts apps/api/src/person-catalog-apply.test.ts apps/api/src/person-materialization.test.ts apps/api/src/person-service.test.ts apps/api/src/person-notion-sync.test.ts apps/api/src/person-sources/provider-http.test.ts apps/api/src/person-sources/wikidata.test.ts apps/api/src/person-sources/wikidata-work.test.ts apps/api/src/person-sources/tmdb.test.ts apps/api/src/person-sources/imdb.test.ts
 npm run typecheck --workspace @wwpdw/api
 git diff --check
 ```
+
+After changing biography rules, first run a five-person quality pilot. Include
+different professions and at least one previously regressed existing profile.
+Require 3–4 useful source URLs per person across at least two independent
+families, zero identity conflicts, exact Notion readback, targeted
+Notion-to-Azure convergence, and an unchanged targeted replay before resuming a
+larger campaign.
 
 ## Preview and apply Notion
 

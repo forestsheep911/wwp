@@ -1,7 +1,8 @@
 import type { MovieCreditDepartment, PersonLockedField, PersonProfile } from "@wwpdw/shared";
 import { selectPersonBiographyTexts, selectPersonDisplayNames } from "@wwpdw/shared";
 import { ProviderRateLimiter } from "./person-sources/provider-http.js";
-import type { ChineseBiographyMethod } from "./person-biography-quality.js";
+import { reviewChineseBiography, reviewEnglishBiography, type ChineseBiographyMethod } from "./person-biography-quality.js";
+import { assessPersonQuality } from "./person-quality-score.js";
 
 interface NotionPeopleClient {
   dataSources: {
@@ -30,6 +31,8 @@ export interface ExistingPeopleValues {
   profileUrl?: string;
   hideFromWebsite?: boolean;
   developerMemo?: string;
+  qualityScore?: number;
+  lastReviewedAt?: string;
 }
 
 export interface PeopleManagedValues extends ExistingPeopleValues {
@@ -44,6 +47,8 @@ export interface PeopleManagedValues extends ExistingPeopleValues {
   birthPlace?: string;
   nameStatus: string;
   dataStatus: string;
+  qualityScore: number;
+  lastReviewedAt?: string;
   sources: string;
   lastEnrichedAt: string;
 }
@@ -61,6 +66,8 @@ export interface NotionPeopleSnapshot extends ExistingPeopleValues {
   birthPlace?: string;
   nameStatus?: "verified" | "strong" | "provisional" | "conflict";
   dataStatus?: "draft" | "partial" | "verified" | "conflict";
+  qualityScore?: number;
+  lastReviewedAt?: string;
 }
 
 export interface NotionPeopleInvalidSnapshot {
@@ -88,6 +95,39 @@ export function managedPeopleValues(profile: PersonProfile, existing?: ExistingP
   const selectedEnglishBiography = (profile.biography?.texts ?? [])
     .filter((entry) => /^en(?:-|$)/i.test(entry.language) && entry.value.trim() === biographyTexts.english)
     .sort((left, right) => biographyStatusRank(right.status) - biographyStatusRank(left.status))[0];
+  const biographySources = sharedSourceRefs(profile, existing?.sources);
+  const preserveChineseBiography = locked.has("biographyZh") || shouldPreserveVerifiedEditorialBiography(
+    existing?.biographyZhStatus,
+    existing?.biographyZhMethod,
+    reviewChineseBiography({
+      text: selectedChineseBiography?.value,
+      method: selectedChineseBiography?.method,
+      sourceRefs: biographySources
+    }).eligibleForVerified
+  );
+  const preserveEnglishBiography = locked.has("biographyEn") || shouldPreserveVerifiedEditorialBiography(
+    existing?.biographyEnStatus,
+    existing?.biographyEnMethod,
+    reviewEnglishBiography({
+      text: selectedEnglishBiography?.value,
+      method: selectedEnglishBiography?.method,
+      sourceRefs: biographySources
+    }).eligibleForVerified
+  );
+  const effectiveProfile = profileForManagedQuality(profile, existing, {
+    chineseName: locked.has("chineseName") ? existing?.chineseName : names.chinese,
+    englishName: locked.has("englishName") ? existing?.englishName : names.english,
+    originalName: locked.has("originalName") ? existing?.originalName : names.original,
+    biographyZh: preserveChineseBiography ? existing?.biographyZh : biographyTexts.chinese,
+    biographyZhStatus: preserveChineseBiography ? existing?.biographyZhStatus : biographyPublicationStatus(selectedChineseBiography?.status),
+    biographyZhMethod: preserveChineseBiography ? existing?.biographyZhMethod : selectedChineseBiography?.method,
+    biographyEn: preserveEnglishBiography ? existing?.biographyEn : biographyTexts.english,
+    biographyEnStatus: preserveEnglishBiography ? existing?.biographyEnStatus : biographyPublicationStatus(selectedEnglishBiography?.status),
+    biographyEnMethod: preserveEnglishBiography ? existing?.biographyEnMethod : selectedEnglishBiography?.method,
+    sources: biographySources,
+    profileUrl: locked.has("profileUrl") ? existing?.profileUrl : profile.profileImages?.[0]?.url
+  });
+  const quality = assessPersonQuality(effectiveProfile);
   return {
     personId: profile.personId,
     name: names.primary ?? profile.personId,
@@ -102,21 +142,31 @@ export function managedPeopleValues(profile: PersonProfile, existing?: ExistingP
     birthDate: profile.biography?.birthDate,
     deathDate: profile.biography?.deathDate,
     birthPlace: profile.biography?.birthPlace,
-    biographyZh: locked.has("biographyZh") ? existing?.biographyZh : biographyTexts.chinese,
-    biographyZhStatus: existing?.biographyZhStatus ?? biographyPublicationStatus(selectedChineseBiography?.status),
-    biographyZhMethod: existing?.biographyZhMethod ?? selectedChineseBiography?.method,
-    biographyEn: locked.has("biographyEn") ? existing?.biographyEn : biographyTexts.english,
-    biographyEnStatus: existing?.biographyEnStatus ?? biographyPublicationStatus(selectedEnglishBiography?.status),
-    biographyEnMethod: existing?.biographyEnMethod ?? selectedEnglishBiography?.method,
+    biographyZh: preserveChineseBiography ? existing?.biographyZh : biographyTexts.chinese,
+    biographyZhStatus: preserveChineseBiography ? existing?.biographyZhStatus : biographyPublicationStatus(selectedChineseBiography?.status),
+    biographyZhMethod: preserveChineseBiography ? existing?.biographyZhMethod : selectedChineseBiography?.method,
+    biographyEn: preserveEnglishBiography ? existing?.biographyEn : biographyTexts.english,
+    biographyEnStatus: preserveEnglishBiography ? existing?.biographyEnStatus : biographyPublicationStatus(selectedEnglishBiography?.status),
+    biographyEnMethod: preserveEnglishBiography ? existing?.biographyEnMethod : selectedEnglishBiography?.method,
     profileUrl: locked.has("profileUrl") ? existing?.profileUrl : profile.profileImages?.[0]?.url,
     nameStatus: status,
     dataStatus: profile.dataQuality.status,
-    sources: sharedSourceRefs(profile, existing?.sources).join("\n"),
+    qualityScore: quality.score,
+    lastReviewedAt: profile.dataQuality.reviewedAt ?? existing?.lastReviewedAt ?? quality.reviewedAt,
+    sources: biographySources.join("\n"),
     lastEnrichedAt: profile.updatedAt,
     lockedFields: [...locked],
     hideFromWebsite: existing?.hideFromWebsite ?? profile.hiddenFromWebsite ?? false,
     developerMemo: existing?.developerMemo
   };
+}
+
+function shouldPreserveVerifiedEditorialBiography(
+  existingStatus: ExistingPeopleValues["biographyZhStatus"],
+  existingMethod: ChineseBiographyMethod | undefined,
+  incomingEligibleForVerified: boolean
+) {
+  return existingStatus === "verified" && existingMethod === "editorial-rewrite" && !incomingEligibleForVerified;
 }
 
 export function notionPeopleProperties(values: PeopleManagedValues) {
@@ -144,6 +194,8 @@ export function notionPeopleProperties(values: PeopleManagedValues) {
     "Name Status": { select: { name: values.nameStatus } },
     "Locked Fields": { multi_select: values.lockedFields.map((field) => ({ name: notionLockedField(field) })) },
     "Data Status": { select: { name: values.dataStatus } },
+    "Quality Score": { number: values.qualityScore },
+    "Last Reviewed At": date(values.lastReviewedAt),
     Sources: sourceRichText(values.sources),
     "Last Enriched At": date(values.lastEnrichedAt),
     "Hide from Website": { checkbox: Boolean(values.hideFromWebsite) },
@@ -212,7 +264,20 @@ export class NotionPeopleSource {
     return { action: existingPage ? "updated" : "created", pageId, values };
   }
 
-  async listChanged(options: { since?: string; limit?: number; pageSize?: number } = {}) {
+  async listChanged(options: { since?: string; limit?: number; pageSize?: number; personIds?: string[] } = {}) {
+    const personIds = [...new Set((options.personIds ?? []).map((value) => value.trim()).filter(Boolean))];
+    if (personIds.length) {
+      const rows: NotionPeopleChange[] = [];
+      for (const personId of personIds) {
+        const response = await this.request(() => this.notion.dataSources.query({
+          data_source_id: this.dataSourceId,
+          filter: { property: "Person ID", rich_text: { equals: personId } },
+          page_size: 3
+        }));
+        rows.push(...response.results.map((value) => this.readChange(value)));
+      }
+      return rows;
+    }
     const rows: NotionPeopleChange[] = [];
     const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 100));
     let cursor: string | undefined;
@@ -228,22 +293,24 @@ export class NotionPeopleSource {
         } : {}),
         ...(cursor ? { start_cursor: cursor } : {})
       }));
-      rows.push(...response.results.map((value) => {
-        const page = value as NotionPage;
-        try {
-          return readNotionPeopleSnapshot(page);
-        } catch (error) {
-          return {
-            pageId: page.id,
-            lastEditedTime: page.last_edited_time ?? new Date(0).toISOString(),
-            archived: Boolean(page.archived || page.in_trash),
-            error: error instanceof Error ? error.message : String(error)
-          } satisfies NotionPeopleInvalidSnapshot;
-        }
-      }));
+      rows.push(...response.results.map((value) => this.readChange(value)));
       cursor = response.has_more && response.next_cursor ? response.next_cursor : undefined;
     } while (cursor && (!options.limit || rows.length < options.limit));
     return rows;
+  }
+
+  private readChange(value: unknown): NotionPeopleChange {
+    const page = value as NotionPage;
+    try {
+      return readNotionPeopleSnapshot(page);
+    } catch (error) {
+      return {
+        pageId: page.id,
+        lastEditedTime: page.last_edited_time ?? new Date(0).toISOString(),
+        archived: Boolean(page.archived || page.in_trash),
+        error: error instanceof Error ? error.message : String(error)
+      } satisfies NotionPeopleInvalidSnapshot;
+    }
   }
 
   private request<T>(operation: () => Promise<T>) {
@@ -278,7 +345,9 @@ export function readNotionPeopleSnapshot(page: NotionPage): NotionPeopleSnapshot
     deathDate: dateStart(page.properties["Death Date"]),
     birthPlace: plainText(page.properties["Birth Place"]),
     nameStatus: nameStatus(page.properties["Name Status"]),
-    dataStatus: dataStatus(page.properties["Data Status"])
+    dataStatus: dataStatus(page.properties["Data Status"]),
+    qualityScore: numberValue(page.properties["Quality Score"]),
+    lastReviewedAt: dateStart(page.properties["Last Reviewed At"])
   };
 }
 
@@ -300,7 +369,9 @@ export function readExistingPeopleValues(page: NotionPage): ExistingPeopleValues
     sources: plainText(page.properties.Sources),
     profileUrl: propertyObject(page.properties["Profile URL"]).url as string | undefined,
     hideFromWebsite: Boolean(propertyObject(page.properties["Hide from Website"]).checkbox),
-    developerMemo: plainText(page.properties["Developer Memo"])
+    developerMemo: plainText(page.properties["Developer Memo"]),
+    qualityScore: numberValue(page.properties["Quality Score"]),
+    lastReviewedAt: dateStart(page.properties["Last Reviewed At"])
   };
 }
 
@@ -374,6 +445,11 @@ function dateStart(value: unknown) {
   return (propertyObject(value).date as { start?: string } | null)?.start;
 }
 
+function numberValue(value: unknown) {
+  const number = propertyObject(value).number;
+  return typeof number === "number" && Number.isFinite(number) ? number : undefined;
+}
+
 function selectName(value: unknown) {
   return (propertyObject(value).select as { name?: string } | null)?.name;
 }
@@ -439,6 +515,7 @@ function comparableProperty(value: unknown): unknown {
       : start;
     return { date: normalized ?? null };
   }
+  if ("number" in property) return { number: typeof property.number === "number" ? property.number : null };
   if ("url" in property) return { url: property.url ?? null };
   if ("checkbox" in property) return { checkbox: Boolean(property.checkbox) };
   return property;
@@ -479,4 +556,57 @@ function title(value: string) {
 
 function date(value?: string) {
   return { date: value ? { start: value } : null };
+}
+
+function profileForManagedQuality(
+  profile: PersonProfile,
+  existing: ExistingPeopleValues | undefined,
+  values: {
+    chineseName?: string;
+    englishName?: string;
+    originalName?: string;
+    biographyZh?: string;
+    biographyZhStatus?: ExistingPeopleValues["biographyZhStatus"];
+    biographyZhMethod?: ChineseBiographyMethod;
+    biographyEn?: string;
+    biographyEnStatus?: ExistingPeopleValues["biographyEnStatus"];
+    biographyEnMethod?: ChineseBiographyMethod;
+    sources: string[];
+    profileUrl?: string;
+  }
+): PersonProfile {
+  const observedAt = existing?.lastReviewedAt ?? profile.dataQuality.reviewedAt ?? profile.updatedAt;
+  const names = [
+    ...(values.chineseName ? [{ value: values.chineseName, language: "zh-CN", kind: "display" as const, source: "manual" as const, status: "verified" as const, observedAt }] : []),
+    ...(values.englishName ? [{ value: values.englishName, language: "en", kind: "display" as const, source: "manual" as const, status: "verified" as const, observedAt }] : []),
+    ...(values.originalName ? [{ value: values.originalName, kind: "original" as const, source: "manual" as const, status: "verified" as const, observedAt }] : []),
+    ...profile.names
+  ];
+  const texts = [
+    ...(values.biographyZh ? [{
+      value: values.biographyZh,
+      language: "zh-CN",
+      source: "manual" as const,
+      status: values.biographyZhStatus === "verified" ? "verified" as const : "provisional" as const,
+      method: values.biographyZhMethod,
+      supportingSourceRefs: values.sources,
+      observedAt
+    }] : []),
+    ...(values.biographyEn ? [{
+      value: values.biographyEn,
+      language: "en",
+      source: "manual" as const,
+      status: values.biographyEnStatus === "verified" ? "verified" as const : "provisional" as const,
+      method: values.biographyEnMethod,
+      supportingSourceRefs: values.sources,
+      observedAt
+    }] : []),
+    ...(profile.biography?.texts ?? [])
+  ];
+  return {
+    ...profile,
+    names,
+    biography: { ...profile.biography, texts },
+    ...(values.profileUrl ? { profileImages: [{ url: values.profileUrl, source: "manual" as const, observedAt }, ...(profile.profileImages ?? [])] } : {})
+  };
 }

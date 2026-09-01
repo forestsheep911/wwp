@@ -49,6 +49,14 @@ career arc, important collaborations, representative works, contribution or
 artistic character, and only precise supported awards. The quality gate rejects
 the retired workflow-template phrases in both Chinese and English.
 
+Verified biographies also have a substantive minimum: 100 non-whitespace
+Chinese characters and 45 English words. This is an evidence floor, not a
+prompt to add filler. Known Wikidata/credit templates and obvious machine
+grammar are rejected. If an existing Notion row already contains a verified
+`editorial-rewrite`, a later enrichment pass cannot replace it with a weaker
+provider summary even when the field is unlocked; the replacement must pass the
+same method, source-family, template, and length gates.
+
 `Data Status=verified` now has a concrete core meaning: at least one stable
 external identity, verified Chinese and English names, a verified department,
 and verified bilingual editorial biographies backed by two independent source
@@ -56,6 +64,27 @@ families, with no identity conflict. Portrait, exact dates, birthplace, native
 name, additional aliases, education, and detailed awards are enhancements and
 do not keep an otherwise verified core profile permanently partial. This is an
 editorial/admin status and is not shown on the public person page.
+
+### Quality assessment and review time
+
+`Quality Score` is a versioned 0-100 internal maintenance score. Version 1
+weights identity 25, verified names and departments 15, bilingual biographies
+and evidence 45, and optional structured metadata 15. Identity conflicts cap
+the result at 39, public correctness defects at 69, and an incomplete bilingual
+biography at 79. The score is used by the repair queue and Notion editors; it is
+not displayed on the public website and does not measure a person's importance.
+The runtime catalog also stores the policy version and component scores so a
+future rubric change can be distinguished from a profile improvement.
+
+`Last Reviewed At` means a complete editorial review of identity, names,
+departments, biographies, and sources. Set it after a completed review even
+when no textual change was necessary. `Last Enriched At` remains the ordinary
+profile/synchronization update time and must never reset this review clock.
+Profiles below 80 or carrying P0/P1 correctness issues are due immediately;
+otherwise living profiles are reviewed after 12 months at 80-89 or 24 months
+at 90+, and deceased profiles after 60 months. Existing high-quality bilingual
+profiles may infer an initial review date from their editorial evidence times;
+other rows remain empty until a real review occurs.
 
 ### Public person metadata
 

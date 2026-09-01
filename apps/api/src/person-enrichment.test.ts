@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { discoverPeopleCandidates, JsonEvidenceCache, runPersonEnrichment, type EnrichmentCheckpoint } from "./person-enrichment.js";
+import { discoverPeopleCandidates, JsonEvidenceCache, LocalRunLease, runPersonEnrichment, type EnrichmentCheckpoint } from "./person-enrichment.js";
 import { ProviderHttpError } from "./person-sources/provider-http.js";
 
 const candidate = { workId: "work-1", title: "A Film", kind: "movie" as const, tmdbId: "10", workHash: "hash-1" };
+
+test("recovers a lease whose recorded owner has exited", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "people-lease-"));
+  const leasePath = path.join(root, "pilot.lock");
+  await writeFile(leasePath, JSON.stringify({ pid: 2_147_483_647, acquiredAt: "2026-01-01T00:00:00.000Z" }));
+  const lease = new LocalRunLease(leasePath);
+  await lease.acquire();
+  assert.equal(JSON.parse(await readFile(leasePath, "utf8")).pid, process.pid);
+  await lease.release();
+});
 
 test("discovers stable TMDB candidates from the current search snapshot", () => {
   const result = discoverPeopleCandidates({ entries: {

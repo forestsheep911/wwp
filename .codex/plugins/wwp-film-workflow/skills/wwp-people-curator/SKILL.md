@@ -5,21 +5,49 @@ description: Collect, verify, enrich, and publish WWP people profiles and person
 
 # WWP People Curator
 
-Run the WWP people lane independently from film production. Reuse the repository's existing people tools, publish only reviewed identities, and leave an auditable, resumable batch under `.local-data/people/`.
+Run the WWP people lane as a serialized mode owned by the film-production coordinator. Reuse the repository's existing people tools, publish only reviewed identities, and leave an auditable, resumable batch under `.local-data/people/`.
 
 Read [references/workflow.md](references/workflow.md) before running commands. Also follow `docs/people-maintenance.md` for the current schema and editorial gates.
 
-## Keep the lane independent
+When selecting between existing-profile repair and new-person expansion, read
+[references/campaign-routing.md](references/campaign-routing.md). Do not infer
+the lane from whichever candidates happen to be easiest to find.
 
-- Start only from an explicit request such as “补人物”, “跑人物批次”, “继续补人物”, or a named-person repair.
-- Do not run from `开始制作影视库`, ordinary uploads, encoding, or metadata backfill.
+## Keep one production owner
+
+- Start from an explicit People request, `--mode people-only`, or the People handoff created after the film checkpoint in `--mode film-and-current-people`.
+- `开始制作影视库` uses `film-and-current-people` by default, but the People stage may begin only after the bounded film stage reaches its stable checkpoint and only for the exact current work IDs.
 - Do not delay publishing a film because its people data is incomplete.
-- Keep the integration seam at the reviewed report: the main workflow may invoke this skill later, but must not duplicate its identity or publishing logic.
+- Do not run this skill as a second concurrent task beside film production. Its network commands share `.local-data/wwp-production-network.lock` with the film cycle; a live lock owner is a stop condition, not a retry signal.
+- Keep the integration seam at the reviewed report: the main workflow invokes this skill after routing, but must not duplicate its identity or publishing logic.
 - Treat bands, combinations, studios, companies, and other organizations as unresolved non-person entities. Never force them into `People / 创作人`.
+
+## Route campaign commands deterministically
+
+- “推进人物修补” or an explicit existing-person correction is `repair_only`.
+- “推进人物扩展” or an explicit request to add people from works is
+  `expansion_only`.
+- “推进人物流程” is `balanced`: use a 10-profile cycle with four existing
+  repairs and six new people by default.
+- A bare “继续” resumes the last unfinished people campaign from its saved
+  state, including its mode, queue cursors, and remaining quotas. It must not
+  choose a new lane from conversation wording.
+- A named person or named work overrides the automatic selector only for that
+  scoped request. Preserve the campaign cursor for later resumption.
+- P0 identity or synchronization defects always preempt ordinary quotas and
+  may consume the whole cycle. Unused repair capacity transfers to expansion;
+  optional metadata gaps never consume normal repair capacity.
+- Before research or writes, report the selected mode, quotas, people or works,
+  and the recorded reason for every repair selection.
 
 ## Use conservative defaults
 
-- Default to 10 new people per batch; do not exceed 20 without an explicit request.
+- Default to 10 profile operations per cycle. In balanced mode this means four
+  repairs plus six new people; in an explicit single-lane mode all 10 belong to
+  that lane. Do not exceed 20 profiles in one publishable sub-batch without an
+  explicit request.
+- For Azure production applies, prefer 10-16 profiles per sub-batch once the catalog is large; if `person-catalog-apply` returns Azure Table `OperationTimedOut`, keep the backup, verify index rollback, and retry the same reviewed report in a smaller sub-batch rather than launching a duplicate apply.
+- Coverage audits against Azure must also have a finite read window; if the audit stalls, stop only that read, preserve the completed batch artifacts, record the timeout, and resume from the last cached candidate list instead of rerunning writes.
 - Treat `profile-budget` as the maximum number of candidate identities to review in one discovery pass, never as a per-work credit, cast, or publication limit. Preserve the complete discovered credit list and resume the same work in later passes when significant people remain.
 - When the user explicitly requests about 100 people, manage it as one umbrella observation batch but publish in sub-batches of at most 20 after each sub-batch passes review.
 - Prefer works already present in WWP whose important credits are missing or unlinked.
@@ -122,8 +150,13 @@ Require zero unresolved identity conflicts for every profile that will be publis
 - Use Douban as a Chinese research lead, never as the sole verifier or as text to copy.
 - Record 3–4 useful source URLs when available, spanning at least two independent source families. Sources are shared across languages; language status and method remain separate.
 - Mark Chinese biography `verified` only after editorial rewrite and multi-source verification. Never label machine translation as reviewed.
+- A verified biography must be substantive enough to establish a career rather than merely satisfy a non-empty-field check. The publication gate currently requires at least 100 non-whitespace Chinese characters and 45 English words. If reliable evidence cannot support that much, keep the biography partial and leave the profile out of a verified publication batch.
+- Reject provider-credit templates such as “公开人物资料来自 Wikidata；在《…》中担任 Actor” and “documented in Wikidata / is credited as”. Reject obvious machine grammar such as `is a actor`. Do not repair these by padding them with generic filler.
+- Reprocessing another work must never downgrade an existing verified editorial biography. Preserve the current Notion text unless the incoming replacement independently passes the same verified biography gate. This protection applies even when the biography field is not manually locked.
 - Mark the whole person profile `verified` when stable external identity, verified Chinese and English names, at least one verified department, and verified bilingual editorial biographies are all present with no identity conflict. Portrait, exact dates, birthplace, native name, aliases, education, and award detail are valuable enhancements but are not mandatory for core verification.
 - Keep structured person facts independent from biography prose. Publish supported dates, birthplace, original name, portrait, and external IDs even when other optional facts are absent; the website hides missing rows rather than substituting placeholders.
+- Compute the versioned `Quality Score` after composing the effective reviewed profile. Use it to rank repair work, not as a public website rating. `Last Reviewed At` means a full identity/name/department/biography/source review completed, including a review that made no prose change; ordinary provider enrichment or Notion synchronization updates only `Last Enriched At` and must not refresh the review clock.
+- A score below 80 is immediately review-due. Otherwise review living people after 12 months at 80-89 or 24 months at 90+, and deceased people after 60 months. P0/P1 correctness issues remain immediately due regardless of score. Follow [references/campaign-routing.md](references/campaign-routing.md) for the complete v1 rubric and ordering rules.
 
 Apply reviewed biography and credit-name edits with `tools/person-biography-review.mjs`. Inspect the resulting report directly before any write.
 
@@ -132,6 +165,8 @@ Apply reviewed biography and credit-name edits with `tools/person-biography-revi
 Run the focused people tests, API typecheck, and `git diff --check`. Then preview Notion operations and catalog/index changes. Confirm expected profile, work, credit, and unresolved counts before applying.
 
 Never apply an offline diagnostic report or a report containing identity conflicts. Use the explicit reviewed-pilot gates for both Notion and catalog writes.
+
+Before scaling a changed biography strategy, run a five-person quality pilot containing at least one director/creator and one actor. Require substantive bilingual text, 3–4 useful source URLs across at least two independent source families, zero identity conflicts, successful Notion readback, targeted Notion-to-Azure convergence, and an unchanged replay. Only then increase the batch size.
 
 ### 7. Publish in order
 

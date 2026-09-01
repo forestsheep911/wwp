@@ -4,6 +4,9 @@ import type { PersonProfile } from "@wwpdw/shared";
 
 import { applyReviewedChineseBiographies, applyReviewedCreditNames } from "./person-biography-review.js";
 
+const substantiveZh = "这位电影工作者早年进入行业，随后在剧情片、纪录片和电视制作之间积累经验，并逐步形成稳定的创作方法。其职业生涯经历多个阶段，也包括与重要导演、编剧、摄影师和演员的长期合作；多部代表作品显示出对人物关系、社会环境与电影语言的持续探索，具体履历和贡献由两类独立资料交叉核实。";
+const substantiveEn = "This film professional entered the industry early, gained experience across narrative film, documentary, and television, and gradually developed a consistent creative method. The career spans several stages and includes sustained collaborations with important directors, writers, cinematographers, and performers, while representative works show a continuing engagement with character, social context, and film language supported by independent sources.";
+
 const profile: PersonProfile = {
   personId: "person_123e4567-e89b-42d3-a456-426614174000",
   names: [{ value: "旧名", language: "zh", kind: "display" as const, source: "wikidata" as const, status: "strong" as const, observedAt: "2026-08-01T00:00:00Z" }],
@@ -17,8 +20,8 @@ test("keeps the profile partial until all core identity fields are verified", ()
   const report = applyReviewedChineseBiographies({ proposedProfiles: [profile] }, [{
     personId: profile.personId,
     chineseName: "新名",
-    biographyZh: "交叉核实后重新撰写的小传。",
-    biographyEn: "An original English biography written from independently checked sources.",
+    biographyZh: substantiveZh,
+    biographyEn: substantiveEn,
     sourceRefs: ["https://movie.douban.com/celebrity/1/", "https://www.wikidata.org/wiki/Q1"]
   }], "2026-08-11T00:00:00Z");
   const next = report.proposedProfiles[0];
@@ -41,8 +44,8 @@ test("promotes a fully reviewed core profile without requiring optional portrait
     personId: profile.personId,
     chineseName: "新名",
     englishName: "New Name",
-    biographyZh: "这是一段以人物生涯、主要合作和代表作品为中心的原创中文小传。",
-    biographyEn: "This is an original person-centred biography covering a career, major collaborations, and representative work.",
+    biographyZh: substantiveZh,
+    biographyEn: substantiveEn,
     sourceRefs: ["https://movie.douban.com/celebrity/1/", "https://www.wikidata.org/wiki/Q1"]
   }], "2026-08-11T00:00:00Z");
   assert.equal(report.proposedProfiles[0].dataQuality.status, "verified");
@@ -66,7 +69,7 @@ test("removes trailing punctuation accidentally returned in source names", () =>
   const report = applyReviewedChineseBiographies({ proposedProfiles: [punctuatedProfile] }, [{
     personId: profile.personId,
     chineseName: "树木希林",
-    biographyZh: "交叉核实后重新撰写的小传。",
+    biographyZh: substantiveZh,
     sourceRefs: ["https://movie.douban.com/celebrity/1/", "https://www.wikidata.org/wiki/Q1"]
   }], "2026-08-11T00:00:00Z");
   assert.equal(report.proposedProfiles.some((entry) => entry.names.some((name) => /[,，]$/u.test(name.value))), false);

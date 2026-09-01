@@ -14,6 +14,8 @@ test("defines immutable identity, editorial locks, publication state, and proven
   assert.deepEqual(schema["Biography EN"], { rich_text: {} });
   assert.ok(schema["Biography EN Status"].select.options.some((option) => option.name === "verified"));
   assert.ok(schema["Biography EN Method"].select.options.some((option) => option.name === "editorial-rewrite"));
+  assert.deepEqual(schema["Quality Score"], { number: { format: "number" } });
+  assert.deepEqual(schema["Last Reviewed At"], { date: {} });
   assert.equal("Biography" in schema, false);
   assert.deepEqual(DEPRECATED_PEOPLE_PROPERTIES, ["Biography", "Biography ZH Sources", "Biography EN Sources"]);
   assert.ok(schema["Locked Fields"].multi_select.options.some((option) => option.name === "Biography ZH"));

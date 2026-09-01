@@ -34,3 +34,8 @@ __pycache__/
 *-app.zip
 .DS_Store
 Thumbs.db
+
+# Ad-hoc film release/readback reports belong under .local-data, not repo root.
+/r[0-9]*.json
+/release[0-9]*.json
+/x.json

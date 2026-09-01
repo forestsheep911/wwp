@@ -83,6 +83,15 @@ export interface PersonSourceRef {
 export interface PersonDataQuality {
   status: "draft" | "partial" | "verified" | "conflict";
   issues?: string[];
+  score?: number;
+  scoreVersion?: string;
+  scoreComponents?: {
+    identity: number;
+    namesAndDepartments: number;
+    biographyAndEvidence: number;
+    optionalMetadata: number;
+  };
+  reviewedAt?: string;
   updatedAt: string;
 }
 

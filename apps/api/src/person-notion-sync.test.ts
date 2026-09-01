@@ -170,6 +170,44 @@ test("dry-run never writes catalog or checkpoint", async () => {
   assert.equal(writes, 0);
 });
 
+test("apply guard stops unexpected sync amplification before catalog publication", async () => {
+  let writes = 0;
+  const checkpoint = emptyPeopleNotionSyncCheckpoint();
+  await assert.rejects(() => runPeopleNotionSync({
+    source: { async listChanged() { return [row(), row({ pageId: "notion-page-b", personId: "unknown" })]; } },
+    store: { description: "fake", async getState() { return catalog(); }, async replaceState() { writes += 1; } },
+    checkpoint,
+    apply: true,
+    maxApplied: 0
+  }), /Notion sync apply guard exceeded/);
+  assert.equal(writes, 0);
+  assert.deepEqual(checkpoint, { schemaVersion: 1 });
+});
+
+test("five-person apply pilot trips the guard before any catalog write", async () => {
+  const current = catalog();
+  const rows: NotionPeopleSnapshot[] = [];
+  for (let index = 0; index < 5; index += 1) {
+    const id = index === 0 ? personId : `person_123e4567-e89b-42d3-a456-42661417400${index}`;
+    if (index > 0) {
+      const entry = structuredClone(current.people[personId]);
+      entry.profile = { ...entry.profile, personId: id, externalIds: { tmdb: String(index + 1), imdb: `nm000000${index + 1}` } };
+      entry.workIds = [];
+      current.people[id] = entry;
+    }
+    rows.push(row({ pageId: `notion-pilot-${index}`, personId: id, externalIds: { tmdb: String(index + 1), imdb: `nm000000${index + 1}` }, chineseName: `试点人物${index}`, englishName: `Pilot Person ${index}` }));
+  }
+  let writes = 0;
+  await assert.rejects(() => runPeopleNotionSync({
+    source: { async listChanged() { return rows; } },
+    store: { description: "fake", async getState() { return current; }, async replaceState() { writes += 1; } },
+    checkpoint: emptyPeopleNotionSyncCheckpoint(),
+    apply: true,
+    maxApplied: 4
+  }), /Notion sync apply guard exceeded/);
+  assert.equal(writes, 0);
+});
+
 test("failed catalog publication never advances the successful checkpoint", async () => {
   let checkpoints = 0;
   const checkpoint = emptyPeopleNotionSyncCheckpoint();

@@ -67,6 +67,8 @@ export function peoplePropertySchema() {
       { name: "verified", color: "green" as const },
       { name: "conflict", color: "red" as const }
     ] } },
+    "Quality Score": { number: { format: "number" as const } },
+    "Last Reviewed At": { date: {} },
     Sources: { rich_text: {} },
     "Last Enriched At": { date: {} },
     "Hide from Website": { checkbox: {} },

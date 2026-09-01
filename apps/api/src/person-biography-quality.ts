@@ -44,6 +44,9 @@ function reviewBiography(input: {
   const issues: string[] = [];
   if (input.method !== "editorial-rewrite") issues.push(`${field} must be marked editorial-rewrite before verification.`);
   if (independentSources.length < 2) issues.push(`${field} requires at least two independent source families before verification.`);
+  if (text && !biographyHasSubstantiveLength(text, field)) {
+    issues.push(`${field} is too short to establish a person-centred career summary.`);
+  }
   if (text && biographyLooksLikeWorkflowCopy(text, field)) {
     issues.push(`${field} must read as a person-centred biography, not a WWP credit or verification report.`);
   }
@@ -63,6 +66,14 @@ export function reviewPersonCoreProfile(profile: PersonProfile) {
   return { eligibleForVerified: issues.length === 0, issues };
 }
 
+export function assertVerifiedPersonProfileQuality(profile: PersonProfile) {
+  if (profile.dataQuality.status !== "verified") return;
+  const review = reviewPersonCoreProfile(profile);
+  if (!review.eligibleForVerified) {
+    throw new Error(`${profile.personId} claims verified data but fails the core biography gate: ${review.issues.join(", ")}`);
+  }
+}
+
 function hasVerifiedName(profile: PersonProfile, language: RegExp) {
   return profile.names.some((name) => language.test(name.language ?? "") && name.status === "verified" && Boolean(name.value.trim()));
 }
@@ -78,19 +89,30 @@ function hasVerifiedBiography(profile: PersonProfile, language: RegExp) {
   });
 }
 
-function biographyLooksLikeWorkflowCopy(text: string, field: "Biography ZH" | "Biography EN") {
+export function biographyLooksLikeWorkflowCopy(text: string, field: "Biography ZH" | "Biography EN") {
   const patterns = field === "Biography ZH" ? [
+    /公开人物资料来自\s*Wikidata/iu,
+    /在《[^》]+》中担任(?:Actor|Voice Actor|Director|Screenwriter|Producer|Editor|Director of Photography|Original Music Composer)/iu,
     /相关作品关系由.*(?:身份记录|资料).*核对/u,
     /本小传依据.*(?:资料|身份).*综合改写/u,
     /以.*身份参与创作或演出/u,
     /与[^。；]+有关的?荣誉或提名/u
   ] : [
+    /documented in Wikidata/iu,
+    /\bis credited as\b/iu,
+    /\bis (?:a|an) (?:actor|editor|director|screenwriter|producer) documented in\b/iu,
+    /\bis a (?:actor|editor)\b/iu,
     /linking (?:their|his|her) profile to the film through a documented/iu,
     /this summary was independently rewritten from the cited/iu,
     /recognition connected with/iu,
     /contributed as .+ a principal cast member/iu
   ];
   return patterns.some((pattern) => pattern.test(text));
+}
+
+export function biographyHasSubstantiveLength(text: string, field: "Biography ZH" | "Biography EN") {
+  if (field === "Biography ZH") return [...text.replace(/\s+/gu, "")].length >= 100;
+  return text.split(/\s+/u).filter(Boolean).length >= 45;
 }
 
 function sourceFamily(value: string) {

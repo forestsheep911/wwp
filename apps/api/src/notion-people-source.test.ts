@@ -48,11 +48,56 @@ test("preserves independently locked editorial biography fields, hide state, and
   assert.equal(values.biographyEn, "Provider English biography");
   assert.equal(values.hideFromWebsite, true);
   assert.equal(values.developerMemo, "同名人物，注意核对");
+  assert.equal(typeof values.qualityScore, "number");
   assert.equal(notionPeopleProperties(values)["Person ID"].rich_text[0].text.content, "person-a");
+  assert.equal(notionPeopleProperties(values)["Quality Score"].number, values.qualityScore);
   assert.equal(notionPeopleProperties(values)["Biography ZH"].rich_text[0].text.content, "编辑中文简介");
   assert.equal(notionPeopleProperties(values)["Biography ZH Method"].select?.name, "editorial-rewrite");
   const sourceParts = notionPeopleProperties(values).Sources.rich_text;
   assert.equal(sourceParts.filter((part) => part.text.link).length, 0);
+});
+
+test("does not replace an unlocked verified editorial biography with a weak provider summary", () => {
+  const values = managedPeopleValues(profile(), {
+    personId: "person-a",
+    lockedFields: [],
+    biographyZh: "这是一份已经由编辑核实并发布的完整中文人物小传，内容覆盖人物的职业阶段、主要合作、代表作品和创作贡献，也经过两个独立来源家族的交叉核对。它不应因为后来处理另一部作品时生成的简短职务说明而被覆盖，既有编辑成果必须继续作为权威版本保留。",
+    biographyZhStatus: "verified",
+    biographyZhMethod: "editorial-rewrite",
+    biographyEn: "This is an established editorial biography covering the person's career stages, major collaborations, representative works, and creative contribution. It has already been checked against two independent source families and must remain authoritative when a later work-discovery pass offers only a short provider summary without comparable editorial review or supporting evidence.",
+    biographyEnStatus: "verified",
+    biographyEnMethod: "editorial-rewrite",
+    sources: "douban:1\nwikidata:Q1"
+  });
+  assert.match(values.biographyZh ?? "", /已经由编辑核实/);
+  assert.match(values.biographyEn ?? "", /established editorial biography/);
+  assert.equal(values.biographyZhStatus, "verified");
+  assert.equal(values.biographyEnStatus, "verified");
+});
+
+test("allows a fully reviewed substantive biography to replace an unlocked editorial version", () => {
+  const observedAt = "2026-08-30T00:00:00.000Z";
+  const incomingZh = "这位演员早年从舞台和独立电影进入行业，随后在家庭剧、社会题材和商业制作之间持续工作，并通过对身体状态、语气和日常动作的细致控制形成具有辨识度的表演方法。其职业生涯包含多个阶段，也包括与重要导演和固定创作团队的反复合作；多部代表作品显示出她处理脆弱、幽默和人物韧性的能力。";
+  const incomingEn = "This actor began in stage and independent work before building a career across family drama, socially engaged cinema, and commercial production. Careful control of physical behavior, speech, and everyday gesture became central to a recognizable performance method. The career spans several stages and recurring collaborations with important directors, while representative works show an unusual ability to combine vulnerability, humor, and resilience.";
+  const values = managedPeopleValues({
+    ...profile(),
+    biography: { texts: [
+      { value: incomingZh, language: "zh-CN", source: "manual", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["douban:1", "wikidata:Q1"], observedAt },
+      { value: incomingEn, language: "en", source: "manual", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["douban:1", "wikidata:Q1"], observedAt }
+    ] }
+  }, {
+    personId: "person-a",
+    lockedFields: [],
+    biographyZh: "原有中文编辑稿。",
+    biographyZhStatus: "verified",
+    biographyZhMethod: "editorial-rewrite",
+    biographyEn: "Previous editorial biography.",
+    biographyEnStatus: "verified",
+    biographyEnMethod: "editorial-rewrite",
+    sources: "douban:1\nwikidata:Q1"
+  });
+  assert.equal(values.biographyZh, incomingZh);
+  assert.equal(values.biographyEn, incomingEn);
 });
 
 test("refuses to mutate immutable Person ID", () => {
@@ -79,6 +124,17 @@ test("treats equivalent Notion timestamp serializations as equal", () => {
     { "Last Enriched At": { date: { start: "2026-08-10T06:05:00.000+00:00" } } },
     { "Last Enriched At": { date: { start: "2026-08-10T06:05:39.510Z" } } }
   ), true);
+});
+
+test("writes and reads quality score and the dedicated review timestamp", () => {
+  const reviewed = "2026-08-30T03:00:00.000Z";
+  const values = managedPeopleValues({
+    ...profile(),
+    dataQuality: { ...profile().dataQuality, reviewedAt: reviewed }
+  });
+  const properties = notionPeopleProperties(values);
+  assert.equal(properties["Quality Score"].number, values.qualityScore);
+  assert.equal(properties["Last Reviewed At"].date?.start, reviewed);
 });
 
 test("rejects external identifiers assigned to multiple people", () => {
@@ -141,6 +197,22 @@ test("lists incrementally edited People rows with pagination and one shared quer
   assert.equal("personId" in rows[1] ? rows[1].personId : undefined, "person-b");
   assert.deepEqual(inputs[0].filter, { timestamp: "last_edited_time", last_edited_time: { on_or_after: "2026-08-10T00:00:00.000Z" } });
   assert.equal(inputs[1].start_cursor, "next");
+});
+
+test("lists targeted People rows by immutable Person ID without scanning the data source", async () => {
+  const inputs: Record<string, unknown>[] = [];
+  const page = { id: "page-a", last_edited_time: "2026-08-31T14:47:00.000Z", properties: notionPeopleProperties(managedPeopleValues(profile())) };
+  const source = new NotionPeopleSource({
+    dataSources: { query: async (input) => { inputs.push(input); return { results: [page], has_more: false }; } },
+    pages: { create: async () => page, update: async () => page, retrieve: async () => page }
+  }, "people-source", new ProviderRateLimiter(0));
+  const rows = await source.listChanged({ personIds: ["person-a", "person-a"] });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(inputs, [{
+    data_source_id: "people-source",
+    filter: { property: "Person ID", rich_text: { equals: "person-a" } },
+    page_size: 3
+  }]);
 });
 
 test("returns malformed rows for quarantine instead of aborting the batch", async () => {

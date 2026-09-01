@@ -88,7 +88,20 @@ export class LocalRunLease {
       await this.handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error(`People enrichment lease is already held: ${this.leasePath}`);
+        if (!await leaseOwnerHasExited(this.leasePath)) {
+          throw new Error(`People enrichment lease is already held: ${this.leasePath}`);
+        }
+        await rm(this.leasePath, { force: true });
+        try {
+          this.handle = await open(this.leasePath, "wx");
+          await this.handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
+        } catch (retryError) {
+          if ((retryError as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new Error(`People enrichment lease is already held: ${this.leasePath}`);
+          }
+          throw retryError;
+        }
+        return;
       }
       throw error;
     }
@@ -98,6 +111,22 @@ export class LocalRunLease {
     await this.handle?.close();
     this.handle = undefined;
     await rm(this.leasePath, { force: true });
+  }
+}
+
+async function leaseOwnerHasExited(leasePath: string) {
+  try {
+    const raw = JSON.parse(await readFile(leasePath, "utf8")) as { pid?: unknown };
+    const ownerPid = typeof raw.pid === "number" && Number.isInteger(raw.pid) ? raw.pid : undefined;
+    if (!ownerPid || ownerPid === process.pid) return false;
+    try {
+      process.kill(ownerPid, 0);
+      return false;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  } catch {
+    return false;
   }
 }
 

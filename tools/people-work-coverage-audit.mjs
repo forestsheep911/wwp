@@ -3,35 +3,41 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createSearchIndexStore } from "@wwpdw/cache-store";
 import { auditPeopleWorkCoverage } from "../apps/api/src/people-work-coverage-audit.ts";
+import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 
 const options = parseArgs(process.argv.slice(2));
 if (options.backend) process.env.SEARCH_INDEX_BACKEND = options.backend;
 
-const store = createSearchIndexStore();
-const results = await store.search("", 1_000_000);
-const coverage = auditPeopleWorkCoverage(results, options.candidateLimit);
-const report = {
-  schemaVersion: 1,
-  generatedAt: new Date().toISOString(),
-  searchStore: store.description,
-  ...coverage
-};
+const productionLock = acquireProductionLock({ owner: "people-work-coverage-audit", mode: "people-only" });
+try {
+  const store = createSearchIndexStore();
+  const results = await store.search("", 1_000_000);
+  const coverage = auditPeopleWorkCoverage(results, options.candidateLimit);
+  const report = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    searchStore: store.description,
+    ...coverage
+  };
 
-if (options.output) {
-  const outputPath = path.resolve(options.output);
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  if (options.output) {
+    const outputPath = path.resolve(options.output);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  }
+
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: report.schemaVersion,
+    generatedAt: report.generatedAt,
+    searchStore: report.searchStore,
+    totalWorks: report.totalWorks,
+    summary: report.summary,
+    candidateCount: report.candidates.length,
+    candidates: report.candidates
+  }, null, 2)}\n`);
+} finally {
+  productionLock.release();
 }
-
-process.stdout.write(`${JSON.stringify({
-  schemaVersion: report.schemaVersion,
-  generatedAt: report.generatedAt,
-  searchStore: report.searchStore,
-  totalWorks: report.totalWorks,
-  summary: report.summary,
-  candidateCount: report.candidates.length,
-  candidates: report.candidates
-}, null, 2)}\n`);
 
 function parseArgs(values) {
   const options = { backend: undefined, output: undefined, candidateLimit: 100 };

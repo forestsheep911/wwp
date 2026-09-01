@@ -11,6 +11,7 @@ import { normalizePersonExternalIds, normalizePersonNameSearchKey } from "@wwpdw
 import { rebuildDerivedPersonIndexes, type PersonCatalogStore } from "@wwpdw/cache-store";
 import type { NotionPeopleChange, NotionPeopleSnapshot } from "./notion-people-source.js";
 import { reviewChineseBiography, reviewEnglishBiography, reviewPersonCoreProfile, splitBiographySourceRefs } from "./person-biography-quality.js";
+import { withPersonQualityAssessment } from "./person-quality-score.js";
 
 export interface PeopleNotionSyncCheckpoint {
   schemaVersion: 1;
@@ -171,12 +172,14 @@ export function planPeopleNotionSync(
 }
 
 export async function runPeopleNotionSync(input: {
-  source: { listChanged(options?: { since?: string; limit?: number; pageSize?: number }): Promise<NotionPeopleChange[]> };
+  source: { listChanged(options?: { since?: string; limit?: number; pageSize?: number; personIds?: string[] }): Promise<NotionPeopleChange[]> };
   store: PersonCatalogStore;
   checkpoint: PeopleNotionSyncCheckpoint;
   apply: boolean;
   limit?: number;
+  maxApplied?: number;
   pageSize?: number;
+  personIds?: string[];
   overlapMinutes?: number;
   now?: () => Date;
   persistCheckpoint?: (checkpoint: PeopleNotionSyncCheckpoint) => Promise<void>;
@@ -189,9 +192,12 @@ export async function runPeopleNotionSync(input: {
   const now = input.now ?? (() => new Date());
   const startedAt = now().toISOString();
   const since = withOverlap(input.checkpoint.lastSuccessfulSyncAt, input.overlapMinutes ?? 10);
-  const changes = await input.source.listChanged({ since, limit: input.limit, pageSize: input.pageSize });
+  const changes = await input.source.listChanged({ since, limit: input.limit, pageSize: input.pageSize, personIds: input.personIds });
   const current = await input.store.getState();
   const plan = planPeopleNotionSync(current, changes, startedAt);
+  if (input.apply && input.maxApplied !== undefined && plan.summary.applied > input.maxApplied) {
+    throw new Error(`Notion sync apply guard exceeded: planned ${plan.summary.applied} changes, maximum is ${input.maxApplied}.`);
+  }
   const lastSourceEditedAt = changes.map((change) => change.lastEditedTime).sort().at(-1);
   if (input.apply) {
     if (plan.catalogChanged) await input.store.replaceState(plan.nextCatalog);
@@ -262,7 +268,7 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
   };
   const coreReview = reviewPersonCoreProfile(profile);
   const retainedIssues = (current.dataQuality.issues ?? []).filter((issue) => !issue.startsWith("missing_verified_") && issue !== "missing_stable_external_id");
-  return {
+  const normalized: PersonProfile = {
     ...profile,
     dataQuality: {
       status: row.dataStatus === "conflict"
@@ -274,6 +280,9 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
       updatedAt: row.lastEditedTime
     }
   };
+  return withPersonQualityAssessment(normalized, {
+    reviewedAt: row.lastReviewedAt ?? current.dataQuality.reviewedAt
+  });
 }
 
 function addBiographyText(

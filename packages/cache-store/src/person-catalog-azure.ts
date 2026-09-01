@@ -34,8 +34,10 @@ const partitionKey = "personcatalog";
 const manifestRowKey = "current";
 const payloadChunkChars = 30_000;
 // Azure Table transactions allow at most 100 actions and a 4 MiB payload.
-// Forty 30k-character entities stay below that payload cap even for UTF-8 text.
-const transactionChunkCount = 40;
+// Keep transactions well below the payload cap. The production catalog can
+// time out with forty biography-heavy entities even when the request is under
+// 4 MiB; groups of ten have a much safer service-time margin.
+const transactionChunkCount = 10;
 
 export class AzurePersonCatalogStore implements PersonCatalogStore {
   readonly description: string;
@@ -63,15 +65,14 @@ export class AzurePersonCatalogStore implements PersonCatalogStore {
       if (!manifest.generationId || !manifest.chunkCount || manifest.chunkCount < 1) {
         throw new Error("Person catalog manifest is incomplete.");
       }
-      const chunks: string[] = [];
-      for (let index = 0; index < manifest.chunkCount; index += 1) {
+      const chunks = await Promise.all(Array.from({ length: manifest.chunkCount }, async (_, index) => {
         const entity = await this.tableClient.getEntity<PersonCatalogEntity>(
           partitionKey,
-          chunkRowKey(manifest.generationId, index)
+          chunkRowKey(manifest.generationId!, index)
         );
         if (typeof entity.payload !== "string") throw new Error(`Person catalog chunk is missing: ${index}`);
-        chunks.push(entity.payload);
-      }
+        return entity.payload;
+      }));
       return parseState(chunks.join(""));
     } catch (error) {
       if (isNotFound(error)) return emptyState();
