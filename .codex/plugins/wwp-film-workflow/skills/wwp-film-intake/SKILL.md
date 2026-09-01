@@ -24,11 +24,20 @@ When one discovered directory contains several independently catalogued seasons,
    completed work does not permanently suppress that explicitly reopened source:
    it reappears as a production-selection candidate only while its intake task
    is pending. An unchanged scan must not reopen completed work or invite a
-   duplicate encode.
+   duplicate encode. Normalize source paths with Windows case-insensitive
+   semantics before routing: if two ledger rows point to the same physical
+   path under the same input root and work, keep the richer/preferred row as
+   canonical and classify the other as `duplicate_source`; never encode or
+   move the duplicate row independently.
 3. For each new or changed source, identify the work using filename, folder, season/episode, original-language title, year, and known external IDs.
    If one directory is a collection, box set, multi-disc package, or contains multiple standalone film ISOs, split it into member sources before binding any work. Never bind a collection directory itself to one arbitrary film; each member keeps its own work identity, source evidence, and production decision. Duplicate 2D/3D or alternate-disc members may bind to the same work as separate sources.
    For series, verify the mapped integer span against the canonical external episode count before binding. When files exceed that count, treat the excess as an identity incident requiring a sequel/season/part/extras decision, not as additional episodes of the first matching work.
+   If later frame, stream, subtitle, or authoritative title evidence proves an already-bound source belongs to another existing work, do not route it again or create a new work. Use the auditable `correct-source-work` ledger operation with the exact reason, then re-read the destination work, its variants, and metadata task. If the source is only a copied collection/container and should never be produced, mark it explicitly as a duplicate source with `mark-duplicate-source`; a copied path must not remain an unbound identity candidate.
 4. Before evaluating subtitles, quality, or bitrate expansion, verify that the source path contains a media payload: a playable video file, a playlist with referenced media, or a complete disc structure. A directory containing only sidecar subtitles, artwork, or release notes is not a source. Record `missing_media_payload` with any discovered subtitle clues and keep it out of production candidates until the media itself returns.
+   A subtitle-only bundle associated with a known video source is companion
+   evidence, not an independent production source: verify its episode coverage,
+   encoding, and alignment, attach that evidence to the video source, and
+   classify the bundle as `companion_evidence` rather than creating a variant.
 5. Search existing Notion coverage through multi-alias identity preflight before creating anything. Preserve possible duplicates for review instead of silently creating a second work page.
 6. Create or repair a work-level metadata task even when playable production is unsuitable, missing subtitles, deferred, or blocked by color/quality risk.
 7. Route the source to one of: metadata-only, production evaluation, source/archive handling, series handling, deferred user decision, or rejected with reason.
@@ -51,4 +60,8 @@ An `intake` task is complete only after the source is bound to a verified work i
 - A poor or risky source may be rejected for playback while its work page is still created or enriched.
 - Metadata-first work and playable production are independent tracks. Do not wait for encoding before starting sourced metadata.
 - Keep uncertain matching, duplicate risk, missing subtitle identity, and user-only decisions in a task reason; continue other deterministic tasks.
+- When a work has an explicit `[规格扩展:CLOSED]` marker, a source with no
+  independent variant is closed for production unless the user explicitly
+  reopens the expansion. Do not repeatedly report it as a missing production
+  decision; retain it only for the separate source-cleanup evidence gate.
 - A collection parent may be marked complete only after all recognizable members have been represented as child/member sources and each member has its own identity or an explicit deferred reason.

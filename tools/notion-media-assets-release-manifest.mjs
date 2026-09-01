@@ -30,6 +30,16 @@ function mediaFilenameKey(value) {
   return String(value ?? "").toLocaleLowerCase("en-US");
 }
 
+function episodeNumberFromCandidate(candidate) {
+  const explicit = candidate?.metadata?.episodeNumber;
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  const text = [candidate?.displayLabel, candidate?.name, candidate?.originalFileName]
+    .filter(Boolean)
+    .join(" ");
+  const match = text.match(/(?:S\d{1,3}E|Episode\s*|\bE)(\d{1,3})(?!\d)/i);
+  return match ? Number(match[1]) : null;
+}
+
 export function filesByName(root, requestedNames, map = new Map()) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const entryPath = path.join(root, entry.name);
@@ -53,7 +63,7 @@ export function releaseItemFromAction(action) {
   const candidate = action.candidate;
   if (!candidate?.metadata || !action.pageId) return null;
   const episode = candidate.metadata.episodeNumber;
-  const expectedEpisodeNumber = Number.isInteger(episode) && episode > 0 ? episode : null;
+  const expectedEpisodeNumber = episodeNumberFromCandidate(candidate);
   return {
     pageId: action.pageId,
     originalFileName: candidate.originalFileName,
@@ -75,7 +85,11 @@ function main() {
   const byPageId = new Map();
   for (const reportPath of options.reports) {
     const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-    for (const reportPage of report.reports ?? []) {
+    // The writer emits `reports[]` for batch manifests and top-level
+    // `actions[]` for an exact single work page. Treat both shapes alike so a
+    // bounded repair can enter the same guarded release path as a batch.
+    const reportPages = report.reports ?? [{ actions: report.actions ?? [] }];
+    for (const reportPage of reportPages) {
       for (const action of reportPage.actions ?? []) {
         const releasableActions = ["created", "would_create", "updated_existing", "would_update_existing", "corrected_existing", "would_correct_existing"];
         if (options.includeExisting) releasableActions.push("skip_existing");

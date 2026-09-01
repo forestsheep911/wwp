@@ -170,15 +170,24 @@ export function recordMovedSourcePath(db, moved, at = new Date().toISOString()) 
     if (item.candidateType !== "source_input" || item.sourceId == null) continue;
     const previousPath = item.path;
     const nextPath = path.resolve(item.destination);
-    db.prepare("UPDATE sources SET absolute_path=?, updated_at=? WHERE id=?")
-      .run(nextPath.replaceAll("/", "\\"), at, item.sourceId);
-    db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run("source", item.sourceId, "source_quarantined", JSON.stringify({
-        previousPath,
-        nextPath,
-        reason: "Moved after all linked variants closed",
-        reviewedUncoveredMediaReason: item.coverageOverrideReason ?? null
-      }), at);
+    // A split source can have multiple ledger rows pointing to one physical
+    // directory. Move the path for every alias so the ledger stays coherent.
+    const aliases = db.prepare(`SELECT id FROM sources
+      WHERE lower(replace(absolute_path, '/', '\\')) = lower(replace(?, '/', '\\'))`).all(previousPath);
+    const sourceIds = aliases.length > 0 ? aliases.map((row) => row.id) : [item.sourceId];
+    for (const sourceId of sourceIds) {
+      db.prepare("UPDATE sources SET absolute_path=?, updated_at=? WHERE id=?")
+        .run(nextPath.replaceAll("/", "\\"), at, sourceId);
+      db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run("source", sourceId, "source_quarantined", JSON.stringify({
+          previousPath,
+          nextPath,
+          reason: sourceId === item.sourceId
+            ? "Moved after all linked variants closed"
+            : "Moved with an aliased physical source path",
+          reviewedUncoveredMediaReason: item.coverageOverrideReason ?? null
+        }), at);
+    }
     item.ledgerUpdated = true;
     item.ledgerPath = nextPath;
   }
@@ -277,7 +286,23 @@ export function latestExpansionDecision(workflowNote) {
   return matches.at(-1)?.[1] ?? null;
 }
 
-function countMediaFiles(directory) {
+function hasOpticalDiscLayout(directory) {
+  const pending = [directory];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (/^(?:BDMV|VIDEO_TS)$/iu.test(entry.name)) return true;
+      pending.push(path.join(current, entry.name));
+    }
+  }
+  return false;
+}
+
+function countMediaFiles(directory, sourceKind = null) {
+  // A disc backup contains many playlist streams and extras; count it as one
+  // source content unit and leave detailed title selection to the coverage audit.
+  if (sourceKind === "original_disc" || hasOpticalDiscLayout(directory)) return 1;
   let count = 0;
   const pending = [directory];
   while (pending.length > 0) {
@@ -285,10 +310,14 @@ function countMediaFiles(directory) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const entryPath = path.join(current, entry.name);
       if (entry.isDirectory()) pending.push(entryPath);
-      else if (/\.(?:mkv|mp4|m2ts|ts|avi|mov|webm)$/iu.test(entry.name)) count += 1;
+      else if (!isSampleArtifact(entryPath) && /\.(?:mkv|mp4|m2ts|ts|avi|mov|webm)$/iu.test(entry.name)) count += 1;
     }
   }
   return count;
+}
+
+function isEmptyDirectory(directory) {
+  return fs.readdirSync(directory).length === 0;
 }
 
 export function collectCleanupCandidates(db, outputRoot) {
@@ -332,7 +361,7 @@ export function collectCleanupCandidates(db, outputRoot) {
 
 export function collectSourceCleanupCandidates(db) {
   const rows = db.prepare(`
-    SELECT sources.id AS source_id, sources.absolute_path, sources.relative_path, sources.source_kind,
+    SELECT sources.id AS source_id, sources.work_id, sources.absolute_path, sources.relative_path, sources.source_kind,
            input_roots.path AS input_root_path,
            works.canonical_title, works.workflow_status, works.workflow_note,
            COUNT(variants.id) AS linked_variant_count,
@@ -342,12 +371,11 @@ export function collectSourceCleanupCandidates(db) {
              OR variants.publication_state NOT IN ('sync_ready','cancelled') THEN 1 ELSE 0 END) AS active_variant_count
     FROM sources
     JOIN input_roots ON input_roots.id=sources.input_root_id AND input_roots.enabled=1
-    JOIN works ON works.id=sources.work_id
+    LEFT JOIN works ON works.id=sources.work_id
     LEFT JOIN variants ON variants.source_id=sources.id
-    WHERE sources.missing=0 AND sources.work_id IS NOT NULL
+    WHERE sources.missing=0
       AND sources.relative_path NOT LIKE '@flat/%'
     GROUP BY sources.id
-    HAVING COUNT(variants.id) > 0
     ORDER BY sources.id
   `).all();
   return rows.map((row) => {
@@ -367,6 +395,18 @@ export function collectSourceCleanupCandidates(db) {
       eligible: false,
       reasons: []
     };
+    const hasWorkColumn = Object.prototype.hasOwnProperty.call(row, "work_id");
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() && isEmptyDirectory(filePath)) {
+      result.isDirectory = true;
+      result.mediaFileCount = 0;
+      result.eligible = true;
+      result.reasons.push(row.work_id == null ? "empty_unbound_directory" : "empty_source_directory");
+      return result;
+    }
+    if (row.linked_variant_count === 0) return null;
+    if (hasWorkColumn && row.work_id == null) {
+      return null;
+    }
     if (row.active_variant_count > 0 || row.closed_variant_count !== row.linked_variant_count) result.reasons.push("linked_variants_not_closed");
     const expansionDecision = latestExpansionDecision(row.workflow_note);
     if (expansionDecision === "OPEN") result.reasons.push("source_expansion_open");
@@ -377,7 +417,7 @@ export function collectSourceCleanupCandidates(db) {
       result.actualBytes = stats.isFile() ? stats.size : null;
       result.isDirectory = stats.isDirectory();
       if (result.isDirectory) {
-        result.mediaFileCount = countMediaFiles(filePath);
+        result.mediaFileCount = countMediaFiles(filePath, row.source_kind);
         if (result.mediaFileCount > row.linked_variant_count) result.reasons.push("source_media_not_fully_covered");
       }
     }

@@ -3,6 +3,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
+import { buildProductionModePlan, normalizeProductionMode, PRODUCTION_MODES } from "./lib/wwp-production-mode.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -16,7 +18,8 @@ function parseArgs(argv) {
     // Full Notion/ledger rounds are expensive. A user-reported batch uses
     // --force and bypasses this interval immediately.
     minFullCycleSec: 3600,
-    force: false
+    force: false,
+    mode: PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -25,6 +28,7 @@ function parseArgs(argv) {
     else if (arg === "--state") options.statePath = argv[++index];
     else if (arg === "--min-full-cycle-sec") options.minFullCycleSec = Number(argv[++index]);
     else if (arg === "--force") options.force = true;
+    else if (arg === "--mode") options.mode = normalizeProductionMode(argv[++index]);
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -38,6 +42,13 @@ function parseArgs(argv) {
     throw new Error("--min-full-cycle-sec must be zero or a positive number");
   }
   return options;
+}
+
+function currentWorkIds(cycle) {
+  const lanes = cycle.lanes ?? {};
+  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.production, lanes.productionCoverage, lanes.publication]
+    .flatMap((lane) => lane ?? []);
+  return rows.map((row) => row.work_id ?? row.workId ?? row.ww_work_id ?? row.wwWorkId).filter(Boolean);
 }
 
 function run(args) {
@@ -144,7 +155,30 @@ function buildSummary(scan, cycle) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
+  const lock = acquireProductionLock({ owner: "film-workflow-cycle", mode: options.mode });
+  try {
+    return runMain(options, lock);
+  } finally {
+    lock.release();
+  }
+}
+
+function runMain(options, lock) {
   const root = path.resolve("tools");
+  if (options.mode === PRODUCTION_MODES.PEOPLE_ONLY) {
+    const result = {
+      startedAt: new Date().toISOString(),
+      orchestration: {
+        ...buildProductionModePlan(options.mode),
+        lockPath: lock.path,
+        concurrencyPolicy: "影视与人物网络阶段共享排他锁；人物模式仅恢复已保存的人物 campaign，不启动影视扫描。"
+      },
+      scan: { skipped: true, reason: "people_only_mode" },
+      summary: { discoveryMessage: "人物专做模式未扫描影视输入目录。", workMessage: "恢复已保存的人物 campaign；具体候选、配额和阻塞项由 people-cycle-state.json 报告。" }
+    };
+    process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
   const scan = run([path.join(root, "scan-enabled-input-roots.mjs"), "--max-samples", String(options.maxSamples), "--json"]);
   const state = readState(options.statePath);
   const now = Date.now();
@@ -173,6 +207,11 @@ function main() {
   });
   const result = {
     startedAt: new Date().toISOString(),
+    orchestration: {
+      ...buildProductionModePlan(options.mode, currentWorkIds(cycle)),
+      lockPath: lock.path,
+      concurrencyPolicy: "先完成本轮影视的稳定检查点，再处理本批影视人物；两条网络阶段禁止并行。"
+    },
     cadence: {
       mode: "bounded_round",
       minFullCycleSec: options.minFullCycleSec,

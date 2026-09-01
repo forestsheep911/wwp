@@ -1547,7 +1547,22 @@ async function processPage(notion, pageRef, options, cookie) {
     return { pageId: page.id, title, status: "error", message: error.message, source: "douban" };
   }
   const identityConflict = metadataIdentityConflict(page.properties, metadata, { title });
-  if (identityConflict && !options.preserveExistingIdentity) {
+  // A conflicting Douban candidate is unsafe even when preserving IMDb identity:
+  // the candidate can belong to a different film and would otherwise overwrite
+  // empty or stale metadata fields with unrelated values.
+  if (identityConflict) {
+    // A stale or cross-linked Douban subject must not block a page whose
+    // existing IMDb identity is already verified. Fall back to OMDb by that
+    // trusted IMDb ID, while keeping the conflicting Douban subject out of
+    // the metadata patch.
+    const fallback = await processOmdbFallback(notion, page, options, title, existingIdentity.effectiveImdbId);
+    if (fallback) {
+      return {
+        ...fallback,
+        doubanError: `Douban identity conflict: ${identityConflict.expected} != ${identityConflict.actual}`,
+        subjectId: metadata.subjectId
+      };
+    }
     return {
       pageId: page.id,
       title,

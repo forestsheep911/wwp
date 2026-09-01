@@ -259,7 +259,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .get(input.inputRootId, input.fingerprint);
     if (fingerprintMatch) {
       const current = db.prepare("SELECT * FROM sources WHERE id=?").get(fingerprintMatch.id);
-      db.prepare(`UPDATE sources SET work_id=COALESCE(?, work_id), relative_path=?, absolute_path=?, source_kind=?,
+      db.prepare(`UPDATE sources SET work_id=COALESCE(?, work_id), relative_path=?, absolute_path=?, source_kind=CASE WHEN source_kind='duplicate_source' THEN source_kind ELSE ? END,
         probe_path=COALESCE(?, probe_path), quality_state=CASE WHEN ? = 'unknown' THEN quality_state ELSE ? END,
         subtitle_evidence=?, audio_evidence=COALESCE(?, audio_evidence),
         color_risk=CASE WHEN ? = 'unknown' THEN color_risk ELSE ? END, missing=?, updated_at=? WHERE id=?`)
@@ -273,6 +273,11 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
         ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
           priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
+      } else if (source.source_kind === "duplicate_source") {
+        completeWorkflowTaskByKey(`intake:source:${source.id}`, {
+          sourceId: source.id,
+          reason: "Source is an explicitly marked duplicate and is excluded from identity and production queues"
+        });
       } else {
         const intakeTask = db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?")
           .get(`intake:source:${source.id}`);
@@ -298,7 +303,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(input_root_id, relative_path) DO UPDATE SET
         work_id=COALESCE(excluded.work_id, sources.work_id), absolute_path=excluded.absolute_path,
-        fingerprint=excluded.fingerprint, source_kind=excluded.source_kind,
+        fingerprint=excluded.fingerprint, source_kind=CASE WHEN sources.source_kind='duplicate_source' THEN sources.source_kind ELSE excluded.source_kind END,
         probe_path=COALESCE(excluded.probe_path, sources.probe_path),
         quality_state=CASE WHEN excluded.quality_state='unknown' THEN sources.quality_state ELSE excluded.quality_state END,
         subtitle_evidence=CASE WHEN json_extract(excluded.subtitle_evidence, '$.internalProbeState')='not_run'
@@ -316,6 +321,11 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
       ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
         priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
+    } else if (source.source_kind === "duplicate_source") {
+      completeWorkflowTaskByKey(`intake:source:${source.id}`, {
+        sourceId: source.id,
+        reason: "Source is an explicitly marked duplicate and is excluded from identity and production queues"
+      });
     } else {
       ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
         reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
@@ -344,6 +354,52 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       priorityScore: work.priority_score, reason: "Work-level metadata should be checked independently of playable media readiness" });
     reconcileDeferredCollectionParents(source.input_root_id);
     return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+  }
+
+  function correctSourceWork(sourceId, workId, details = {}) {
+    return withTransaction(db, () => {
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      const work = db.prepare("SELECT * FROM works WHERE id=?").get(workId);
+      if (!work) throw new Error(`work not found: ${workId}`);
+      if (source.work_id === workId) return source;
+      const at = timestamp();
+      db.prepare("UPDATE sources SET work_id=?, updated_at=? WHERE id=?").run(workId, at, sourceId);
+      insertEvent.run("source", sourceId, "source_work_corrected", stableJson({
+        previousWorkId: source.work_id,
+        workId,
+        reason: details.reason ?? "Corrected the source identity after direct media evidence review"
+      }), at);
+      completeWorkflowTaskByKey(`intake:source:${sourceId}`, {
+        sourceId, workId,
+        reason: details.reason ?? "Source identity corrected after direct media evidence review"
+      });
+      ensureWorkflowTask({ taskKey: `metadata:work:${workId}`, taskType: "metadata_backfill", workId,
+        priorityScore: work.priority_score, reason: "Work-level metadata should be checked after source identity correction" });
+      return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    });
+  }
+
+  function markDuplicateSource(sourceId, canonicalSourceId, details = {}) {
+    return withTransaction(db, () => {
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      const canonical = db.prepare("SELECT * FROM sources WHERE id=?").get(canonicalSourceId);
+      if (!canonical) throw new Error(`canonical source not found: ${canonicalSourceId}`);
+      if (sourceId === canonicalSourceId) throw new Error("a source cannot be its own duplicate");
+      const at = timestamp();
+      db.prepare("UPDATE sources SET source_kind='duplicate_source', updated_at=? WHERE id=?").run(at, sourceId);
+      insertEvent.run("source", sourceId, "source_marked_duplicate", stableJson({
+        canonicalSourceId,
+        reason: details.reason ?? "Marked as a duplicate source container"
+      }), at);
+      completeWorkflowTaskByKey(`intake:source:${sourceId}`, {
+        sourceId,
+        workId: source.work_id,
+        reason: details.reason ?? `Duplicate source; retain canonical source ${canonicalSourceId}`
+      });
+      return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    });
   }
 
   function reconcileDeferredCollectionParents(inputRootId) {
@@ -697,6 +753,28 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
           )
         )
         AND NOT EXISTS (SELECT 1 FROM variants WHERE variants.source_id=sources.id)
+        -- The disposition report treats repeated scans of the same physical
+        -- path as one source. Keep production selection consistent with that
+        -- rule so a later, less evidenced scan cannot reopen a false task.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sources AS canonical_sources
+          WHERE canonical_sources.id <> sources.id
+            AND canonical_sources.input_root_id=sources.input_root_id
+            AND canonical_sources.work_id=sources.work_id
+            AND lower(replace(canonical_sources.absolute_path, '/', '\\'))
+                = lower(replace(sources.absolute_path, '/', '\\'))
+            AND (
+              (canonical_sources.source_kind='series_folder' AND sources.source_kind<>'series_folder')
+              OR (
+                NOT (canonical_sources.source_kind='series_folder' AND sources.source_kind<>'series_folder')
+                AND (
+                  canonical_sources.updated_at < sources.updated_at
+                  OR (canonical_sources.updated_at = sources.updated_at AND canonical_sources.id < sources.id)
+                )
+              )
+            )
+        )
         -- A collection source is only an intake container after it has been
         -- split into independently tracked child sources. Do not offer the
         -- parent directory for production again; its child files are the
@@ -1111,7 +1189,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
+  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listSeriesCoverageGaps, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,

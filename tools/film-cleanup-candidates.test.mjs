@@ -195,6 +195,139 @@ test("source cleanup treats a cancelled planned variant as closed", () => {
   }
 });
 
+test("source coverage count ignores sample media files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-sample-count-"));
+  const sourcePath = path.join(root, "source");
+  fs.mkdirSync(sourcePath);
+  fs.writeFileSync(path.join(sourcePath, "movie.mkv"), "movie");
+  fs.writeFileSync(path.join(sourcePath, "movie.Sample.mkv"), "sample");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 13,
+      absolute_path: sourcePath,
+      relative_path: "source",
+      source_kind: "folder",
+      canonical_title: "Sample exclusion",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] reviewed and exhausted",
+      linked_variant_count: 1,
+      sync_ready_count: 1,
+      closed_variant_count: 1,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.mediaFileCount, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("source coverage treats an optical disc layout as one content unit", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-disc-count-"));
+  const sourcePath = path.join(root, "disc");
+  fs.mkdirSync(path.join(sourcePath, "BDMV", "STREAM"), { recursive: true });
+  fs.writeFileSync(path.join(sourcePath, "BDMV", "STREAM", "00000.m2ts"), "feature");
+  fs.writeFileSync(path.join(sourcePath, "BDMV", "STREAM", "00001.m2ts"), "extra");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 14,
+      absolute_path: sourcePath,
+      relative_path: "disc",
+      source_kind: "folder",
+      canonical_title: "Disc layout",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] reviewed and exhausted",
+      linked_variant_count: 1,
+      sync_ready_count: 1,
+      closed_variant_count: 1,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.mediaFileCount, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("empty unbound directories are reversible cleanup candidates", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-empty-unbound-source-"));
+  const sourcePath = path.join(root, "empty-source");
+  fs.mkdirSync(sourcePath);
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 15,
+      work_id: null,
+      absolute_path: sourcePath,
+      relative_path: "empty-source",
+      source_kind: "folder",
+      canonical_title: null,
+      workflow_status: null,
+      workflow_note: null,
+      linked_variant_count: 0,
+      sync_ready_count: 0,
+      closed_variant_count: 0,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.isDirectory, true);
+    assert.equal(candidate.mediaFileCount, 0);
+    assert.deepEqual(candidate.reasons, ["empty_unbound_directory"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("empty bound source directories are reversible cleanup candidates", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-empty-bound-source-"));
+  const sourcePath = path.join(root, "empty-season");
+  fs.mkdirSync(sourcePath);
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 16,
+      work_id: 232,
+      absolute_path: sourcePath,
+      relative_path: "empty-season",
+      source_kind: "season_member",
+      canonical_title: "Empty season",
+      workflow_status: "待 AI 处理",
+      workflow_note: null,
+      linked_variant_count: 0,
+      sync_ready_count: 0,
+      closed_variant_count: 0,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, true);
+    assert.deepEqual(candidate.reasons, ["empty_source_directory"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unlinked non-empty sources are not cleanup candidates", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-unlinked-source-"));
+  const sourcePath = path.join(root, "source.mkv");
+  fs.writeFileSync(sourcePath, "source");
+  try {
+    const candidates = collectSourceCleanupCandidates(mockDb([{
+      source_id: 17,
+      work_id: 232,
+      absolute_path: sourcePath,
+      relative_path: "source.mkv",
+      source_kind: "file",
+      canonical_title: "Unlinked source",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] reviewed",
+      linked_variant_count: 0,
+      sync_ready_count: 0,
+      closed_variant_count: 0,
+      active_variant_count: 0
+    }]));
+    assert.deepEqual(candidates, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("source cleanup remains blocked while the work has an open expansion marker", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-expansion-"));
   const sourcePath = path.join(root, "source.mkv");
@@ -414,13 +547,24 @@ test("quarantined playable output updates ledger path and records an event", () 
 
 test("quarantined source updates ledger path and records an event", () => {
   const calls = [];
-  const db = { prepare: (sql) => ({ run: (...args) => calls.push({ sql, args }) }) };
+  const db = { prepare: (sql) => ({ all: () => [{ id: 43 }], run: (...args) => calls.push({ sql, args }) }) };
   const moved = [{ candidateType: "source_input", sourceId: 43, path: "I:\\MAKE\\queue\\source", destination: "I:\\待人工删除\\source.source-43" }];
   recordMovedSourcePath(db, moved, "2026-08-26T00:00:00.000Z");
   assert.equal(calls.length, 2);
   assert.equal(calls[0].args[0], "I:\\待人工删除\\source.source-43");
   assert.equal(calls[0].args[2], 43);
   assert.equal(calls[1].args[2], "source_quarantined");
+  assert.equal(moved[0].ledgerUpdated, true);
+});
+
+test("quarantined source updates ledger paths for aliased physical sources", () => {
+  const calls = [];
+  const db = { prepare: (sql) => ({ all: () => [{ id: 43 }, { id: 44 }], run: (...args) => calls.push({ sql, args }) }) };
+  const moved = [{ candidateType: "source_input", sourceId: 43, path: "I:\\MAKE\\queue\\shared", destination: "I:\\待人工删除\\shared.source-43" }];
+  recordMovedSourcePath(db, moved, "2026-08-26T00:00:00.000Z");
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls.filter((call) => call.args[0] === "I:\\待人工删除\\shared.source-43").map((call) => call.args[2]), [43, 44]);
+  assert.deepEqual(calls.filter((call) => call.args[2] === "source_quarantined").map((call) => call.args[1]), [43, 44]);
   assert.equal(moved[0].ledgerUpdated, true);
 });
 

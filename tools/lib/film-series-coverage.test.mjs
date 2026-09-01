@@ -34,6 +34,14 @@ test("normalizes legacy per-episode suffixes before grouping a specification", (
   assert.deepEqual(analyzeSeriesVariantCoverage(rows), []);
 });
 
+test("merges historical reversed dubbed-track labels before coverage grouping", () => {
+  assert.equal(normalizeSeriesSpecTitle("Example 简 刘杰台配 H.265 1GB/集"), "Example 简 台配刘杰 H.265 1GB/集");
+  assert.equal(normalizeSeriesSpecTitle("Example 简 姜瑰瑾台配 H.265 1GB/集"), "Example 简 台配姜瑰瑾 H.265 1GB/集");
+  const rows = [1, 2, 3, 4, 5, 6].map((episode) => row({ episode, title: "Example 简 台配刘杰 H.265 1GB/集" }));
+  rows.push(...[1, 2, 3, 4].map((episode) => row({ episode, title: "Example 简 刘杰台配 H.265 1GB/集" })));
+  assert.deepEqual(analyzeSeriesVariantCoverage(rows), []);
+});
+
 test("reports a partially published per-episode specification", () => {
   const rows = [1, 2, 3, 4].map((episode) => row({ episode, title: "Example 简 1GB/集" }));
   rows.push(...[1, 2].map((episode) => row({ episode, title: "Example 英语原声 简 3.5GB/集" })));

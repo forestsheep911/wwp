@@ -21,7 +21,7 @@ function latestFailure(events) {
   return events.find((event) => event.event_type === "source_quarantine_failed") ?? null;
 }
 
-export function classifySourceDisposition({ source, variants = [], tasks = [], cleanupCandidate = null, events = [], now = new Date().toISOString(), pathExists = true }) {
+export function classifySourceDisposition({ source, variants = [], tasks = [], cleanupCandidate = null, events = [], now = new Date().toISOString(), pathExists = true, collectionMembersAlreadyTracked: explicitCollectionTracking = false, duplicateOfSourceId = null }) {
   const reasons = [];
   const evidence = [];
   const workflowStatus = source.workflow_status ?? null;
@@ -32,11 +32,16 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
   const openVariants = variants.filter((variant) => !CLOSED_PUBLICATION_STATES.has(variant.publication_state));
   const futureVariant = variants.find((variant) => futureDate(variant.next_review_at, now));
   const dueVariant = variants.find((variant) => variant.production_state === "deferred" && !futureDate(variant.next_review_at, now));
-  const failedVariant = variants.find((variant) => variant.failure_code || variant.failure_detail);
+  // Successful variants often retain QC notes in failure_detail for auditability.
+  // Only an open failed/deferred variant should block source disposition.
+  const failedVariant = variants.find((variant) =>
+    (variant.production_state === "qc_failed" || variant.production_state === "deferred")
+    && (variant.failure_code || variant.failure_detail)
+    && !CLOSED_PUBLICATION_STATES.has(variant.publication_state));
   const quarantineFailure = latestFailure(events);
-  const collectionMembersAlreadyTracked = source.work_id == null && tasks.some((task) =>
+  const collectionMembersAlreadyTracked = explicitCollectionTracking || (source.work_id == null && tasks.some((task) =>
     task.status === "done" && /(?:members?|成员源|各季成员|已绑定|拆分)/iu.test(String(task.reason ?? ""))
-  );
+  ));
 
   if (source.workflow_note) evidence.push({ type: "workflow_note", value: source.workflow_note });
   for (const task of tasks) {
@@ -51,7 +56,21 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
   let needsHumanConfirmation = false;
   let nextTrigger = null;
 
-  if (!pathExists) {
+  if (duplicateOfSourceId != null) {
+    disposition = "duplicate_source";
+    reasons.push("same_physical_source_registered_more_than_once");
+    nextTrigger = `保留源 ${duplicateOfSourceId} 作为唯一账本记录；不要重复制作或移动此路径`;
+    evidence.push({ type: "duplicate_source", value: { canonicalSourceId: duplicateOfSourceId } });
+  } else if (source.source_kind === "duplicate_source") {
+    disposition = "duplicate_source";
+    reasons.push("source_marked_as_duplicate_container");
+    nextTrigger = "保留规范源；不要重复制作或移动此路径";
+    evidence.push({ type: "duplicate_source", value: "explicitly marked duplicate" });
+  } else if (source.source_kind === "subtitle_bundle") {
+    disposition = "companion_evidence";
+    reasons.push("subtitle_bundle_is_not_a_media_source");
+    nextTrigger = "将字幕作为对应视频源的伴随证据使用；不单独压制或上传";
+  } else if (!pathExists) {
     disposition = "source_missing";
     reasons.push("source_path_missing");
     actionableNow = true;
@@ -119,6 +138,10 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push(publicationPending ? "linked_variant_publication_open" : "linked_variant_production_open");
     actionableNow = true;
     nextTrigger = publicationPending ? "完成上传、Media Assets 与读回闭环" : "继续已选择规格的制作或 QC";
+  } else if (expansionDecision === "CLOSED" && variants.length === 0) {
+    disposition = "source_expansion_closed";
+    reasons.push("work_expansion_closed_without_source_variant");
+    nextTrigger = "作品扩展已关闭；除非用户重新指定，不制作此源";
   } else if (variants.length === 0) {
     disposition = workflowStatus === "暂缓" ? "deferred_without_review_time" : "production_decision_missing";
     reasons.push(workflowStatus === "暂缓" ? "work_deferred_without_due_time" : "no_linked_variant_decision");
@@ -206,6 +229,34 @@ export function collectSourceDispositions(db, { now = new Date().toISOString(), 
     WHERE sources.missing=0 AND sources.relative_path NOT LIKE '@flat/%'
     ORDER BY input_roots.id, sources.relative_path, sources.id
   `).all().filter((source) => insideRoot(source.absolute_path, source.input_root_path) && pathExists(source.absolute_path));
+  // Child sources may already be marked missing after their completed media
+  // was quarantined. They still matter when deciding whether a parent folder
+  // is a tracked collection container, so use the full ledger for hierarchy
+  // detection rather than only the currently present input entries.
+  const allSources = db.prepare(`
+    SELECT sources.id, sources.input_root_id, sources.work_id, sources.absolute_path,
+           sources.source_kind, sources.updated_at
+    FROM sources
+    JOIN input_roots ON input_roots.id=sources.input_root_id AND input_roots.enabled=1
+  `).all();
+  const duplicateCanonicalBySourceId = new Map();
+  const samePhysicalSources = new Map();
+  for (const candidate of allSources) {
+    if (candidate.work_id == null) continue;
+    const key = `${candidate.input_root_id}:${candidate.work_id}:${path.resolve(candidate.absolute_path).toLowerCase()}`;
+    const group = samePhysicalSources.get(key) ?? [];
+    group.push(candidate);
+    samePhysicalSources.set(key, group);
+  }
+  for (const group of samePhysicalSources.values()) {
+    if (group.length < 2) continue;
+    group.sort((left, right) => {
+      const leftPreferred = left.source_kind === "series_folder" ? 0 : 1;
+      const rightPreferred = right.source_kind === "series_folder" ? 0 : 1;
+      return leftPreferred - rightPreferred || String(left.updated_at).localeCompare(String(right.updated_at)) || left.id - right.id;
+    });
+    for (const duplicate of group.slice(1)) duplicateCanonicalBySourceId.set(duplicate.id, group[0].id);
+  }
   const cleanupBySource = new Map(collectSourceCleanupCandidates(db).map((item) => [item.sourceId, item]));
   const variantsForSource = db.prepare("SELECT * FROM variants WHERE source_id=? ORDER BY id");
   const tasksForSource = db.prepare("SELECT * FROM workflow_tasks WHERE source_id=? ORDER BY id");
@@ -217,7 +268,12 @@ export function collectSourceDispositions(db, { now = new Date().toISOString(), 
     cleanupCandidate: cleanupBySource.get(source.id) ?? null,
     events: eventsForSource.all(source.id),
     now,
-    pathExists: true
+    pathExists: true,
+    duplicateOfSourceId: duplicateCanonicalBySourceId.get(source.id) ?? null,
+    collectionMembersAlreadyTracked: allSources.some((candidate) => candidate.id !== source.id
+      && candidate.input_root_id === source.input_root_id
+      && candidate.work_id != null
+      && String(candidate.absolute_path).replaceAll("/", "\\").toLowerCase().startsWith(`${String(source.absolute_path).replaceAll("/", "\\").toLowerCase()}\\`))
   }));
   return { generatedAt: now, summary: summarizeSourceDispositions(items), items };
 }

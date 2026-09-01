@@ -71,6 +71,37 @@ test("a completed collection container waits on its tracked members instead of r
   assert.equal(item.actionableNow, false);
 });
 
+test("a parent directory with bound descendant sources is recognized as a collection container", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, canonical_title: null, workflow_status: null, workflow_note: null },
+    collectionMembersAlreadyTracked: true
+  });
+  assert.equal(item.disposition, "collection_container_active");
+  assert.equal(item.actionableNow, false);
+});
+
+test("a source registered twice at the same physical path is not a new production candidate", () => {
+  const item = classifySourceDisposition({
+    source,
+    duplicateOfSourceId: 3,
+    variants: []
+  });
+  assert.equal(item.disposition, "duplicate_source");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /源 3/u);
+});
+
+test("a subtitle bundle is companion evidence, not an independent production source", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, source_kind: "subtitle_bundle", workflow_status: null },
+    variants: []
+  });
+  assert.equal(item.disposition, "companion_evidence");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+});
+
 test("missing Chinese subtitle is surfaced as human evidence instead of generic technical work", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_status: "暂缓", workflow_note: "等待中文字幕" },
@@ -79,6 +110,31 @@ test("missing Chinese subtitle is surfaced as human evidence instead of generic 
   assert.equal(item.disposition, "waiting_for_human");
   assert.equal(item.needsHumanConfirmation, true);
   assert.equal(item.nextTrigger, "请提供或授权中文字幕");
+});
+
+test("successful QC notes do not turn a released variant into a technical blocker", () => {
+  const item = classifySourceDisposition({
+    source,
+    variants: [{
+      id: 13,
+      production_state: "qc_passed",
+      publication_state: "sync_ready",
+      failure_detail: "Full-duration QC passed"
+    }],
+    cleanupCandidate: { eligible: false, reasons: ["source_expansion_unresolved"] }
+  });
+  assert.equal(item.disposition, "expansion_decision_missing");
+  assert.equal(item.reasons.includes("variant_failure"), false);
+});
+
+test("a source without its own variant stays closed when the work explicitly closed expansion", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, workflow_note: "[规格扩展:CLOSED] 已完成现有规格" },
+    variants: []
+  });
+  assert.equal(item.disposition, "source_expansion_closed");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
 });
 
 test("summary retains residue, human, cleanup, and scheduled counts", () => {

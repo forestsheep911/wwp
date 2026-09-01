@@ -405,7 +405,9 @@ function summarize(pages) {
 async function main() {
   const options = parseArgs();
   installNotionDnsOverride(options.resolveIp);
-  const token = dotenv("NOTION_READ_ONLY_TOKEN") || dotenv("NOTION_TOKEN") || dotenv("NOTION_WRITE_TOKEN");
+  // Prefer the film-library integration. The optional read-only integration
+  // is not necessarily shared with every legacy work page.
+  const token = dotenv("NOTION_TOKEN") || dotenv("NOTION_READ_ONLY_TOKEN") || dotenv("NOTION_WRITE_TOKEN");
   if (!token) throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_TOKEN, or NOTION_WRITE_TOKEN.");
 
   const targets = loadTargets(options);

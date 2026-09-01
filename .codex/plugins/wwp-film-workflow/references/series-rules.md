@@ -12,6 +12,8 @@ Do not place several independently released seasons' specs or Episode pages belo
 
 Use a season label only when the verified external identity explicitly names a season or the work has multiple separately released seasons. Do not invent `第一季`, `Season 1`, `本传`, or similar labels for a single canonical series page merely to distinguish a spec. Specs should be named from the canonical series title plus actual audio, subtitle, codec, edition, and measured size dimensions.
 
+Long-running animation exception: a source folder named `season`, `Sxx`, or an equivalent distribution label is not by itself a Notion season boundary. When the verified identity is one continuous long-running series, keep one work/spec tree, map episodes by their global episode number, and continue from the first uncovered episode in bounded batches. Split only when authoritative identity evidence or an explicit user decision establishes a distinct independently catalogued season, sequel, part, or special.
+
 ## Spec Titles
 
 The default size dimension is the measured decimal-GB size per episode or per-episode range, for example `银河英雄传说 日语中字 H.265 0.08-0.44GB/集`. Never use a season or source-folder total in the playable spec title.

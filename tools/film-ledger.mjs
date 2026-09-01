@@ -30,7 +30,7 @@ function parse(argv) {
   const positionals = [];
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--season-page", "--spec-page", "--episode-page",
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
-    "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail",
+    "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail", "--canonical-source-id",
     "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
     "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
@@ -283,6 +283,18 @@ async function main() {
         priorityScore: options.priority_score == null ? undefined : Number(options.priority_score), scopeState: "catalogued" });
       const source = repo.bindSourceToWork(sourceId, work.id, { reason: options.failure_detail });
       output({ work, source }, options.json, `routed source ${sourceId} to work ${work.id}`);
+    } else if (command === "correct-source-work") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
+      const reason = requireOption(options, "failure_detail", "--failure-detail");
+      const source = repo.correctSourceWork(sourceId, workId, { reason });
+      output(source, options.json, `corrected source ${sourceId} to work ${workId}`);
+    } else if (command === "mark-duplicate-source") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const canonicalSourceId = asId(requireOption(options, "canonical_source_id", "--canonical-source-id"), "--canonical-source-id");
+      const reason = requireOption(options, "failure_detail", "--failure-detail");
+      const source = repo.markDuplicateSource(sourceId, canonicalSourceId, { reason });
+      output(source, options.json, `marked source ${sourceId} as duplicate of ${canonicalSourceId}`);
     } else if (command === "rename-work") {
       const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
       const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");

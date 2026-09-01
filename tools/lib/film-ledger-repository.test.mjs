@@ -43,6 +43,34 @@ test("idempotent upserts preserve identities and update mutable evidence", () =>
   } finally { f.close(); }
 });
 
+test("correctSourceWork records an auditable identity correction", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const wrong = f.repo.ensureWork({ canonicalTitle: "Wrong", year: 2007, workType: "movie" });
+    const right = f.repo.ensureWork({ canonicalTitle: "Right", year: 2017, workType: "movie" });
+    const source = f.repo.upsertDiscoveredSource({ inputRootId: root.id, workId: wrong.id, relativePath: "spider.ts", absolutePath: "X:\\queue\\spider.ts", fingerprint: "spider", sourceKind: "movie_file" });
+    const corrected = f.repo.correctSourceWork(source.id, right.id, { reason: "Frame evidence identifies the other work" });
+    assert.equal(corrected.work_id, right.id);
+    const event = f.db.prepare("SELECT event_type, payload_json FROM events WHERE entity_type='source' AND entity_id=? ORDER BY id DESC LIMIT 1").get(source.id);
+    assert.equal(event.event_type, "source_work_corrected");
+    assert.match(event.payload_json, /Frame evidence identifies/);
+  } finally { f.close(); }
+});
+
+test("explicit duplicate source marking survives discovery refresh", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const source = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "copy", absolutePath: "X:\\queue\\copy", fingerprint: "copy-1", sourceKind: "folder" });
+    const canonical = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "canonical", absolutePath: "X:\\queue\\canonical", fingerprint: "canonical-1", sourceKind: "folder" });
+    f.repo.markDuplicateSource(source.id, canonical.id, { reason: "Same content, copied path" });
+    const refreshed = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "copy", absolutePath: "X:\\queue\\copy", fingerprint: "copy-2", sourceKind: "folder" });
+    assert.equal(refreshed.source_kind, "duplicate_source");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+  } finally { f.close(); }
+});
+
 test("attachVariantSource repairs legacy links only within the same work", () => {
   const f = fixture();
   try {
@@ -570,6 +598,28 @@ test("production queue keeps a bound source visible until a variant is selected"
     assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === episodeFlat.id), false);
     f.repo.setInputRootEnabled("X:\\queue", false);
     assert.deepEqual(f.repo.listProductionSourceCandidates({ limit: 5 }), []);
+  } finally { f.close(); }
+});
+
+test("production source selection excludes a duplicate scan of the same physical path", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Duplicate Scan", year: 2025, priorityScore: 70 });
+    const canonical = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "Duplicate Scan",
+      absolutePath: "X:\\queue\\Duplicate Scan", fingerprint: "duplicate-canonical", sourceKind: "series_folder",
+      qualityState: "acceptable"
+    });
+    const duplicate = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "nested\\Duplicate Scan",
+      absolutePath: "x:/queue/duplicate scan", fingerprint: "duplicate-rescan", sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+
+    const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
+    assert.equal(candidates.some((row) => row.source_id === canonical.id), true);
+    assert.equal(candidates.some((row) => row.source_id === duplicate.id), false);
   } finally { f.close(); }
 });
 

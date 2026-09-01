@@ -216,9 +216,11 @@ function output(value, json) {
 async function main() {
   loadDotEnv();
   const { command, options } = parse(process.argv.slice(2));
+  // The film-library integration is the authoritative token for these pages.
+  // A separate read-only token may not have access to pages created by it.
   const token = options.apply
     ? process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN
-    : process.env.NOTION_READ_ONLY_TOKEN || process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN;
+    : process.env.NOTION_TOKEN || process.env.NOTION_READ_ONLY_TOKEN || process.env.NOTION_WRITE_TOKEN;
   if (!token) throw new Error(options.apply ? "NOTION_WRITE_TOKEN or NOTION_TOKEN is required" : "A Notion token is required");
   installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
   const clientOptions = { auth: token, timeoutMs: Number(process.env.NOTION_REQUEST_TIMEOUT_MS ?? 120000) };

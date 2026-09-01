@@ -332,6 +332,14 @@ test("multi-season shows use one database work page per season", () => {
   assert.match(seriesProducer, /parent-series page, another season page, or another work ID is a hard failure/u);
 });
 
+test("long-running continuous animation does not infer Notion seasons from source folders", () => {
+  const seriesRules = read("references/series-rules.md");
+  const seriesProducer = read("skills/wwp-series-producer/SKILL.md");
+  assert.match(seriesRules, /Long-running animation exception/u);
+  assert.match(seriesRules, /global episode number/u);
+  assert.match(seriesProducer, /distribution-folder season labels do not create Notion seasons/u);
+});
+
 test("automatic goal continuations suppress duplicate no-change reports", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const cycle = read("references/workflow-cycle.md");

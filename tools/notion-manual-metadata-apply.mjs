@@ -13,7 +13,7 @@ const ALLOWED_FIELDS = new Set([
   "外部类型原文", "未映射类型", "Runtime Minutes", "Directors", "Writers", "Cast",
   "Production Companies", "Distributors", "Studios", "简介", "基本信息",
   "Poster URL", "Metadata Source", "Metadata Confidence", "Match Status",
-  "Metadata Status", "Metadata Updated At", "Needs Review", "Developer Memo"
+  "Metadata Status", "Metadata Updated At", "Needs Review", "Developer Memo", "AI Issue"
 ]);
 
 function loadEnv() {

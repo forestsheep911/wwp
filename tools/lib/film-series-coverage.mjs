@@ -28,7 +28,11 @@ export function normalizeSeriesSpecTitle(value) {
   return String(value ?? "")
     .replace(/\s*\/\s*(?:Episode|EP)\s*\d{1,4}(?:\s*[-–]\s*\d{1,4})?\s*$/iu, "")
     .replace(/\s*\/\s*第?\s*\d{1,4}(?:\s*[-–]\s*\d{1,4})?\s*集\s*$/u, "")
-    .trim();
+    .trim()
+    // Historical entries used both orders for dubbed-track labels. Treat
+    // those labels as one specification so coverage does not split a season.
+    .replace(/刘杰台配/gu, "台配刘杰")
+    .replace(/姜瑰瑾台配/gu, "台配姜瑰瑾");
 }
 
 export function analyzeSeriesVariantCoverage(rows) {
