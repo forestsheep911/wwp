@@ -86,6 +86,11 @@ export class WikidataWorkCreditsSource {
     });
     return {
       workExternalId: workId,
+      workExternalIds: normalizeWorkExternalIds({
+        wikidata: workId,
+        imdb: claimString(work, "P345"),
+        tmdb: claimString(work, "P4947")
+      }),
       workKind: kind,
       credits: dedupeCredits(credits),
       observedAt: this.now().toISOString()
@@ -101,6 +106,10 @@ export class WikidataWorkCreditsSource {
       headers: { Accept: "application/json", "User-Agent": this.userAgent }
     });
   }
+}
+
+function normalizeWorkExternalIds(values: Record<string, string | undefined>) {
+  return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => Boolean(entry[1])));
 }
 
 function extractCreditRefs(work: WikidataEntity) {

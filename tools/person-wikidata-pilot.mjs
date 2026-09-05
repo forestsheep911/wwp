@@ -41,7 +41,7 @@ try {
   const workSource = new WikidataWorkCreditsSource({ limiter });
   const personSource = new WikidataPersonSource({ limiter });
   const workCacheKey = `${args.kind}-${args.wikidataId}`;
-  const workCreditLocale = "multilingual-v3-voice-actor-english-original-name";
+  const workCreditLocale = "multilingual-v4-work-identity-voice-actor-english-original-name";
   let workEvidence = await cache.get("wikidata", "work-credits", workCacheKey, workCreditLocale, 30 * 86_400_000);
   const cachedWork = Boolean(workEvidence);
   if (!workEvidence) {
@@ -100,7 +100,10 @@ try {
     excludedWikidataIds: [...excludedIds],
     proposedPeople: evidence,
     proposedProfiles: materialized.profiles,
-    proposedCredits: materialized.creditReplacements,
+    proposedCredits: materialized.creditReplacements.map((creditSet) => ({
+      ...creditSet,
+      sourceWorkExternalIds: workEvidence.workExternalIds ?? { wikidata: workEvidence.workExternalId }
+    })),
     identityIssues: materialized.issues,
     skippedIdentityMismatches,
     unresolved: materialized.unresolved.map((entry) => ({

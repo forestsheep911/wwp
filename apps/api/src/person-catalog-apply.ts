@@ -1,6 +1,7 @@
 import type {
   MovieCreditEntry,
   MovieDataQuality,
+  MovieExternalIds,
   PersonCatalogIssue,
   PersonCatalogState,
   PersonCreditRef,
@@ -11,10 +12,28 @@ import { normalizePersonExternalIds, normalizePersonNameSearchKey } from "@wwpdw
 import { rebuildDerivedPersonIndexes } from "@wwpdw/cache-store";
 import { assertVerifiedPersonProfileQuality } from "./person-biography-quality.js";
 
+export interface ReviewedCreditReplacementGuard {
+  mode: "replace-contaminated";
+  reason: "cross-work-contamination";
+  expectedAssetKey: string;
+  expectedSourceCreditCount: number;
+  expectedLinkedPersonIds: string[];
+  preserveExistingPersonIds?: string[];
+  expectedWorkExternalIds: Partial<MovieExternalIds>;
+  authoritativeSource: "wikidata";
+  authoritativeSourceWorkId: string;
+}
+
 export interface ReviewedPeopleReport {
   generatedAt: string;
   proposedProfiles: PersonProfile[];
-  proposedCredits: Array<{ workId: string; title: string; credits: MovieCreditEntry[] }>;
+  proposedCredits: Array<{
+    workId: string;
+    title: string;
+    credits: MovieCreditEntry[];
+    sourceWorkExternalIds?: Partial<MovieExternalIds>;
+    creditReplacement?: ReviewedCreditReplacementGuard;
+  }>;
   identityIssues: PersonCatalogIssue[];
   unresolved?: Array<{ workId?: string; creditName?: string; reason: string }>;
 }
@@ -80,8 +99,11 @@ export function planReviewedPeopleReportApply(
 
     const original = matches[0];
     if (!original.metadata?.work) throw new Error(`Search result for ${work.workId} has no structured work metadata.`);
+    assertSourceWorkIdentity(original, work.sourceWorkExternalIds);
     const sourceCredits = structuredClone(original.metadata.work.credits ?? original.metadata.credits ?? []);
-    const mergedCredits = mergeReviewedCredits(sourceCredits, work.credits);
+    const mergedCredits = work.creditReplacement
+      ? replaceContaminatedCredits(original, sourceCredits, work.credits, work.creditReplacement)
+      : mergeReviewedCredits(sourceCredits, work.credits);
     const linked = mergedCredits.filter((credit): credit is MovieCreditEntry & { personId: string } => Boolean(credit.personId)).map((credit) => {
       assertStablePersonId(credit.personId);
       if (!nextCatalog.people[credit.personId]) {
@@ -166,6 +188,65 @@ export function planReviewedPeopleReportApply(
       catalogChanged
     }
   };
+}
+
+function assertSourceWorkIdentity(original: SearchResult, sourceIds: Partial<MovieExternalIds> | undefined) {
+  if (!sourceIds) return;
+  const canonicalIds = original.metadata?.work?.externalIds ?? original.metadata?.externalIds ?? {};
+  for (const source of ["imdb", "tmdb", "douban"] as const) {
+    const supplied = sourceIds[source];
+    const canonical = canonicalIds[source];
+    if (supplied && canonical && supplied !== canonical) {
+      throw new Error(`Source work identity conflict for ${source}: expected ${canonical}, received ${supplied}.`);
+    }
+  }
+}
+
+function replaceContaminatedCredits(
+  original: SearchResult,
+  sourceCredits: MovieCreditEntry[],
+  reviewedCredits: MovieCreditEntry[],
+  guard: ReviewedCreditReplacementGuard
+) {
+  if (original.assetKey !== guard.expectedAssetKey) {
+    throw new Error(`Credit replacement asset guard failed: expected ${guard.expectedAssetKey}, found ${original.assetKey}.`);
+  }
+  const actualExternalIds = original.metadata?.work?.externalIds ?? original.metadata?.externalIds ?? {};
+  for (const [source, expected] of Object.entries(guard.expectedWorkExternalIds)) {
+    if (expected && actualExternalIds[source as keyof MovieExternalIds] !== expected) {
+      throw new Error(`Credit replacement work identity guard failed for ${source}.`);
+    }
+  }
+  if (!guard.authoritativeSourceWorkId.trim() || reviewedCredits.length === 0) {
+    throw new Error("Credit replacement requires a named source work and a non-empty authoritative credit set.");
+  }
+  const unsafeCredits = reviewedCredits.filter((credit) => (
+    credit.source !== guard.authoritativeSource || !credit.externalIds?.[guard.authoritativeSource]
+  ));
+  if (unsafeCredits.length > 0) {
+    throw new Error(`Credit replacement contains ${unsafeCredits.length} credit(s) without ${guard.authoritativeSource} identity evidence.`);
+  }
+  const replacement = structuredClone(reviewedCredits);
+  const replacementPersonIds = new Set(replacement.map((credit) => credit.personId).filter(Boolean));
+  for (const personId of guard.preserveExistingPersonIds ?? []) {
+    if (replacementPersonIds.has(personId)) continue;
+    const preserved = sourceCredits.filter((credit) => credit.personId === personId);
+    if (preserved.length !== 1) {
+      throw new Error(`Credit replacement preserve guard expected one source row for ${personId}; found ${preserved.length}.`);
+    }
+    replacement.push(structuredClone(preserved[0]));
+    replacementPersonIds.add(personId);
+  }
+  if (sameJson(sourceCredits, replacement)) return replacement;
+  if (sourceCredits.length !== guard.expectedSourceCreditCount) {
+    throw new Error(`Credit replacement count guard failed: expected ${guard.expectedSourceCreditCount}, found ${sourceCredits.length}.`);
+  }
+  const actualLinkedPersonIds = [...new Set(sourceCredits.map((credit) => credit.personId).filter(Boolean) as string[])].sort();
+  const expectedLinkedPersonIds = [...new Set(guard.expectedLinkedPersonIds)].sort();
+  if (!sameJson(actualLinkedPersonIds, expectedLinkedPersonIds)) {
+    throw new Error("Credit replacement linked-person guard failed.");
+  }
+  return replacement;
 }
 
 function dataQualityAfterCreditRepair(

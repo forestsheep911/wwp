@@ -1,5 +1,6 @@
 import type {
   MovieCreditEntry,
+  MovieExternalIds,
   PersonBiography,
   PersonExternalIds,
   PersonImage,
@@ -18,6 +19,7 @@ export interface PersonEvidence {
 
 export interface WorkCreditEvidence {
   workExternalId: string;
+  workExternalIds?: MovieExternalIds;
   workKind: "movie" | "series";
   credits: MovieCreditEntry[];
   observedAt: string;

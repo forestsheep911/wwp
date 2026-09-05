@@ -15,6 +15,8 @@ test("collects complete work relations while resolving people in a bounded batch
       if (url.includes("Special:EntityData")) {
         return Response.json({ entities: { Q1: { claims: {
           P57: [{ mainsnak: { datavalue: { value: { id: "Q10" } } } }],
+          P345: [{ mainsnak: { datavalue: { value: "tt0000001" } } }],
+          P4947: [{ mainsnak: { datavalue: { value: "101" } } }],
           P58: [{ mainsnak: { datavalue: { value: { id: "Q10" } } } }],
           P161: [{ mainsnak: { datavalue: { value: { id: "Q20" } } }, qualifiers: { P1545: [{ datavalue: { value: "1" } }] } }],
           P725: [{ mainsnak: { datavalue: { value: { id: "Q30" } } }, qualifiers: { P1545: [{ datavalue: { value: "2" } }] } }]
@@ -41,6 +43,7 @@ test("collects complete work relations while resolving people in a bounded batch
   assert.equal(result.credits[2].job, "Actor");
   assert.equal(result.credits[3].job, "Voice Actor");
   assert.deepEqual(result.credits[3].externalIds, { imdb: "nm0000030", wikidata: "Q30" });
+  assert.deepEqual(result.workExternalIds, { wikidata: "Q1", imdb: "tt0000001", tmdb: "101" });
 });
 
 test("rejects malformed work ids before requesting", async () => {

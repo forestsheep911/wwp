@@ -28,6 +28,7 @@ for (const input of config.inputs) {
   for (const work of report.proposedCredits) {
     proposedCredits.push({
       ...work,
+      ...(input.creditReplacement ? { creditReplacement: input.creditReplacement } : {}),
       credits: work.credits.map((credit) => {
         const wikidataId = credit.externalIds?.wikidata;
         const overrideName = wikidataId ? input.creditNameOverrides?.[wikidataId] : undefined;

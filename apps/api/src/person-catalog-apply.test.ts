@@ -79,6 +79,86 @@ test("merges reviewed links into the complete canonical source credit list", () 
   assert.equal(plan.nextCatalog.creditsByWorkId["work-1"].length, 1);
 });
 
+test("replaces a cross-work-contaminated credit set only when every source guard matches", () => {
+  const preservedPersonId = "person_323e4567-e89b-42d3-a456-426614174002";
+  const preservedProfile = structuredClone(profile);
+  preservedProfile.personId = preservedPersonId;
+  preservedProfile.externalIds = { tmdb: "11" };
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [
+    { personId, name: "正确导演", department: "directing", source: "wikidata", externalIds: { wikidata: "Q10" } },
+    { personId: preservedPersonId, name: "正确编剧", department: "writing", source: "wikidata", externalIds: { wikidata: "Q11" } },
+    { personId: "person_223e4567-e89b-42d3-a456-426614174001", name: "串片演员", department: "acting", source: "wikidata", externalIds: { wikidata: "Q99" } }
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    externalIds: { imdb: "tt0000001", tmdb: "100" },
+    credits: structuredClone(sourceCredits),
+    work: {
+      ...movie.metadata!.work!,
+      externalIds: { imdb: "tt0000001", tmdb: "100" },
+      credits: structuredClone(sourceCredits)
+    }
+  };
+  const reviewed = report();
+  reviewed.proposedProfiles.push(preservedProfile);
+  reviewed.proposedCredits[0] = {
+    workId: "work-1",
+    title: "作品一",
+    credits: [{ personId, name: "正确导演", department: "directing", source: "wikidata", externalIds: { wikidata: "Q10" } }],
+    creditReplacement: {
+      mode: "replace-contaminated",
+      reason: "cross-work-contamination",
+      expectedAssetKey: "asset-work-1",
+      expectedSourceCreditCount: 3,
+      expectedLinkedPersonIds: [personId, preservedPersonId, "person_223e4567-e89b-42d3-a456-426614174001"],
+      preserveExistingPersonIds: [preservedPersonId],
+      expectedWorkExternalIds: { imdb: "tt0000001", tmdb: "100" },
+      authoritativeSource: "wikidata",
+      authoritativeSourceWorkId: "Q1"
+    }
+  };
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 2);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].name, "正确导演");
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[1].name, "正确编剧");
+  const replay = planReviewedPeopleReportApply(plan.nextCatalog, plan.updatedResults, reviewed);
+  assert.equal(replay.updatedResults.length, 0);
+  assert.equal(replay.summary.catalogChanged, false);
+});
+
+test("rejects a guarded credit replacement after source state drift", () => {
+  const movie = result("work-1");
+  movie.metadata = {
+    ...movie.metadata,
+    externalIds: { imdb: "tt0000001" },
+    credits: [{ name: "串片演员", department: "acting", source: "wikidata", externalIds: { wikidata: "Q99" } }],
+    work: { ...movie.metadata!.work!, externalIds: { imdb: "tt0000001" }, credits: [{ name: "串片演员", department: "acting", source: "wikidata", externalIds: { wikidata: "Q99" } }] }
+  };
+  const reviewed = report();
+  reviewed.proposedCredits[0].credits = [{
+    personId,
+    name: "正确导演",
+    department: "directing",
+    source: "wikidata",
+    externalIds: { wikidata: "Q10" }
+  }];
+  reviewed.proposedCredits[0].creditReplacement = {
+    mode: "replace-contaminated",
+    reason: "cross-work-contamination",
+    expectedAssetKey: "asset-work-1",
+    expectedSourceCreditCount: 2,
+    expectedLinkedPersonIds: [],
+    expectedWorkExternalIds: { imdb: "tt0000001" },
+    authoritativeSource: "wikidata",
+    authoritativeSourceWorkId: "Q1"
+  };
+  assert.throws(
+    () => planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed),
+    /count guard failed/
+  );
+});
+
 test("matches voice-actor review credits to legacy actor rows without appending duplicates", () => {
   const movie = result("work-1");
   const sourceCredits: MovieCreditEntry[] = [{ name: "奥利维娅·科尔曼", department: "acting", job: "Actor", source: "tmdb" }];
@@ -139,6 +219,21 @@ test("rejects missing search work and unresolved identity issues before writes",
   const unsafe = report();
   unsafe.identityIssues.push({ kind: "external_id_conflict", message: "conflict", personIds: [personId] });
   assert.throws(() => planReviewedPeopleReportApply(emptyPersonCatalogState(), [result("work-1")], unsafe), /identity issue/);
+});
+
+test("rejects a discovery report whose source work identity conflicts with the canonical work", () => {
+  const movie = result("work-1");
+  movie.metadata = {
+    ...movie.metadata,
+    externalIds: { imdb: "tt0000001", tmdb: "100" },
+    work: { ...movie.metadata!.work!, externalIds: { imdb: "tt0000001", tmdb: "100" } }
+  };
+  const wrongWork = report();
+  wrongWork.proposedCredits[0].sourceWorkExternalIds = { imdb: "tt9999999", tmdb: "999" };
+  assert.throws(
+    () => planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], wrongWork),
+    /Source work identity conflict for imdb/
+  );
 });
 
 test("rolls search index back when catalog replacement fails", async () => {
