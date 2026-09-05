@@ -5,6 +5,8 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 ## Workflow Contract
 
 - `../../references/workflow-cycle.md`
+- `../../references/storage-rules.md`
+  - Optional external-disk policy. `G:` is a runtime-probed staging/quarantine fallback only; it is not a fixed input or output root. Check mount status, write/read responsiveness, and free space before use, and keep the actual path in the ledger.
   - Defines the bounded four-lane cycle: intake, metadata maintenance, production, and publication/Media Assets. Use it with the producer skill so an empty media-block queue cannot end the overall film-library workflow.
 
 ## Plugin Helpers

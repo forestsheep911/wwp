@@ -214,9 +214,14 @@ function mergeReviewedCredits(
   reviewedCredits: MovieCreditEntry[]
 ): MovieCreditEntry[] {
   const merged = structuredClone(sourceCredits);
+  const sourceCreditCount = merged.length;
   const consumed = new Set<number>();
   for (const reviewed of reviewedCredits) {
-    const sourceIndex = merged.findIndex((source, index) => !consumed.has(index) && sameCreditIdentity(source, reviewed));
+    const sourceIndex = merged.findIndex((source, index) => (
+      index < sourceCreditCount
+      && !consumed.has(index)
+      && sameCreditIdentity(source, reviewed)
+    ));
     if (!reviewed.personId) {
       if (sourceIndex < 0) merged.push(structuredClone(reviewed));
       continue;

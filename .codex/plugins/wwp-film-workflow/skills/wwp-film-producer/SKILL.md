@@ -57,7 +57,7 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 Treat the exact phrase `开始制作影视库` as the end-to-end start command. Do not ask the user to restate the workflow.
 
 1. Read enabled input roots and pending work from `.local-data/wwp-film-workflow.sqlite`. If the ledger has no enabled input root, use a directory explicitly supplied in the same request; ask for one only when neither source exists.
-2. Run `node tools/film-workflow-cycle.mjs --limit 3 --mode film-and-current-people --json` before reading any lanes. This is the default single-line production mode: finish the bounded film round first, reach a stable checkpoint, and only then route People work for the exact current film work IDs. Use `--mode film-only` for a film-only round and `--mode people-only` to resume the saved People campaign without scanning film inputs. Never launch film and People network stages as separate concurrent tasks. This single entry point performs a fresh bounded scan of every enabled input root in film modes, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. The local scan always runs in film modes, while the Notion handoff/full round is throttled for one hour after an unchanged scan; a changed input bypasses that cooldown. When the user reports a new batch, run the same command with `--force`, because an automatic continuation may already have registered the batch before the user-facing turn. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, and cleanup candidates. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
+2. Run `node tools/film-workflow-cycle.mjs --limit 3 --mode film-and-current-enrichment --json` before reading any lanes. This is the default single-line production mode: finish the bounded film round first, reach a stable checkpoint, and only then route base metadata, People, honors, and highlights for the exact current film work IDs. Use `--mode film-only` for a film-only round, `--mode people-only` to resume the narrower saved People campaign, and `--mode enrichment-only` to resume all saved enrichment stages without scanning film inputs. Never launch film and enrichment network stages as separate concurrent tasks. This single entry point performs a fresh bounded scan of every enabled input root in film modes, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. The local scan always runs in film modes, while the Notion handoff/full round is throttled for one hour after an unchanged scan; a changed input bypasses that cooldown. When the user reports a new batch, run the same command with `--force`, because an automatic continuation may already have registered the batch before the user-facing turn. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, and cleanup candidates. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
 3. Claim a bounded actionable handoff before changing it, following `../../references/workflow-handoff.md`. Continue the other workflow lanes after the handoff batch.
 4. For each bounded batch, identify new resources and existing works needing metadata/spec repair before selecting playable production. Start work-page creation and metadata backfill as soon as a scanned work is identified. Apply release-first coverage: after the minimum production gates pass, prioritize one releaseable playable for each eligible newly arrived work before supplemental depth on an already covered work. Run independent metadata, destination-page preparation, upload, QC, and encoding work concurrently when practical; use long encode/upload wait time for the non-conflicting lanes. While a long encode or upload is active, monitor that process instead of starting rapid repeated full cycles. After an unchanged scan, wait for that process to close, a user-reported new input batch, or an urgent Workflow Note change before starting another full cycle.
 5. Continue through destination structure, playable production, upload handoff, Media Assets, and targeted readback. Reconcile at most three registered Notion targets per run. Media-block reconciliation is only the publication lane, not the workflow trigger or completion test.
@@ -86,10 +86,14 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 
 ## Single-line Film and People Scheduling
 
-- The workflow has one production owner and three current modes: `film-only`,
-  `people-only`, and the default `film-and-current-people`. Add future modes to
+- The workflow has one production owner and five current modes: `film-only`,
+  `people-only`, `enrichment-only`, the narrower `film-and-current-people`, and
+  the default `film-and-current-enrichment`. Add future modes to
   the central mode registry; do not recreate a second autonomous People task.
-- `film-and-current-people` means film first, then People for the exact work IDs
+- `film-and-current-enrichment` means film first, then base metadata, People,
+  honors, and highlights for the exact work IDs selected in the current film
+  batch. `film-and-current-people` remains available as a deliberately narrower
+  compatibility mode.
   touched by the bounded film batch. No current work ID means no opportunistic
   People batch. It does not authorize a broad historical People scan.
 - All film and People network stages share
@@ -174,6 +178,14 @@ toggle, callout, or base-like visual containers.
   staging root (for example on `I:`), record the actual output path in the
   ledger, and do not create a partial file on the full volume. Never delete
   quarantined files merely to make room without an explicit human decision.
+- `G:` is an optional external-disk fallback, not a fixed input or output root.
+  If it is present and writable, it may temporarily hold encode intermediates,
+  completed outputs, or cleanup items when another volume lacks space. Probe
+  its write/read performance and free space before a large transfer, record the
+  actual path, and verify bytes before removing the original. If it is absent
+  or slow, continue without it and do not retry it in a tight loop. Keep any
+  G-drive quarantine outside its output root, for example a top-level
+  `G:\待人工删除` when no configured quarantine path exists.
 - If a finished, verified output was staged on another volume and
   `E:\video_made` has recovered enough capacity, relocate that output back to
   the default root before quarantine. Verify the copied byte count, remove the
@@ -277,3 +289,4 @@ The cycle may end only after these work areas have been checked and the next bou
 - Script inventory: `../../references/script-map.md`
 - Work title and duplicate prevention: `../../references/work-title-identity-rules.md`
 - Human/AI collaboration handoff: `../../references/workflow-handoff.md`
+- Storage and optional external-disk handling: `../../references/storage-rules.md`

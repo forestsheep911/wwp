@@ -24,7 +24,7 @@ Use this skill before opening heavy encodes or uploads. The goal is to choose de
 ## Hard Gates
 
 - Chinese subtitles are required for subtitle-dependent versions unless the user explicitly overrides. A verified Mandarin-dubbed (`国配`) version is Chinese-language playable and does not become subtitle-dependent merely because it lacks Chinese subtitles.
-- Internal subtitle tracks, sidecar subtitles, and visually confirmed source hard subtitles are all valid subtitle evidence.
+- Internal subtitle tracks, sidecar subtitles, and visually confirmed source hard subtitles are all valid subtitle evidence. For a source with no subtitle stream, visually confirm hardcoded Chinese subtitles at multiple content-bearing timestamps distributed across the runtime, at minimum early, middle, and late dialogue; record the screenshots/timestamps as `bakedChinese=true` before selecting the playable variant.
 - Do not auto-search subtitle sites in v1; record this as a future extension when relevant.
 - Skip sources with severe quality, color, subtitle, audio, or encode risk unless the user explicitly asks to experiment.
 - Do not treat "already in the folder" as sufficient reason to encode.

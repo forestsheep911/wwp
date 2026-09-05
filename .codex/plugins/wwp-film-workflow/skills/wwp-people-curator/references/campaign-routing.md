@@ -4,7 +4,8 @@ Use this reference whenever a people request could repair existing profiles,
 expand new identities from work credits, or resume an earlier campaign.
 
 The production coordinator owns when this campaign may run. `people-only`
-resumes the saved campaign directly; `film-and-current-people` may create an
+resumes the saved campaign directly; `enrichment-only` runs it after the saved
+base-metadata stage; `film-and-current-enrichment` may create an
 exact-current-work expansion sub-batch only after the film checkpoint. These
 outer production modes are separate from the campaign's inner `repair_only`,
 `expansion_only`, and `balanced` selection modes. Never use the inner mode to

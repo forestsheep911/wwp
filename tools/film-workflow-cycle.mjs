@@ -19,7 +19,7 @@ function parseArgs(argv) {
     // --force and bypasses this interval immediately.
     minFullCycleSec: 3600,
     force: false,
-    mode: PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE
+    mode: PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -165,16 +165,27 @@ function main() {
 
 function runMain(options, lock) {
   const root = path.resolve("tools");
-  if (options.mode === PRODUCTION_MODES.PEOPLE_ONLY) {
+  if (options.mode === PRODUCTION_MODES.PEOPLE_ONLY || options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY) {
+    const enrichmentOnly = options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY;
     const result = {
       startedAt: new Date().toISOString(),
       orchestration: {
         ...buildProductionModePlan(options.mode),
         lockPath: lock.path,
-        concurrencyPolicy: "影视与人物网络阶段共享排他锁；人物模式仅恢复已保存的人物 campaign，不启动影视扫描。"
+        concurrencyPolicy: enrichmentOnly
+          ? "影视、人物、荣誉与看点网络阶段共享排他锁；资料补全模式按基础资料、人物、荣誉、看点顺序恢复已保存的 campaign，不启动影视扫描。"
+          : "影视与人物网络阶段共享排他锁；人物模式仅恢复已保存的人物 campaign，不启动影视扫描。"
       },
-      scan: { skipped: true, reason: "people_only_mode" },
-      summary: { discoveryMessage: "人物专做模式未扫描影视输入目录。", workMessage: "恢复已保存的人物 campaign；具体候选、配额和阻塞项由 people-cycle-state.json 报告。" }
+      scan: { skipped: true, reason: enrichmentOnly ? "enrichment_only_mode" : "people_only_mode" },
+      summary: enrichmentOnly
+        ? {
+            discoveryMessage: "资料补全模式未扫描影视输入目录。",
+            workMessage: "依次恢复基础资料、人物、荣誉、看点 campaign；每阶段必须报告完成、阻塞、待人工确认和下一步。"
+          }
+        : {
+            discoveryMessage: "人物专做模式未扫描影视输入目录。",
+            workMessage: "恢复已保存的人物 campaign；具体候选、配额和阻塞项由 people-cycle-state.json 报告。"
+          }
     };
     process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
     return;
@@ -210,7 +221,9 @@ function runMain(options, lock) {
     orchestration: {
       ...buildProductionModePlan(options.mode, currentWorkIds(cycle)),
       lockPath: lock.path,
-      concurrencyPolicy: "先完成本轮影视的稳定检查点，再处理本批影视人物；两条网络阶段禁止并行。"
+      concurrencyPolicy: options.mode === PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
+        ? "先完成本轮影视的稳定检查点，再按基础资料、人物、荣誉、看点串行处理本批作品；所有网络阶段禁止并行。"
+        : "先完成本轮影视的稳定检查点，再处理本批影视人物；两条网络阶段禁止并行。"
     },
     cadence: {
       mode: "bounded_round",

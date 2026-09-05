@@ -11,7 +11,7 @@ const ALLOWED_FIELDS = new Set([
   "Traditional Chinese Title (Taiwan)", "Traditional Chinese Title (Hong Kong)",
   "Release Year", "上映日期", "Countries", "Languages", "旨趣",
   "外部类型原文", "未映射类型", "Runtime Minutes", "Directors", "Writers", "Cast",
-  "Production Companies", "Distributors", "Studios", "简介", "基本信息",
+  "Production Companies", "Distributors", "Studios", "简介", "基本信息", "AI建议最低年龄",
   "Poster URL", "Metadata Source", "Metadata Confidence", "Match Status",
   "Metadata Status", "Metadata Updated At", "Needs Review", "Developer Memo", "AI Issue"
 ]);

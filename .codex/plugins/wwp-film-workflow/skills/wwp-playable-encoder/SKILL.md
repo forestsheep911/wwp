@@ -51,6 +51,11 @@ Use this skill for playable outputs that people will watch directly. Source arch
 - Do not run competing GPU encodes merely to appear parallel. While GPU encoding is active, use CPU/network/attention capacity for metadata backfill, destination preparation, upload, Media Assets reconciliation, and QC of completed files.
 
 - When the final output volume is too full to hold both the temporary MKV and the final MP4, use `--temp-dir <other-volume>` with `transcode-hevc-mp4.mjs`. Keep `--output` in the configured output directory; only the intermediate work files may move to the temporary volume. The temporary volume must be checked for sufficient free space before starting, and the final output still requires its own free-space check.
+- `G:` may serve as that temporary volume when it is actually mounted and a
+  write/read probe confirms acceptable operation. It is an optional external
+  fallback, not a fixed output directory; do not place the final output there
+  unless the selected output root is explicitly G-based and recorded in the
+  ledger.
 - For external SSA/ASS/SRT subtitles, verify the text encoding before a full batch. A non-UTF-8 sidecar must use `--subtitle-charenc` (for example `GBK`) and pass a bounded smoke test with visible dialogue before the batch is selected for encoding.
 - For multichannel AAC browser delivery, pass the explicit source channel count (`--audio-channels 6` for 5.1 or `--audio-channels 8` for 7.1) so the output carries a channel layout. A file that lacks this layout fails browser-compatibility QC even if FFmpeg completes.
 - A first release is allowed to complete before supplemental variants. Keep every planned supplement as a concrete selected/deferred ledger variant so it returns to the production queue and keeps the source retained.

@@ -1,7 +1,9 @@
 export const PRODUCTION_MODES = Object.freeze({
   FILM_ONLY: "film-only",
   PEOPLE_ONLY: "people-only",
-  FILM_AND_CURRENT_PEOPLE: "film-and-current-people"
+  ENRICHMENT_ONLY: "enrichment-only",
+  FILM_AND_CURRENT_PEOPLE: "film-and-current-people",
+  FILM_AND_CURRENT_ENRICHMENT: "film-and-current-enrichment"
 });
 
 const MODE_ALIASES = new Map([
@@ -11,13 +13,19 @@ const MODE_ALIASES = new Map([
   ["people", PRODUCTION_MODES.PEOPLE_ONLY],
   ["people_only", PRODUCTION_MODES.PEOPLE_ONLY],
   [PRODUCTION_MODES.PEOPLE_ONLY, PRODUCTION_MODES.PEOPLE_ONLY],
+  ["enrichment", PRODUCTION_MODES.ENRICHMENT_ONLY],
+  ["enrichment_only", PRODUCTION_MODES.ENRICHMENT_ONLY],
+  [PRODUCTION_MODES.ENRICHMENT_ONLY, PRODUCTION_MODES.ENRICHMENT_ONLY],
   ["film_with_people", PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE],
   ["film-and-people", PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE],
   ["film_and_current_people", PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE],
-  [PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE, PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE]
+  [PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE, PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE],
+  ["film_with_enrichment", PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT],
+  ["film_and_current_enrichment", PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT],
+  [PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT, PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT]
 ]);
 
-export function normalizeProductionMode(value = PRODUCTION_MODES.FILM_AND_CURRENT_PEOPLE) {
+export function normalizeProductionMode(value = PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT) {
   const normalized = MODE_ALIASES.get(String(value).trim().toLowerCase());
   if (!normalized) {
     throw new Error(`--mode must be one of: ${Object.values(PRODUCTION_MODES).join(", ")}`);
@@ -42,6 +50,27 @@ export function buildProductionModePlan(mode, currentWorkIds = []) {
       sequence: ["people"],
       film: { enabled: false },
       people: { enabled: true, status: "eligible", scope: "saved_people_campaign", workIds: [] }
+    };
+  }
+  if (normalized === PRODUCTION_MODES.ENRICHMENT_ONLY) {
+    return {
+      mode: normalized,
+      sequence: ["base-metadata", "people", "honors", "highlights"],
+      film: { enabled: false },
+      enrichment: { enabled: true, status: "eligible", scope: "saved_enrichment_campaign", workIds: [] }
+    };
+  }
+  if (normalized === PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT) {
+    return {
+      mode: normalized,
+      sequence: ["film", "base-metadata", "people", "honors", "highlights"],
+      film: { enabled: true },
+      enrichment: {
+        enabled: true,
+        status: exactWorkIds.length ? "eligible_after_film_checkpoint" : "not_scheduled_no_current_work",
+        scope: "current_film_batch",
+        workIds: exactWorkIds
+      }
     };
   }
   return {

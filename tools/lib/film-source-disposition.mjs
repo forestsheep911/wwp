@@ -29,19 +29,28 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
   const humanTask = tasks.find((task) => task.status === "waiting_user");
   const deferredTasks = tasks.filter((task) => task.status === "deferred");
   const pendingTasks = tasks.filter((task) => ["pending", "in_progress"].includes(task.status));
-  const openVariants = variants.filter((variant) => !CLOSED_PUBLICATION_STATES.has(variant.publication_state));
-  const futureVariant = variants.find((variant) => futureDate(variant.next_review_at, now));
-  const dueVariant = variants.find((variant) => variant.production_state === "deferred" && !futureDate(variant.next_review_at, now));
+  const supersededPlaceholder = (variant) => variant.failure_code === "superseded_by_episode_targets";
+  const openVariants = variants.filter((variant) =>
+    !supersededPlaceholder(variant) && !CLOSED_PUBLICATION_STATES.has(variant.publication_state));
+  const futureVariant = variants.find((variant) => !supersededPlaceholder(variant) && futureDate(variant.next_review_at, now));
+  const dueVariant = variants.find((variant) =>
+    !supersededPlaceholder(variant) && variant.production_state === "deferred" && !futureDate(variant.next_review_at, now));
   // Successful variants often retain QC notes in failure_detail for auditability.
   // Only an open failed/deferred variant should block source disposition.
   const failedVariant = variants.find((variant) =>
     (variant.production_state === "qc_failed" || variant.production_state === "deferred")
     && (variant.failure_code || variant.failure_detail)
+    && !supersededPlaceholder(variant)
     && !CLOSED_PUBLICATION_STATES.has(variant.publication_state));
   const quarantineFailure = latestFailure(events);
   const collectionMembersAlreadyTracked = explicitCollectionTracking || (source.work_id == null && tasks.some((task) =>
     task.status === "done" && /(?:members?|成员源|各季成员|已绑定|拆分)/iu.test(String(task.reason ?? ""))
   ));
+  const subtitleEvidence = String(source.subtitle_evidence ?? "").toLowerCase();
+  const verifiedMissingChineseSubtitle = subtitleEvidence.includes("no_chinese_subtitles")
+    || subtitleEvidence.includes('"verifiedchinese":false')
+    || subtitleEvidence.includes('"verifiedchinesesubtitle":false');
+  const hasVerifiedMandarinAudio = /(?:mandarin|cmn|国语|普通话)/iu.test(String(source.audio_evidence ?? ""));
 
   if (source.workflow_note) evidence.push({ type: "workflow_note", value: source.workflow_note });
   for (const task of tasks) {
@@ -106,6 +115,11 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     disposition = "collection_container_active";
     reasons.push("collection_members_tracked_separately");
     nextTrigger = "等待全部成员源各自闭环后再关闭并移动合集容器";
+  } else if (verifiedMissingChineseSubtitle && !hasVerifiedMandarinAudio) {
+    disposition = "waiting_for_human";
+    reasons.push("missing_chinese_subtitle");
+    needsHumanConfirmation = true;
+    nextTrigger = "补充中文字幕或由用户明确覆盖中文字幕门槛；在此之前不制作";
   } else if (source.work_id == null) {
     disposition = "identity_review_required";
     reasons.push("source_not_bound_to_work");
@@ -156,8 +170,10 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
   } else if (expansionDecision === "OPEN" || cleanupCandidate?.reasons?.includes("source_expansion_open")) {
     disposition = "retained_for_open_expansion";
     reasons.push(...(cleanupCandidate?.reasons ?? ["source_expansion_open"]));
-    actionableNow = variants.some((variant) => !futureDate(variant.next_review_at, now));
-    nextTrigger = actionableNow ? "继续具体扩展规格" : "等待下一次规格复核时间";
+    // OPEN means the source is retained for future evidence; it is not a
+    // concrete task until a missing stream/spec or user instruction exists.
+    actionableNow = false;
+    nextTrigger = "等待新增音轨/字幕/剪辑证据或用户明确指定扩展规格";
   } else if (expansionDecision !== "CLOSED" || cleanupCandidate?.reasons?.includes("source_expansion_unresolved")) {
     disposition = "expansion_decision_missing";
     reasons.push(...(cleanupCandidate?.reasons ?? ["source_expansion_unresolved"]));

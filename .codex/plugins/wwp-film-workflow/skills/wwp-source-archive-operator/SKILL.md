@@ -42,7 +42,13 @@ Source/original-disc work is optional and guarded. It is different from playable
   enabled input root needs one explicit disposition and reason. A failed move
   is recorded as `source_quarantine_failed` so later rounds continue reporting
   the exact path and OS error until the source is successfully quarantined.
-- Before quarantining a completed output that is on a non-default volume, run `node tools/film-relocate-finished-outputs.mjs --from-root <staging-output-root> --to-root E:\\video_made --json`; add `--apply` only after the preview shows exact `sync_ready` and byte-matched outputs. The tool copies and verifies each file, updates its exact ledger path and relocation event, then removes the old copy. It excludes sources, active work files, samples, and size-mismatched records.
+- Before quarantining a completed output that is on a non-default volume, run `node tools/film-relocate-finished-outputs.mjs --from-root <staging-output-root> --to-root <configured-output-root> --json`; use the default `E:\\video_made` only when no output root was specified. Add `--apply` only after the preview shows exact `sync_ready` and byte-matched outputs. The tool copies and verifies each file, updates its exact ledger path and relocation event, then removes the old copy. It excludes sources, active work files, samples, and size-mismatched records.
+- `G:` is an optional external holding volume. Use it only after checking that
+  the drive is mounted, writable, has enough space, and passes a small
+  write/read probe. It may hold temporary outputs or cleanup items when the
+  normal volume is short on space, but it is not an enabled input root and its
+  actual path must remain in the ledger. Read `../../references/storage-rules.md`
+  for the quarantine and failure rules.
 - When reconciling the local output ledger, run `node tools/film-output-ledger-audit.mjs --root <directory> --json`. A `sync_ready` variant that is absent from its original output path but present in the same-volume `待人工删除` path with its `.variant-<id>` suffix is an archived finished output, not a missing output. Only the audit's `registeredOutputsMissing` list needs historical follow-up.
 - When a deliberately cleaned local output is still represented by a visible, playback-verified Notion Media Asset with a mapped spec or Episode page and media block, use the explicit backfill tool flag `--allow-uploaded-only` to restore the ledger record. This is evidence recovery only: do not invent a local path or byte size, and do not use it for an unverified, hidden, misplaced, or unreleased asset.
 - Treat a local media file with no exact ledger record as a legacy exception, not a cleanup candidate. Keep it in place until a published replacement is proven to cover its intended audio, subtitle, and browser-compatibility role, or the user explicitly authorizes that file class. Record the reason before moving it to `待人工删除`.
@@ -51,4 +57,4 @@ Source/original-disc work is optional and guarded. It is different from playable
 
 ## Reference
 
-Read `../../references/source-archive-rules.md` and `../../references/script-map.md`.
+Read `../../references/source-archive-rules.md`, `../../references/storage-rules.md`, and `../../references/script-map.md`.

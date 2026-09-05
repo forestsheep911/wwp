@@ -92,6 +92,21 @@ test("matches voice-actor review credits to legacy actor rows without appending 
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
 });
 
+test("preserves distinct reviewed role rows when no canonical source row exists", () => {
+  const reviewed = report();
+  reviewed.proposedCredits[0].credits = [
+    { personId, name: "张三", department: "directing", job: "Director", source: "wikidata", externalIds: { wikidata: "Q10" } },
+    { personId, name: "张三", department: "production", job: "Producer", source: "wikidata", externalIds: { wikidata: "Q10" } }
+  ];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [result("work-1")], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 2);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 2);
+  assert.deepEqual(
+    plan.updatedResults[0].metadata?.work?.credits?.map((credit) => credit.department),
+    ["directing", "production"]
+  );
+});
+
 test("clears the stale missing-credits marker when reviewed credits are published", () => {
   const movie = result("work-1");
   const existingCredits = structuredClone(report().proposedCredits[0].credits);

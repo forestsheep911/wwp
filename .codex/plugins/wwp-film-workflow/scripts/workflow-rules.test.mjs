@@ -22,6 +22,16 @@ test("verified Mandarin-dubbed playback is not blocked by missing Chinese subtit
   assert.match(handoff, /set `已完成` and append one concise AI note/u);
 });
 
+test("subtitle-free probes require distributed hard-subtitle screenshot evidence", () => {
+  const decisionRules = read("references/decision-rules.md");
+  const encoding = read("references/encoding-rules.md");
+  const intake = read("skills/wwp-film-intake/SKILL.md");
+  assert.match(decisionRules, /multiple content-bearing timestamps distributed across the runtime/iu);
+  assert.match(decisionRules, /bakedChinese=true/iu);
+  assert.match(encoding, /early, middle, and late dialogue/iu);
+  assert.match(intake, /timestamped `bakedChinese=true` evidence/iu);
+});
+
 test("the exception does not waive subtitles for foreign-original-audio playback", () => {
   const decisionRules = read("references/decision-rules.md");
   const encoder = read("skills/wwp-playable-encoder/SKILL.md");

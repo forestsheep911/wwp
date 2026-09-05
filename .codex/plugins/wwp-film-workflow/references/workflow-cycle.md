@@ -14,10 +14,14 @@ the complete Notion destination tree because uploaded media blocks cannot be
 moved by the API. Automatic upload is the normal route after a direct-route
 probe; manual upload is an explicit, bounded fallback coordinated through
 `Workflow Status` and `Workflow Note`, never through page timestamps.
+An optional mounted `G:` external disk may be used as a probed temporary
+staging or quarantine volume when another volume lacks space; it is not a fixed
+input/output root and its actual path must be recorded in the ledger.
 
-Film and People production have one scheduler rather than two autonomous
-tasks. The scheduler accepts `film-only`, `people-only`, and the default
-`film-and-current-people`. The default completes the bounded film stage first
+Film production and all catalog enrichment have one scheduler rather than
+autonomous tasks. The scheduler accepts `film-only`, `people-only`,
+`enrichment-only`, the compatibility mode `film-and-current-people`, and the
+default `film-and-current-enrichment`. The default completes the bounded film stage first
 and then offers the People stage only the exact work IDs touched by that film
 round. People research, Notion publication, and convergence never run beside a
 film network stage. Both lanes use `.local-data/wwp-production-network.lock`;
@@ -265,6 +269,11 @@ playable file, and no Media Assets.
 - Every s801 wrapper invocation must include a concrete `--reason` naming the estimated batch size or DIRECT failure evidence. The wrapper passes that reason to the uploader for audit. Run the probe and uploader with their explicit-proxy bypass option (`--no-proxy`) so Clash TUN and the temporary selectors, rather than `HTTPS_PROXY` or `NOTION_PROXY_URL`, own the exact route. A generic desire to use a proxy is insufficient, and unavailable s801 must not obstruct the default DIRECT path.
 - For series, normal publication is one playable file per Episode page. Multi-episode collections are opt-in exceptions and must not be produced merely to reduce upload count.
 - A local output/source file is deletable only after the ledger and Notion evidence show that the required asset is already accounted for, or the user explicitly authorizes deletion of that specific class of file.
+- `G:` is an optional external holding volume. Before using it, check that it is
+  mounted, writable, sufficiently empty, and responsive to a small write/read
+  probe. If it is unavailable or slow, record the reason and continue other
+  lanes without tight retries. Never infer that G is an input root, final output
+  root, or proof that a cleanup gate has passed.
 - For verified finished outputs approved for cleanup, use `E:\待人工删除` as the default quarantine directory. Keep it outside the production output root: do not place it under `E:\video_made`. Moving to quarantine is not final deletion and does not itself authorize deletion.
 - A source moved to a same-volume `待人工删除` directory exits normal input-root scanning, but it does not lose expansion value. Before final human deletion or when repairing a known spec gap, resolve the exact quarantined source from the ledger and recheck useful original audio, dubbed audio, commentary, subtitle, compact, and higher-bitrate branches. Directory placement alone must never close or cancel a supplemental variant.
 - Keep every `待人工删除` root disabled in the input-root registry. A deliberate quarantine audit may update existence for exact previously registered sources, but unknown children are skipped and never create a new source or intake task.

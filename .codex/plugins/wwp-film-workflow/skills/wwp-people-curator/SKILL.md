@@ -15,8 +15,8 @@ the lane from whichever candidates happen to be easiest to find.
 
 ## Keep one production owner
 
-- Start from an explicit People request, `--mode people-only`, or the People handoff created after the film checkpoint in `--mode film-and-current-people`.
-- `开始制作影视库` uses `film-and-current-people` by default, but the People stage may begin only after the bounded film stage reaches its stable checkpoint and only for the exact current work IDs.
+- Start from an explicit People request, `--mode people-only`, the People stage of `--mode enrichment-only`, or the People handoff created after the film checkpoint in `--mode film-and-current-enrichment`.
+- `开始制作影视库` uses `film-and-current-enrichment` by default, but the People stage may begin only after the bounded film stage and base-metadata stage reach stable checkpoints and only for the exact current work IDs.
 - Do not delay publishing a film because its people data is incomplete.
 - Do not run this skill as a second concurrent task beside film production. Its network commands share `.local-data/wwp-production-network.lock` with the film cycle; a live lock owner is a stop condition, not a retry signal.
 - Keep the integration seam at the reviewed report: the main workflow invokes this skill after routing, but must not duplicate its identity or publishing logic.

@@ -56,10 +56,38 @@ test("future deferred variant reports its review time instead of pretending the 
   assert.equal(item.nextTrigger, "2026-09-10T00:00:00.000Z");
 });
 
+test("an open expansion marker retains a source without creating a phantom task", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, workflow_note: "[规格扩展:OPEN] 未来有新音轨时再评估" },
+    variants: [{ id: 11, production_state: "qc_passed", publication_state: "sync_ready" }],
+    cleanupCandidate: { eligible: false, reasons: ["source_expansion_open"] }
+  });
+  assert.equal(item.disposition, "retained_for_open_expansion");
+  assert.equal(item.actionableNow, false);
+  assert.match(item.nextTrigger, /新增音轨/u);
+});
+
 test("unbound source cannot disappear behind an empty production lane", () => {
   const item = classifySourceDisposition({ source: { ...source, work_id: null, canonical_title: null, workflow_status: null, workflow_note: null } });
   assert.equal(item.disposition, "identity_review_required");
   assert.equal(item.actionableNow, true);
+});
+
+test("a verified subtitle absence waits for subtitles instead of becoming a production decision", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      subtitle_evidence: '{"internalProbeState":"completed","no_chinese_subtitles":true,"verifiedChinese":false}',
+      audio_evidence: '{"originalAudio":"eng"}',
+      workflow_status: null,
+      workflow_note: null
+    },
+    variants: []
+  });
+  assert.equal(item.disposition, "waiting_for_human");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, true);
+  assert.deepEqual(item.reasons, ["missing_chinese_subtitle"]);
 });
 
 test("a completed collection container waits on its tracked members instead of reopening identity", () => {
@@ -121,6 +149,19 @@ test("successful QC notes do not turn a released variant into a technical blocke
       publication_state: "sync_ready",
       failure_detail: "Full-duration QC passed"
     }],
+    cleanupCandidate: { eligible: false, reasons: ["source_expansion_unresolved"] }
+  });
+  assert.equal(item.disposition, "expansion_decision_missing");
+  assert.equal(item.reasons.includes("variant_failure"), false);
+});
+
+test("a season placeholder superseded by episode targets does not block the closed episode set", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, workflow_note: "[规格扩展:CLOSED] 本季按 episode 独立交付" },
+    variants: [
+      { id: 14, production_state: "deferred", publication_state: "not_ready", failure_code: "superseded_by_episode_targets" },
+      { id: 15, production_state: "qc_passed", publication_state: "sync_ready" }
+    ],
     cleanupCandidate: { eligible: false, reasons: ["source_expansion_unresolved"] }
   });
   assert.equal(item.disposition, "expansion_decision_missing");

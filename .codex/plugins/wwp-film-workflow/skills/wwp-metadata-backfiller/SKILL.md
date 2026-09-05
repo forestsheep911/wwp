@@ -29,6 +29,15 @@ This fills work-level metadata. It is separate from Media Assets, which describe
    - After a confirmed fallback score is parsed, use `node tools/notion-critic-rating-enrichment.mjs --page-id <page> ...` to preview/apply only missing `烂番茄新鲜度` and `Metascore` fields. It must not overwrite existing human or OMDb values. The tool can reuse official RT/Metacritic URLs already present in Notion URL/text fields or `Developer Memo`, so manual confirmation can be recorded once and reused later. If parsing saved HTML files, pass `--rotten-source-url`, `--metacritic-source-url`, or `--imdb-source-url`, or keep those official URLs in `Developer Memo`. Preserve the official RT/Metacritic URL in evidence memo or `--ratings-json`; the website index can reuse those URLs as `externalIds.rottenTomatoes` and `externalIds.metacritic` for exact badge links instead of search-page fallback.
    Do not use screenshots unless the user supplies them as manual evidence.
 11. Use AI only for advisory/generated fields such as `AI建议最低年龄`, `AI年龄建议置信度`, `内容风险标签`, `AI年龄建议理由`, family viewing notes, or summary phrasing; do not invent external facts.
+11a. When proposing `看点标签` or `观影看点`, follow
+     `../../references/editorial-highlight-rules.md`. Treat people, companies,
+     awards, genres, ratings, and synopsis text as evidence inputs rather than
+     display-template slots. Run the metadata prerequisite gate first; missing,
+     conflicting, or unchecked creator/award/company/identity evidence returns
+     `blocked_metadata` with exact missing fields instead of generic tags.
+     Generate and score candidates only from a saved factual snapshot, retain
+     at most three approved tags, allow `insufficient_evidence`, and never
+     overwrite reviewed or human-locked editorial output.
 12. At the end of a valid AI inspection, write `Last AI Check Time` even when no metadata changed. Keep `Metadata Updated At` for actual metadata changes only.
 13. Put only concrete unresolved AI findings in `AI Issue`. Never write, replace, or clear `Human Issue`; it is the renamed legacy `Issue` field and belongs to people. Set/keep `Needs Review` when either issue field is non-empty. Remove an `AI Issue` only after readback evidence confirms that specific issue is resolved.
 14. Apply patches conservatively and verify the exact page by readback. Run the
@@ -95,4 +104,6 @@ node tools/notion-metadata-backfill.mjs --page-id <page-id> --douban-subject <pa
 
 ## Reference
 
-Read `../../references/metadata-sources.md` and `../../references/script-map.md`.
+Read `../../references/metadata-sources.md`,
+`../../references/editorial-highlight-rules.md`, and
+`../../references/script-map.md`.

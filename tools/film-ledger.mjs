@@ -32,9 +32,9 @@ function parse(argv) {
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
     "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail", "--canonical-source-id",
     "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
-    "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root"]);
+    "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root", "--resolve-ip", "--local-address"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
-  const booleans = new Set(["--json", "--pass", "--fail", "--dry-run", "--force-after-429", "--replace-expected-filename"]);
+  const booleans = new Set(["--json", "--pass", "--fail", "--dry-run", "--force-after-429", "--replace-expected-filename", "--no-proxy"]);
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (values.has(arg)) {
@@ -91,7 +91,7 @@ function variantRecord(db, id) {
   return row;
 }
 
-async function loadNotionAdapter() {
+async function loadNotionAdapter(options = {}) {
   const injectedModule = process.env.WWP_FILM_LEDGER_NOTION_ADAPTER_MODULE;
   if (injectedModule) {
     const module = await import(pathToFileURL(path.resolve(injectedModule)).href);
@@ -101,8 +101,8 @@ async function loadNotionAdapter() {
   const { Client } = await import("@notionhq/client");
   const auth = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
   if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
-  installNotionDnsOverride(process.env.NOTION_API_RESOLVE_IP);
-  const localAddress = process.env.NOTION_API_LOCAL_ADDRESS;
+  installNotionDnsOverride(options.resolve_ip || process.env.NOTION_API_RESOLVE_IP);
+  const localAddress = options.local_address || process.env.NOTION_API_LOCAL_ADDRESS;
   const clientOptions = {
     auth,
     // The adapter may request several exact pages at once. Pace the transport
@@ -504,7 +504,7 @@ async function main() {
       if (!Number.isInteger(limit) || limit < 1 || limit > 3) throw new Error("--limit must be between 1 and 3");
       const variantIds = (options.variant_id ?? []).map(Number);
       if (variantIds.some(id => !Number.isInteger(id) || id < 1) || variantIds.length > 3) throw new Error("--variant-id must contain at most three positive integers");
-      const adapter = await loadNotionAdapter();
+      const adapter = await loadNotionAdapter(options);
       const result = await reconcileDueTargets(repo, adapter, { limit, variantIds, forceAfter429: options["force-after-429"] === true });
       output(result, options.json, `checked=${result.checked} completed=${result.completed} pending=${result.pending} failed=${result.failed}`);
     } else if (command === "migrate-local-data") {

@@ -56,7 +56,7 @@ An `intake` task is complete only after the source is bound to a verified work i
 ## Gates
 
 - Chinese subtitle evidence is required for subtitle-dependent playable variants, but never gates catalog metadata.
-- A probe, extraction, or source-read timeout is an `unknown` evidence result, never evidence that an audio or subtitle stream is absent. Record the failed method and error in source evidence, then use one bounded retry, a different representative episode, or a later follow-up task before deciding that a subtitle-dependent variant is unavailable.
+- A probe, extraction, or source-read timeout is an `unknown` evidence result, never evidence that an audio or subtitle stream is absent. When ffprobe reports no subtitle stream, inspect multiple content-bearing screenshots across the runtime, not just one frame: early, middle, and late dialogue are the minimum, with additional samples for long series. If Chinese dialogue is visibly burned into all representative samples, record timestamped `bakedChinese=true` evidence and allow production; otherwise retain unknown/missing evidence and use one bounded retry, another representative episode, or a later follow-up task before deciding that a subtitle-dependent variant is unavailable.
 - A poor or risky source may be rejected for playback while its work page is still created or enriched.
 - Metadata-first work and playable production are independent tracks. Do not wait for encoding before starting sourced metadata.
 - Keep uncertain matching, duplicate risk, missing subtitle identity, and user-only decisions in a task reason; continue other deterministic tasks.

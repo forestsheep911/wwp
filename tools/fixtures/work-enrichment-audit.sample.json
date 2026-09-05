@@ -1,0 +1,23 @@
+{
+  "works": [
+    {
+      "workId": "wwm_ready_example",
+      "metadataStatus": "verified",
+      "peopleStatus": "partial",
+      "keyCreatorsVerified": true,
+      "honorsStatus": "checked_none_found",
+      "highlightStatus": "not_started"
+    },
+    {
+      "workId": "wwm_blocked_example",
+      "metadataStatus": "verified",
+      "peopleStatus": "partial",
+      "keyCreatorsVerified": false,
+      "peopleMissingFields": ["director_relation"],
+      "honorsStatus": "not_checked",
+      "honorsMissingFields": ["official_award_archive"],
+      "highlightStatus": "not_started",
+      "humanConfirmationReasons": ["conflicting_director_credit"]
+    }
+  ]
+}

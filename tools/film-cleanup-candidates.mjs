@@ -364,11 +364,14 @@ export function collectSourceCleanupCandidates(db) {
     SELECT sources.id AS source_id, sources.work_id, sources.absolute_path, sources.relative_path, sources.source_kind,
            input_roots.path AS input_root_path,
            works.canonical_title, works.workflow_status, works.workflow_note,
-           COUNT(variants.id) AS linked_variant_count,
-           SUM(CASE WHEN variants.publication_state='sync_ready' THEN 1 ELSE 0 END) AS sync_ready_count,
-           SUM(CASE WHEN variants.publication_state IN ('sync_ready','cancelled') THEN 1 ELSE 0 END) AS closed_variant_count,
-           SUM(CASE WHEN variants.production_state IN ('encoding','evaluated','selected')
-             OR variants.publication_state NOT IN ('sync_ready','cancelled') THEN 1 ELSE 0 END) AS active_variant_count
+           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets' THEN 1 ELSE 0 END) AS linked_variant_count,
+           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+             THEN CASE WHEN variants.publication_state='sync_ready' THEN 1 ELSE 0 END ELSE 0 END) AS sync_ready_count,
+           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+             THEN CASE WHEN variants.publication_state IN ('sync_ready','cancelled') THEN 1 ELSE 0 END ELSE 0 END) AS closed_variant_count,
+           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+             THEN CASE WHEN variants.production_state IN ('encoding','evaluated','selected')
+               OR variants.publication_state NOT IN ('sync_ready','cancelled') THEN 1 ELSE 0 END ELSE 0 END) AS active_variant_count
     FROM sources
     JOIN input_roots ON input_roots.id=sources.input_root_id AND input_roots.enabled=1
     LEFT JOIN works ON works.id=sources.work_id
