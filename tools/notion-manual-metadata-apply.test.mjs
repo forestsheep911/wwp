@@ -41,3 +41,19 @@ test("manual metadata rejects invalid number and checkbox values", () => {
     "Needs Review": { value: "false", overwrite: true }
   }), /must be boolean/u);
 });
+
+test("manual metadata supports the complete AI age advisory group", () => {
+  const properties = {
+    "AI年龄建议置信度": { type: "select", select: null },
+    "内容风险标签": { type: "multi_select", multi_select: [] },
+    "AI年龄建议理由": { type: "rich_text", rich_text: [] }
+  };
+  const result = buildMetadataPatch(properties, {
+    "AI年龄建议置信度": "high",
+    "内容风险标签": ["战争", "暴力"],
+    "AI年龄建议理由": "包含持续战争暴力。"
+  });
+  assert.equal(result.patch["AI年龄建议置信度"].select.name, "high");
+  assert.deepEqual(result.patch["内容风险标签"].multi_select, [{ name: "战争" }, { name: "暴力" }]);
+  assert.equal(result.patch["AI年龄建议理由"].rich_text[0].text.content, "包含持续战争暴力。");
+});

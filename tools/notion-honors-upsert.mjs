@@ -69,6 +69,7 @@ function parseArgs(values) {
   const result = { apply: false, confirmReviewedPilot: false, input: ".local-data/enrichment-pilot/2026-09-05/all-beauty-honors.json", stateDir: ".local-data/enrichment-pilot/2026-09-05/honors-state" };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
+    if (value === "--dry-run") continue;
     if (value === "--apply") result.apply = true;
     else if (value === "--confirm-reviewed-pilot") result.confirmReviewedPilot = true;
     else if (value === "--input") result.input = required(values[++index], "--input");

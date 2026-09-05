@@ -12,6 +12,7 @@ const ALLOWED_FIELDS = new Set([
   "Release Year", "上映日期", "Countries", "Languages", "旨趣",
   "外部类型原文", "未映射类型", "Runtime Minutes", "Directors", "Writers", "Cast",
   "Production Companies", "Distributors", "Studios", "简介", "基本信息", "AI建议最低年龄",
+  "AI年龄建议置信度", "内容风险标签", "AI年龄建议理由",
   "Poster URL", "Metadata Source", "Metadata Confidence", "Match Status",
   "Metadata Status", "Metadata Updated At", "Needs Review", "Developer Memo", "AI Issue"
 ]);
