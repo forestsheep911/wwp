@@ -30,7 +30,7 @@ export function validateHighlightDraft(draft: WorkHighlightDraft) {
   if (!draft.generatedAt || Number.isNaN(Date.parse(draft.generatedAt))) errors.push("invalid_generated_at");
   if (draft.candidates.length > 8) errors.push("candidate_limit_exceeded");
   const retained = draft.candidates.filter((candidate) => candidate.status !== "rejected");
-  if (retained.length > 3) errors.push("retained_limit_exceeded");
+  if (retained.length > 5) errors.push("retained_limit_exceeded");
   const labels = new Set<string>();
   for (const candidate of draft.candidates) {
     const key = candidate.label.trim().toLocaleLowerCase();

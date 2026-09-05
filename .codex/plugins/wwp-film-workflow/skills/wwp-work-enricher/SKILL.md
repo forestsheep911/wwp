@@ -26,6 +26,25 @@ must retain every blocked work's exact missing fields and next action, plus a
 separate list of human-confirmation reasons. “No ready work” is not a complete
 report while either list is non-empty.
 
+Persist the execution queue with `tools/work-enrichment-campaign.mjs`:
+
+- The default film cycle automatically enqueues exact current work IDs. It must
+  not reset stages already completed in an earlier round.
+- For an explicit historical batch, run
+  `node tools/work-enrichment-campaign.mjs enqueue --input <batch.json> --source historical_backfill --json`.
+- Resume without scanning film inputs with
+  `node tools/film-workflow-cycle.mjs --mode enrichment-only --json`.
+- Before executing a due stage, record `in_progress`. After the real stage and
+  required readback, record `completed`; otherwise record `blocked`,
+  `waiting_user`, or `deferred` with exact reasons, missing fields, and a review
+  time when one exists. Never leave an attempted stage as an unexplained
+  `in_progress` item.
+
+`enrichmentCampaign.due` is an execution handoff, not a planning result. Consume
+the bounded due items through the named skills in sequence. If no item is due,
+report `waitingForHuman`, `blocked`, and `scheduledReviews` before saying the
+campaign is idle.
+
 People completeness means the key creators needed for the current work's
 editorial claims are verified. It does not require materializing every minor
 cast credit. Honors completeness is either `verified` or the explicit

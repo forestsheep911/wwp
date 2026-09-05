@@ -4,7 +4,14 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
+import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { buildProductionModePlan, normalizeProductionMode, PRODUCTION_MODES } from "./lib/wwp-production-mode.mjs";
+import {
+  buildEnrichmentCampaignReport,
+  enqueueEnrichmentWorks,
+  readEnrichmentCampaign,
+  writeEnrichmentCampaign
+} from "./lib/work-enrichment-campaign.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -19,6 +26,8 @@ function parseArgs(argv) {
     // --force and bypasses this interval immediately.
     minFullCycleSec: 3600,
     force: false,
+    applyCleanup: false,
+    enrichmentStatePath: ".local-data/work-enrichment-campaign.json",
     mode: PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -28,6 +37,8 @@ function parseArgs(argv) {
     else if (arg === "--state") options.statePath = argv[++index];
     else if (arg === "--min-full-cycle-sec") options.minFullCycleSec = Number(argv[++index]);
     else if (arg === "--force") options.force = true;
+    else if (arg === "--apply-cleanup") options.applyCleanup = true;
+    else if (arg === "--enrichment-state") options.enrichmentStatePath = argv[++index];
     else if (arg === "--mode") options.mode = normalizeProductionMode(argv[++index]);
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -51,6 +62,52 @@ function currentWorkIds(cycle) {
   return rows.map((row) => row.work_id ?? row.workId ?? row.ww_work_id ?? row.wwWorkId).filter(Boolean);
 }
 
+function currentWorkRefs(cycle, databasePath = ".local-data/wwp-film-workflow.sqlite") {
+  const lanes = cycle.lanes ?? {};
+  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.production, lanes.productionCoverage, lanes.publication]
+    .flatMap((lane) => lane ?? []);
+  const refs = rows.map((row) => ({
+    ledgerWorkId: row.work_id ?? row.workId,
+    externalWorkId: row.ww_work_id ?? row.wwWorkId,
+    pageId: row.notion_work_page_id ?? row.work_page_id ?? row.workPageId,
+    title: row.canonical_title ?? row.title
+  })).filter((row) => row.ledgerWorkId || row.externalWorkId || row.pageId);
+  const unique = [...new Map(refs.map((row) => [row.externalWorkId ? `ww:${row.externalWorkId}` : row.pageId ? `notion:${row.pageId}` : `ledger:${row.ledgerWorkId}`, row])).values()];
+  const unresolvedIds = unique.filter((row) => row.ledgerWorkId && (!row.pageId || !row.title)).map((row) => Number(row.ledgerWorkId));
+  if (unresolvedIds.length === 0) return unique;
+  const db = openLedger(databasePath);
+  try {
+    const placeholders = unresolvedIds.map(() => "?").join(",");
+    const ledgerWorks = db.prepare(`SELECT id, canonical_title, notion_work_page_id FROM works WHERE id IN (${placeholders})`)
+      .all(...unresolvedIds);
+    const byId = new Map(ledgerWorks.map((work) => [Number(work.id), work]));
+    return unique.map((row) => {
+      const work = byId.get(Number(row.ledgerWorkId));
+      return {
+        ...row,
+        pageId: row.pageId ?? work?.notion_work_page_id ?? null,
+        title: row.title ?? work?.canonical_title ?? null
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function loadEnrichmentCampaign(statePath, { limit, inputs = [], source = "saved_campaign" } = {}) {
+  let state = readEnrichmentCampaign(statePath);
+  let enqueue = { added: [], existing: [] };
+  if (inputs.length > 0) {
+    enqueue = enqueueEnrichmentWorks(state, inputs, { source });
+    state = enqueue.state;
+    writeEnrichmentCampaign(statePath, state);
+  }
+  const report = buildEnrichmentCampaignReport(state, { limit });
+  report.statePath = path.resolve(statePath);
+  report.enqueued = { added: enqueue.added, existing: enqueue.existing };
+  return report;
+}
+
 function run(args) {
   const result = spawnSync(process.execPath, args, { encoding: "utf8" });
   if (result.status !== 0) {
@@ -69,6 +126,30 @@ function runOptional(args) {
   } catch (error) {
     return { status: "error", error: `invalid JSON from ${args[0]}: ${error.message}` };
   }
+}
+
+function applyCleanupCandidates(root, candidates) {
+  const reports = [];
+  for (const candidate of candidates) {
+    const args = [path.join(root, "film-cleanup-candidates.mjs"), "--candidate-type", candidate.candidate_type];
+    if (candidate.candidate_type === "playable_output" && candidate.variantId) {
+      args.push("--variant-id", String(candidate.variantId));
+    } else if (candidate.candidate_type === "source_input" && candidate.sourceId) {
+      args.push("--source-id", String(candidate.sourceId));
+    } else {
+      reports.push({ status: "error", error: "cleanup candidate is missing its exact ledger identifier", candidate });
+      continue;
+    }
+    reports.push(runOptional([...args, "--apply", "--json"]));
+  }
+  return {
+    status: reports.some((report) => report.status === "error") ? "partial_error" : "ok",
+    movePerformed: reports.length > 0,
+    moved: reports.flatMap((report) => report.moved ?? []),
+    moveFailures: reports.flatMap((report) => report.moveFailures ?? []),
+    moveSkipped: reports.flatMap((report) => report.moveSkipped ?? []),
+    reports
+  };
 }
 
 function readState(filePath) {
@@ -167,20 +248,35 @@ function runMain(options, lock) {
   const root = path.resolve("tools");
   if (options.mode === PRODUCTION_MODES.PEOPLE_ONLY || options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY) {
     const enrichmentOnly = options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY;
+    const enrichmentCampaign = enrichmentOnly
+      ? loadEnrichmentCampaign(options.enrichmentStatePath, { limit: options.limit })
+      : null;
+    const campaignWorkIds = enrichmentCampaign
+      ? [...enrichmentCampaign.due, ...enrichmentCampaign.waitingForHuman, ...enrichmentCampaign.blocked, ...enrichmentCampaign.scheduledReviews]
+          .map((work) => work.externalWorkId ?? work.pageId ?? work.ledgerWorkId)
+          .filter(Boolean)
+      : [];
     const result = {
       startedAt: new Date().toISOString(),
       orchestration: {
-        ...buildProductionModePlan(options.mode),
+        ...buildProductionModePlan(options.mode, campaignWorkIds),
         lockPath: lock.path,
         concurrencyPolicy: enrichmentOnly
           ? "影视、人物、荣誉与看点网络阶段共享排他锁；资料补全模式按基础资料、人物、荣誉、看点顺序恢复已保存的 campaign，不启动影视扫描。"
           : "影视与人物网络阶段共享排他锁；人物模式仅恢复已保存的人物 campaign，不启动影视扫描。"
       },
       scan: { skipped: true, reason: enrichmentOnly ? "enrichment_only_mode" : "people_only_mode" },
+      enrichmentCampaign,
       summary: enrichmentOnly
         ? {
             discoveryMessage: "资料补全模式未扫描影视输入目录。",
-            workMessage: "依次恢复基础资料、人物、荣誉、看点 campaign；每阶段必须报告完成、阻塞、待人工确认和下一步。"
+            workMessage: enrichmentCampaign.summary.total
+              ? `已恢复资料补全批次：当前可推进 ${enrichmentCampaign.summary.actionableNow}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}，已完成 ${enrichmentCampaign.summary.completed}。具体下一步见 enrichmentCampaign。`
+              : "当前没有已保存的资料补全批次；需要先从影视本轮或历史补全清单加入作品。",
+            hasWorkBeyondNewDiscovery: enrichmentCampaign.summary.actionableNow > 0
+              || enrichmentCampaign.summary.waitingForHuman > 0
+              || enrichmentCampaign.summary.blocked > 0
+              || enrichmentCampaign.summary.scheduledReview > 0
           }
         : {
             discoveryMessage: "人物专做模式未扫描影视输入目录。",
@@ -205,7 +301,23 @@ function runMain(options, lock) {
   const metadataTaskSync = cooldownActive
     ? { status: "skipped", reason: "unchanged_scan_cooldown" }
     : runOptional([path.join(root, "notion-metadata-task-sync.mjs"), "--limit", String(Math.min(options.limit, 3)), "--apply", "--json"]);
-  const cycle = run([path.join(root, "film-ledger.mjs"), "cycle", "--limit", String(options.limit), "--json"]);
+  let cycle = run([path.join(root, "film-ledger.mjs"), "cycle", "--limit", String(options.limit), "--json"]);
+  const cleanupExecution = options.applyCleanup && (cycle.lanes?.cleanup ?? []).length > 0
+    ? applyCleanupCandidates(root, cycle.lanes.cleanup)
+    : {
+        status: "skipped",
+        reason: options.applyCleanup ? "no_cleanup_candidates" : "apply_cleanup_not_requested"
+      };
+  if (options.applyCleanup && cleanupExecution.movePerformed) {
+    cycle = run([path.join(root, "film-ledger.mjs"), "cycle", "--limit", String(options.limit), "--json"]);
+  }
+  const enrichmentCampaign = options.mode === PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
+    ? loadEnrichmentCampaign(options.enrichmentStatePath, {
+        limit: options.limit,
+        inputs: currentWorkRefs(cycle),
+        source: "current_film_batch"
+      })
+    : null;
   const fullCycleAt = cooldownActive ? state.lastFullCycleAt : new Date(now).toISOString();
   const nextFullCycleAt = cooldownActive
     ? new Date(lastFullCycleAt + options.minFullCycleSec * 1000).toISOString()
@@ -216,6 +328,25 @@ function runMain(options, lock) {
     lastScanChanged: changed,
     lastHandoffSkipped: cooldownActive
   });
+  const summary = buildSummary(scan, cycle);
+  summary.cleanupExecution = {
+    requested: options.applyCleanup,
+    status: cleanupExecution.status,
+    moved: cleanupExecution.moved?.length ?? 0,
+    failed: cleanupExecution.moveFailures?.length ?? 0,
+    skipped: cleanupExecution.moveSkipped?.length ?? 0,
+    reason: cleanupExecution.reason ?? null
+  };
+  if (enrichmentCampaign) {
+    summary.enrichment = enrichmentCampaign.summary;
+    summary.enrichmentMessage = enrichmentCampaign.summary.total
+      ? `资料补全批次：当前可推进 ${enrichmentCampaign.summary.actionableNow}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}，已完成 ${enrichmentCampaign.summary.completed}。`
+      : "本轮没有可加入资料补全批次的作品。";
+    summary.hasWorkBeyondNewDiscovery = summary.hasWorkBeyondNewDiscovery
+      || enrichmentCampaign.summary.actionableNow > 0
+      || enrichmentCampaign.summary.waitingForHuman > 0
+      || enrichmentCampaign.summary.blocked > 0;
+  }
   const result = {
     startedAt: new Date().toISOString(),
     orchestration: {
@@ -233,10 +364,12 @@ function runMain(options, lock) {
       localScanRunsEveryInvocation: true,
       repeatPolicy: "每次调用都扫描本地输入；只有完整 Notion/账本轮次受最短间隔限制。发现文件变化、用户报告新批次或使用 --force 时立即执行完整轮次。"
     },
-    summary: buildSummary(scan, cycle),
+    summary,
     scan,
     handoff,
     metadataTaskSync,
+    cleanupExecution,
+    enrichmentCampaign,
     cycle
   };
   process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);

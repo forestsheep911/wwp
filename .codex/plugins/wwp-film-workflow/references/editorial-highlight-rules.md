@@ -37,8 +37,9 @@ candidate passes only when it:
 1. is specific enough that replacing the title with an unrelated work would
    make the claim false or misleading;
 2. helps a viewer decide why or how to watch it;
-3. names a concrete quality, method, theme, historical position, or viewing
-   experience rather than repeating the synopsis;
+3. names a concrete quality, method, theme, historical position, viewing
+   experience, verified recognition milestone, or career-significant
+   performance rather than repeating the synopsis;
 4. is non-spoiler by default;
 5. has source support for factual claims; and
 6. uses a reusable controlled label rather than a sentence fragment.
@@ -61,15 +62,28 @@ Do not create a highlight tag from:
 
 People belong in structured credits/People relations. Companies belong in
 production-company, distributor, studio, or future franchise fields. Awards
-belong in sourced honor facts. Those signals may justify an editorial tag, but
-they are never copied directly into the tag vocabulary.
+belong in sourced honor facts. Verify those facts in their structured fields
+first, then allow them to support an audience-recognition highlight when the
+label adds a concrete viewing reason instead of merely copying a name.
+
+Examples that may qualify after verification include `六项奥斯卡大奖`,
+`戛纳金棕榈获奖作`, or `汤姆·汉克斯奥斯卡代表作`. The exact award result must
+match a sourced honor fact. A representative-work claim must not come from cast
+billing alone: require at least two meaningful signals such as a leading role,
+a major personal award, repeated inclusion in institutional career summaries,
+or durable critical/public recognition. These labels communicate recognition
+and career significance; they do not prove that every viewer will like the
+work.
 
 Treat legacy `闻达` values as migration inputs, not approved highlights:
 
-- creator names -> People/credit relations;
+- creator names -> People/credit relations first; a representative-work
+  candidate may then be assessed when career significance has independent
+  support;
 - Disney, Pixar, Marvel, studio, company, franchise, and IP names -> structured
   company/franchise data or browse facets;
-- award names -> sourced honor facts;
+- award names -> sourced honor facts first; an exact verified achievement may
+  then be assessed as an audience-recognition candidate;
 - genres -> `旨趣`;
 - only a genuinely editorial, reusable viewing reason proceeds to highlight
   scoring.
@@ -77,15 +91,19 @@ Treat legacy `闻达` values as migration inputs, not approved highlights:
 ## Candidate generation
 
 For one work, generate up to eight candidates across distinct categories, then
-score, deduplicate, and retain at most three. Prefer one precise tag over two
-near-synonyms. Keep the candidate vocabulary open during pilots; promote a tag
-to the controlled vocabulary only after it appears usefully on at least two
-works or describes a clearly important singleton that cannot be expressed by an
+score, deduplicate, and retain at most five. Prefer one precise tag over two
+near-synonyms. When evidence supports both sides, retain at least one
+audience-recognition candidate and one editorial-analysis candidate. Three or
+four strong tags are usually enough; five is a ceiling rather than a target.
+Keep the candidate vocabulary open during pilots; promote a tag to the
+controlled vocabulary only after it appears usefully on at least two works or
+describes a clearly important singleton that cannot be expressed by an
 existing tag.
 
-Useful candidate families include theme and human experience; society,
-history, culture, and ethics; narrative or formal construction; image, sound,
-music, animation, and performance method; documentary method and access;
+Useful candidate families include audience recognition through exact awards or
+career-significant performances; theme and human experience; society, history,
+culture, and ethics; narrative or formal construction; image, sound, music,
+animation, and performance method; documentary method and access;
 film-historical or genre-changing significance; and series-continuity value.
 
 Do not force a tag. `insufficient_evidence` is a healthy result.

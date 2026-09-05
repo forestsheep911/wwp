@@ -2,7 +2,7 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
-## Stable Contract (0.1.47)
+## Stable Contract (0.1.48)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as
@@ -100,6 +100,14 @@ Legacy flat-source guard: when a synthetic or root-flat ledger row no longer has
    with residual counts, exact reasons, and the next trigger for every residue.
    Explicit sample artifacts are never cleanup candidates, even when a smoke-test variant happens to be marked `sync_ready`; filenames containing the standalone token `sample` require separate human handling and remain in place.
    When a completed output is temporarily on a non-default staging volume and the configured default output volume has sufficient free space, prefer a verified cross-volume relocation back to the default output root before quarantine. Copy, verify byte count, remove the old copy, and update the exact ledger path plus a relocation event atomically; never relocate an active work file or a source that still has open expansion value.
+8. **Work enrichment campaign**: the default film mode adds only the exact
+   bounded film work IDs to `.local-data/work-enrichment-campaign.json`. Resume
+   each saved work serially through base metadata, People, honors, and
+   highlights. Every attempted stage must be recorded as completed, blocked,
+   waiting for human input, or deferred with a next review time. A routing plan
+   is not execution, and an active campaign is not an idle workflow. Use an
+   explicit historical input file to add older works; never turn this into an
+   unbounded Notion-library scan.
 
 ## Cycle start
 
@@ -286,5 +294,10 @@ A cycle may stop only after all work areas were checked and any pending item has
 - all current media blocks were organized;
 - the production queue is empty; or
 - the publication queue is temporarily rate-limited.
+
+The same stop rule applies to the saved work-enrichment campaign. Before a Goal
+round becomes idle, consume every due campaign item within the bounded limit or
+record its exact blocker, human-confirmation reason, or next review time. Do not
+describe `enrichmentCampaign.due` as merely advisory output.
 
 Final playable completion still requires the exact Notion structure, completed file upload and destination media block, ffprobe-backed Media Assets, and local-ledger `sync_ready`. Release completion additionally requires exact work-page `Metadata Status=verified`, empty issue fields, a usable poster, parent work-page release, incremental website sync, and live API readback of both playable assets and core metadata. An accepted multipart part, a completed local encode, `sync_ready` alone, or an on-disk search index is not final release proof. Release completion does not close concrete supplemental variants or authorize source cleanup.

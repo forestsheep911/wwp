@@ -57,7 +57,12 @@ export function buildProductionModePlan(mode, currentWorkIds = []) {
       mode: normalized,
       sequence: ["base-metadata", "people", "honors", "highlights"],
       film: { enabled: false },
-      enrichment: { enabled: true, status: "eligible", scope: "saved_enrichment_campaign", workIds: [] }
+      enrichment: {
+        enabled: true,
+        status: exactWorkIds.length ? "eligible" : "empty_saved_campaign",
+        scope: "saved_enrichment_campaign",
+        workIds: exactWorkIds
+      }
     };
   }
   if (normalized === PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT) {

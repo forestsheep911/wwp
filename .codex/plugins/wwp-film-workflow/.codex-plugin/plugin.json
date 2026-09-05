@@ -1,6 +1,6 @@
 {
   "name": "wwp-film-workflow",
-  "version": "0.1.47",
+  "version": "0.1.48",
   "description": "Repo-local Codex skills and helpers for WWP film and series production workflows.",
   "author": {
     "name": "WWP local workflow"
@@ -8,7 +8,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "WWP Film Workflow",
-    "shortDescription": "Route WWP intake, metadata, playable video, Notion, and Media Assets work.",
+    "shortDescription": "Run resumable WWP film production and work enrichment in one serial workflow.",
     "longDescription": "Project-local Codex workflow rules for explicit human/AI handoffs, ingesting new resources, preventing duplicate works, maintaining metadata-first catalog entries, selecting films and series, acquiring missing Chinese subtitle candidates through local browser companions or APIs, creating work/spec/episode pages early, encoding browser-compatible playable MP4 variants, resumably uploading them to Notion, writing Media Assets, verifying live website sync, backfilling manual uploads, handling source archives, and filling structured film metadata through identity, Douban, OMDb, TMDb, and AI advisory lanes. Series delivery defaults to one file per episode; collections require an explicit instruction.",
     "developerName": "WWP local workflow",
     "category": "Productivity",
@@ -16,6 +16,6 @@
       "skills",
       "scripts"
     ],
-    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow with release-first batch coverage: publish the first verified useful playable for each eligible new work as early as practical, use encode/upload wait time for metadata and other independent lanes, then revisit concrete selected or deferred supplemental variants without deleting their sources. Never set Workflow Status=已完成 from sync_ready alone."
+    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow with release-first batch coverage. After the bounded film checkpoint, continue the saved enrichment campaign serially through base metadata, People, honors, and highlights. Apply guarded cleanup moves for eligible items, report every residual source and enrichment blocker, and never stop at a routing plan while due work remains."
   }
 }

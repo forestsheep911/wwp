@@ -55,6 +55,7 @@
     "highlights:audit": "node --import tsx tools/work-highlight-audit.ts",
     "enrichment:audit": "tsx tools/work-enrichment-audit.ts",
     "enrichment:snapshot": "node --import tsx tools/notion-work-enrichment-snapshot.mjs",
+    "enrichment:campaign": "node tools/work-enrichment-campaign.mjs",
     "honors:audit": "tsx tools/work-honor-audit.ts",
     "notion:manual-upload-organizer": "node tools/notion-manual-upload-organizer.mjs",
     "notion:title-prefix-cleanup": "node tools/notion-title-prefix-cleanup.mjs",
