@@ -42,6 +42,18 @@ The Notion sync enforces this gate. If `Biography ZH Status` claims `verified` w
 People publication must preserve the source work's complete credit list. A Wikidata pilot may identify only a stable subset of a larger Notion/movie-index cast list; apply `personId` only to matched reviewed credits and keep the remaining source names as unlinked legacy credits. Replacing the source list with the shorter pilot subset is a `source_credit_preservation_gate` failure and must be repaired before the work is considered covered.
 When merging, consume each pre-pilot source credit at most once; append each unmatched reviewed credit rather than matching it against an earlier appended pilot row. This preserves separate department/role credits for the same person. Collapsing reviewed role rows is a `source_credit_duplicate_preservation_gate` failure.
 
+People maintenance is organized around one work at a time for both repair and
+new-person expansion. A campaign pins the selected work, repairs its existing
+important profiles, creates or links its missing important creators and cast in
+bounded publishable batches, and keeps returning until coverage and profile
+quality both close. Batch size and the default four-repair/six-expansion split
+are safety and planning limits, not permission to scatter work across unrelated
+titles. A work blocked by identity, source, provider, or human-review questions
+remains explicitly open with its unresolved credits and repair-due profiles;
+the campaign may proceed elsewhere only after recording that blocker. Global
+P0 identity/integrity and P1 public-correctness defects may interrupt briefly,
+but they do not replace the pinned work.
+
 Reader-facing biographies are person-centred career summaries, not WWP credit
 audits. Do not mention that a relationship was checked, that text was rewritten
 from sources, or that the person appears in the current WWP holdings. Cover the

@@ -34,9 +34,13 @@ the lane from whichever candidates happen to be easiest to find.
   choose a new lane from conversation wording.
 - A named person or named work overrides the automatic selector only for that
   scoped request. Preserve the campaign cursor for later resumption.
-- P0 identity or synchronization defects always preempt ordinary quotas and
-  may consume the whole cycle. Unused repair capacity transfers to expansion;
-  optional metadata gaps never consume normal repair capacity.
+- P0 identity or synchronization defects and P1 public correctness defects may
+  preempt the active work and consume the whole cycle. This emergency detour
+  does not clear the pinned work; resume it after the defect is resolved.
+- Within a pinned work, four repairs plus six new people are default planning
+  allocations, not reasons to leave the work incomplete. In balanced mode,
+  unused capacity may transfer in either direction inside that work. Optional
+  metadata gaps never consume normal repair capacity.
 - Before research or writes, report the selected mode, quotas, people or works,
   and the recorded reason for every repair selection.
 
@@ -49,6 +53,16 @@ the lane from whichever candidates happen to be easiest to find.
 - For Azure production applies, prefer 10-16 profiles per sub-batch once the catalog is large; if `person-catalog-apply` returns Azure Table `OperationTimedOut`, keep the backup, verify index rollback, and retry the same reviewed report in a smaller sub-batch rather than launching a duplicate apply.
 - Coverage audits against Azure must also have a finite read window; if the audit stalls, stop only that read, preserve the completed batch artifacts, record the timeout, and resume from the last cached candidate list instead of rerunning writes.
 - Treat `profile-budget` as the maximum number of candidate identities to review in one discovery pass, never as a per-work credit, cast, or publication limit. Preserve the complete discovered credit list and resume the same work in later passes when significant people remain.
+- Ordinary People repair and new-person expansion are both work-scoped. Pin one
+  `activePeopleWorkId`, repair its existing important profiles, and create or
+  link its next important missing identities. Resume the same work in later
+  cycles when one publishable batch cannot finish it; do not sample convenient
+  repair or expansion candidates from unrelated works.
+- Switch away from the active People work only after its important credits and
+  linked profiles reach the work-level quality gate, or after an
+  identity/source/human-decision blocker is recorded with every remaining
+  credit and repair. A blocked work remains open and visible in reports; it is
+  not silently treated as covered.
 - When the user explicitly requests about 100 people, manage it as one umbrella observation batch but publish in sub-batches of at most 20 after each sub-batch passes review.
 - Prefer works already present in WWP whose important credits are missing or unlinked.
 - Include directors, writers, producers, cinematographers, editors, composers, and important cast according to the work's actual prominence.
@@ -58,6 +72,11 @@ the lane from whichever candidates happen to be easiest to find.
   work ID, source work ID, batch ID, status, total/linked/unlinked credit counts,
   publication time, verification time, and visual-verification result. A work
   is not complete merely because one of its people already exists.
+- Update `work-coverage.json` after every repair or expansion sub-batch. Record
+  both remaining important creator/cast credits and actionable P0-P2 defects on
+  already-linked important profiles. Batch completion may advance profile
+  counts, but it must not advance the work cursor or clear
+  `activePeopleWorkId` until the work-level coverage and quality gates close.
 
 ## Run the workflow
 

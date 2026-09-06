@@ -51,6 +51,14 @@ then `unlinked_only`, then `partially_linked`. The audit is a queue, not proof
 that a person identity is correct. Refresh it after each published umbrella
 batch instead of rescanning providers for already completed works.
 
+The coverage ordering chooses the next work only when no People work is already
+pinned. Once selected, persist that work as `activePeopleWorkId` and scope both
+ordinary repair and new-person expansion to it across as many bounded passes as
+needed. Do not let a refreshed audit or global P2 repair queue move a partially
+completed active work behind unrelated candidates. The work pin is cleared only
+by a recorded coverage-and-quality closure or a recorded blocker with all
+remaining important credits and repair-due profiles accounted for.
+
 The queue's `sourcePageId` is an address hint, not an identity proof. If that
 page ID is stale (`object_not_found`) or an exact refresh resolves to another
 stable work ID, stop the people lane. Query the configured Notion library data
@@ -152,6 +160,12 @@ only for an intentional local/offline review.
 Use `--kind series` for a series. Repeat the same command to resume from cache/checkpoint. Use repeated `--exclude-wikidata-id <QID>` arguments for known non-person or incorrect candidates.
 
 `profile-budget` limits only the number of candidate identities materialized and reviewed in that discovery pass. It is not a cap on stored credits, important cast, linked people, or eventual profiles for the work. Preserve the complete work-credit evidence and run another reviewed pass when significant unresolved people remain.
+
+If the active work needs more profiles than the current repair/expansion quotas
+or publishable sub-batch limit, checkpoint its remaining important credits and
+actionable linked-profile repairs, then resume that same work in the next
+cycle. Do not use leftover convenience to sample people from unrelated works.
+Only after the active work is closed may capacity move to the next work.
 
 The network budget is approximately one work-credit request plus up to `profile-budget` person requests when the cache is cold. Additional biography-source checks are outside this number. Run works sequentially.
 
