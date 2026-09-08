@@ -32,6 +32,17 @@ test("desktop layout reserves a stable vertical scrollbar gutter", () => {
   );
 });
 
+test("the root page blocks vertical overscroll behind the fixed tablet sidebar", () => {
+  assert.match(
+    stylesSource,
+    /html\s*\{[^}]*overscroll-behavior-y:\s*none/,
+  );
+  assert.match(
+    stylesSource,
+    /body\s*\{[^}]*overscroll-behavior-y:\s*none/,
+  );
+});
+
 test("the account menu does not lock or reposition the document scroll", () => {
   assert.match(layoutSource, /<DropdownMenu modal=\{false\} open=\{open\}/);
 });

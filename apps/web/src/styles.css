@@ -24,6 +24,7 @@ html {
   min-height: 100%;
   background: #020617;
   overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
 }
 
 @media (min-width: 640px) {
@@ -41,6 +42,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   min-height: 100dvh;
+  overscroll-behavior-y: none;
   overflow-x: hidden;
   overflow-x: clip;
   background:

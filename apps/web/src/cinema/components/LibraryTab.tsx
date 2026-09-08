@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
+import { loadingGridCount, remainingLoadingCount } from "../loading-grid";
 import { createPortal } from "react-dom";
 import {
   CalendarDays,
@@ -1140,8 +1141,7 @@ function LibraryHome({
           <BrowseLoadingGrid />
         ) : browsingResults ? (
           <>
-            <div className="gallery-results">
-              <div className="gallery-results-grid grid gap-4">
+            <BrowseLoadingGrid loadedCount={visibleResults.length} loading={browseLoadingMore || browseLoading}>
                 {visibleResults.map((result, position) => (
                   <MovieCard
                     creditPolicy={creditPolicy}
@@ -1161,8 +1161,7 @@ function LibraryHome({
                     variantLimit={3}
                   />
                 ))}
-              </div>
-            </div>
+            </BrowseLoadingGrid>
             <LazyLoadFooter
               capped={reachedBrowseViewLimit}
               hasMore={hasMoreItems || canLoadMoreFromServer}
@@ -1239,14 +1238,62 @@ function LazyLoadFooter({
   );
 }
 
-function BrowseLoadingGrid() {
+function BrowseLoadingGrid({ children, loadedCount = 0, loading = true }: {
+  children?: ReactNode;
+  loadedCount?: number;
+  loading?: boolean;
+}) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [count, setCount] = useState(1);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || !loading) return;
+    let frame = 0;
+    const measure = () => {
+      // MovieCard has separate desktop and mobile roots; ignore the hidden one.
+      const card = Array.from(grid.children).find(child => child.getBoundingClientRect().height > 0);
+      if (!card) return;
+      const style = getComputedStyle(grid);
+      const columns = style.gridTemplateColumns.split(/\s+/).filter(Boolean).length;
+      const viewport = window.visualViewport;
+      const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+      const capacity = loadingGridCount(columns, card.getBoundingClientRect().height,
+        parseFloat(style.rowGap) || 0, bottom - grid.getBoundingClientRect().top);
+      const next = remainingLoadingCount(capacity, columns, loadedCount);
+      setCount(current => current === next ? current : next);
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    // Fill the initial viewport before paint; later resizes are coalesced.
+    measure();
+    const observer = new ResizeObserver(schedule);
+    observer.observe(grid);
+    for (const child of Array.from(grid.children)) observer.observe(child);
+    // Filter expansion/collapse above the gallery changes its viewport position.
+    if (grid.parentElement?.parentElement) observer.observe(grid.parentElement.parentElement);
+    window.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
+  }, [loading, loadedCount]);
+
   return (
-    <div className="gallery-results" aria-busy="true" aria-label={copy.library.browseLoadingLabel}>
-      <div className="gallery-results-grid grid gap-4">
-        {Array.from({ length: 6 }).map((_, index) => (
+    <div className="gallery-results" aria-busy={loading} aria-label={loading ? copy.library.browseLoadingLabel : undefined}>
+      <div ref={gridRef} className="gallery-results-grid grid gap-4" data-browse-loading-grid>
+        {children}
+        {Array.from({ length: loading ? count : 0 }).map((_, index) => (
           <article
+            data-loading-placeholder
+            aria-hidden="true"
             className="grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4 md:grid-cols-1 md:border-0 md:bg-transparent md:p-0 md:shadow-none"
-            key={index}
+            key={`loading-${index}`}
           >
             <div className="aspect-[2/3] animate-pulse rounded-md bg-slate-800/70" />
             <div className="grid min-w-0 content-start gap-3">
