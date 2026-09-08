@@ -4,9 +4,8 @@ import { posterIndexAfterImageEvent, posterUrlPriority } from "../poster-state";
 
 function posterUrls(result: SearchResult) {
   const candidates = [
-    ...(result.metadata?.posters?.map((poster) => poster.url) ?? []),
-    ...(result.metadata?.work?.media?.posters?.map((poster) => poster.url) ?? []),
-    ...(result.metadata?.posterUrl
+    ...((result.metadata?.posters ?? result.metadata?.work?.media?.posters)?.map((poster) => poster.url) ?? []),
+    ...(result.metadata?.posters === undefined && result.metadata?.work?.media?.posters === undefined && result.metadata?.posterUrl
       ? [result.metadata.posterUrl]
       : [])
   ]

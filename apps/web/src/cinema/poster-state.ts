@@ -1,7 +1,6 @@
 export type PosterImageEvent = "load" | "error";
 
-const notionTemporaryPosterPattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
-const localPosterPattern = /^\/api\/posters\/[^/]+$/i;
+const localPosterPattern = /^\/api\/posters\/[^?#]+$/i;
 
 export function posterUrlPriority(url: string) {
   if (localPosterPattern.test(url)) {
@@ -12,11 +11,9 @@ export function posterUrlPriority(url: string) {
     return 1;
   }
 
-  if (!/^https:\/\//i.test(url)) {
-    return 99;
-  }
-
-  return notionTemporaryPosterPattern.test(url) ? 3 : 2;
+  // Notion links, Poster URL, Douban and other external fallbacks are not
+  // website posters. Only our own storage may be rendered.
+  return 99;
 }
 
 export function posterIndexAfterImageEvent(

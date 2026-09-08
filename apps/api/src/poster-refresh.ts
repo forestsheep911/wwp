@@ -1,4 +1,5 @@
 import type { MoviePoster, SearchResult } from "@wwpdw/shared";
+import { withMoviePosters } from "@wwpdw/cache-store";
 
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 
@@ -40,15 +41,9 @@ export function mergeCachedPosters(existing: SearchResult, refreshed: SearchResu
       continue;
     }
     seen.add(key);
-    posters.push(cachedPostersByKey.get(key) ?? poster);
+    const cached = cachedPostersByKey.get(key);
+    posters.push(cached ? { ...cached, origin: poster.origin } : poster);
   }
 
-  return {
-    ...refreshed,
-    metadata: {
-      ...refreshed.metadata,
-      posterUrl: posters.find(isCachedBlobPoster)?.url ?? refreshed.metadata?.posterUrl,
-      posters
-    }
-  };
+  return withMoviePosters(refreshed, posters);
 }

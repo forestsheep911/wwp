@@ -42,6 +42,7 @@ export interface RatingValue {
 
 export interface MoviePoster {
   url: string;
+  origin?: "notion-files";
   source: "notion" | "omdb" | "external" | "blob";
   originalUrl?: string;
   blobName?: string;

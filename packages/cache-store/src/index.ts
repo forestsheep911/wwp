@@ -15,6 +15,7 @@ export { addDays, cacheAssetIdleTtlDays, createJob, isFreshReady } from "./jobs.
 export { AzureCacheStore } from "./azure.js";
 export { FilesystemCacheStore } from "./filesystem.js";
 export { LocalCacheStore } from "./local.js";
+export { moviePosterCandidates, withMoviePosters, isCachedPoster } from "./poster-cache.js";
 export type {
   SearchIndexEntry,
   SearchIndexRun,

@@ -15,6 +15,7 @@ if (process.env.WWPDW_LOCAL_DATA_DIR && !path.isAbsolute(process.env.WWPDW_LOCAL
 
 const { createCacheStore, createSearchIndexStore } = await import("@wwpdw/cache-store");
 const { NotionSearchSource } = await import("./notion-source.js");
+const { mergeCachedPosters } = await import("./poster-refresh.js");
 
 interface Options {
   apply: boolean;
@@ -224,11 +225,12 @@ async function main() {
       } else if (!options.apply) {
         records.push(recordFor(result, "would_update", undefined, refreshed));
       } else {
-        const cached = await cacheStore.cacheMoviePosters(refreshed, {
+        const cached = await cacheStore.cacheMoviePosters(mergeCachedPosters(result, refreshed), {
           refreshPosters: refreshPostersForResult(refreshed)
         });
         await searchIndex.upsertResult(cached);
-        records.push(recordFor(result, "updated", undefined, cached));
+        const incomplete = cached.metadata?.posters?.some(poster => !poster.blobName && !poster.url.startsWith("/api/posters/"));
+        records.push(recordFor(result, incomplete ? "failed" : "updated", incomplete ? "poster_cache_failed" : undefined, cached));
       }
     } catch (error) {
       const record = recordFor(result, "failed");

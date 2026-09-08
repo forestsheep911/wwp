@@ -6,6 +6,7 @@ import {
   generateBlobSASQueryParameters
 } from "@azure/storage-blob";
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import type { ReadableStream } from "node:stream/web";
 import type { BlockBlobClient, ContainerClient, UserDelegationKey } from "@azure/storage-blob";
 import { QueueClient, QueueServiceClient } from "@azure/storage-queue";
@@ -38,6 +39,10 @@ import {
 } from "./jobs.js";
 import {
   posterDownloadCandidates,
+  moviePosterCandidates,
+  withMoviePosters,
+  isCachedPoster,
+  postersForSync,
   posterRequestHeaders,
   posterRequestTimeoutMs
 } from "./poster-cache.js";
@@ -243,23 +248,10 @@ function blobNameForAsset(assetKey: string, sourceUrl?: string) {
   return `assets/${encodeRowKey(assetKey)}/cached${mediaExtension(sourceUrl)}`;
 }
 
-function blobNameForPoster(assetKey: string, index: number, sourceUrl?: string, contentType?: string | null) {
-  return `posters/${encodeRowKey(assetKey)}/${String(index + 1).padStart(2, "0")}${posterExtension(sourceUrl, contentType)}`;
-}
-
-function isAzureBlobUrl(url: string) {
-  return /^https:\/\/[^/?#]+\.blob\.core\.windows\.net\//i.test(url);
-}
-
-function firstBlobPosterUrl(posters: MoviePoster[]) {
-  return posters.find((poster) => isAzureBlobUrl(poster.url))?.url;
-}
-
-function moviePosterCandidates(result: SearchResult) {
-  return [
-    ...(result.metadata?.posters ?? []),
-    ...(result.metadata?.work?.media?.posters ?? [])
-  ];
+function blobNameForPoster(assetKey: string, index: number, contentHash: string, sourceUrl?: string, contentType?: string | null) {
+  // A new image must not overwrite a preserved old image at the same ordinal,
+  // including when files are reordered or another download in this batch fails.
+  return `posters/${encodeRowKey(assetKey)}/${String(index + 1).padStart(2, "0")}-${contentHash}${posterExtension(sourceUrl, contentType)}`;
 }
 
 function parseHeaderNumber(value: string | null) {
@@ -931,13 +923,16 @@ export class AzureCacheStore implements CacheStore {
   async cacheMoviePosters(result: SearchResult, options: CacheMoviePostersOptions = {}) {
     await this.ensureReady();
     const metadata = result.metadata;
-    const posters = moviePosterCandidates(result);
-    if (!metadata || posters.length === 0) {
+    if (!metadata) {
       return result;
     }
-
-    const maxPosters = Math.max(0, Math.floor(this.config.posterMaxPerMovie));
-    const visiblePosters = maxPosters > 0 ? posters.slice(0, maxPosters) : posters;
+    let posters: MoviePoster[];
+    try {
+      posters = await postersForSync(result, options.refreshPosters);
+    } catch (error) {
+      logWarn("cache.poster.source_refresh_failed", { assetKey: result.assetKey, ...errorLogFields(error) });
+      return result;
+    }
     let refreshedPosters: Promise<MoviePoster[] | undefined> | undefined;
     const refreshPosterSource = options.refreshPosters;
     const refreshPosters = refreshPosterSource
@@ -947,32 +942,33 @@ export class AzureCacheStore implements CacheStore {
       }
       : undefined;
     const cachedPosters = await Promise.all(
-      visiblePosters.map((poster, index) => this.cacheMoviePoster(result.assetKey, poster, index, posters, refreshPosters))
+      posters.map(async (poster, index) => {
+        try {
+          return await this.cacheMoviePoster(result.assetKey, poster, index, posters, refreshPosters);
+        } catch (error) {
+          logWarn("cache.poster.upload_failed", { assetKey: result.assetKey, index, ...errorLogFields(error) });
+          return poster;
+        }
+      })
     );
-    await this.deleteStalePosterBlobs(
-      result.assetKey,
-      new Set(cachedPosters.map((poster) => poster.blobName).filter((blobName): blobName is string => Boolean(blobName)))
-    );
-
-    return {
-      ...result,
-      metadata: {
-        ...metadata,
-        posterUrl: firstBlobPosterUrl(cachedPosters),
-        posters: cachedPosters
-      }
-    };
+    const sourceConfirmed = (metadata.posters !== undefined && metadata.posters.every(poster => poster.origin === "notion-files")) || Boolean(options.refreshPosters);
+    // Failed downloads are not deletions. Prune only after the complete current
+    // Notion file set was cached, including a confirmed empty source field.
+    if (sourceConfirmed && cachedPosters.every(poster => Boolean(poster.blobName))) {
+      await this.deleteStalePosterBlobs(result.assetKey, new Set(cachedPosters.map(poster => poster.blobName!)));
+    }
+    return withMoviePosters(result, cachedPosters);
   }
 
   async hydrateMoviePosterUrls(result: SearchResult) {
     await this.ensureReady();
     const metadata = result.metadata;
     const posters = moviePosterCandidates(result);
-    if (!metadata || posters.length === 0) {
+    if (!metadata) {
       return result;
     }
 
-    const hydratedPosters = posters.map((poster) => {
+    const hydratedPosters = posters.filter(isCachedPoster).map((poster) => {
         if (!poster.blobName) {
           return poster;
         }
@@ -984,14 +980,7 @@ export class AzureCacheStore implements CacheStore {
         };
       });
 
-    return {
-      ...result,
-      metadata: {
-        ...metadata,
-        posterUrl: firstBlobPosterUrl(hydratedPosters),
-        posters: hydratedPosters
-      }
-    };
+    return withMoviePosters(result, hydratedPosters);
   }
 
   async getPosterFile(posterKey: string) {
@@ -1112,7 +1101,8 @@ export class AzureCacheStore implements CacheStore {
         throw new Error(`Poster is too large (${buffer.length} bytes).`);
       }
 
-      const blobName = blobNameForPoster(assetKey, index, sourceUrl, contentType);
+      const contentHash = createHash("sha256").update(buffer).digest("hex").slice(0, 20);
+      const blobName = blobNameForPoster(assetKey, index, contentHash, sourceUrl, contentType);
       const blockBlob = this.containerClient.getBlockBlobClient(blobName);
       await blockBlob.uploadData(buffer, {
         blobHTTPHeaders: {

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { withMoviePosters, moviePosterCandidates, isCachedPoster } from "./poster-cache.js";
 import {
   type CacheAsset,
   type CacheJob,
@@ -258,7 +259,7 @@ export class LocalCacheStore implements CacheStore {
   }
 
   async hydrateMoviePosterUrls(result: SearchResult) {
-    return result;
+    return withMoviePosters(result, moviePosterCandidates(result).filter(isCachedPoster));
   }
 
   async getPlayback(assetKey: string) {

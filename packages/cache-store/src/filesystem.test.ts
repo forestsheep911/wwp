@@ -110,6 +110,7 @@ test("filesystem cache downloads media, survives a second store instance, and de
       metadata: {
         posters: [{
           url: `http://127.0.0.1:${address.port}/poster.jpg`,
+          origin: "notion-files",
           source: "external"
         }]
       }

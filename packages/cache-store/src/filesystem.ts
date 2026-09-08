@@ -42,10 +42,14 @@ import {
   durationMs,
   errorLogFields,
   logError,
+  logWarn,
   logInfo
 } from "@wwpdw/shared";
 import {
   posterDownloadCandidates,
+  postersForSync,
+  withMoviePosters,
+  moviePosterCandidates,
   posterRequestHeaders,
   posterRequestTimeoutMs
 } from "./poster-cache.js";
@@ -669,29 +673,28 @@ export class FilesystemCacheStore implements CacheStore {
   }
 
   async cacheMoviePosters(result: SearchResult, options: CacheMoviePostersOptions = {}) {
-    const posters = result.metadata?.posters ?? [];
-    if (posters.length === 0) return result;
+    let posters: MoviePoster[];
+    try {
+      posters = await postersForSync(result, options.refreshPosters);
+    } catch (error) {
+      logWarn("cache.poster.source_refresh_failed", { assetKey: result.assetKey, ...errorLogFields(error) });
+      return result;
+    }
 
     const cachedPosters = await Promise.all(posters.map(async (poster, index) => {
       try {
         return await this.cachePoster(poster, index, posters, options);
-      } catch {
+      } catch (error) {
+        logWarn("cache.poster.download_failed", { assetKey: result.assetKey, index, ...errorLogFields(error) });
         return poster;
       }
     }));
-    const localPoster = cachedPosters.find((poster) => poster.url.startsWith("/api/posters/"));
-    return {
-      ...result,
-      metadata: {
-        ...result.metadata,
-        posterUrl: localPoster?.url ?? result.metadata?.posterUrl,
-        posters: cachedPosters
-      }
-    };
+    return withMoviePosters(result, cachedPosters);
   }
 
   async hydrateMoviePosterUrls(result: SearchResult) {
-    return this.cacheMoviePosters(result);
+    const cached = await this.cacheMoviePosters(result);
+    return withMoviePosters(cached, moviePosterCandidates(cached).filter(poster => /^\/api\/posters\//.test(poster.url)));
   }
 
   async getPlayback(assetKey: string) {

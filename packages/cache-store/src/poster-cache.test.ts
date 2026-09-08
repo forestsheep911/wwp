@@ -8,8 +8,9 @@ import {
   posterRequestTimeoutMs
 } from "./poster-cache.js";
 
-test("posterDownloadCandidates retries a refreshed Notion file URL before external URLs", async () => {
+test("posterDownloadCandidates retries a refreshed maintained Notion file without unrelated external URLs", async () => {
   const original: MoviePoster = {
+    origin: "notion-files",
     url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/stale.jpg",
     originalUrl: "https://prod-files-secure.s3.us-west-2.amazonaws.com/stale.jpg",
     source: "notion"

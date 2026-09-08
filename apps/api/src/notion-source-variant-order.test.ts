@@ -44,7 +44,7 @@ test("structured Media Assets keep every episode and specification for large ser
   assert.equal(completed.at(-1)?.metadata?.episodeNumber, 114);
 });
 
-test("an explicit poster property takes precedence over a legacy page cover", () => {
+test("only the maintained poster files are read, never Poster URL or page cover", () => {
   const posters = postersFromProperties(
     { cover: { type: "external", external: { url: "https://example.com/wrong-cover.jpg" } } },
     {
@@ -57,10 +57,20 @@ test("an explicit poster property takes precedence over a legacy page cover", ()
   );
 
   assert.deepEqual(posters.map((poster) => poster.url), [
-    "https://example.com/correct-poster.jpg",
-    "https://example.com/correct-poster-source.jpg",
-    "https://example.com/wrong-cover.jpg"
+    "https://example.com/correct-poster.jpg"
   ]);
+  assert.equal(posters[0].origin, "notion-files");
+});
+
+test("an absent or empty Notion poster field remains empty despite legacy image sources", () => {
+  const page = { cover: { type: "external", external: { url: "https://example.com/cover.jpg" } } };
+  const properties = {
+    "Poster URL": { type: "url", url: "https://example.com/fallback.jpg" },
+    "图片": { type: "files", files: [{ type: "external", external: { url: "https://example.com/still.jpg" } }] },
+    "Poster": { type: "rich_text", rich_text: [{ plain_text: "https://example.com/text.jpg" }] }
+  };
+  assert.deepEqual(postersFromProperties(page, properties), []);
+  assert.deepEqual(postersFromProperties(page, { ...properties, 海报: { type: "files", files: [] } }), []);
 });
 
 test("OMDb comma-separated directors, writers, and cast become distinct structured credits", () => {

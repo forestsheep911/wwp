@@ -1,4 +1,40 @@
-import type { MoviePoster } from "@wwpdw/shared";
+import type { MoviePoster, SearchResult } from "@wwpdw/shared";
+
+export function moviePosterCandidates(result: SearchResult): MoviePoster[] {
+  // An explicit empty list is a source deletion, not a request for a fallback.
+  return result.metadata?.posters ?? result.metadata?.work?.media?.posters ?? [];
+}
+
+export function withMoviePosters(result: SearchResult, posters: MoviePoster[]): SearchResult {
+  if (!result.metadata) return result;
+  return {
+    ...result,
+    metadata: {
+      ...result.metadata,
+      posterUrl: posters[0]?.url,
+      posters,
+      ...(result.metadata.work ? {
+        work: { ...result.metadata.work, media: { ...result.metadata.work.media, posters } }
+      } : {})
+    }
+  };
+}
+
+export function isCachedPoster(poster: MoviePoster) {
+  return Boolean(poster.blobName) || /^\/api\/posters\/[^?#]+$/.test(poster.url);
+}
+
+export async function postersForSync(result: SearchResult, refreshPosters?: () => Promise<MoviePoster[] | undefined>) {
+  const posters = moviePosterCandidates(result);
+  // Legacy entries may mix files, Poster URL and cover. Re-read Notion before
+  // caching those entries; never turn an unverified fallback into a new Blob.
+  if ((result.metadata?.posters === undefined || posters.some(poster => !poster.origin)) && refreshPosters) {
+    const refreshed = await refreshPosters();
+    if (refreshed === undefined) throw new Error("Notion poster field could not be read.");
+    return refreshed.filter(poster => poster.origin === "notion-files");
+  }
+  return posters.filter(poster => poster.origin === "notion-files" || isCachedPoster(poster));
+}
 
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const doubanImagePattern = /^https:\/\/img\d*\.doubanio\.com\//i;
@@ -45,6 +81,8 @@ function addCandidate(candidates: PosterDownloadCandidate[], poster: MoviePoster
   if (!poster) {
     return;
   }
+
+  if (poster.origin !== "notion-files") return;
 
   const url = poster ? sourceUrlForPoster(poster) : undefined;
   if (!url || candidates.some((candidate) => candidate.url === url)) {

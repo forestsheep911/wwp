@@ -115,7 +115,7 @@ const urlPattern = /https?:\/\/[^\s<>"']+/gi;
 const directFilePattern = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const durationPropertyPattern = /duration|runtime|length|\u65f6\u957f|\u65f6\u95f4/i;
-const posterPropertyPattern = /\u6d77\u62a5|poster|cover|image|\u56fe\u7247/i;
+const posterPropertyPattern = /^(海报|posters?)$/i;
 const descriptionPropertyPattern = /\u7b80\u4ecb|summary|description|synopsis|plot/i;
 const infoPropertyPattern = /^(?:\u57fa\u672c\u4fe1\u606f|basic\s*info(?:rmation)?|info)$/i;
 const releaseDatePropertyPattern = /^(?:\u4e0a\u6620\u65e5\u671f|\u9996\u64ad\u65e5\u671f)$/i;
@@ -1256,6 +1256,7 @@ function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | und
   seen.add(url);
   posters.push({
     url,
+    origin: "notion-files",
     source: "notion",
     originalUrl: url
   });
@@ -1264,9 +1265,7 @@ function pushPoster(posters: MoviePoster[], seen: Set<string>, url: string | und
 export function postersFromProperties(page: JsonRecord, properties: JsonRecord) {
   const posters: MoviePoster[] = [];
   const seen = new Set<string>();
-  const coverUrl = mediaUrlFromObject(page.cover);
   const fileUrls: string[] = [];
-  const textUrls: string[] = [];
 
   for (const [name, rawProperty] of Object.entries(properties)) {
     if (!posterPropertyPattern.test(name)) {
@@ -1287,23 +1286,11 @@ export function postersFromProperties(page: JsonRecord, properties: JsonRecord) 
         }
       }
     }
-
-    if (type === "url" && asString(property.url)) {
-      textUrls.push(asString(property.url) as string);
-    }
-
-    if (type === "rich_text") {
-      for (const match of plainTextFromRichText(property.rich_text).matchAll(urlPattern)) {
-        textUrls.push(normalizeUrl(match[0]));
-      }
-    }
   }
 
-  // A maintained poster property is explicit metadata. A Notion page cover is
-  // only a legacy fallback and must not override a corrected poster.
+  // Only the maintained files field is authoritative. Missing means missing:
+  // neither Poster URL, rich text, unrelated image fields nor page cover fills it.
   fileUrls.forEach((url) => pushPoster(posters, seen, url));
-  textUrls.forEach((url) => pushPoster(posters, seen, url));
-  pushPoster(posters, seen, coverUrl);
 
   return posters;
 }

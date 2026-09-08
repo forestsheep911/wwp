@@ -19,6 +19,7 @@ import {
 } from "@wwpdw/cache-store";
 import { NotionSearchSource } from "./notion-source.js";
 import { preserveIndexedPersonCredits } from "./person-credit-index-merge.js";
+import { mergeCachedPosters } from "./poster-refresh.js";
 import { tspdtEdition, tspdtSourceUrl, tspdtTop1000 } from "../../web/src/cinema/tspdt";
 import { tspdtImdbIds } from "../../web/src/cinema/tspdt-id-map";
 
@@ -106,7 +107,8 @@ function syncOptions(): SyncOptions {
     incrementalOverlapMinutes: Math.max(0, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_OVERLAP_MINUTES", 10))),
     incrementalBootstrapLimit: Math.max(1, Math.floor(numberOption("SEARCH_INDEX_INCREMENTAL_BOOTSTRAP_LIMIT", 200))),
     deleteMissingOnFull: booleanOption("SEARCH_INDEX_FULL_DELETE_MISSING", true),
-    posterCacheEnabled: booleanOption("POSTER_CACHE_ENABLED", true)
+    // A sync must cache the maintained Notion files, never publish raw fallbacks.
+    posterCacheEnabled: true
   };
 }
 
@@ -191,7 +193,11 @@ export async function runMetaSync() {
     const personSafeBatch = await mapWithConcurrency(
       batch,
       options.concurrency,
-      async (result) => preserveIndexedPersonCredits(result, await searchIndex.getResult(result.assetKey))
+      async (result) => {
+        const existing = await searchIndex.getResult(result.assetKey);
+        const merged = preserveIndexedPersonCredits(result, existing);
+        return existing ? mergeCachedPosters(existing, merged) : merged;
+      }
     );
     let posterCompleted = 0;
     const localResults = options.posterCacheEnabled
@@ -283,12 +289,14 @@ export async function runMetaSync() {
         if (searchIndex.backend === "local") {
           pendingLocalResults.push(item.result);
         } else {
-          const personSafeResult = preserveIndexedPersonCredits(item.result, await searchIndex.getResult(item.result.assetKey));
+          const existing = await searchIndex.getResult(item.result.assetKey);
+          const personSafeResult = preserveIndexedPersonCredits(item.result, existing);
+          const posterSafeResult = existing ? mergeCachedPosters(existing, personSafeResult) : personSafeResult;
           const result = options.posterCacheEnabled
-            ? await cacheStore.cacheMoviePosters(personSafeResult, {
+            ? await cacheStore.cacheMoviePosters(posterSafeResult, {
               refreshPosters: refreshPostersForResult(personSafeResult)
             })
-            : personSafeResult;
+            : posterSafeResult;
           await searchIndex.upsertResult(result);
         }
         run.saved += 1;

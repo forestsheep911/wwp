@@ -16,7 +16,10 @@ test("same-origin local poster URLs are preferred over remote fallbacks", () => 
   assert.equal(posterUrlPriority("/api/posters/0123456789abcdef0123456789abcdef"), 0);
   assert.equal(posterUrlPriority("/api/posters/posters%2Fasset_123%2F01.webp"), 0);
   assert.equal(posterUrlPriority("https://example.blob.core.windows.net/posters/01.webp"), 1);
-  assert.equal(posterUrlPriority("https://example.com/poster.jpg"), 2);
+  assert.equal(posterUrlPriority("https://example.com/poster.jpg"), 99);
+  assert.equal(posterUrlPriority("https://prod-files-secure.s3.us-west-2.amazonaws.com/poster.jpg"), 99);
+  assert.equal(posterUrlPriority("https://img1.doubanio.com/poster.jpg"), 99);
+  assert.equal(posterUrlPriority("/api/posters/posters/asset_123/01.webp"), 0);
 });
 
 test("untrusted relative and insecure poster URLs are rejected", () => {
