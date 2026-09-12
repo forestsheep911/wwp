@@ -20,7 +20,8 @@ param(
     [string]$BlobContainer = "cached-videos",
     [string]$SearchIndexTable = "movieindex",
     [string]$TspdtBrowseTable = "tspdtbrowse",
-    [string]$CronExpression = "*/30 * * * *",
+    # Azure schedules use UTC: 08:00 and 20:00 Asia/Shanghai.
+    [string]$CronExpression = "0 0,12 * * *",
     [int]$DelayMs = -1,
     [int]$PageSize = 25,
     [int]$Limit = 0,

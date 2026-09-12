@@ -643,14 +643,11 @@ export interface PlaybackResponse {
   line?: PlaybackLine;
 }
 
-export type PlaybackLoadLevel = "low" | "medium" | "high" | "full";
-
 export interface PlaybackCapacity {
   enabled: boolean;
   active: number;
   maximum: number;
   queued: number;
-  level: PlaybackLoadLevel;
 }
 
 export interface PlaybackAdmissionResponse {

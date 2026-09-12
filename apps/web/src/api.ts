@@ -38,7 +38,6 @@ import type {
   NowPlayingResponse,
   MovieRequestsResponse,
   PlaybackAdmissionResponse,
-  PlaybackCapacity,
   PlaybackLine,
   PlaybackResponse,
   PublicPersonDetail,
@@ -104,33 +103,6 @@ export async function wakeBackend() {
     signal: AbortSignal.timeout(backendWakeTimeoutMs)
   });
   return response.ok;
-}
-
-export async function getPlaybackCapacity(): Promise<PlaybackCapacity> {
-  const response = await fetch(healthRequestUrl(apiBaseUrl), {
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000)
-  });
-  if (!response.ok) {
-    throw new Error(`Health request failed with ${response.status}`);
-  }
-  const health = await response.json() as {
-    playback?: {
-      activeStreams?: number;
-      maximumStreams?: number;
-      queued?: number;
-      level?: PlaybackCapacity["level"];
-      queueEnabled?: boolean;
-    };
-  };
-  const playback = health.playback;
-  return {
-    enabled: Boolean(playback?.queueEnabled),
-    active: playback?.activeStreams ?? 0,
-    maximum: playback?.maximumStreams ?? 0,
-    queued: playback?.queued ?? 0,
-    level: playback?.level ?? "low"
-  };
 }
 
 function createRequestId() {

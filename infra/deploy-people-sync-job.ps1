@@ -12,7 +12,8 @@ param(
     [string]$NotionPeopleDataSourceId = $env:NOTION_PEOPLE_DATA_SOURCE_ID,
     [string]$StorageAccount = "stwwcachee9219db7",
     [string]$PersonCatalogTable = "peoplecatalog",
-    [string]$CronExpression = "10 */2 * * *",
+    # Azure schedules use UTC: 08:00 and 20:00 Asia/Shanghai.
+    [string]$CronExpression = "0 0,12 * * *",
     [int]$PageSize = 100,
     [int]$OverlapMinutes = 10,
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })

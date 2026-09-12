@@ -102,8 +102,8 @@ import {
   type PlaybackLineChoice
 } from "./cinema/components/PlaybackLineDialog";
 import { PlaybackOpening } from "./cinema/components/PlaybackOpening";
-import { PlaybackLoadIndicator } from "./cinema/components/PlaybackLoadIndicator";
 import { PlaybackQueue } from "./cinema/components/PlaybackQueue";
+import { startVisiblePoll } from "./cinema/visible-poll";
 import { ProfileDialog } from "./cinema/components/ProfileDialog";
 import { ProfilePage } from "./cinema/components/ProfilePage";
 import { SearchDialog } from "./cinema/components/SearchDialog";
@@ -2799,9 +2799,15 @@ function CinemaApp() {
       return;
     }
 
-    const timer = window.setInterval(async () => {
+    return startVisiblePoll(async (isActive) => {
       try {
-        const responses = await Promise.all(activeItems.map((item) => getCacheStatus(item.job.id)));
+        // Sequential requests also bound amplification when many jobs are tracked.
+        const responses = [];
+        for (const item of activeItems) {
+          if (!isActive() || document.hidden) return;
+          responses.push(await getCacheStatus(item.job.id));
+        }
+        if (!isActive()) return false;
         const responseByJobId = new Map(responses.map((response) => [response.job.id, response]));
 
         setTrackedItems((currentItems) =>
@@ -2832,11 +2838,11 @@ function CinemaApp() {
           }
         }
       } catch (statusError) {
+        if (!isActive()) return false;
         handleRequestError(statusError, copy.fallbackErrors.statusRefresh);
+        throw statusError;
       }
-    }, 1200);
-
-    return () => window.clearInterval(timer);
+    }, 5_000);
   }, [trackedPollKey, job?.id, query, activeTab]);
 
   useEffect(() => {
@@ -3590,7 +3596,6 @@ export default function App() {
   return (
     <ToastProvider>
       <CinemaApp />
-      <PlaybackLoadIndicator />
     </ToastProvider>
   );
 }

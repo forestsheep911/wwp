@@ -93,12 +93,12 @@ table warm:
 
 - `job-ww-meta-index-full`: manual slow full crawl. Use this first and after
   large Notion reorganizations. It deletes index rows not seen in the full run.
-- `job-ww-meta-index-incremental`: scheduled crawl, default every 30 minutes.
+- `job-ww-meta-index-incremental`: scheduled crawl, default twice daily at 08:00 and 20:00 Asia/Shanghai (00:00 and 12:00 UTC).
   It scans recent Notion rows by `last_edited_time`, with a small overlap
   window to avoid missing close updates.
 
-People profile edits have a separate scheduled job, `job-ww-people-index`.
-It runs every two hours by default at minute 10, reads only the `People / 创作人`
+People profile edits have a separate scheduled job, `job-ww-people-index`, also running twice daily at 08:00 and 20:00 Asia/Shanghai (00:00 and 12:00 UTC).
+It reads only the `People / 创作人`
 data source, and publishes safe edits for existing immutable `personId` values
 to the Azure `peoplecatalog` table. Its incremental checkpoint and latest
 secret-safe report use a separate `peopleNotionSync` partition in the same

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { startVisiblePoll } from "../visible-poll";
 import { Cloud, Loader2, Play, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import type { SearchResult } from "@wwpdw/shared";
 
@@ -127,13 +128,21 @@ export function OssPlaybackPocPanel() {
     void refreshPreparations();
   }, []);
 
+  const hasPendingPreparations = preparations.some((job) => ["queued", "running", "cancelling"].includes(job.status));
+
   useEffect(() => {
-    if (!preparations.some((job) => ["queued", "running", "cancelling"].includes(job.status))) {
+    if (!hasPendingPreparations) {
       return;
     }
-    const timer = window.setInterval(() => void refreshPreparations(false), 5_000);
-    return () => window.clearInterval(timer);
-  }, [preparations]);
+    return startVisiblePoll(async (isActive) => {
+      const response = await listAdminOssPreparations();
+      if (!isActive()) return false;
+      setPreparations(response.jobs);
+      setPreparationsEnabled(response.enabled);
+      setPreparationConcurrency(response.concurrency);
+      return response.enabled && response.jobs.some((job) => ["queued", "running", "cancelling"].includes(job.status));
+    }, 5_000);
+  }, [hasPendingPreparations]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>) {

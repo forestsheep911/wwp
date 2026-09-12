@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PlaybackAdmissionQueue,
-  playbackLoadLevel,
   playbackRequiresLocalAdmission
 } from "./playback-admission.js";
 
@@ -11,16 +10,6 @@ test("remote and domestic playback do not require a local-media seat", () => {
   assert.equal(playbackRequiresLocalAdmission("domestic", false), false);
   assert.equal(playbackRequiresLocalAdmission("international", false), false);
   assert.equal(playbackRequiresLocalAdmission("international", true), true);
-});
-
-test("load levels map an eight-seat home server to low, medium, high, and full", () => {
-  assert.equal(playbackLoadLevel(0, 8), "low");
-  assert.equal(playbackLoadLevel(2, 8), "low");
-  assert.equal(playbackLoadLevel(3, 8), "medium");
-  assert.equal(playbackLoadLevel(5, 8), "medium");
-  assert.equal(playbackLoadLevel(6, 8), "high");
-  assert.equal(playbackLoadLevel(7, 8), "high");
-  assert.equal(playbackLoadLevel(8, 8), "full");
 });
 
 test("the next queued viewer is admitted when a seat is released", () => {
@@ -41,7 +30,7 @@ test("the next queued viewer is admitted when a seat is released", () => {
   assert.equal(second.status, "admitted");
   assert.equal(third.status, "queued");
   assert.equal(third.position, 1);
-  assert.equal(third.capacity.level, "full");
+  assert.equal(third.capacity.active, third.capacity.maximum);
 
   assert.equal(queue.release(first.ticketId!, "one"), true);
   const promoted = queue.request({

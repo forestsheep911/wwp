@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CircleStop, Clock3, UsersRound } from "lucide-react";
 import type { PlaybackAdmissionResponse } from "@wwpdw/shared";
 import { Button } from "../../components/ui/button";
-import { requestPlaybackAdmission } from "../../api";
+import { ApiError, requestPlaybackAdmission } from "../../api";
+import { startVisiblePoll } from "../visible-poll";
 
 export function PlaybackQueue({
   admission,
@@ -16,6 +17,7 @@ export function PlaybackQueue({
   onUpdate: (admission: PlaybackAdmissionResponse) => void;
 }) {
   const completedRef = useRef(false);
+  const [queueError, setQueueError] = useState("");
   const onAdmittedRef = useRef(onAdmitted);
   const onUpdateRef = useRef(onUpdate);
 
@@ -26,28 +28,27 @@ export function PlaybackQueue({
 
   useEffect(() => {
     if (!admission.ticketId) return;
-    let disposed = false;
-
-    const poll = async () => {
+    completedRef.current = false;
+    setQueueError("");
+    return startVisiblePoll(async (isActive) => {
       try {
         const next = await requestPlaybackAdmission(admission.assetKey, admission.ticketId);
-        if (disposed || completedRef.current) return;
+        if (!isActive() || completedRef.current) return false;
         onUpdateRef.current(next);
         if (next.status === "admitted") {
           completedRef.current = true;
           onAdmittedRef.current(next);
+          return false;
         }
-      } catch {
-        // A transient network interruption should not silently remove a viewer from the queue.
+      } catch (error) {
+        if (!isActive()) return false;
+        if (error instanceof ApiError && [401, 403, 404, 409, 410].includes(error.statusCode)) {
+          setQueueError("排队已失效，请返回后重新点击播放。");
+          return false;
+        }
+        throw error;
       }
-    };
-
-    const timer = window.setInterval(poll, 2_000);
-    void poll();
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
+    }, 5_000);
   }, [admission.assetKey, admission.ticketId]);
 
   return (
@@ -60,7 +61,7 @@ export function PlaybackQueue({
         <p className="mt-7 text-xs font-black tracking-[0.28em] text-amber-300">家庭影院候场区</p>
         <h1 className="mt-3 text-2xl font-bold text-slate-50 sm:text-3xl">正在排队中</h1>
         <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-400">
-          前面的观众结束播放或离开后，你会自动进入播放器。保持此页面打开即可。
+          {queueError || "前面的观众结束播放或离开后，你会自动进入播放器。请保持此页面在前台；切到后台较久后需要重新排队。"}
         </p>
 
         <div className="mt-7 grid grid-cols-2 gap-3 text-left">

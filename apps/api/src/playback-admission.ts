@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   PlaybackAdmissionResponse,
   PlaybackCapacity,
-  PlaybackLine,
-  PlaybackLoadLevel
+  PlaybackLine
 } from "@wwpdw/shared";
 
 type AdmissionStatus = PlaybackAdmissionResponse["status"];
@@ -27,14 +26,6 @@ interface PlaybackAdmissionQueueOptions {
   createId?: () => string;
   queuedLeaseMs?: number;
   admittedLeaseMs?: number;
-}
-
-export function playbackLoadLevel(active: number, maximum: number): PlaybackLoadLevel {
-  if (active >= maximum) return "full";
-  const ratio = active / maximum;
-  if (ratio >= 0.75) return "high";
-  if (ratio >= 0.375) return "medium";
-  return "low";
 }
 
 export class PlaybackAdmissionQueue {
@@ -62,8 +53,7 @@ export class PlaybackAdmissionQueue {
       enabled: true,
       active,
       maximum: this.maximum,
-      queued,
-      level: playbackLoadLevel(active, this.maximum)
+      queued
     };
   }
 

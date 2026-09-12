@@ -212,8 +212,7 @@ function playbackCapacity(): PlaybackCapacity {
     enabled: false,
     active: activePlaybackStreams,
     maximum: maximumPlaybackStreams,
-    queued: 0,
-    level: "low"
+    queued: 0
   };
 }
 
@@ -4959,7 +4958,6 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
           grantMinutes: playbackGrantMinutes,
           activeConnections: activePlaybackStreams,
           queued: capacity.queued,
-          level: capacity.level,
           queueEnabled: capacity.enabled
         }
       });
