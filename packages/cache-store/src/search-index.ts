@@ -54,6 +54,7 @@ export interface SearchIndexStore {
   getStats(): Promise<SearchIndexStats>;
   search(query: string, limit: number): Promise<SearchResult[]>;
   sample(limit: number): Promise<SearchResult[]>;
+  listAllResults(): Promise<SearchResult[]>;
   getResult(assetKey: string): Promise<SearchResult | undefined>;
   upsertResult(result: SearchResult, indexedAt?: string): Promise<SearchIndexEntry>;
   upsertResults(results: SearchResult[], indexedAt?: string): Promise<SearchIndexEntry[]>;
@@ -583,6 +584,11 @@ export class LocalSearchIndexStore implements SearchIndexStore {
     return searchEntries(Object.values(state.entries), query, limit);
   }
 
+  async listAllResults() {
+    const state = await this.readState();
+    return Object.values(state.entries).map(entry => cloneResult(entry.result));
+  }
+
   async sample(limit: number) {
     const state = await this.readState();
     return sampleEntries(Object.values(state.entries), limit);
@@ -753,6 +759,11 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   async search(query: string, limit: number) {
     await this.ensureReady();
     return searchEntries(await this.listEntries(), query, limit);
+  }
+
+  async listAllResults() {
+    await this.ensureReady();
+    return (await this.listEntries()).map(entry => cloneResult(entry.result));
   }
 
   async sample(limit: number) {

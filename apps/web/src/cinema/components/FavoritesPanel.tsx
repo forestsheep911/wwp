@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CalendarDays, CheckCircle2, Eye, Film, Play, Star } from "lucide-react";
 import type { CacheAsset, CreditPolicyResponse, MediaVariant } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
@@ -32,8 +33,8 @@ const favoriteSections: Array<{
   icon: typeof Star;
   className: string;
 }> = [
-  { mark: "favorite", icon: Star, className: "text-amber-200" },
   { mark: "wantToWatch", icon: Eye, className: "text-sky-200" },
+  { mark: "watching", icon: Play, className: "text-sky-200" },
   { mark: "watched", icon: CheckCircle2, className: "text-emerald-200" }
 ];
 
@@ -57,7 +58,7 @@ export function FavoritesPanel({
       .filter((entry) => markTimestamp(entry, section.mark))
       .map((entry) => hydrateFavorite(entry, cachedByAssetKey))
   }));
-  const defaultSection = sections.find((section) => section.candidates.length > 0)?.mark ?? "favorite";
+  const defaultSection = sections.find((section) => section.candidates.length > 0)?.mark ?? "wantToWatch";
 
   if (favorites.length === 0) {
     return (
@@ -120,6 +121,7 @@ function markTimestamp(entry: FavoriteEntry, mark: CollectionMark) {
   if (mark === "wantToWatch") {
     return entry.wantToWatchAt;
   }
+  if (mark === "watching") return entry.watchingAt;
   return entry.watchedAt;
 }
 
@@ -134,11 +136,12 @@ function FavoriteSection({
   onRemove: (assetKey: string, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
+  const [limit, setLimit] = useState(50);
   return (
     <div>
       {section.candidates.length ? (
         <div className="grid gap-3">
-          {section.candidates.map((candidate) => (
+          {section.candidates.slice(0, limit).map((candidate) => (
             <FavoriteCard
               candidate={candidate}
               creditPolicy={creditPolicy}
@@ -148,6 +151,7 @@ function FavoriteSection({
               onSelect={onSelect}
             />
           ))}
+          {section.candidates.length > limit && <Button variant="outline" onClick={()=>setLimit(count=>count+50)}>加载更多（还有 {section.candidates.length-limit} 部）</Button>}
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/45 px-4 py-5 text-sm font-semibold text-slate-500 sm:rounded-md">
@@ -200,12 +204,12 @@ function FavoriteCard({
     ? copy.favorites.remove
     : mark === "wantToWatch"
       ? copy.favorites.removeWantToWatch
-      : copy.favorites.removeWatched;
-  const stampedLabel = mark === "favorite"
+      : mark === "watching" ? copy.favorites.removeWatching : copy.favorites.removeWatched;
+  const stampedLabel = entry.doubanImport && !entry.doubanImport.markedAt ? "豆瓣未提供标记日期" : mark === "favorite"
     ? copy.favorites.addedAt(formatDateTime(timestamp))
     : mark === "wantToWatch"
       ? copy.favorites.wantToWatchAt(formatDateTime(timestamp))
-      : copy.favorites.watchedAt(formatDateTime(timestamp));
+      : mark === "watching" ? copy.favorites.watchingAt(formatDateTime(timestamp)) : copy.favorites.watchedAt(formatDateTime(timestamp));
 
   return (
     <article className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 sm:grid-cols-[76px_minmax(0,1fr)] sm:rounded-md lg:grid-cols-[84px_minmax(0,1fr)_minmax(280px,0.42fr)]">
@@ -231,6 +235,9 @@ function FavoriteCard({
         ) : null}
 
         <p className="line-clamp-2 text-sm leading-6 text-slate-400">{bestSummary(result)}</p>
+        {entry.doubanImport?.rating != null && <p className="text-sm text-amber-200">我的评分：{entry.doubanImport.rating} / 10</p>}
+        {entry.doubanImport?.comment && <p className="whitespace-pre-wrap break-words text-sm text-slate-300">我的短评：{entry.doubanImport.comment}</p>}
+        {entry.doubanImport?.tags && <p className="text-xs text-slate-400">我的标签：{entry.doubanImport.tags}</p>}
         <p className="min-w-0 truncate text-xs font-semibold text-slate-500">
           <CalendarDays className="mr-1 inline h-3.5 w-3.5" />
           {stampedLabel}
@@ -252,6 +259,8 @@ function FavoriteCard({
           >
             {mark === "favorite" ? (
               <Star className="h-4 w-4 fill-amber-300 text-amber-300" />
+            ) : mark === "watching" ? (
+              <Play className="h-4 w-4 text-sky-200" />
             ) : mark === "wantToWatch" ? (
               <Eye className="h-4 w-4 text-sky-200" />
             ) : (

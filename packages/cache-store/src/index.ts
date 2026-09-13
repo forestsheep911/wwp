@@ -1,3 +1,5 @@
+export { createCollectionDocumentStore, LocalCollectionDocumentStore, CollectionConflict } from "./member-collection-store.js";
+export type { CollectionDocumentStore } from "./member-collection-store.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AzureCacheStore } from "./azure.js";

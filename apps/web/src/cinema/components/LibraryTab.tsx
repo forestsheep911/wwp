@@ -1,3 +1,5 @@
+import { Play } from "lucide-react";
+import { explicitBrowseKind } from "../browse-channel";
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
 import { loadingGridCount, remainingLoadingCount } from "../loading-grid";
 import { createPortal } from "react-dom";
@@ -2829,7 +2831,7 @@ function MovieCard({
           <Star className={`h-3.5 w-3.5 ${
             favoriteAssetKeys.has(result.assetKey) ? "fill-amber-300 text-amber-300" : ""
           }`} />
-          {favoriteAssetKeys.has(result.assetKey) ? "已收藏" : "收藏"}
+          {favoriteAssetKeys.has(result.assetKey) ? "已想看" : "想看"}
         </Button>
       </div>
 
@@ -2932,8 +2934,8 @@ function CollectionMarkButton({
 }) {
   const label = mark === "wantToWatch"
     ? active ? copy.favorites.unwantToWatch : copy.favorites.wantToWatch
-    : active ? copy.favorites.unwatched : copy.favorites.watched;
-  const Icon = mark === "wantToWatch" ? Eye : CheckCircle2;
+    : mark === "watching" ? active ? copy.favorites.unwatching : copy.favorites.watching : active ? copy.favorites.unwatched : copy.favorites.watched;
+  const Icon = mark === "wantToWatch" ? Eye : mark === "watching" ? Play : CheckCircle2;
   const activeClass = mark === "wantToWatch"
     ? "border-sky-300/40 bg-sky-300/10 text-sky-200 hover:bg-sky-300/20"
     : "border-emerald-300/40 bg-emerald-300/10 text-emerald-200 hover:bg-emerald-300/20";
@@ -2943,12 +2945,14 @@ function CollectionMarkButton({
       className={active ? activeClass : ""}
       type="button"
       variant="outline"
-      size="icon"
+      size="sm"
+      aria-pressed={active}
       onClick={onClick}
       title={label}
       aria-label={label}
     >
       <Icon className={`h-4 w-4 ${active ? "fill-current" : ""}`} />
+      <span>{mark === "watching" ? "在看" : mark === "watched" ? "已看" : "想看"}</span>
     </Button>
   );
 }
@@ -3193,15 +3197,14 @@ function MovieDetailView({
           {backLabel}
         </Button>
         <div className="grid grid-cols-4 items-center gap-2 sm:flex">
-          <FavoriteButton
-            active={favoriteAssetKeys.has(result.assetKey)}
-            onClick={() => onToggleFavorite(result)}
-          />
           <CollectionMarkButton
             active={Boolean(collectionEntry?.wantToWatchAt)}
             mark="wantToWatch"
             onClick={() => onUpdateCollectionMark(result, "wantToWatch")}
           />
+          {explicitBrowseKind(result) === "tv" && (
+            <CollectionMarkButton active={Boolean(collectionEntry?.watchingAt)} mark="watching" onClick={() => onUpdateCollectionMark(result, "watching")} />
+          )}
           <CollectionMarkButton
             active={Boolean(collectionEntry?.watchedAt)}
             mark="watched"

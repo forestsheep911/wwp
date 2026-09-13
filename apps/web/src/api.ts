@@ -624,3 +624,19 @@ export function deleteCachedAsset(assetKey: string) {
     }
   );
 }
+
+export function getMemberCollection() {
+  return request<import("@wwpdw/shared").CollectionResponse>(apiUrl("/api/member/collection"));
+}
+export function previewMemberCollection(data: unknown, strategy: import("@wwpdw/shared").ImportStrategy) {
+  return request<import("@wwpdw/shared").CollectionPreview>(apiUrl("/api/member/collection/preview"), { method: "POST", body: JSON.stringify({ data, strategy }) });
+}
+export function commitMemberCollection(id: string, confirmReplace: boolean) {
+  return request<import("@wwpdw/shared").CollectionResponse>(apiUrl("/api/member/collection/commit"), { method: "POST", body: JSON.stringify({ id, confirmReplace }) });
+}
+export function undoMemberCollection(id: string, revision: string) {
+  return request<import("@wwpdw/shared").CollectionResponse>(apiUrl("/api/member/collection/undo"), { method: "POST", body: JSON.stringify({ id, revision }) });
+}
+export function markMemberCollection(assetKey: string, mark: string, active: boolean, revision: string) {
+  return request<import("@wwpdw/shared").CollectionResponse>(apiUrl("/api/member/collection/mark"), { method: "POST", body: JSON.stringify({ assetKey, mark, active, revision }) });
+}

@@ -1,3 +1,4 @@
+export * from "./member-collection.js";
 import type { PersonExternalIds } from "./person-names.js";
 
 export * from "./person-identity.js";

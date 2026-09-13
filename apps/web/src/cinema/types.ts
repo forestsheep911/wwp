@@ -49,16 +49,18 @@ export interface PlaybackHistoryEntry {
 }
 
 export interface FavoriteEntry {
+  doubanImport?: import("@wwpdw/shared").DoubanRecord;
   assetKey: string;
   title: string;
   addedAt: string;
   favoriteAt?: string;
   wantToWatchAt?: string;
+  watchingAt?: string;
   watchedAt?: string;
   result: ResultWithCache;
 }
 
-export type CollectionMark = "favorite" | "wantToWatch" | "watched";
+export type CollectionMark = "favorite" | "wantToWatch" | "watching" | "watched";
 
 export interface TrackedCacheItem {
   job: CacheJob;

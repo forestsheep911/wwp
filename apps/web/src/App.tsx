@@ -1,3 +1,6 @@
+import { getMemberCollection, markMemberCollection } from "./api";
+import type { CollectionResponse } from "@wwpdw/shared";
+import { DoubanImportPanel } from "./cinema/components/DoubanImportPanel";
 import { lazy, Suspense, type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AccessRole,
@@ -244,21 +247,13 @@ function favoriteKeyForIdentity(role?: AccessRole, memberId?: string) {
 }
 
 function normalizeFavorites(entries: FavoriteEntry[]) {
-  return entries.map((entry) => {
-    if (entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt) {
-      return entry;
-    }
-
-    return {
-      ...entry,
-      favoriteAt: entry.addedAt
-    };
-  });
+  return entries.map((entry) => ({
+    ...entry,
+    favoriteAt: undefined,
+    wantToWatchAt: (entry.watchedAt || entry.watchingAt) ? undefined : entry.wantToWatchAt ?? entry.favoriteAt ?? entry.addedAt
+  }));
 }
 
-function hasCollectionMarks(entry: FavoriteEntry) {
-  return Boolean(entry.favoriteAt || entry.wantToWatchAt || entry.watchedAt);
-}
 
 function CinemaApp() {
   const { showToast } = useToast();
@@ -372,6 +367,40 @@ function CinemaApp() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<PlaybackHistoryEntry[]>(() => readJsonStorage(historyStorageKey, []));
   const [favorites, setFavorites] = useState<FavoriteEntry[]>([]);
+  const [collectionRevision, setCollectionRevision] = useState("0");
+  const [collectionUndoId, setCollectionUndoId] = useState<string>();
+  const [collectionReady, setCollectionReady] = useState(false);
+  const [collectionError, setCollectionError] = useState("");
+  const [collectionBusy, setCollectionBusy] = useState(false);
+  const collectionBusyRef = useRef(false);
+  const collectionEpoch = useRef(0);
+  const collectionReadSequence = useRef(0);
+  const [legacyRecords, setLegacyRecords] = useState<unknown[]>([]);
+  function acceptCollection(value: CollectionResponse) {
+    collectionReadSequence.current += 1;
+    setFavorites(value.entries);
+    setCollectionRevision(value.revision);
+    setCollectionUndoId(value.undoImportId);
+    setCollectionReady(true);
+    setCollectionError("");
+  }
+  async function refreshCollection() {
+    const epoch = collectionEpoch.current;
+    const sequence=++collectionReadSequence.current;
+    try {const value=await getMemberCollection();if(epoch===collectionEpoch.current && sequence===collectionReadSequence.current) acceptCollection(value);}
+    catch(e){if(epoch===collectionEpoch.current) setCollectionError(e instanceof Error ? e.message : "读取个人片单失败。");}
+  }
+  useEffect(() => {
+    if (!unlocked) return;
+    void refreshCollection();
+    const focus = () => { if (!collectionBusyRef.current) void refreshCollection(); };
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [unlocked, member?.id, role]);
+  useEffect(() => {
+    if (unlocked && activeTab === "favorites" && !collectionBusyRef.current) void refreshCollection();
+  }, [activeTab]);
+
   const [historyAssetStatus, setHistoryAssetStatus] = useState<HistoryAssetStatusMap>({});
   const [cachedAssets, setCachedAssets] = useState<CacheAsset[]>([]);
   const [cachedAssetsLoading, setCachedAssetsLoading] = useState(false);
@@ -444,7 +473,7 @@ function CinemaApp() {
   }, [trackedItems]);
 
   const favoriteAssetKeys = useMemo(
-    () => new Set(favorites.filter((item) => item.favoriteAt).map((item) => item.assetKey)),
+    () => new Set(favorites.filter((item) => item.wantToWatchAt).map((item) => item.assetKey)),
     [favorites]
   );
 
@@ -1598,76 +1627,29 @@ function CinemaApp() {
     setHistoryAssetStatus({});
   }
 
-  function writeFavorites(nextFavorites: FavoriteEntry[]) {
-    const storageKey = favoriteKeyForIdentity(role, member?.id);
-    writeJsonStorage(storageKey, nextFavorites);
-  }
-
-  function updateCollectionMark(result: ResultWithCache, mark: CollectionMark) {
-    setFavorites((currentFavorites) => {
-      const now = new Date().toISOString();
-      const currentEntry = currentFavorites.find((item) => item.assetKey === result.assetKey);
-      const baseEntry: FavoriteEntry = currentEntry ?? {
-        assetKey: result.assetKey,
-        title: result.title,
-        addedAt: now,
-        result
-      };
-      const nextEntry: FavoriteEntry = {
-        ...baseEntry,
-        title: result.title,
-        result
-      };
-
-      if (mark === "favorite") {
-        nextEntry.favoriteAt = nextEntry.favoriteAt ? undefined : now;
-      } else if (mark === "wantToWatch") {
-        const active = Boolean(nextEntry.wantToWatchAt);
-        nextEntry.wantToWatchAt = active ? undefined : now;
-        if (!active) {
-          nextEntry.watchedAt = undefined;
-        }
-      } else {
-        const active = Boolean(nextEntry.watchedAt);
-        nextEntry.watchedAt = active ? undefined : now;
-        if (!active) {
-          nextEntry.wantToWatchAt = undefined;
-        }
+  async function saveCollectionMark(assetKey: string, mark: CollectionMark, active: boolean) {
+    if (!collectionReady) {showToast({title:"片单尚未就绪",description:"请在我的片单中刷新账号数据后重试。"});return;}
+    if (collectionBusyRef.current) return;
+    const epoch=collectionEpoch.current;
+    collectionBusyRef.current=true;setCollectionBusy(true);
+    try {
+      const value=await markMemberCollection(assetKey, mark === "favorite" ? "wantToWatch" : mark, active, collectionRevision);
+      if(epoch===collectionEpoch.current) acceptCollection(value);
+    } catch(e) {
+      if(epoch===collectionEpoch.current) {
+        const message=e instanceof Error ? e.message : "保存失败，请刷新后重试。";
+        setCollectionError(message);
+        showToast({title:"片单保存失败",description:message});
       }
-
-      const withoutCurrent = currentFavorites.filter((item) => item.assetKey !== result.assetKey);
-      const nextFavorites = hasCollectionMarks(nextEntry) ? [nextEntry, ...withoutCurrent] : withoutCurrent;
-      writeFavorites(nextFavorites);
-      return nextFavorites;
-    });
+    } finally {collectionBusyRef.current=false;if(epoch===collectionEpoch.current) setCollectionBusy(false);}
   }
-
-  function toggleFavorite(result: ResultWithCache) {
-    updateCollectionMark(result, "favorite");
+  function updateCollectionMark(result: ResultWithCache, mark: CollectionMark) {
+    const entry=favorites.find(item=>item.assetKey===result.assetKey);
+    const field=mark === "watching" ? "watchingAt" : mark === "watched" ? "watchedAt" : "wantToWatchAt";
+    void saveCollectionMark(result.assetKey,mark,!entry?.[field]);
   }
-
-  function removeCollectionMark(assetKey: string, mark: CollectionMark) {
-    setFavorites((currentFavorites) => {
-      const nextFavorites = currentFavorites.flatMap((item) => {
-        if (item.assetKey !== assetKey) {
-          return [item];
-        }
-
-        const nextItem: FavoriteEntry = { ...item };
-        if (mark === "favorite") {
-          nextItem.favoriteAt = undefined;
-        } else if (mark === "wantToWatch") {
-          nextItem.wantToWatchAt = undefined;
-        } else {
-          nextItem.watchedAt = undefined;
-        }
-
-        return hasCollectionMarks(nextItem) ? [nextItem] : [];
-      });
-      writeFavorites(nextFavorites);
-      return nextFavorites;
-    });
-  }
+  function toggleFavorite(result: ResultWithCache) { updateCollectionMark(result,"wantToWatch"); }
+  function removeCollectionMark(assetKey: string, mark: CollectionMark) { void saveCollectionMark(assetKey,mark,false); }
 
   async function refreshHistoryAssetStatus() {
     const assetKeys = Array.from(new Set(history.map((item) => item.assetKey)));
@@ -1853,7 +1835,10 @@ function CinemaApp() {
     setRole(auth.role);
     setMember(auth.member);
     setAdminUnlocked(auth.role === "admin");
-    setFavorites(normalizeFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), [])));
+    collectionEpoch.current += 1;
+    setFavorites([]);setCollectionRevision("0");setCollectionReady(false);setCollectionUndoId(undefined);setCollectionError("");
+    const legacy=normalizeFavorites(readJsonStorage<FavoriteEntry[]>(favoriteKeyForIdentity(auth.role, auth.member?.id), []));
+    setLegacyRecords(legacy.flatMap(entry => entry.doubanImport ? [entry.doubanImport] : []));
   }
 
   function completeAuth(auth: AuthCheckResponse) {
@@ -2624,6 +2609,9 @@ function CinemaApp() {
   }
 
   function lockCinema() {
+    collectionEpoch.current += 1;
+    setCollectionReady(false);
+    setLegacyRecords([]);
     clearAccessKey();
     setAuthRestoring(false);
     setUnlocked(false);
@@ -3442,6 +3430,12 @@ function CinemaApp() {
           />
         )}
         favorites={(
+          <div className="grid gap-4">
+          {collectionError && <p role="alert">{collectionError} <button type="button" onClick={()=>void refreshCollection()}>刷新片单</button></p>}
+          {!collectionReady && <p role="status">正在读取账号片单…</p>}
+          <DoubanImportPanel key={`${member?.id ?? role ?? "guest"}:${collectionEpoch.current}`} disabled={!collectionReady || collectionBusy}
+            collection={{entries:favorites,revision:collectionRevision,undoImportId:collectionUndoId}}
+            legacyRecords={legacyRecords} onImport={acceptCollection} />
           <FavoritesPanel
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
@@ -3449,6 +3443,7 @@ function CinemaApp() {
             onRemove={removeCollectionMark}
             onSelect={(selectedResult, variant) => void selectResult(selectedResult, variant)}
           />
+          </div>
         )}
         watchlist={(
           <div className="grid gap-4">

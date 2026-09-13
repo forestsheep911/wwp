@@ -1,3 +1,6 @@
+import { createCollectionDocumentStore } from "@wwpdw/cache-store";
+import { MemberCollectionService } from "./member-collection.js";
+import { handleMemberCollection } from "./member-collection-http.js";
 import "./env.js";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -96,6 +99,7 @@ import { mergeCachedPosters } from "./poster-refresh.js";
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
+const memberCollections = new MemberCollectionService(createCollectionDocumentStore(), () => searchIndex.listAllResults());
 const personCatalog = createPersonCatalogStore();
 const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
@@ -4985,6 +4989,11 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       if (!identity) {
         return;
       }
+    }
+
+    if (pathname === "/api/member/collection" || pathname.startsWith("/api/member/collection/")) {
+      await handleMemberCollection(request, response, pathname, identity!, memberCollections);
+      return;
     }
 
     if (request.method === "GET" && pathname === "/api/auth/check") {
