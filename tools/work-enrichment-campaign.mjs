@@ -6,7 +6,10 @@ import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 import {
   buildEnrichmentCampaignReport,
   enqueueEnrichmentWorks,
+  recoverStaleInProgress,
   readEnrichmentCampaign,
+  resumeAuthorizedPeopleStage,
+  settlePeopleStageFromCoverage,
   updateEnrichmentStage,
   writeEnrichmentCampaign
 } from "./lib/work-enrichment-campaign.mjs";
@@ -42,10 +45,13 @@ function parseArgs(argv) {
     else if (arg === "--missing-field") options.missingFields.push(argv[++index]);
     else if (arg === "--human-confirmation") options.humanConfirmationReasons.push(argv[++index]);
     else if (arg === "--next-review-at") options.nextReviewAt = argv[++index];
+    else if (arg === "--preflight") options.preflight = argv[++index];
+    else if (arg === "--report") options.report = argv[++index];
+    else if (arg === "--coverage") options.coverage = argv[++index];
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!options.command) throw new Error("command is required: status|enqueue|record");
+  if (!options.command) throw new Error("command is required: status|enqueue|record|authorize-people|settle-people-coverage");
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 20) throw new Error("--limit must be between 1 and 20");
   return options;
 }
@@ -67,6 +73,9 @@ function main() {
     : acquireProductionLock({ owner: "work-enrichment-campaign", mode: "enrichment-only" });
   try {
     let state = readEnrichmentCampaign(options.state);
+    const recovered = recoverStaleInProgress(state);
+    state = recovered.state;
+    if (recovered.recovered.length > 0) writeEnrichmentCampaign(options.state, state);
     let mutation = null;
     if (options.command === "enqueue") {
       const inputs = options.inputs.flatMap(readInputWorks);
@@ -99,13 +108,48 @@ function main() {
       });
       state = mutation.state;
       writeEnrichmentCampaign(options.state, state);
+    } else if (options.command === "authorize-people") {
+      if (!options.preflight || !options.report) throw new Error("authorize-people requires --preflight and --report");
+      const preflight = JSON.parse(readFileSync(path.resolve(options.preflight), "utf8"));
+      mutation = resumeAuthorizedPeopleStage(state, {
+        key: options.key,
+        ledgerWorkId: options.ledgerWorkId,
+        externalWorkId: options.externalWorkId,
+        pageId: options.pageId
+      }, {
+        preflight,
+        reportPath: options.report,
+        reason: options.reason ?? undefined
+      });
+      state = mutation.state;
+      writeEnrichmentCampaign(options.state, state);
+    } else if (options.command === "settle-people-coverage") {
+      if (!options.coverage) throw new Error("settle-people-coverage requires --coverage");
+      const coverage = JSON.parse(readFileSync(path.resolve(options.coverage), "utf8"));
+      mutation = settlePeopleStageFromCoverage(state, {
+        key: options.key,
+        ledgerWorkId: options.ledgerWorkId,
+        externalWorkId: options.externalWorkId,
+        pageId: options.pageId
+      }, coverage);
+      state = mutation.state;
+      writeEnrichmentCampaign(options.state, state);
     } else if (options.command !== "status") {
       throw new Error(`unknown command: ${options.command}`);
     }
     const report = buildEnrichmentCampaignReport(state, { limit: options.limit });
     report.statePath = path.resolve(options.state);
     if (mutation?.added) report.mutation = { added: mutation.added, existing: mutation.existing };
-    if (mutation?.work) report.mutation = { updated: mutation.work.key, stage: options.stage, status: options.status };
+    report.recoveredStaleInProgress = recovered.recovered;
+    if (mutation?.work) report.mutation = {
+      updated: mutation.work.key,
+      stage: ["authorize-people", "settle-people-coverage"].includes(options.command) ? "people" : options.stage,
+      status: options.command === "authorize-people"
+        ? "in_progress"
+        : options.command === "settle-people-coverage"
+          ? mutation.work.stages.people.status
+          : options.status
+    };
     output(report, options.json);
   } finally {
     lock?.release();

@@ -5,12 +5,26 @@ description: Use when a WWP movie or series source lacks verified Chinese subtit
 
 # WWP Subtitle Acquirer
 
+Do not create or reopen a subtitle-acquisition task when the associated work
+has an explicit closed expansion scope (`scope_state=closed` or a verified
+`[规格扩展:CLOSED]` decision). A closed decision is stronger than missing
+subtitle evidence: retain the source for possible future user-directed work,
+but remove it from the actionable acquisition queue until the user reopens the
+expansion.
+
 Use this skill only after source probing and hard-subtitle inspection show that a
 subtitle-dependent work has no usable Chinese subtitle. It extends playable
 production; it does not weaken the Chinese-subtitle hard gate for a foreign-
 original-audio branch. Do not route a verified Mandarin-dubbed (`国配`) branch
 here merely because it lacks Chinese subtitles: that branch may complete now,
 with subtitle acquisition retained only as optional later enrichment.
+
+The film ledger is the integration boundary. A normal film cycle creates or
+reuses one durable `subtitle_acquisition` workflow task only for an explicit
+`confirmed_missing` state. The current v0.1 Companion can collect provider
+candidates, but the automatic task-to-Bridge request, artifact download,
+ranking, and task completion path remain future work; until then, keep the
+ledger task pending/deferred/waiting_user instead of treating it as completed.
 
 ## Initial Route
 
@@ -25,6 +39,10 @@ with subtitle acquisition retained only as optional later enrichment.
    the current results/detail page. The Companion may collect evidence, but it
    must not bypass login, CAPTCHA, download confirmation, copyright removal, or
    another access-control decision.
+   After creating the Companion task, record the ledger handoff with
+   `node tools/film-ledger.mjs wait-task --task <id> --failure-detail <exact action>`
+   so the source is classified as waiting for a named human action instead of
+   remaining a generic AI-pending item.
 4. Keep each provider adapter factual. It reports titles, release text,
    languages, formats, badges, author/rating evidence when visible, detail URL,
    raw evidence, and later artifact metadata. It does not choose the winner.

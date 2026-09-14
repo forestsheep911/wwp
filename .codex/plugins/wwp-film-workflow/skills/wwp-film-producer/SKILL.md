@@ -90,7 +90,28 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 - Treat an automatic goal continuation as a scheduling opportunity, not as a request to repeat the last status message.
 - After one bounded cycle reports no filesystem delta and no due actionable item, do not immediately run another full cycle or send another user-visible "no change" message. Wait for a real trigger: new user input, a changed source fingerprint, a due ledger review, an active encode/upload transition, or an urgent Workflow Note handoff.
 - During long encoding or upload work, report only meaningful progress checkpoints, completion, failure, or a decision request. Do not emit heartbeat-style prose merely because the goal mechanism resumed the thread.
+- Read the top-level `continuation` object as the Goal decision gate. A local
+  Notion, identity, upload, cleanup, or source failure freezes only that item.
+  When `continuation.state=actionable_now`, continue another due lane; only
+`continuation.canDeclareWorkflowIdle=true` permits calling the whole workflow
+  idle. If `canDeclareNoDueAction=true` but the workflow is not idle, list every
+  `remainingConditions` category and its exact next trigger.
+- Read `continuation.goalDisposition` before changing Goal state. `continue`
+  requires another bounded item, `stable_wait` means every remaining item is
+  waiting on a named trigger, and `idle` requires the full idle gate. The
+  ordinary cycle intentionally returns `canMarkGoalBlocked=false`: item-level
+  `blocked`, identity ambiguity, one inaccessible Notion page, a failed cleanup
+  move, or a network-stage failure must be recorded on that item and skipped so
+  another due item can run. Mark the Goal itself blocked only after a separately
+  established workflow-wide blocker has prevented all meaningful lanes for the
+  required repeated turns; never infer that condition from the aggregate
+  `localBlockers` count.
+- Include `continuation.decisionMessage` in the round decision and obey
+  `continuation.blockerScope`. `blockerScope=item` means the failure belongs to
+  named rows only and can never justify stopping the Goal while another lane is
+  due.
 - Before saying there is nothing to do, check all workflow lanes and distinguish `waiting until due` from `waiting for user evidence`. Report the concrete blocker once, with the next trigger or review time, and suppress identical follow-ups until that evidence changes.
+- Follow `continuation.recheckPolicy`: `continue_now` means perform one bounded action and read back state; `event_or_due_time` means do not poll on a short fixed interval and wait for one of its listed triggers. `pollingAllowed=false` never means the workflow is idle unless `canDeclareWorkflowIdle=true`.
 
 ## Single-line Film and People Scheduling
 
@@ -155,6 +176,11 @@ toggle, callout, or base-like visual containers.
 - An output or quarantine directory must never remain enabled as an input root.
   Disable retired, duplicate nested, and missing roots before the next cycle;
   otherwise produced files can re-enter intake as false new sources.
+- A newly seen but incomplete download remains registered in the source ledger,
+  while its intake task is machine-deferred and excluded from the executable
+  lane. Repeated scans preserve that reason; a later scan that explicitly marks
+  the source complete reopens intake automatically. Bound incomplete sources are
+  also excluded from production selection until their complete state is observed.
 - For new work, prepare the complete destination tree before upload because
   Notion cannot move an uploaded media block through the API: movie work page ->
   spec page; series/season page -> spec page -> one Episode page per episode.
@@ -208,7 +234,7 @@ toggle, callout, or base-like visual containers.
   impossible or safe to delete. Quarantine location is not an expansion
   decision.
 - Each cycle must report all lanes: handoff, intake, metadata maintenance,
-  playable production, publication/Media Assets, and source/archive follow-up.
+  subtitle acquisition, playable production, publication/Media Assets, and source/archive follow-up.
   An empty publication queue or a rate-limited Notion request never ends the
   complete workflow cycle.
 
@@ -225,7 +251,8 @@ toggle, callout, or base-like visual containers.
 - New input directory, queue discovery, or "which one should we do": use `wwp-film-intake` and then `wwp-film-candidate-selector`.
 - Existing work pages needing fields, identity repair, or AI advisory refresh: use `wwp-library-maintainer` and `wwp-metadata-backfiller`.
 - Playable transcode, subtitles, audio variants, QC, or output files: use `wwp-playable-encoder`.
-- A subtitle-dependent source with no verified Chinese subtitle: use `wwp-subtitle-acquirer` before deferring playable production. Provider capture is evidence collection; the local workflow still owns compatibility, quality, timing, and final selection.
+- A subtitle-dependent source with explicitly confirmed missing Chinese subtitles: use `wwp-subtitle-acquirer` before deferring playable production. `verifiedChinese:false` alone is legacy unknown evidence and must return to source review rather than disappearing or starting acquisition. Provider capture is evidence collection; the local workflow still owns compatibility, quality, timing, and final selection.
+- A work-level `CLOSED` expansion decision suppresses downstream subtitle-acquisition and intake reopens for that source. Keep the source visible as retained history, but do not let missing-subtitle evidence recreate an actionable task unless the user explicitly reopens the expansion.
 - A verified Mandarin-dubbed (`国配`) branch without Chinese subtitles: continue through normal production and publication. Treat subtitles as optional future enrichment, record one concise note, and do not set `暂缓`, `Needs Review`, or `Hide from Website` for that reason alone. A separate foreign-original-audio branch remains subtitle-dependent.
 - Series, seasons, episodes, SxxEyy mapping, or episode pages: use `wwp-series-producer`.
 - Upload playable files or create/update Notion work/spec pages: use `wwp-notion-publisher`.
@@ -282,7 +309,7 @@ The cycle may end only after these work areas have been checked and the next bou
   selected, deferred, encoding, QC-pending, or publication-pending. A released
   work may be `已完成` while its source remains active for expansion.
 - If the user explicitly cancels an optional variant after QC but before upload, or an existing canonical media asset makes a prepared duplicate unnecessary, confirm that no upload is in flight, archive only its exact empty placeholder page when applicable, and retire the ledger variant with `retire-variant`. It records terminal publication state `cancelled`; do not mark a retired variant `sync_ready`, and do not leave it in `upload_pending` or `assets_pending` where a later cycle can select it again.
-- An empty production queue does not mean the workflow is idle. Check `queue --stage intake` and `queue --stage metadata` before stopping.
+- An empty production queue does not mean the workflow is idle. Check `queue --stage intake`, `queue --stage metadata`, and `queue --stage subtitle` before stopping.
 - Do not claim completion until Notion or Media Assets readback proves the external state.
 - Do not claim release completion from `sync_ready` alone. Exact work-page
   metadata verification and live poster/core-metadata readback are additional

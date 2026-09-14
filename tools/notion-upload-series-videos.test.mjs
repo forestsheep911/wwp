@@ -40,7 +40,9 @@ test("stale completed Notion upload sessions are restartable", () => {
 
 test("prepare-only without a source directory requires an explicit episode range", () => {
   const result = spawnSync(process.execPath, [scriptPath, "--prepare-only", "--create-episodes", "--page-id", "page", "--create-spec", "--spec-title", "Spec"], {
-    encoding: "utf8"
+    encoding: "utf8",
+    // Argument validation must not depend on a developer's local credentials.
+    env: { ...process.env, NOTION_WRITE_TOKEN: "test-token-not-used-for-network" }
   });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /requires --create-episodes with --episode-from and --episode-to/u);

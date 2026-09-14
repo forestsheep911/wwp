@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import dns from "node:dns";
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import nodeFetch from "node-fetch";
 import { createPacedFetch } from "./notion-work-identity-preflight.mjs";
 
 const ALLOWED_FIELDS = new Set([
@@ -14,7 +16,7 @@ const ALLOWED_FIELDS = new Set([
   "Production Companies", "Distributors", "Studios", "简介", "基本信息", "AI建议最低年龄",
   "AI年龄建议置信度", "内容风险标签", "AI年龄建议理由",
   "Poster URL", "Metadata Source", "Metadata Confidence", "Match Status",
-  "Metadata Status", "Metadata Updated At", "Needs Review", "Developer Memo", "AI Issue"
+  "Metadata Status", "Metadata Updated At", "Last AI Check Time", "Needs Review", "Developer Memo", "AI Issue"
 ]);
 
 function loadEnv() {
@@ -38,19 +40,28 @@ function installDnsOverride(address) {
   };
 }
 
-function parseArgs(argv) {
-  const options = { apply: false, delayMs: 1000 };
+export function parseArgs(argv) {
+  const options = { apply: false, delayMs: 1000, resolveIp: "", localAddress: "", noProxy: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--manifest") options.manifest = path.resolve(argv[++index]);
     else if (arg === "--report") options.report = path.resolve(argv[++index]);
     else if (arg === "--delay-ms") options.delayMs = Number(argv[++index]);
+    else if (arg === "--resolve-ip") options.resolveIp = argv[++index];
+    else if (arg === "--local-address") options.localAddress = argv[++index];
+    else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--apply") options.apply = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.manifest) throw new Error("--manifest is required");
   if (!Number.isFinite(options.delayMs) || options.delayMs < 1000) {
     throw new Error("--delay-ms must be at least 1000 for Notion rate safety");
+  }
+  if (options.resolveIp && (!options.localAddress || !options.noProxy)) {
+    throw new Error("--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy; refusing an unsafe raw-IP route.");
+  }
+  if (options.localAddress && (!options.resolveIp || !options.noProxy)) {
+    throw new Error("--local-address requires --resolve-ip <api-ip> and --no-proxy.");
   }
   return options;
 }
@@ -143,15 +154,20 @@ async function main() {
   const entries = manifest.pages ?? [manifest];
   if (entries.length < 1 || entries.length > 20) throw new Error("manifest must contain between 1 and 20 pages");
   const env = loadEnv();
-  installDnsOverride(env.NOTION_API_RESOLVE_IP);
+  const resolveIp = options.resolveIp || env.NOTION_API_RESOLVE_IP;
+  installDnsOverride(resolveIp);
   const token = options.apply
     ? env.NOTION_WRITE_TOKEN || env.NOTION_TOKEN
     : env.NOTION_READ_ONLY_TOKEN || env.NOTION_WRITE_TOKEN || env.NOTION_TOKEN;
   if (!token) throw new Error("A Notion token is required");
+  const directAgent = options.localAddress
+    ? new https.Agent({ keepAlive: true, localAddress: options.localAddress })
+    : undefined;
   const notion = new Client({
     auth: token,
     timeoutMs: 120000,
-    fetch: createPacedFetch(globalThis.fetch.bind(globalThis), options.delayMs)
+    fetch: createPacedFetch(directAgent ? nodeFetch : globalThis.fetch.bind(globalThis), options.delayMs),
+    agent: directAgent
   });
   const results = [];
   for (const entry of entries) {
@@ -176,7 +192,13 @@ async function main() {
       readback: readback(finalPage.properties ?? {}, Object.keys(entry.fields ?? {}))
     });
   }
-  const report = { generatedAt: new Date().toISOString(), mode: options.apply ? "apply" : "dry-run", results };
+  directAgent?.destroy();
+  const report = {
+    generatedAt: new Date().toISOString(),
+    mode: options.apply ? "apply" : "dry-run",
+    route: options.localAddress ? { mode: "physical-direct", resolveIp, localAddress: options.localAddress } : { mode: "default" },
+    results
+  };
   if (options.report) {
     fs.mkdirSync(path.dirname(options.report), { recursive: true });
     fs.writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);

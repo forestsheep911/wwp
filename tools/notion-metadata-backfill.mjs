@@ -143,6 +143,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     forcePoster: false,
     forceDoubanFields: false,
     preserveExistingIdentity: false
+    ,notionApiResolveIp: undefined
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -175,6 +176,8 @@ export function parseArgs(args = process.argv.slice(2)) {
       options.imdbTimeoutMs = Number(args[++index]);
     } else if (arg === "--local-address") {
       options.localAddress = args[++index];
+    } else if (arg === "--notion-api-resolve-ip") {
+      options.notionApiResolveIp = args[++index];
     } else if (arg === "--skip-metadata-updated-at") {
       options.skipMetadataUpdatedAt = true;
     } else {
@@ -196,8 +199,8 @@ function dotenv(name) {
   return process.env[name];
 }
 
-function installNotionDnsOverride() {
-  const notionApiIp = dotenv("NOTION_API_RESOLVE_IP");
+function installNotionDnsOverride(address) {
+  const notionApiIp = address || dotenv("NOTION_API_RESOLVE_IP");
   if (!notionApiIp) return;
   const originalLookup = dns.lookup.bind(dns);
   dns.lookup = (hostname, options, callback) => {
@@ -224,7 +227,13 @@ function readProcessed() {
       .readFileSync(PROGRESS_PATH, "utf8")
       .split(/\r?\n/)
       .filter(Boolean)
-      .map((line) => JSON.parse(line).pageId)
+      .map((line) => JSON.parse(line))
+      .filter((record) => (
+        record.status === "updated"
+        || record.status === "dry_run"
+        || (record.status === "skipped" && record.reason === "nothing_to_update")
+      ))
+      .map((record) => record.pageId)
   );
 }
 
@@ -764,6 +773,31 @@ async function fetchJson(url, headers = {}) {
   return JSON.parse(text);
 }
 
+async function withTransientNotionRetry(operation) {
+  const delaysMs = [500, 1_500, 4_000];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const delayMs = delaysMs[attempt];
+      if (!delayMs || !isTransientNotionError(error)) throw error;
+      await sleep(delayMs);
+    }
+  }
+}
+
+function isTransientNotionError(error) {
+  const candidate = error ?? {};
+  const message = `${candidate.message ?? candidate}`;
+  return [candidate.code, candidate.errno].some((value) => [
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+    "UND_ERR_CONNECT_TIMEOUT"
+  ].includes(value ?? ""))
+    || /fetch failed|socket hang up|network timeout/i.test(message);
+}
+
 async function fetchDoubanSuggestions(query, cookie) {
   return fetchJson(`https://movie.douban.com/j/subject_suggest?q=${encodeURIComponent(query)}`, {
     Cookie: cookie,
@@ -789,7 +823,15 @@ async function findDoubanSubject(title, existingInfo, expectedType, cookie) {
   const queryVariants = titleSearchVariants(title);
   let suggestions = [];
   for (const variant of queryVariants) {
-    suggestions = await fetchDoubanSuggestions(variant, cookie);
+    try {
+      suggestions = await fetchDoubanSuggestions(variant, cookie);
+    } catch (error) {
+      return {
+        status: "skipped",
+        reason: "douban_search_failed",
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
     if (suggestions.length > 0) {
       break;
     }
@@ -1486,8 +1528,8 @@ async function processOmdbFallback(notion, page, options, title, existingImdbId)
   }
   let readback;
   if (!options.dryRun) {
-    await notion.pages.update({ page_id: page.id, properties: patch });
-    const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
+    await withTransientNotionRetry(() => notion.pages.update({ page_id: page.id, properties: patch }));
+    const verifiedPage = await withTransientNotionRetry(() => notion.pages.retrieve({ page_id: page.id }));
     readback = Object.fromEntries(Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])]));
   }
   return {
@@ -1503,7 +1545,7 @@ async function processOmdbFallback(notion, page, options, title, existingImdbId)
 }
 
 async function processPage(notion, pageRef, options, cookie) {
-  const page = await notion.pages.retrieve({ page_id: pageRef.id });
+  const page = await withTransientNotionRetry(() => notion.pages.retrieve({ page_id: pageRef.id }));
   const title = propText(page.properties.Title);
   const existingIdentity = existingImdbIdentity(page.properties);
   if (existingIdentity.conflict) {
@@ -1609,8 +1651,8 @@ async function processPage(notion, pageRef, options, cookie) {
 
   let readback;
   if (!options.dryRun) {
-    await notion.pages.update({ page_id: page.id, properties: patch });
-    const verifiedPage = await notion.pages.retrieve({ page_id: page.id });
+    await withTransientNotionRetry(() => notion.pages.update({ page_id: page.id, properties: patch }));
+    const verifiedPage = await withTransientNotionRetry(() => notion.pages.retrieve({ page_id: page.id }));
     readback = Object.fromEntries(
       Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])])
     );
@@ -1633,7 +1675,7 @@ async function processPage(notion, pageRef, options, cookie) {
 async function main() {
   ensureLocalData();
   const options = parseArgs();
-  installNotionDnsOverride();
+  installNotionDnsOverride(options.notionApiResolveIp);
   const clientOptions = { auth: dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN"), timeoutMs: 120000 };
   if (options.localAddress) {
     clientOptions.fetch = nodeFetch;

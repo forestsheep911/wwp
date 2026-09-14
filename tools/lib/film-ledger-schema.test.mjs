@@ -30,6 +30,10 @@ test("openLedger creates the complete versioned schema", () => {
 
     assert.equal(db.prepare("SELECT version FROM schema_meta").get().version, SCHEMA_VERSION);
     assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+    db.prepare(`INSERT INTO workflow_tasks
+      (task_key, task_type, status, priority_score, created_at, updated_at)
+      VALUES ('subtitle:test', 'subtitle_acquisition', 'pending', 0, 'now', 'now')`).run();
+    assert.equal(db.prepare("SELECT task_type FROM workflow_tasks WHERE task_key='subtitle:test'").get().task_type, "subtitle_acquisition");
     db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

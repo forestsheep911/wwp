@@ -43,6 +43,62 @@ test("idempotent upserts preserve identities and update mutable evidence", () =>
   } finally { f.close(); }
 });
 
+test("incomplete source intake waits until a later scan confirms a complete source", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const incomplete = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Downloading Movie",
+      absolutePath: "X:\\queue\\Downloading Movie",
+      fingerprint: "download-1",
+      sourceKind: "folder",
+      qualityState: "incomplete"
+    });
+    const waiting = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${incomplete.id}`);
+    assert.equal(waiting.status, "deferred");
+    assert.match(waiting.reason, /download is incomplete/u);
+    assert.equal(f.repo.listWorkflowTasks({ taskType: "intake" }).length, 0);
+
+    f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Downloading Movie",
+      absolutePath: "X:\\queue\\Downloading Movie",
+      fingerprint: "download-1",
+      sourceKind: "folder",
+      qualityState: "acceptable"
+    });
+    const resumed = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${incomplete.id}`);
+    assert.equal(resumed.status, "pending");
+    assert.match(resumed.reason, /now complete/u);
+  } finally { f.close(); }
+});
+
+test("source disposition defers incomplete-download intake and reopens it when artifacts disappear", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Downloading Movie",
+      absolutePath: "X:\\queue\\Downloading Movie",
+      fingerprint: "download-2",
+      sourceKind: "folder",
+      qualityState: "unknown"
+    });
+    const deferred = f.repo.syncSourceIntakeAvailability([{ sourceId: source.id, disposition: "source_download_incomplete" }]);
+    assert.equal(deferred.length, 1);
+    assert.equal(deferred[0].status, "deferred");
+    assert.match(deferred[0].reason, /download is incomplete/u);
+
+    assert.equal(f.repo.syncSourceIntakeAvailability([{ sourceId: source.id, disposition: "source_download_incomplete" }]).length, 0);
+    const resumed = f.repo.syncSourceIntakeAvailability([{ sourceId: source.id, disposition: "ai_action_pending" }]);
+    assert.equal(resumed.length, 1);
+    assert.equal(resumed[0].status, "pending");
+    assert.match(resumed[0].reason, /now complete/u);
+  } finally { f.close(); }
+});
+
 test("correctSourceWork records an auditable identity correction", () => {
   const f = fixture();
   try {
@@ -601,6 +657,24 @@ test("production queue keeps a bound source visible until a variant is selected"
   } finally { f.close(); }
 });
 
+test("production source queue excludes an incomplete bound source", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Incomplete", year: 2025, workType: "movie" });
+    f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: work.id,
+      relativePath: "Incomplete",
+      absolutePath: "X:\\queue\\Incomplete",
+      fingerprint: "incomplete-bound",
+      sourceKind: "folder",
+      qualityState: "incomplete"
+    });
+    assert.equal(f.repo.listProductionSourceCandidates().length, 0);
+  } finally { f.close(); }
+});
+
 test("production source selection excludes a duplicate scan of the same physical path", () => {
   const f = fixture();
   try {
@@ -778,6 +852,99 @@ test("source selection excludes an explicitly subtitle-blocked foreign source", 
     const candidates = f.repo.listProductionSourceCandidates({ limit: 5 });
     assert.equal(candidates.some((row) => row.source_id === blocked.id), false);
     assert.equal(candidates.some((row) => row.source_id === unknown.id), true);
+  } finally { f.close(); }
+});
+
+test("source selection excludes current hasChineseSubtitle false evidence", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Current subtitle evidence", year: 2025, priorityScore: 70 });
+    const blocked = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "blocked-current", absolutePath: "X:\\queue\\blocked-current",
+      fingerprint: "blocked-current-subtitle", sourceKind: "folder", qualityState: "acceptable",
+      subtitleEvidence: { internalProbeState: "complete", hasChineseSubtitle: false },
+      audioEvidence: { languages: ["Spanish"] }
+    });
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === blocked.id), false);
+  } finally { f.close(); }
+});
+
+test("legacy verifiedChinese false remains selectable until absence is explicitly confirmed", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Unlabelled subtitle", year: 2025, priorityScore: 70 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "unlabelled", absolutePath: "X:\\queue\\unlabelled",
+      fingerprint: "unlabelled-subtitle", sourceKind: "folder", qualityState: "acceptable",
+      subtitleEvidence: { internalProbeState: "completed", verifiedChinese: false, note: "unlabelled PGS; visual check not performed" },
+      audioEvidence: { languages: ["English"] }
+    });
+    assert.equal(f.repo.listProductionSourceCandidates({ limit: 5 }).some((row) => row.source_id === source.id), true);
+    assert.equal(f.repo.listSubtitleAcquisitionCandidates({ limit: 5 }).some((row) => row.source_id === source.id), false);
+  } finally { f.close(); }
+});
+
+test("confirmed subtitle absence creates and later resolves a durable acquisition task", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Needs subtitles", year: 2025, priorityScore: 80 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "needs-subtitles", absolutePath: "X:\\queue\\needs-subtitles",
+      fingerprint: "needs-subtitles", sourceKind: "folder", qualityState: "subtitle_missing",
+      subtitleEvidence: { internalProbeState: "completed", verifiedChinese: false },
+      audioEvidence: { languages: ["English"] }
+    });
+
+    const first = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(first.candidates.map((row) => row.source_id), [source.id]);
+    assert.equal(first.created.length, 1);
+    const task = f.repo.listWorkflowTasks({ taskType: "subtitle_acquisition", limit: 5 })[0];
+    assert.equal(task.source_id, source.id);
+    assert.equal(task.status, "pending");
+
+    const second = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.equal(second.created.length, 0);
+    f.repo.updateSourceEvidence(source.id, {
+      qualityState: "acceptable",
+      subtitleEvidence: { internalProbeState: "completed", verifiedChinese: true }
+    });
+    const resolved = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(resolved.resolved.map((row) => row.id), [task.id]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "done");
+
+    f.repo.updateSourceEvidence(source.id, {
+      qualityState: "subtitle_missing",
+      subtitleEvidence: { internalProbeState: "completed", hasChineseSubtitle: false }
+    });
+    const reopened = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(reopened.reopened.map((row) => row.id), [task.id]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("subtitle task sync does not starve untracked sources behind existing open tasks", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const sources = [];
+    for (let index = 0; index < 4; index += 1) {
+      const work = f.repo.ensureWork({ canonicalTitle: `Subtitle source ${index}`, year: 2025, priorityScore: 100 - index });
+      sources.push(f.repo.upsertDiscoveredSource({
+        inputRootId: root.id, workId: work.id, relativePath: `source-${index}`,
+        absolutePath: `X:\\queue\\source-${index}`, fingerprint: `source-${index}`,
+        sourceKind: "folder", qualityState: "subtitle_missing",
+        subtitleEvidence: { hardGate: "missing_chinese_subtitle", verifiedChinese: false },
+        audioEvidence: { languages: ["English"] }
+      }));
+    }
+
+    const first = f.repo.syncSubtitleAcquisitionTasks({ limit: 3 });
+    assert.equal(first.created.length, 3);
+    const second = f.repo.syncSubtitleAcquisitionTasks({ limit: 3 });
+    assert.deepEqual(second.created.map((task) => task.source_id), [sources[3].id]);
   } finally { f.close(); }
 });
 

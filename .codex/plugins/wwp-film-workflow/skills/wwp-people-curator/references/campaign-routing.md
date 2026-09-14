@@ -250,6 +250,13 @@ its own reviewed sub-batch and convergence evidence. A failure in one lane does
 not advance that lane's cursor and does not erase a successfully completed
 other lane.
 
+A missing, truncated, or invalid local intermediate artifact is recoverable AI
+work whenever its upstream report and selected stable IDs still exist. Rebuild
+the artifact atomically and resume the pinned batch. Do not convert this local
+staging failure into a Goal-level blocker or human-review state. Reserve a
+blocker for missing source evidence, ambiguous identity, provider/API failure,
+or another condition the AI cannot resolve from retained state.
+
 ## Explain every selection
 
 Before provider research or any write, create `selection-explanation.json` and

@@ -247,6 +247,27 @@ async function queryRecordedAssets(client, dataSourceId, { sourcePageId, mediaBl
   });
 }
 
+// Notion can briefly expose a child-page block before pages.retrieve accepts
+// the same page ID. Recover only the recorded child from its known parent;
+// never search globally or infer a different destination.
+async function recoverRecordedPages(client, pages, target) {
+  const hasPage = (pageId) => pages.some(page => sameNotionId(page?.id, pageId));
+  const recoverChild = async (parentId, childId) => {
+    if (!parentId || !childId || hasPage(childId)) return;
+    try {
+      const children = await listRecordedPageChildren(client, parentId);
+      const child = children.find(block => block.type === "child_page" && sameNotionId(block.id, childId));
+      if (child) pages.push({ id: child.id, parent: { type: "page_id", page_id: parentId } });
+    } catch {
+      // The normal retrieve path remains authoritative when this fallback is unavailable.
+    }
+  };
+  await recoverChild(target.work_page_id, target.season_page_id);
+  await recoverChild(target.season_page_id || target.work_page_id, target.spec_page_id);
+  await recoverChild(target.spec_page_id, target.episode_page_id);
+  return pages;
+}
+
 export function createNotionTargetAdapter(client, {
   mediaAssetsDataSourceId = process.env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID
 } = {}) {
@@ -257,6 +278,7 @@ export function createNotionTargetAdapter(client, {
       const recordedIds = [target.work_page_id, target.season_page_id, target.spec_page_id, target.episode_page_id].filter(Boolean);
       const pageResults = await Promise.allSettled(recordedIds.map(pageId => client.pages.retrieve({ page_id: pageId })));
       const pages = pageResults.filter(result => result.status === "fulfilled").map(result => result.value);
+      await recoverRecordedPages(client, pages, target);
       if (pages.length === 0) throw pageResults.find(result => result.status === "rejected")?.reason ?? new Error("No recorded Notion page is accessible.");
       const contentPageId = target.episode_page_id || target.spec_page_id;
       const blocks = await listRecordedPageChildren(client, contentPageId);

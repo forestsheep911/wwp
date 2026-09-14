@@ -38,16 +38,33 @@ Persist the execution queue with `tools/work-enrichment-campaign.mjs`:
   required readback, record `completed`; otherwise record `blocked`,
   `waiting_user`, or `deferred` with exact reasons, missing fields, and a review
   time when one exists. Never leave an attempted stage as an unexplained
-  `in_progress` item.
+  `in_progress` item. The cycle automatically recovers an `in_progress` stage
+  with no new record for six hours to `deferred`, preserving its old reason and
+  setting a one-hour review time plus a concrete resume trigger. This is claim
+  recovery, not completion evidence.
+- Record mutations with the campaign item's exact `--item-key`. Historical
+  carrier pages can share a stale external work ID with a canonical item;
+  non-key selectors must fail when they match more than one item rather than
+  updating the first match.
 
 `enrichmentCampaign.due` is an execution handoff, not a planning result. Consume
 the bounded due items through the named skills in sequence. If no item is due,
 report `waitingForHuman`, `blocked`, and `scheduledReviews` before saying the
 campaign is idle.
 
-People completeness means the key creators needed for the current work's
-editorial claims are verified. It does not require materializing every minor
-cast credit. Honors completeness is either `verified` or the explicit
+For the People stage, an explicit user request to fill missing people or
+continue People work is batch-level write authorization after a clean person
+report preflight. Keep `ready_for_authorized_apply` work actionable. Do not
+convert it to `waiting_user`; reserve that state for named identity ambiguity or
+another concrete human decision. A large count of clean reports awaiting the
+same redundant confirmation is a routing defect, not a valid Goal blocker.
+
+People completeness means the key creators and significant cast in the
+canonical source-credit set are verified. It does not require materializing
+every minor cast credit, but every remaining significant unlinked credit must
+be individually deferred with evidence and a next trigger; an exhausted
+Wikidata result or a completed profile-budget batch is not completion evidence.
+Honors completeness is either `verified` or the explicit
 `checked_none_found`; an empty unchecked field is not completion.
 
 Only route a work to highlights when its assessment is `ready`. Report

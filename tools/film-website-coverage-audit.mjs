@@ -1,24 +1,67 @@
 #!/usr/bin/env node
 
+import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_PREVIEW_LIMIT = 3;
+const DEFAULT_INDEX = path.resolve(".local-data/home-site/search-index.json");
 
 function parseArgs(args) {
-  const options = { index: path.resolve(".local-data/home-site/search-index.json"), previewLimit: DEFAULT_PREVIEW_LIMIT };
+  const options = { index: DEFAULT_INDEX, previewLimit: DEFAULT_PREVIEW_LIMIT };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--page-id") options.pageId = args[++index];
     else if (arg === "--index") options.index = path.resolve(args[++index]);
     else if (arg === "--preview-limit") options.previewLimit = Number(args[++index]);
+    else if (arg === "--live") options.live = true;
+    else if (arg === "--title") options.title = args[++index];
+    else if (arg === "--origin") options.origin = args[++index];
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pageId?.trim()) throw new Error("--page-id is required.");
   if (!Number.isInteger(options.previewLimit) || options.previewLimit < 1) throw new Error("--preview-limit must be a positive integer.");
+  if (options.live && !options.title?.trim()) throw new Error("--live requires --title for a bounded website search.");
   return options;
+}
+
+function normalizedPageId(value) {
+  return String(value ?? "").replaceAll("-", "").toLowerCase();
+}
+
+export function liveSearchIndexDocument(payload, pageId) {
+  const results = Array.isArray(payload) ? payload : payload?.results ?? payload?.items ?? [];
+  const expected = normalizedPageId(pageId);
+  const result = results.find((item) => normalizedPageId(item?.sourcePageId) === expected);
+  const assetKey = `notion-page-${pageId.trim()}`;
+  return { entries: result ? { [assetKey]: { result } } : {} };
+}
+
+async function fetchLiveSearch(options) {
+  const origin = String(options.origin ?? process.env.WWPDW_HOME_PUBLIC_ORIGIN ?? "").trim();
+  const passcode = String(process.env.WWPDW_ADMIN_KEY ?? "").trim();
+  if (!origin) throw new Error("WWPDW_HOME_PUBLIC_ORIGIN or --origin is required for --live.");
+  if (!passcode) throw new Error("WWPDW_ADMIN_KEY is required for authenticated --live readback.");
+
+  const login = await fetch(new URL("/api/auth/login", origin), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ passcode })
+  });
+  if (!login.ok) throw new Error(`Live website login failed: HTTP ${login.status}`);
+  const setCookies = typeof login.headers.getSetCookie === "function"
+    ? login.headers.getSetCookie()
+    : [login.headers.get("set-cookie")].filter(Boolean);
+  const cookie = setCookies.map((value) => value.split(";", 1)[0]).join("; ");
+  if (!cookie) throw new Error("Live website login did not return a session cookie.");
+
+  const searchUrl = new URL("/api/search", origin);
+  searchUrl.searchParams.set("q", options.title.trim());
+  const response = await fetch(searchUrl, { headers: { cookie } });
+  if (!response.ok) throw new Error(`Live website search failed: HTTP ${response.status}`);
+  return { payload: await response.json(), origin };
 }
 
 export function auditWebsiteCoverage(indexDocument, pageId, previewLimit = DEFAULT_PREVIEW_LIMIT) {
@@ -28,6 +71,7 @@ export function auditWebsiteCoverage(indexDocument, pageId, previewLimit = DEFAU
   if (!entry) return { status: "missing", pageId: normalizedPageId, fullVariantCount: 0, previewVariantCount: 0, variants: [] };
 
   const variants = Array.isArray(entry.result?.variants) ? entry.result.variants : [];
+  const metadata = entry.result?.metadata ?? {};
   return {
     status: "ok",
     pageId: normalizedPageId,
@@ -36,6 +80,8 @@ export function auditWebsiteCoverage(indexDocument, pageId, previewLimit = DEFAU
     previewVariantCount: Math.min(variants.length, previewLimit),
     previewLimit,
     previewOnly: variants.length > previewLimit,
+    posterPresent: Boolean(metadata.posterUrl || metadata.posters?.length || metadata.work?.media?.posters?.length),
+    coreMetadataPresent: Boolean(metadata.work?.titles?.length && metadata.work?.release?.year),
     variants: variants.map((variant) => ({
       assetKey: variant.assetKey,
       label: variant.label,
@@ -46,9 +92,22 @@ export function auditWebsiteCoverage(indexDocument, pageId, previewLimit = DEFAU
   };
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const report = auditWebsiteCoverage(JSON.parse(fs.readFileSync(options.index, "utf8")), options.pageId, options.previewLimit);
+  let indexDocument;
+  let indexDescription;
+  if (options.live) {
+    const live = await fetchLiveSearch(options);
+    indexDocument = liveSearchIndexDocument(live.payload, options.pageId);
+    indexDescription = `live:${live.origin}`;
+  } else {
+    indexDocument = JSON.parse(fs.readFileSync(options.index, "utf8"));
+    indexDescription = options.index;
+  }
+  const report = {
+    ...auditWebsiteCoverage(indexDocument, options.pageId, options.previewLimit),
+    index: indexDescription
+  };
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));
     return;
@@ -58,4 +117,9 @@ function main() {
   for (const variant of report.variants) console.log(`- ${variant.label ?? "(unnamed)"} | ${variant.assetKey}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

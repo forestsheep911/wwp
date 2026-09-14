@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import dns from "node:dns";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -109,6 +110,11 @@ function installDnsOverride() {
 
 function richText(value) {
   return [{ type: "text", text: { content: value } }];
+}
+
+function stableMovieWorkIdFromNotion(pageId) {
+  const digest = createHash("sha256").update(`notion:${pageId}`).digest("base64url").slice(0, 16);
+  return `wwm_${digest}`;
 }
 
 function propertyName(dataSource, name, type) {
@@ -285,6 +291,12 @@ async function main() {
     page = await notion.pages.create({
       parent: { database_id: library.databaseId },
       properties
+    });
+  }
+  if (propertyName(library.dataSource, "WW Work ID", "rich_text")) {
+    await notion.pages.update({
+      page_id: page.id,
+      properties: { "WW Work ID": { rich_text: richText(stableMovieWorkIdFromNotion(page.id)) } }
     });
   }
   const mediaType = await reconcileMediaType(notion, library, page.id, options.type, true);

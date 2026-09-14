@@ -1,6 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildMetadataPatch } from "./notion-manual-metadata-apply.mjs";
+import { buildMetadataPatch, parseArgs } from "./notion-manual-metadata-apply.mjs";
+
+test("manual metadata physical direct route requires the complete route guard", () => {
+  assert.throws(() => parseArgs(["--manifest", "one.json", "--resolve-ip", "208.103.161.2"]), /requires --local-address/u);
+  assert.throws(() => parseArgs(["--manifest", "one.json", "--local-address", "192.168.1.22"]), /requires --resolve-ip/u);
+  const options = parseArgs([
+    "--manifest", "one.json",
+    "--resolve-ip", "208.103.161.2",
+    "--local-address", "192.168.1.22",
+    "--no-proxy"
+  ]);
+  assert.equal(options.resolveIp, "208.103.161.2");
+  assert.equal(options.localAddress, "192.168.1.22");
+  assert.equal(options.noProxy, true);
+});
 
 test("manual metadata preserves existing fields and merges provenance", () => {
   const properties = {
@@ -56,4 +70,14 @@ test("manual metadata supports the complete AI age advisory group", () => {
   assert.equal(result.patch["AI年龄建议置信度"].select.name, "high");
   assert.deepEqual(result.patch["内容风险标签"].multi_select, [{ name: "战争" }, { name: "暴力" }]);
   assert.equal(result.patch["AI年龄建议理由"].rich_text[0].text.content, "包含持续战争暴力。");
+});
+
+test("manual metadata allows recording the AI inspection timestamp", () => {
+  const properties = {
+    "Last AI Check Time": { type: "date", date: null }
+  };
+  const result = buildMetadataPatch(properties, {
+    "Last AI Check Time": "2026-09-08"
+  });
+  assert.deepEqual(result.patch["Last AI Check Time"].date, { start: "2026-09-08" });
 });

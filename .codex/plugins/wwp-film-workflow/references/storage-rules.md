@@ -36,6 +36,15 @@ not retry it in a tight loop.
 
 ## Allowed Uses
 
+- Cleanup discovery must inspect exact ledger output paths on every volume,
+  including temporary output directories. Never restrict a complete cycle to
+  `E:\video_made`. An explicit `--output-root` remains a scoped audit filter.
+- Pass each cleanup candidate's actual parent directory to the cleanup executor.
+  Exclude paths already under `待人工删除` so later cycles do not move them again.
+- Consume the bounded cleanup queue after publication and before declaring idle;
+  continue while eligible files remain. External disks are temporary storage and
+  must not silently accumulate already published outputs.
+
 - Put encode intermediates on `G:` with `--temp-dir` when the final output
   remains in the configured output root and the external-disk probe passes.
 - Temporarily stage a completed, QC-passed output on `G:` when the normal

@@ -22,6 +22,14 @@ import urllib.parse
 import urllib.request
 
 
+# Windows PowerShell may expose a GBK stdout while task data contains names
+# from other scripts. Keep JSON task reporting lossless and machine-readable.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 SERVICE_NAME = "wwp-subtitle-companion-bridge"
 TASK_SCHEMA = "wwp-subtitle-search.v1"
 DEFAULT_PORT_START = 8818

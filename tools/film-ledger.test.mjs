@@ -17,7 +17,7 @@ test("CLI initializes and reports a clean JSON status", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), {
       production: {}, publication: {}, handoff: {}, totals: { variants: 0, syncReady: 0 },
-      workflowTasks: {}, queues: { collaboration: 0, intake: 0, metadata: 0, production: 0, publication: 0, cleanup: 0 }
+      workflowTasks: {}, queues: { collaboration: 0, intake: 0, metadata: 0, subtitle: 0, production: 0, publication: 0, cleanup: 0 }
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -135,6 +135,42 @@ test("cycle reports catalog maintenance independently without reopening a just-c
     assert.deepEqual(payload.lanes.catalogMaintenance, []);
     assert.deepEqual(payload.refreshedIntakeTasks, []);
     assert.deepEqual(payload.refreshedMetadataTasks, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("cycle creates and exposes a durable subtitle-acquisition lane", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-subtitle-cycle-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const root = repo.upsertInputRoot("X:\\queue");
+    const work = repo.ensureWork({ canonicalTitle: "Subtitle Lane", year: 2025, workType: "movie", priorityScore: 80 });
+    repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: work.id,
+      relativePath: "Subtitle Lane",
+      absolutePath: "X:\\queue\\Subtitle Lane",
+      fingerprint: "subtitle-lane",
+      sourceKind: "folder",
+      qualityState: "subtitle_missing",
+      subtitleEvidence: { verifiedChinese: false },
+      audioEvidence: { languages: ["English"] }
+    });
+    db.close();
+
+    const cycle = run(["--db", dbPath, "cycle", "--limit", "3", "--json"], dir);
+    assert.equal(cycle.status, 0, cycle.stderr);
+    const payload = JSON.parse(cycle.stdout);
+    assert.equal(payload.lanes.subtitleAcquisition.length, 1);
+    assert.equal(payload.subtitleTaskSync.createdTaskIds.length, 1);
+    assert.equal(payload.lanes.production.length, 0);
+
+    const queued = run(["--db", dbPath, "queue", "--stage", "subtitle", "--limit", "3", "--json"], dir);
+    assert.equal(queued.status, 0, queued.stderr);
+    assert.equal(JSON.parse(queued.stdout)[0].task_type, "subtitle_acquisition");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

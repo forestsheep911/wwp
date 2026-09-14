@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import test from "node:test";
+import os from "node:os";
+import path from "node:path";
 import { classifySourceDisposition, summarizeSourceDispositions } from "./film-source-disposition.mjs";
 
 const source = {
@@ -56,6 +59,68 @@ test("future deferred variant reports its review time instead of pretending the 
   assert.equal(item.nextTrigger, "2026-09-10T00:00:00.000Z");
 });
 
+test("future Notion publication retry is scheduled instead of actionable source work", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, workflow_note: "[规格扩展:CLOSED] 已完成现有规格" },
+    variants: [{
+      id: 16,
+      production_state: "qc_passed",
+      publication_state: "assets_pending",
+      publication_next_check_at: "2026-09-10T00:00:00.000Z"
+    }],
+    cleanupCandidate: { eligible: false, reasons: ["linked_variants_not_closed"] },
+    now: "2026-08-29T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "scheduled_review");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.nextTrigger, "2026-09-10T00:00:00.000Z");
+});
+
+test("a requeued intake source is actionable before the completed work review date", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, next_review_at: "2026-11-12T00:00:00.000Z" },
+    variants: [],
+    tasks: [{ task_type: "intake", status: "pending", reason: "new source needs expansion review" }],
+    now: "2026-09-11T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "ai_action_pending");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.deepEqual(item.reasons, ["intake:pending"]);
+});
+
+test("a recently discovered bound source remains actionable after intake is consumed", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      discovered_at: "2026-09-10T00:00:00.000Z",
+      next_review_at: "2026-11-12T00:00:00.000Z"
+    },
+    variants: [],
+    now: "2026-09-11T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "ai_action_pending");
+  assert.equal(item.actionableNow, true);
+  assert.deepEqual(item.reasons, ["source:newly_discovered"]);
+});
+
+test("an explicitly deferred recent source does not reopen as new intake work", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      discovered_at: "2026-09-10T00:00:00.000Z",
+      workflow_status: "暂缓",
+      workflow_note: "[规格扩展:CLOSED] 已确认无中文字幕，等待未来补字幕"
+    },
+    variants: [],
+    now: "2026-09-11T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "source_expansion_closed");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /扩展已关闭/u);
+});
+
 test("an open expansion marker retains a source without creating a phantom task", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_note: "[规格扩展:OPEN] 未来有新音轨时再评估" },
@@ -73,7 +138,22 @@ test("unbound source cannot disappear behind an empty production lane", () => {
   assert.equal(item.actionableNow, true);
 });
 
-test("a verified subtitle absence waits for subtitles instead of becoming a production decision", () => {
+test("an input containing only qBittorrent partial files waits for completion", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wwp-source-partial-"));
+  const stream = path.join(root, "BDMV", "STREAM");
+  mkdirSync(stream, { recursive: true });
+  writeFileSync(path.join(stream, "00800.m2ts.!qB"), "partial");
+  const item = classifySourceDisposition({
+    source: { ...source, absolute_path: root, workflow_status: null, workflow_note: null, variants: [] },
+    variants: []
+  });
+  assert.equal(item.disposition, "source_download_incomplete");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /下载完成/u);
+});
+
+test("a verified subtitle absence becomes actionable subtitle acquisition instead of disappearing", () => {
   const item = classifySourceDisposition({
     source: {
       ...source,
@@ -84,10 +164,66 @@ test("a verified subtitle absence waits for subtitles instead of becoming a prod
     },
     variants: []
   });
-  assert.equal(item.disposition, "waiting_for_human");
-  assert.equal(item.actionableNow, false);
-  assert.equal(item.needsHumanConfirmation, true);
+  assert.equal(item.disposition, "subtitle_acquisition_required");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.needsHumanConfirmation, false);
   assert.deepEqual(item.reasons, ["missing_chinese_subtitle"]);
+});
+
+test("an open subtitle acquisition task is reported as AI-actionable work", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      quality_state: "subtitle_missing",
+      subtitle_evidence: '{"verifiedChinese":false}',
+      audio_evidence: '{"originalAudio":"eng"}',
+      workflow_status: null,
+      workflow_note: null
+    },
+    variants: [],
+    tasks: [{ task_type: "subtitle_acquisition", status: "pending", reason: "collect candidates" }]
+  });
+  assert.equal(item.disposition, "subtitle_acquisition_pending");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.needsHumanConfirmation, false);
+});
+
+test("a recent source with a concrete subtitle task does not fall back to generic intake", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      discovered_at: "2026-09-10T00:00:00.000Z",
+      quality_state: "subtitle_missing",
+      subtitle_evidence: '{"hardGate":"missing_chinese_subtitle","verifiedChinese":false}',
+      audio_evidence: '{"originalAudio":"eng"}',
+      workflow_status: null,
+      workflow_note: null
+    },
+    variants: [],
+    tasks: [{ task_type: "subtitle_acquisition", status: "pending", reason: "collect candidates" }],
+    now: "2026-09-11T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "subtitle_acquisition_pending");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.deepEqual(item.reasons, ["subtitle_acquisition:pending"]);
+  assert.match(item.nextTrigger, /字幕获取任务/u);
+});
+
+test("legacy verifiedChinese false without an absence marker returns to production review", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      subtitle_evidence: '{"internalProbeState":"completed","verifiedChinese":false,"note":"unlabelled PGS"}',
+      audio_evidence: '{"originalAudio":"eng"}',
+      workflow_status: null,
+      workflow_note: null
+    },
+    variants: []
+  });
+  assert.equal(item.disposition, "production_decision_missing");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.needsHumanConfirmation, false);
 });
 
 test("a completed collection container waits on its tracked members instead of reopening identity", () => {

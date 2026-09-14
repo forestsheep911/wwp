@@ -49,7 +49,7 @@ export function buildProductionModePlan(mode, currentWorkIds = []) {
       mode: normalized,
       sequence: ["people"],
       film: { enabled: false },
-      people: { enabled: true, status: "eligible", scope: "saved_people_campaign", workIds: [] }
+      people: { enabled: true, status: exactWorkIds.length ? "eligible" : "empty_saved_campaign", scope: "saved_people_campaign", workIds: exactWorkIds }
     };
   }
   if (normalized === PRODUCTION_MODES.ENRICHMENT_ONLY) {

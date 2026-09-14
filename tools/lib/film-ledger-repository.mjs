@@ -9,6 +9,13 @@ import {
 } from "./film-ledger-domain.mjs";
 import path from "node:path";
 import { analyzeSeriesVariantCoverage } from "./film-series-coverage.mjs";
+import {
+  CHINESE_SUBTITLE_STATES,
+  classifyChineseSubtitleState,
+  hasVerifiedMandarinAudio
+} from "./film-subtitle-state.mjs";
+
+const INCOMPLETE_SOURCE_INTAKE_REASON = "Source download is incomplete; wait for a later scan with a complete readable media file";
 
 export function normalizeLedgerPath(value) {
   const input = String(value);
@@ -67,7 +74,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
 
   function ensureWorkflowTask(input) {
     if (!input?.taskKey || !input.taskType) throw new TypeError("workflow task requires taskKey and taskType");
-    if (!["intake", "metadata_backfill"].includes(input.taskType)) throw new Error(`unsupported workflow task type: ${input.taskType}`);
+    if (!["intake", "metadata_backfill", "subtitle_acquisition"].includes(input.taskType)) throw new Error(`unsupported workflow task type: ${input.taskType}`);
     const at = timestamp();
     db.prepare(`INSERT INTO workflow_tasks
       (task_key, task_type, status, source_id, work_id, variant_id, priority_score, reason, payload_json, next_run_at, created_at, updated_at)
@@ -143,6 +150,41 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     return db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey);
   }
 
+  function reconcileIncompleteSourceIntake(source) {
+    if (!source || source.work_id != null || source.source_kind === "duplicate_source") return null;
+    const taskKey = `intake:source:${source.id}`;
+    const task = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey);
+    if (!task || task.status === "done") return task ?? null;
+    if (source.quality_state === "incomplete") {
+      if (task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) return task;
+      return transitionWorkflowTask(task.id, "deferred", { reason: INCOMPLETE_SOURCE_INTAKE_REASON });
+    }
+    if (task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) {
+      return requeueIntakeTask(source.id, { reason: "Source download is now complete; resume identity, duplicate, and Notion-state analysis" });
+    }
+    return task;
+  }
+
+  function syncSourceIntakeAvailability(dispositions = []) {
+    const changes = [];
+    for (const disposition of dispositions) {
+      const sourceId = Number(disposition?.sourceId);
+      if (!Number.isInteger(sourceId) || sourceId < 1) continue;
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source || source.work_id != null || source.source_kind === "duplicate_source") continue;
+      const task = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`);
+      if (!task || task.status === "done") continue;
+      if (disposition.disposition === "source_download_incomplete") {
+        if (task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) continue;
+        changes.push(transitionWorkflowTask(task.id, "deferred", { reason: INCOMPLETE_SOURCE_INTAKE_REASON }));
+      } else if (disposition.disposition !== "source_missing"
+        && task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) {
+        changes.push(requeueIntakeTask(sourceId, { reason: "Source download is now complete; resume identity, duplicate, and Notion-state analysis" }));
+      }
+    }
+    return changes;
+  }
+
   function refreshDueIntakeTasks({ now = timestamp(), limit = 20 } = {}) {
     const dueTasks = db.prepare(`SELECT id, source_id, work_id, priority_score
       FROM workflow_tasks
@@ -182,6 +224,34 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .run(enabled ? 1 : 0, at, normalized);
     if (result.changes === 0) throw new Error(`input root not found: ${normalized}`);
     return db.prepare("SELECT * FROM input_roots WHERE path=?").get(normalized);
+  }
+
+  function setWorkScopeState(workId, scopeState, reason = "") {
+    if (!Number.isInteger(Number(workId)) || Number(workId) < 1) throw new Error("workId must be a positive integer");
+    if (!new Set(["candidate", "catalogued", "open", "closed"]).has(scopeState)) {
+      throw new Error("scopeState must be candidate|catalogued|open|closed");
+    }
+    return withTransaction(db, () => {
+      const at = timestamp();
+      const work = db.prepare("SELECT * FROM works WHERE id=?").get(Number(workId));
+      if (!work) throw new Error(`work not found: ${workId}`);
+      db.prepare("UPDATE works SET scope_state=?, updated_at=? WHERE id=?").run(scopeState, at, Number(workId));
+      let closedTasks = 0;
+      if (scopeState === "closed") {
+        const result = db.prepare(`UPDATE workflow_tasks SET status='done', reason=?, next_run_at=NULL, updated_at=?
+          WHERE work_id=? AND task_type IN ('intake','subtitle_acquisition')
+            AND status IN ('pending','in_progress','waiting_user','deferred')`)
+          .run(reason || "Work expansion is closed; no further source or subtitle action is required", at, Number(workId));
+        closedTasks = result.changes;
+      }
+      insertEvent.run("work", Number(workId), "work_scope_state_changed", stableJson({
+        from: work.scope_state,
+        to: scopeState,
+        reason,
+        closedTasks
+      }), at);
+      return { work: db.prepare("SELECT * FROM works WHERE id=?").get(Number(workId)), closedTasks };
+    });
   }
 
   function ensureWork(input) {
@@ -291,10 +361,11 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         } else if (intakeTask?.status === "done") {
           // A completed identity/collection decision remains complete when its
           // source directory is merely seen again after a temporary absence.
-        } else {
+        } else if (!intakeTask) {
           ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
             reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
         }
+        reconcileIncompleteSourceIntake(source);
       }
       return source;
     }
@@ -329,6 +400,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     } else {
       ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
         reason: "Discovered source needs identity, duplicate, and Notion-state analysis" });
+      reconcileIncompleteSourceIntake(source);
     }
     return source;
   }
@@ -710,7 +782,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function listProductionSourceCandidates({ limit } = {}) {
-    return db.prepare(`SELECT 'source_selection' AS candidate_type, sources.id AS source_id,
+    const rows = db.prepare(`SELECT 'source_selection' AS candidate_type, sources.id AS source_id,
         sources.work_id, sources.relative_path, sources.absolute_path, sources.source_kind,
         sources.probe_path, sources.quality_state, sources.subtitle_evidence, sources.audio_evidence,
         sources.color_risk, sources.discovered_at, sources.updated_at,
@@ -729,16 +801,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         -- "Z (1969)"). Only the synthetic per-episode groups are excluded;
         -- otherwise a newly scanned movie can disappear after intake binding.
         AND sources.relative_path NOT LIKE '@flat/episode %'
-        AND sources.quality_state NOT IN ('unacceptable', 'rejected', 'subtitle_missing')
-        -- A subtitle-dependent foreign-original source whose evidence already
-        -- proves that Chinese subtitles are absent must stay deferred. Unknown
-        -- or unprobed evidence remains selectable, and verified Mandarin
-        -- branches are handled by the non-blocking subtitle exception.
-        AND NOT (
-          lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%no_chinese_subtitles%'
-          OR lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%"verifiedchinese":false%'
-          OR lower(COALESCE(sources.subtitle_evidence, '')) LIKE '%"verifiedchinesesubtitle":false%'
-        )
+        AND sources.quality_state NOT IN ('incomplete', 'unacceptable', 'rejected')
         AND (works.next_review_at IS NULL OR works.next_review_at <= ?)
         AND (
           COALESCE(works.workflow_status, '') NOT IN ('暂缓', '已完成')
@@ -799,8 +862,116 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
             AND pending_variants.production_state='qc_passed'
             AND pending_variants.publication_state IN ('structure_pending','upload_pending','upload_seen','assets_pending','verification_pending')
         )
-      ORDER BY works.priority_score DESC, sources.discovered_at ASC LIMIT ?`)
-      .all(timestamp(), normalizeLimit(limit, 5, 50));
+      ORDER BY works.priority_score DESC, sources.discovered_at ASC`)
+      .all(timestamp());
+    const capped = normalizeLimit(limit, 5, 50);
+    return rows.filter((row) => {
+      const subtitleState = classifyChineseSubtitleState({
+        subtitleEvidence: row.subtitle_evidence,
+        qualityState: row.quality_state
+      });
+      return subtitleState !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
+        || hasVerifiedMandarinAudio(row.audio_evidence);
+    }).slice(0, capped);
+  }
+
+  function listSubtitleAcquisitionCandidates({ limit } = {}) {
+    const rows = db.prepare(`SELECT 'subtitle_acquisition' AS candidate_type, sources.id AS source_id,
+        sources.work_id, sources.relative_path, sources.absolute_path, sources.source_kind,
+        sources.probe_path, sources.quality_state, sources.subtitle_evidence, sources.audio_evidence,
+        sources.color_risk, sources.discovered_at, sources.updated_at,
+        works.priority_score, works.canonical_title, works.year, works.work_type,
+        works.workflow_status, works.notion_work_page_id,
+        'confirmed_missing_chinese_subtitle' AS acquisition_reason
+      FROM sources
+      JOIN works ON works.id=sources.work_id
+      JOIN input_roots ON input_roots.id=sources.input_root_id
+      WHERE sources.missing=0
+        AND sources.work_id IS NOT NULL
+        AND input_roots.enabled=1
+        AND COALESCE(works.scope_state, 'candidate') <> 'closed'
+        AND sources.relative_path NOT LIKE '@flat/episode %'
+        AND sources.quality_state NOT IN ('unacceptable', 'rejected')
+        AND NOT EXISTS (SELECT 1 FROM variants WHERE variants.source_id=sources.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM sources AS canonical_sources
+          WHERE canonical_sources.id <> sources.id
+            AND canonical_sources.input_root_id=sources.input_root_id
+            AND canonical_sources.work_id=sources.work_id
+            AND lower(replace(canonical_sources.absolute_path, '/', '\\'))
+                = lower(replace(sources.absolute_path, '/', '\\'))
+            AND (canonical_sources.updated_at < sources.updated_at
+              OR (canonical_sources.updated_at = sources.updated_at AND canonical_sources.id < sources.id))
+        )
+      ORDER BY CASE WHEN EXISTS (
+          SELECT 1 FROM workflow_tasks
+          WHERE workflow_tasks.task_key='subtitle:source:' || sources.id
+            AND workflow_tasks.status IN ('pending','in_progress','waiting_user','deferred')
+        ) THEN 1 ELSE 0 END,
+        works.priority_score DESC, sources.discovered_at ASC`).all();
+    return rows.filter((row) => classifyChineseSubtitleState({
+      subtitleEvidence: row.subtitle_evidence,
+      qualityState: row.quality_state
+    }) === CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
+      && !hasVerifiedMandarinAudio(row.audio_evidence))
+      .slice(0, normalizeLimit(limit, 5, 50));
+  }
+
+  function syncSubtitleAcquisitionTasks({ limit = 20 } = {}) {
+    const candidates = listSubtitleAcquisitionCandidates({ limit });
+    const created = [];
+    const reopened = [];
+    for (const candidate of candidates) {
+      const taskKey = `subtitle:source:${candidate.source_id}`;
+      const existing = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey);
+      const task = ensureWorkflowTask({
+        taskKey,
+        taskType: "subtitle_acquisition",
+        sourceId: candidate.source_id,
+        workId: candidate.work_id,
+        priorityScore: candidate.priority_score,
+        reason: "Confirmed missing Chinese subtitles; prepare a resumable subtitle acquisition handoff",
+        payload: { chineseSubtitleState: CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING }
+      });
+      if (!existing) {
+        created.push(task);
+        insertEvent.run("source", candidate.source_id, "subtitle_acquisition_task_created", stableJson({
+          workId: candidate.work_id,
+          reason: task.reason
+        }), timestamp());
+      } else if (existing.status === "done") {
+        reopened.push(transitionWorkflowTask(task.id, "pending", {
+          reason: "Chinese subtitle evidence is explicitly missing again; resume subtitle acquisition"
+        }));
+      }
+    }
+
+    const resolved = [];
+    const openTasks = db.prepare(`SELECT workflow_tasks.*, sources.subtitle_evidence, sources.quality_state,
+        sources.audio_evidence, sources.missing, works.scope_state
+      FROM workflow_tasks JOIN sources ON sources.id=workflow_tasks.source_id
+        JOIN works ON works.id=sources.work_id
+      WHERE workflow_tasks.task_type='subtitle_acquisition'
+        AND workflow_tasks.status IN ('pending','in_progress','waiting_user','deferred')`).all();
+    for (const task of openTasks) {
+      const state = classifyChineseSubtitleState({
+        subtitleEvidence: task.subtitle_evidence,
+        qualityState: task.quality_state
+      });
+      if (task.scope_state === "closed" || task.missing || state !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
+        || hasVerifiedMandarinAudio(task.audio_evidence)) {
+        resolved.push(completeWorkflowTaskByKey(task.task_key, {
+          sourceId: task.source_id,
+          workId: task.work_id,
+          reason: task.scope_state === "closed"
+            ? "Work expansion is closed; do not reacquire subtitles or reopen the task"
+            : task.missing
+            ? "Source is no longer present"
+            : "Subtitle evidence no longer confirms a blocking Chinese-subtitle absence"
+        }));
+      }
+    }
+    return { candidates, created, reopened, resolved };
   }
 
   function listProductionQueue({ limit } = {}) {
@@ -871,7 +1042,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function listWorkflowTasks({ taskType, status = "pending", limit = 5 } = {}) {
-    const types = taskType ? [taskType] : ["intake", "metadata_backfill"];
+    const types = taskType ? [taskType] : ["intake", "metadata_backfill", "subtitle_acquisition"];
     const placeholders = types.map(() => "?").join(",");
     return db.prepare(`SELECT workflow_tasks.*, sources.relative_path, sources.absolute_path, sources.quality_state,
         sources.subtitle_evidence, sources.color_risk, works.canonical_title, works.year, works.work_type,
@@ -1189,13 +1360,14 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, setInputRootEnabled, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
+  return { upsertInputRoot, setInputRootEnabled, setWorkScopeState, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listSeriesCoverageGaps, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
     findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection, correctVariantMetadata,
-    ensureWorkflowTask, requeueMetadataTask, requeueIntakeTask, listWorkflowTasks,
+    ensureWorkflowTask, requeueMetadataTask, requeueIntakeTask, syncSourceIntakeAvailability, listWorkflowTasks,
+    listSubtitleAcquisitionCandidates, syncSubtitleAcquisitionTasks,
     getWorkflowTaskSummary, refreshDueMetadataTasks, refreshDueIntakeTasks, transitionWorkflowTask,
     recordWorkHandoff, recordWorkHandoffByNotionPage, listWorkHandoffs };
 }

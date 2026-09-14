@@ -78,6 +78,90 @@ the lane from whichever candidates happen to be easiest to find.
   counts, but it must not advance the work cursor or clear
   `activePeopleWorkId` until the work-level coverage and quality gates close.
 
+## Interpret authorization without inventing a review queue
+
+### Reconcile saved reports before selecting work
+
+At the start of every People cycle, inspect the saved `preflight*.json` and
+`post-publish-coverage*.json` artifacts under `.local-data/people/` for campaign
+items that are still labelled `waiting_user`. A stale campaign label must not
+override newer evidence:
+
+- If the latest preflight is `ready_for_authorized_apply`, has
+  `humanReviewRequired=false`, has no identity or external-ID conflicts, and
+  the current user objective explicitly includes People work, treat the item
+  as actionable and resume the authorized apply path. Do not ask for a second
+  blanket confirmation just because an older campaign record says
+  `waiting_user`.
+- If the latest artifact has `humanReviewRequired=true`, an identity conflict,
+  a missing canonical work/person index, or an unresolved API/catalog timeout,
+  retain `waiting_user` or `blocked` and copy the exact evidence gap and next
+  trigger into the campaign record.
+- If post-publish coverage is `fully_linked`, settle the campaign from that
+  coverage before selecting another work. Never leave a stale `in_progress`
+  or `waiting_user` label after a successful convergence readback.
+
+This reconciliation is local and bounded: read only reports associated with
+the current campaign or saved queue cursor, never rescan all Notion pages to
+discover whether a local report is ready. A missing, malformed, or stale
+artifact is not authorization; record `saved_report_reconciliation_required`
+and continue with other eligible work.
+
+- An explicit user objective to add missing people, continue a People batch,
+  or run the People stage authorizes bounded publication of profiles that pass
+  identity, source, biography-quality, report-integrity, dry-run, and readback
+  gates. Do not ask for another blanket confirmation for every clean profile.
+- A request only to inspect, audit, preview, or explain does not authorize
+  writes. Neither does an ordinary film-production request unless it explicitly
+  includes People enrichment.
+- `ready_for_authorized_apply` means the report may proceed under the current
+  explicit People objective. Record the campaign stage as actionable or
+  `in_progress`, not `waiting_user`.
+- Use `waiting_user` only for a concrete human decision such as ambiguous
+  identity, conflicting stable IDs, uncertain canonical work/person scope, or
+  a requested editorial choice. Name the exact person/credit and decision.
+- Ordinary unmaterialized legacy credits may remain visible and deferred while
+  clean reviewed profiles are published. They are not, by themselves, a reason
+  to hold the whole batch. Dangling `personId` references, identity conflicts,
+  and verified-profile quality failures remain hard blockers.
+- When one work contains both publishable profiles and deferred credits, compose
+  and publish the clean profiles as an explicit sub-batch. After Notion and
+  Azure convergence, return the work-level People stage to `pending` (or
+  `deferred` with a real next-review time), listing every remaining important
+  person and the next trigger. Use `completed` only after the work-level
+  residual-credit gate closes; never leave a finished sub-batch indefinitely
+  in `in_progress`, and never promote its local blocker to the whole Goal.
+- After every successful People sub-batch, regenerate the exact work coverage
+  report and run `work-enrichment-campaign.mjs settle-people-coverage`. Do not
+  hand-author the resulting status: only a non-empty fully linked canonical
+  credit set completes the stage; every residual returns it to actionable
+  `pending` with measured linked, total, and remaining counts. The settlement
+  record must also retain the exact `unlinkedCredits` as `coverageResiduals`
+  and a concrete `nextTrigger`; a count-only reason is insufficient for the
+  next run to resume safely.
+- This readback is a continuation loop, not a final report step: if exact
+  coverage still contains unlinked credits, immediately create a bounded
+  targeted supplement from that residual list, apply it, and read back the
+  same work again. Repeat only within the current batch request budget; if the
+  residual cannot be safely resolved, persist the names, evidence gap, and
+  next trigger, then settle as `pending` or `deferred`. A pilot's
+  `profile-budget`, a successful Notion checkpoint, or a catalog backup never
+  closes the loop.
+- Treat reasons that describe a missing tool, unsupported metadata-only path,
+  or a blanket review requirement as historical observations, not permanent
+  human gates. When the current toolchain can now produce authoritative
+  coverage, run that path and settle from the readback; a fully linked result
+  must clear the stale reason and human-confirmation text automatically.
+- Settle against the coverage report's authoritative `works` collection when
+  present. `candidates` intentionally omits `fully_linked` works and is only a
+  backward-compatible fallback; an empty candidate queue is not proof that the
+  active work is missing or blocked.
+- Before settlement, reconcile translated or alternate credit spellings through
+  stable external identity plus verified profile aliases. Collapse only exact
+  duplicate relations with the same canonical person, department, compatible
+  job, and character. Preserve separate acting, writing, directing, voice, or
+  different-character rows for the same person.
+
 ## Run the workflow
 
 ### 1. Establish the baseline
@@ -99,7 +183,7 @@ seed the director, writer, and top-cast strings, then refresh the exact movie
 index entry by its Notion page ID before Wikidata materialization; do not use
 `meta-sync ondemand 1` as an exact-page refresh because that mode selects the
 most recently edited page, not a requested page. Use
-`node --import tsx tools/notion-index-refresh.mjs --page-id <page-id> --title <title>` with
+`node --import tsx tools/notion-index-refresh.mjs --backend azure --page-id <page-id> --title <title>` with
 both Azure backends selected, then read back the target work and require its
 credit count to be non-zero before materializing people. The People selector uses those
 existing credit strings as prominence anchors while Wikidata supplies stable
@@ -130,10 +214,34 @@ response for a season's credits. If the season entity has no usable credit
 statements and no independent provider can supply stable person identities,
 record the source defect, leave the names unresolved, and continue with the
 next queue candidate.
+When a canonical series or season has a TMDB series ID and an explicit season
+number, TMDB's season-scoped credits endpoint (`/tv/{id}/season/{n}/credits`)
+is an allowed fallback. Include the season number in the evidence cache key. A
+parent-series response is valid only for a work with no season scope; never use
+it to silently fill a season page. If TMDB credentials are unavailable, record
+a stable blocked reason rather than treating the season as having no credits.
 
 ### 2. Collect slowly and resumably
 
 Use `tools/person-wikidata-pilot.mjs` for bounded work-credit discovery. Run one work at a time with concurrency 1 and a default interval of 1500 ms. Reuse its cache and checkpoint on retries.
+
+When the canonical Notion/index credit list contains a significant person that
+the work-level Wikidata statements omit, verify that exact credit and a stable
+Wikidata identity, then use `tools/person-targeted-supplement.mjs`. This avoids
+rerunning an exhausted work discovery and safely reuses existing catalog people
+by stable external IDs. When no Wikidata QID exists, the same tool may use a
+reviewed IMDb or TMDB identity only when the input includes the stable person
+ID, its person-page source reference, the matching work external ID, and an
+exact HTTPS work-credit page. Keep unsupported biography, date, image, and role
+details empty.
+
+The required post-batch order is: (1) refresh the exact Azure work result by
+asset key, (2) compare `creditCount`, `linkedCreditCount`, and
+`unlinkedCredits`, (3) supplement only the returned residual credits, (4)
+apply Notion and the catalog, and (5) refresh the exact result again before
+settlement. Do not use a full-index candidate scan as a substitute for step
+1; it can omit fully linked works and cannot prove that a profile-budget pilot
+covered all credits.
 
 Before network work, estimate request amplification: each work may require one work request plus one request per candidate person, with additional source checks performed separately. If any provider returns HTTP 429, stop launching requests, honor `Retry-After`, add jitter, and stop the batch after repeated 429 responses.
 
@@ -146,9 +254,11 @@ Give every external request a finite timeout (20 seconds by default), retry at m
 - Normalize a public birthplace into natural simplified Chinese while retaining the provider value in evidence. Curate and deduplicate aliases before public use; traditional-only, duplicated, transliterated, or language-ambiguous aliases remain backend evidence.
 - Keep generated transliterations provisional. Use the formal, source-supported simplified Chinese name when available. Do not promote a Wikidata `zh-cn` label solely because it is the first localized label: compare it with the English/native name, occupation, and other aliases. If it is semantically unrelated to the person (for example, a common noun or machine-style label), retain it only as backend evidence and select a source-supported Chinese alias that matches the identity; record `wikidata_nonsemantic_label_gate`.
 - Exclude non-human entities and quarantine conflicting external IDs or ambiguous aliases. Wikidata `P31` values use the real entity-id field (`datavalue.value.id`); descriptions such as “animal actor” are a secondary safety signal, so a candidate with a non-human instance-of claim must never enter People even when its label looks like a person's name.
-- Check the Wikidata English description against the requested credit department before materialization. If a same-name human has only a clearly non-film identity (for example, an activist, politician, wrestler, or other sports identity) and no IMDb/TMDB crosswalk, exclude the QID and leave the credit unresolved; never repair an identity mismatch by name alone. The non-film occupation list must cover sports identities, not only athlete as a generic term.
+- Check the Wikidata English description against the requested credit department before materialization. If a same-name human has only a clearly non-film identity (for example, an activist, politician, wrestler, or other sports identity) and no IMDb/TMDB crosswalk, exclude the QID and leave the credit unresolved; never repair an identity mismatch by name alone. The non-film occupation list must cover sports identities, not only athlete as a generic term. An acting credit explicitly marked as Self, Media, Newsreader, Host, or equivalent本人出镜 is a distinct cast relation: verify it with the exact work credit and a stable person crosswalk, preserve that job label, and do not reject it merely because the person's main occupation is journalist, presenter, or other non-film work.
 - Before applying a reviewed report, compare its credits with the exact pre-pilot canonical work credits. Preserve every source/index credit that was not represented by the reviewed stable-identity set as an unlinked legacy credit; merge `personId` onto matched reviewed credits instead of replacing the source list with the shorter pilot subset. A lower-confidence or unresolved cast name must remain visible in the movie index and be queued for later review. Record `source_credit_preservation_gate` if an apply would reduce the canonical credit count.
+- After each apply, compare the exact canonical source-credit set with the materialized stable-identity set. Wikidata work credits are discovery evidence, not proof of complete coverage: when IMDb, TMDB, a verified Notion credit list, or another canonical source still contains significant unlinked creators or cast, keep the work pinned and publish a reviewed supplement batch. Mark the work complete only when every significant residual credit is linked or individually recorded as intentionally deferred with its source and next trigger. A profile budget, an empty Wikidata remainder, or one successful batch is never closure evidence.
 - During source-preserving merge, match each reviewed credit only against one unconsumed pre-pilot source row. Never match a later pilot credit against an already appended pilot row, because distinct department/role credits for one person must remain separate. Record `source_credit_duplicate_preservation_gate` if a merge collapses reviewed role rows.
+- When exact Notion metadata is refreshed after People links already exist, treat the fresh Notion credit list as the current source baseline. Preserve only enriched credits with stable identity or external evidence: merge them back onto a matching current credit, and retain a genuine provider-expanded credit that is absent from Notion. Never carry an old unlinked Notion credit over a corrected current value. Stable identity matching must also agree on department and compatible job, because one person may have separate acting, writing, directing, or other credits in the same work.
 - Preserve an immutable `person_<uuid>` once allocated; do not manufacture or recycle IDs.
 
 ### 4. Curate the batch
@@ -172,6 +282,7 @@ Require zero unresolved identity conflicts for every profile that will be publis
 - A verified biography must be substantive enough to establish a career rather than merely satisfy a non-empty-field check. The publication gate currently requires at least 100 non-whitespace Chinese characters and 45 English words. If reliable evidence cannot support that much, keep the biography partial and leave the profile out of a verified publication batch.
 - Reject provider-credit templates such as “公开人物资料来自 Wikidata；在《…》中担任 Actor” and “documented in Wikidata / is credited as”. Reject obvious machine grammar such as `is a actor`. Do not repair these by padding them with generic filler.
 - Reprocessing another work must never downgrade an existing verified editorial biography. Preserve the current Notion text unless the incoming replacement independently passes the same verified biography gate. This protection applies even when the biography field is not manually locked.
+- A merged person report may contain an older Notion biography and a later reviewed biography in the same language. Publication must select a text that passes the current method, source-family, template, and substantive-length gates before comparing equal-status candidates; an earlier short `verified` observation must not mask a later quality-eligible reviewed text.
 - Mark the whole person profile `verified` when stable external identity, verified Chinese and English names, at least one verified department, and verified bilingual editorial biographies are all present with no identity conflict. Portrait, exact dates, birthplace, native name, aliases, education, and award detail are valuable enhancements but are not mandatory for core verification.
 - Keep structured person facts independent from biography prose. Publish supported dates, birthplace, original name, portrait, and external IDs even when other optional facts are absent; the website hides missing rows rather than substituting placeholders.
 - Compute the versioned `Quality Score` after composing the effective reviewed profile. Use it to rank repair work, not as a public website rating. `Last Reviewed At` means a full identity/name/department/biography/source review completed, including a review that made no prose change; ordinary provider enrichment or Notion synchronization updates only `Last Enriched At` and must not refresh the review clock.
@@ -179,26 +290,54 @@ Require zero unresolved identity conflicts for every profile that will be publis
 
 Apply reviewed biography and credit-name edits with `tools/person-biography-review.mjs`. Inspect the resulting report directly before any write.
 
+When re-running a batch, the review input is cumulative: load the prior
+`biography-reviews.json` (and any later review revisions), merge new entries by
+stable `personId`, and write the complete effective set to the next review
+file before invoking the review tool. Never run a partial “new entries only”
+file against the original discovery report, because the tool rebuilds the
+report and would make previously verified biographies disappear. After each
+run, compare verified/partial profile counts and linked/unresolved credit
+counts with the prior report; any unexpected decrease is a review-input
+regression and must be repaired before changing the batch state.
+
 ### 6. Validate and preview every write
+
+- Production catalog sync and exact index refresh commands must declare `--backend azure`; do not rely on ambient shell variables or interpret a successful local-store run as website publication. Reserve `--backend local` for explicit development tests and verify the returned `store` or `index` description before continuing.
 
 Run the focused people tests, API typecheck, and `git diff --check`. Then preview Notion operations and catalog/index changes. Confirm expected profile, work, credit, and unresolved counts before applying.
 
-Never apply an offline diagnostic report or a report containing identity conflicts. Use the explicit reviewed-pilot gates for both Notion and catalog writes.
+Run `tools/person-report-preflight.mjs` before catalog preview, using the same
+catalog backend that produced the report (`--backend azure` with
+`node --import tsx` for Azure, or the matching local catalog path). A `personId`
+credit must resolve to either a profile in the report or an existing catalog
+profile. Dangling IDs are a blocking report defect, not a successfully linked
+credit; repair or regenerate the report before review/apply.
+
+Never apply an offline diagnostic report or a report containing identity conflicts. Use the explicit authorized-batch gates for both Notion and catalog writes.
 
 Before scaling a changed biography strategy, run a five-person quality pilot containing at least one director/creator and one actor. Require substantive bilingual text, 3–4 useful source URLs across at least two independent source families, zero identity conflicts, successful Notion readback, targeted Notion-to-Azure convergence, and an unchanged replay. Only then increase the batch size.
 
 ### 7. Publish in order
 
-1. Upsert the reviewed people to Notion with its shared one-request-per-second limiter.
-2. Read back the changed rows and stop on the first failure.
-3. Apply the same reviewed report to the person catalog and search index.
-4. For production, explicitly set both `PERSON_CATALOG_BACKEND=azure` and `SEARCH_INDEX_BACKEND=azure`; do not trust local `.env` defaults.
+1. Before the first Notion write, scan the current People data source once and compare every incoming TMDB, IMDb, and Wikidata ID. A collision involving the current batch blocks all writes. Record unrelated historical duplicates for repair without freezing a clean batch.
+2. When the report's canonical Person ID already has a stronger Notion row and an older row shares at least two stable external IDs with no contrary ID, preview with `tools/notion-people-deduplicate-report.mjs`; archive the exact old duplicate only after the guarded preview. When Notion already holds the canonical identity under a different Person ID, pass both `--identity-conflicts` and `--auto-remap-report` to the authorized upsert. The command must retain complete incoming/existing external-ID evidence, automatically remap only when at least two stable IDs agree on one existing Person ID and one Notion page with no contrary provider ID, rerun the full identity scan, and continue without a conversational handoff. A one-ID, split-owner, split-page, incomplete-evidence, or contrary-ID case remains blocked for identity review. The standalone `tools/person-report-remap-existing-identities.mjs` remains a repair/debug fallback for an already saved complete conflict artifact.
+3. When composing multiple reviewed work reports, automatically merge repeated people only when at least two stable external IDs agree and no provider ID conflicts. Preserve all work credits and union the person's departments and evidence; leave weaker matches blocked for identity review.
+4. Upsert the reviewed people to Notion with its shared one-request-per-second limiter.
+   When Clash fake-IP or the configured proxy fails before TLS, retry this exact
+   resumable batch with `--resolve-ip <current-api-ip> --local-address
+   <physical-lan-ip> --no-proxy`. These three flags are inseparable; clearing an
+   HTTP proxy alone does not bypass Mihomo TUN.
+5. Read back the changed rows and retain the complete Notion checkpoint.
+6. Apply the same reviewed report to the person catalog and search index. Pass the complete Notion checkpoint when those Notion Person IDs are canonical; catalog apply must then redirect matching legacy IDs instead of remapping the reviewed IDs back to stale catalog identities.
+7. For production, explicitly set both `PERSON_CATALOG_BACKEND=azure` and `SEARCH_INDEX_BACKEND=azure`; do not trust local `.env` defaults.
    The catalog apply must derive each reverse-link `workTitle` from the
    affected Azure work's primary `work.titles` entry, falling back to the
    report title only when the canonical entry is absent; a short provider title
    must not overwrite the canonical WWP title.
-5. Run Notion-to-catalog sync as dry-run, apply, then a fresh dry-run. Require convergence with zero unexpected writes or issues. After sync, do not replay the pre-sync Wikidata report as the final catalog idempotence proof: Notion owns canonical names, aliases, biography overlays, source references, and observed timestamps once a page exists. Before replay, compare each affected canonical Azure work's total and linked credit counts with the original reviewed report and the pre-pilot source credit set; credit truncation is drift, not a healthy canonical state, and must be repaired by merging the reviewed person links into the source credit set before continuing. Then reload the post-sync canonical Azure profiles and credits, build a fresh same-batch replay from that state, use the primary entry from canonical `work.titles` for each replay work title, and require `catalogChanged=false` plus zero search-index writes. Keep the original reviewed report for identity, credit, and duplicate-link checks.
-6. Open the live people directory and several changed person routes. Verify the simplified-Chinese biography, optional meta rows, external source links, roles, deduplicated works, reverse lookup, desktop layout, and mobile layout. English biography remains in Notion/catalog and is not rendered on the fixed Chinese website.
+8. Run Notion-to-catalog sync as dry-run, apply, then a fresh dry-run. Require convergence with zero unexpected writes or issues. After sync, do not replay the pre-sync Wikidata report as the final catalog idempotence proof: Notion owns canonical names, aliases, biography overlays, source references, and observed timestamps once a page exists. Before replay, compare each affected canonical Azure work's total and linked credit counts with the original reviewed report and the pre-pilot source credit set; credit truncation is drift, not a healthy canonical state, and must be repaired by merging the reviewed person links into the source credit set before continuing. Also calculate the canonical-source residual set: significant credits that still lack a materialized `personId` keep the work open for a supplement batch or an explicit per-credit deferral. Then reload the post-sync canonical Azure profiles and credits, build a fresh same-batch replay from that state, use the primary entry from canonical `work.titles` for each replay work title, and require `catalogChanged=false` plus zero search-index writes. Keep the original reviewed report for identity, credit, and duplicate-link checks.
+9. Open the live people directory and several changed person routes. Verify the simplified-Chinese biography, optional meta rows, external source links, roles, deduplicated works, reverse lookup, desktop layout, and mobile layout. English biography remains in Notion/catalog and is not rendered on the fixed Chinese website.
+
+Because Azure catalog apply reads and atomically rewrites a large sharded snapshot, combine several independently clean reports with `tools/person-batch-compose.mjs` before publication when their total remains within the 10-16 profile production target. Do not pay the full snapshot cost once per one-person report.
 
 The production `job-ww-people-index` later carries safe Notion edits for known
 people into Azure. It does not replace reviewed first publication, create an

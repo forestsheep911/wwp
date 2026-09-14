@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditWebsiteCoverage } from "./film-website-coverage-audit.mjs";
+import { auditWebsiteCoverage, liveSearchIndexDocument } from "./film-website-coverage-audit.mjs";
 
 test("coverage audit distinguishes six full variants from a three-item list preview", () => {
   const pageId = "15f20ac1-2f0a-80a1-92ea-f7c8b4702329";
@@ -17,4 +17,16 @@ test("coverage audit fails closed for an unindexed page", () => {
   const report = auditWebsiteCoverage({ entries: {} }, "missing-page");
   assert.equal(report.status, "missing");
   assert.equal(report.fullVariantCount, 0);
+});
+
+test("live search selects the exact work page instead of a same-title result", () => {
+  const pageId = "3da20ac1-2f0a-8164-9973-e86ce9bb3eb0";
+  const document = liveSearchIndexDocument({ results: [
+    { sourcePageId: "other-page", title: "Same title", variants: [] },
+    { sourcePageId: pageId.replaceAll("-", ""), title: "Target", variants: [{ assetKey: "asset-1" }] }
+  ] }, pageId);
+  const report = auditWebsiteCoverage(document, pageId);
+  assert.equal(report.status, "ok");
+  assert.equal(report.title, "Target");
+  assert.equal(report.fullVariantCount, 1);
 });

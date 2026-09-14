@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { assertAuthorizedPersonPreflight } from "./person-report-authorization.mjs";
 
 export const ENRICHMENT_STAGES = Object.freeze(["base-metadata", "people", "honors", "highlights"]);
 export const ENRICHMENT_STAGE_STATUSES = Object.freeze([
@@ -20,6 +21,7 @@ const ACTION_BY_STAGE = Object.freeze({
   honors: "run_wwp_honors_curator",
   highlights: "run_wwp_highlight_curator"
 });
+export const DEFAULT_STALE_IN_PROGRESS_MS = 6 * 60 * 60 * 1000;
 
 export function emptyEnrichmentCampaign(now = new Date().toISOString()) {
   return { schemaVersion: 1, createdAt: now, updatedAt: now, works: [] };
@@ -46,6 +48,8 @@ function stage(status = "pending", details = {}) {
     missingFields: uniqueStrings(details.missingFields),
     humanConfirmationReasons: uniqueStrings(details.humanConfirmationReasons),
     nextReviewAt: cleanString(details.nextReviewAt),
+    coverageResiduals: Array.isArray(details.coverageResiduals) ? structuredClone(details.coverageResiduals) : [],
+    nextTrigger: cleanString(details.nextTrigger),
     updatedAt: cleanString(details.updatedAt)
   };
 }
@@ -157,17 +161,24 @@ export function updateEnrichmentStage(state, selector, update, { now = new Date(
   if (!ENRICHMENT_STAGES.includes(update.stage)) throw new Error(`unsupported enrichment stage: ${update.stage}`);
   if (!ENRICHMENT_STAGE_STATUSES.includes(update.status)) throw new Error(`unsupported enrichment stage status: ${update.status}`);
   const campaign = structuredClone(state);
-  const work = campaign.works.find((candidate) =>
-    (selector.key && candidate.key === selector.key)
-    || (selector.externalWorkId && candidate.externalWorkId === selector.externalWorkId)
-    || (selector.pageId && candidate.pageId === selector.pageId)
-    || (selector.ledgerWorkId && candidate.ledgerWorkId === Number(selector.ledgerWorkId)));
-  if (!work) throw new Error("enrichment work item not found");
+  const matches = selector.key
+    ? campaign.works.filter((candidate) => candidate.key === selector.key)
+    : campaign.works.filter((candidate) =>
+      (selector.externalWorkId && candidate.externalWorkId === selector.externalWorkId)
+      || (selector.pageId && candidate.pageId === selector.pageId)
+      || (selector.ledgerWorkId && candidate.ledgerWorkId === Number(selector.ledgerWorkId)));
+  if (matches.length === 0) throw new Error("enrichment work item not found");
+  if (matches.length > 1) {
+    throw new Error(`enrichment work selector is ambiguous; use --item-key (${matches.map((candidate) => candidate.key).join(", ")})`);
+  }
+  const [work] = matches;
   const previous = work.stages[update.stage] ?? stage();
   const nextReason = update.reason ?? previous.reason;
   const nextMissingFields = update.missingFields ?? previous.missingFields;
   const nextHumanReasons = update.humanConfirmationReasons ?? previous.humanConfirmationReasons;
   const nextReviewAt = update.nextReviewAt ?? previous.nextReviewAt;
+  const nextCoverageResiduals = update.coverageResiduals ?? previous.coverageResiduals;
+  const nextTrigger = update.nextTrigger ?? previous.nextTrigger;
   if (update.status === "deferred" && (!nextReviewAt || Number.isNaN(Date.parse(nextReviewAt)))) {
     throw new Error("deferred enrichment stage requires a valid nextReviewAt");
   }
@@ -179,7 +190,15 @@ export function updateEnrichmentStage(state, selector, update, { now = new Date(
   }
   if (update.status === "in_progress") {
     const currentStage = currentEnrichmentStage(work);
-    if (currentStage !== update.stage) throw new Error(`cannot start ${update.stage} before current stage ${currentStage ?? "complete"}`);
+    if (currentStage !== update.stage) {
+      const current = currentStage ? work.stages[currentStage] : null;
+      const stableEarlierStage = current && (
+        current.status === "blocked"
+        || current.status === "waiting_user"
+        || (current.status === "deferred" && !isDue(current, now))
+      );
+      if (!stableEarlierStage) throw new Error(`cannot start ${update.stage} before current stage ${currentStage ?? "complete"}`);
+    }
     const otherActive = campaign.works.find((candidate) => candidate.key !== work.key
       && ENRICHMENT_STAGES.some((name) => candidate.stages?.[name]?.status === "in_progress"));
     if (otherActive) throw new Error(`another enrichment work is already in progress: ${otherActive.key}`);
@@ -189,6 +208,8 @@ export function updateEnrichmentStage(state, selector, update, { now = new Date(
     missingFields: update.status === "completed" ? [] : nextMissingFields,
     humanConfirmationReasons: update.status === "completed" ? [] : nextHumanReasons,
     nextReviewAt: update.status === "completed" ? null : nextReviewAt,
+    coverageResiduals: update.status === "completed" ? [] : nextCoverageResiduals,
+    nextTrigger: update.status === "completed" ? null : nextTrigger,
     updatedAt: now
   });
   work.updatedAt = now;
@@ -196,12 +217,161 @@ export function updateEnrichmentStage(state, selector, update, { now = new Date(
   return { state: campaign, work };
 }
 
+/**
+ * Recover abandoned worker claims without pretending that the stage completed.
+ * A live worker refreshes updatedAt through the normal record command; only an
+ * old in_progress claim is converted to a resumable deferred item.
+ */
+export function recoverStaleInProgress(
+  state,
+  { now = new Date().toISOString(), maxAgeMs = DEFAULT_STALE_IN_PROGRESS_MS } = {}
+) {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+    throw new Error("recoverStaleInProgress requires a valid now and positive maxAgeMs");
+  }
+  let nextState = structuredClone(state);
+  const recovered = [];
+  for (const work of nextState.works ?? []) {
+    const stageName = ENRICHMENT_STAGES.find((name) => work.stages?.[name]?.status === "in_progress");
+    if (!stageName) continue;
+    const current = work.stages[stageName];
+    const updatedMs = Date.parse(current.updatedAt ?? work.updatedAt ?? "");
+    if (!Number.isFinite(updatedMs) || nowMs - updatedMs < maxAgeMs) continue;
+    const priorReason = cleanString(current.reason) ?? "未记录阶段结果";
+    const nextReviewAt = new Date(nowMs + 60 * 60 * 1000).toISOString();
+    const result = updateEnrichmentStage(nextState, { key: work.key }, {
+      stage: stageName,
+      status: "deferred",
+      reason: `回收过期的 AI处理中认领；原记录：${priorReason}`,
+      missingFields: current.missingFields,
+      humanConfirmationReasons: current.humanConfirmationReasons,
+      nextReviewAt,
+      nextTrigger: "检查上一轮进程/网络结果；若没有新证据，按原阶段重新认领并记录结果"
+    }, { now });
+    nextState = result.state;
+    recovered.push({ key: work.key, stage: stageName, nextReviewAt });
+  }
+  return { state: nextState, recovered };
+}
+
+export function resumeAuthorizedPeopleStage(
+  state,
+  selector,
+  { preflight, reportPath, reason = "clean_people_preflight_authorized_by_current_objective", now = new Date().toISOString() } = {}
+) {
+  assertAuthorizedPersonPreflight(preflight, reportPath);
+  const matches = selectEnrichmentWorks(state, selector);
+  if (matches.length === 0) throw new Error("enrichment work item not found");
+  if (matches.length > 1) {
+    throw new Error(`enrichment work selector is ambiguous; use --item-key (${matches.map((candidate) => candidate.key).join(", ")})`);
+  }
+  const [work] = matches;
+  if (currentEnrichmentStage(work) !== "people" || work.stages?.people?.status !== "waiting_user") {
+    throw new Error("authorize-people requires the selected work to be waiting_user at the people stage");
+  }
+  return updateEnrichmentStage(state, selector, {
+    stage: "people",
+    status: "in_progress",
+    reason,
+    humanConfirmationReasons: []
+  }, { now });
+}
+
+function findPeopleCoverageCandidate(coverage, work) {
+  if (!coverage || (!Array.isArray(coverage.works) && !Array.isArray(coverage.candidates))) {
+    throw new Error("people coverage report must contain a works or candidates array");
+  }
+  // Complete works are intentionally absent from candidates, so settlement
+  // must prefer the authoritative all-works collection when it is available.
+  const records = Array.isArray(coverage.works) ? coverage.works : coverage.candidates;
+  const matches = records.filter((candidate) =>
+    (work.externalWorkId && candidate.workId === work.externalWorkId)
+    || (work.pageId && candidate.sourcePageId === work.pageId));
+  if (matches.length === 0) throw new Error(`people coverage candidate not found for ${work.key}`);
+  if (matches.length > 1) throw new Error(`people coverage candidate is ambiguous for ${work.key}`);
+  return matches[0];
+}
+
+function coverageCount(value, name) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error(`people coverage ${name} must be a non-negative integer`);
+  }
+  return count;
+}
+
+export function settlePeopleStageFromCoverage(
+  state,
+  selector,
+  coverage,
+  { now = new Date().toISOString() } = {}
+) {
+  const matches = selectEnrichmentWorks(state, selector);
+  if (matches.length === 0) throw new Error("enrichment work item not found");
+  if (matches.length > 1) {
+    throw new Error(`enrichment work selector is ambiguous; use --item-key (${matches.map((candidate) => candidate.key).join(", ")})`);
+  }
+  const [work] = matches;
+  const candidate = findPeopleCoverageCandidate(coverage, work);
+  const creditCount = coverageCount(candidate.creditCount, "creditCount");
+  const linkedCreditCount = coverageCount(candidate.linkedCreditCount, "linkedCreditCount");
+  const unlinkedCreditCount = coverageCount(candidate.unlinkedCreditCount, "unlinkedCreditCount");
+  if (linkedCreditCount + unlinkedCreditCount !== creditCount) {
+    throw new Error("people coverage counts are inconsistent");
+  }
+  if (candidate.status === "fully_linked" && creditCount > 0 && unlinkedCreditCount === 0) {
+    return updateEnrichmentStage(state, selector, { stage: "people", status: "completed" }, { now });
+  }
+  const reason = creditCount === 0
+    ? "Post-publish coverage has no canonical credits yet; keep People pending until a reliable credit source is available."
+    : `Post-publish coverage is ${linkedCreditCount}/${creditCount} linked with ${unlinkedCreditCount} canonical credits remaining; continue the same work before advancing.`;
+  const residuals = Array.isArray(candidate.unlinkedCredits)
+    ? candidate.unlinkedCredits.map((credit) => ({
+      name: cleanString(credit.name) ?? "unknown",
+      department: cleanString(credit.department),
+      job: cleanString(credit.job),
+      character: cleanString(credit.character),
+      externalIds: credit.externalIds && typeof credit.externalIds === "object"
+        ? structuredClone(credit.externalIds)
+        : {}
+    }))
+    : [];
+  const residualSuffix = residuals.length > 0
+    ? ` Residual credits are saved in coverageResiduals; next trigger: research these exact names with a stable identity and work-credit source, then rerun exact coverage.`
+    : " Next trigger: rerun exact coverage and create a bounded targeted supplement from the residual list.";
+  return updateEnrichmentStage(state, selector, {
+    stage: "people",
+    status: "pending",
+    reason: `${reason}${residualSuffix}`,
+    missingFields: [creditCount === 0 ? "canonical people credits" : `${unlinkedCreditCount} unlinked canonical credits`],
+    humanConfirmationReasons: [],
+    coverageResiduals: residuals,
+    nextTrigger: residuals.length > 0
+      ? "research coverageResiduals with stable identity and exact work-credit evidence, then rerun exact coverage"
+      : "rerun exact coverage and create a bounded targeted supplement",
+    nextReviewAt: null
+  }, { now });
+}
+
+function selectEnrichmentWorks(state, selector) {
+  if (selector.key) return state.works.filter((candidate) => candidate.key === selector.key);
+  return state.works.filter((candidate) =>
+    (selector.externalWorkId && candidate.externalWorkId === selector.externalWorkId)
+    || (selector.pageId && candidate.pageId === selector.pageId)
+    || (selector.ledgerWorkId && candidate.ledgerWorkId === Number(selector.ledgerWorkId)));
+}
+
 export function currentEnrichmentStage(work) {
+  const active = ENRICHMENT_STAGES.find((name) => work.stages?.[name]?.status === "in_progress");
+  if (active) return active;
   return ENRICHMENT_STAGES.find((name) => !TERMINAL_STAGE_STATUSES.has(work.stages?.[name]?.status ?? "pending")) ?? null;
 }
 
 function isDue(stageState, now) {
-  if (["pending", "in_progress", "draft"].includes(stageState.status)) return true;
+  // An in-progress stage is already owned by the current worker. Stale
+  // claims are recovered separately by recoverStaleInProgress().
+  if (["pending", "draft"].includes(stageState.status)) return true;
   if (stageState.status !== "deferred") return false;
   return Boolean(stageState.nextReviewAt && stageState.nextReviewAt <= now);
 }
@@ -233,6 +403,7 @@ export function buildEnrichmentCampaignReport(state, { limit = 3, now = new Date
   const due = works.filter((work) => work.actionableNow).slice(0, limit);
   const waitingForHuman = works.filter((work) => work.currentStatus === "waiting_user");
   const blocked = works.filter((work) => work.currentStatus === "blocked");
+  const inProgress = works.filter((work) => work.currentStatus === "in_progress");
   const scheduledReviews = works.filter((work) => work.currentStatus === "deferred" && !work.actionableNow);
   const completed = works.filter((work) => work.currentStage === null);
   return {
@@ -242,12 +413,14 @@ export function buildEnrichmentCampaignReport(state, { limit = 3, now = new Date
       actionableNow: works.filter((work) => work.actionableNow).length,
       waitingForHuman: waitingForHuman.length,
       blocked: blocked.length,
+      inProgress: inProgress.length,
       scheduledReview: scheduledReviews.length,
       completed: completed.length
     },
     due,
     waitingForHuman,
     blocked,
+    inProgress,
     scheduledReviews,
     completed: completed.slice(0, limit)
   };

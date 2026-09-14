@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA_SQL = `
 CREATE TABLE schema_meta (version INTEGER NOT NULL);
@@ -109,7 +109,7 @@ CREATE TABLE scheduler_state (
 CREATE TABLE workflow_tasks (
   id INTEGER PRIMARY KEY,
   task_key TEXT NOT NULL UNIQUE,
-  task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill')),
+  task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill', 'subtitle_acquisition')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'waiting_user', 'deferred', 'done')),
   source_id INTEGER REFERENCES sources(id),
   work_id INTEGER REFERENCES works(id),
@@ -181,6 +181,63 @@ function migrateV3ToV4(db) {
   db.prepare("UPDATE schema_meta SET version=?").run(4);
 }
 
+function migrateV4ToV5(db) {
+  const hasWorkflowTasks = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_tasks'").get();
+  if (!hasWorkflowTasks) {
+    db.exec(`
+      CREATE TABLE workflow_tasks (
+        id INTEGER PRIMARY KEY,
+        task_key TEXT NOT NULL UNIQUE,
+        task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill', 'subtitle_acquisition')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'waiting_user', 'deferred', 'done')),
+        source_id INTEGER REFERENCES sources(id),
+        work_id INTEGER REFERENCES works(id),
+        variant_id INTEGER REFERENCES variants(id),
+        priority_score REAL NOT NULL DEFAULT 0,
+        reason TEXT,
+        payload_json TEXT,
+        last_error TEXT,
+        next_run_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX workflow_tasks_due_idx
+        ON workflow_tasks (task_type, status, next_run_at, priority_score DESC, created_at);
+    `);
+    db.prepare("UPDATE schema_meta SET version=?").run(5);
+    return;
+  }
+  db.exec(`
+    CREATE TABLE workflow_tasks_v5 (
+      id INTEGER PRIMARY KEY,
+      task_key TEXT NOT NULL UNIQUE,
+      task_type TEXT NOT NULL CHECK (task_type IN ('intake', 'metadata_backfill', 'subtitle_acquisition')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'waiting_user', 'deferred', 'done')),
+      source_id INTEGER REFERENCES sources(id),
+      work_id INTEGER REFERENCES works(id),
+      variant_id INTEGER REFERENCES variants(id),
+      priority_score REAL NOT NULL DEFAULT 0,
+      reason TEXT,
+      payload_json TEXT,
+      last_error TEXT,
+      next_run_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO workflow_tasks_v5
+      (id, task_key, task_type, status, source_id, work_id, variant_id, priority_score,
+       reason, payload_json, last_error, next_run_at, created_at, updated_at)
+      SELECT id, task_key, task_type, status, source_id, work_id, variant_id, priority_score,
+       reason, payload_json, last_error, next_run_at, created_at, updated_at
+      FROM workflow_tasks;
+    DROP TABLE workflow_tasks;
+    ALTER TABLE workflow_tasks_v5 RENAME TO workflow_tasks;
+    CREATE INDEX workflow_tasks_due_idx
+      ON workflow_tasks (task_type, status, next_run_at, priority_score DESC, created_at);
+  `);
+  db.prepare("UPDATE schema_meta SET version=?").run(5);
+}
+
 export function withTransaction(db, fn) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -225,6 +282,10 @@ export function openLedger(filePath) {
       if (version === 3) {
         migrateV3ToV4(db);
         version = 4;
+      }
+      if (version === 4) {
+        withTransaction(db, () => migrateV4ToV5(db));
+        version = 5;
       }
       if (version !== SCHEMA_VERSION) throw new Error(`unsupported film ledger schema version: ${version ?? "missing"}`);
     }

@@ -64,6 +64,24 @@ function mockDb(rows) {
   return { prepare: () => ({ all: () => rows }) };
 }
 
+test("unscoped cleanup finds staging outputs but never requeues quarantine", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-staging-"));
+  try {
+    const staging = path.join(root, "external", "ready.mp4");
+    const quarantined = path.join(root, "待人工删除", "ready.variant-2.mp4");
+    for (const file of [staging, quarantined]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "ready");
+    }
+    const db = mockDb([staging, quarantined].map((output_path, index) => ({
+      variant_id: index + 1, output_path, output_size_bytes: 5
+    })));
+    assert.deepEqual(collectCleanupCandidates(db).filter(row => row.eligible).map(row => row.variantId), [1]);
+    assert.deepEqual(collectCleanupCandidates(db)[1].reasons, ["already_quarantined"]);
+    assert.equal(collectCleanupCandidates(db, path.join(root, "default")).some(row => row.eligible), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("cleanup report accepts only sync-ready files with matching ledger size", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-"));
   const filePath = path.join(root, "ready.mp4");
@@ -328,6 +346,62 @@ test("unlinked non-empty sources are not cleanup candidates", () => {
   }
 });
 
+test("a zero-variant duplicate source is cleanup eligible only after expansion closes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-zero-variant-duplicate-"));
+  const sourcePath = path.join(root, "duplicate-source");
+  fs.mkdirSync(sourcePath);
+  fs.writeFileSync(path.join(sourcePath, "episode01.mkv"), "source");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 18,
+      work_id: 232,
+      absolute_path: sourcePath,
+      relative_path: "duplicate-source",
+      source_kind: "duplicate_source",
+      canonical_title: "Covered duplicate",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] existing released specification covers this duplicate source",
+      linked_variant_count: 0,
+      sync_ready_count: 0,
+      closed_variant_count: 0,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.linkedVariantCount, 0);
+    assert.equal(candidate.mediaFileCount, 1);
+    assert.deepEqual(candidate.reasons, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a zero-variant duplicate source remains blocked while expansion is open", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-zero-variant-open-"));
+  const sourcePath = path.join(root, "duplicate-source");
+  fs.mkdirSync(sourcePath);
+  fs.writeFileSync(path.join(sourcePath, "episode01.mkv"), "source");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 19,
+      work_id: 232,
+      absolute_path: sourcePath,
+      relative_path: "duplicate-source",
+      source_kind: "duplicate_source",
+      canonical_title: "Open duplicate",
+      workflow_status: "AI 处理中",
+      workflow_note: "[规格扩展:OPEN] compare another audio track",
+      linked_variant_count: 0,
+      sync_ready_count: 0,
+      closed_variant_count: 0,
+      active_variant_count: 0
+    }]));
+    assert.equal(candidate.eligible, false);
+    assert.deepEqual(candidate.reasons, ["source_expansion_open"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("source cleanup remains blocked while the work has an open expansion marker", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-expansion-"));
   const sourcePath = path.join(root, "source.mkv");
@@ -444,6 +518,27 @@ test("cleanup move quarantines only eligible candidates without deleting them", 
     assert.equal(fs.existsSync(moved.moved[0].destination), true);
     assert.equal(fs.existsSync(blocked), true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("cleanup move preserves a dotted directory basename before the ledger suffix", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-dotted-dir-"));
+  const quarantine = path.join(root, "quarantine");
+  const source = path.join(root, "Movie.2025.BluRay.7.1-Group");
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, "disc.iso"), "disc");
+  try {
+    const result = moveCleanupCandidates([{
+      candidate_type: "source_input",
+      sourceId: 1032,
+      path: source,
+      isDirectory: true,
+      eligible: true
+    }], { quarantineDir: quarantine });
+    assert.equal(result.failed.length, 0);
+    assert.equal(path.basename(result.moved[0].destination), "Movie.2025.BluRay.7.1-Group.source-1032");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("cleanup move records a locked candidate and continues", () => {

@@ -98,6 +98,13 @@ test("plugin revision records the updated subtitle gate contract", () => {
   assert.match(cycle, new RegExp(`Stable Contract \\(${manifest.version.replaceAll(".", "\\.")}\\)`, "u"));
 });
 
+test("evidence-only people fallbacks require a formal publishable report", () => {
+  const peopleWorkflow = read("skills/wwp-people-curator/references/workflow.md");
+  assert.match(peopleWorkflow, /An evidence-only fallback report is not a publishable People report/u);
+  assert.match(peopleWorkflow, /require `profileCount > 0`, zero identity issues, zero unresolved entries/u);
+  assert.match(peopleWorkflow, /must never be counted as completed metadata or sent directly to Notion/u);
+});
+
 test("release completion requires playable and verified metadata gates", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const publisher = read("skills/wwp-notion-publisher/SKILL.md");
@@ -285,6 +292,33 @@ test("large uploads stop before paid proxy fallback and bind fixed-IP retries to
   assert.doesNotMatch(trafficMonitor, /state[^]*endpoint\.url/u);
 });
 
+test("new series intake persists probe evidence and prepares size-neutral destinations before encoding", () => {
+  const cycle = read("references/workflow-cycle.md");
+  const series = read("skills/wwp-series-producer/SKILL.md");
+
+  assert.match(cycle, /persist the representative probe path plus quality, subtitle, audio, color, and episode-coverage evidence/u);
+  assert.match(cycle, /create the hidden work page and its complete destination tree immediately/u);
+  assert.match(cycle, /provisional prepared spec title may omit its size/u);
+  assert.match(cycle, /inherited proxy `ECONNRESET`\/TLS failure is transport evidence, not a page-permission verdict/u);
+  assert.match(cycle, /does not waive the separate upload route proof/u);
+  assert.match(series, /prepared title may omit size until outputs exist/u);
+  assert.match(series, /calculate the measured decimal-GB range from every selected episode/u);
+  assert.match(cycle, /Register the exact work\/spec\/episode target first, then use `adopt-existing-variant`/u);
+  assert.match(series, /do not call `record-qc` directly from `selected`/u);
+});
+
+test("production people catalog reads only the current indexed snapshot generation", () => {
+  const workflow = read("skills/wwp-people-curator/references/workflow.md");
+  const azureStore = read("../../../packages/cache-store/src/person-catalog-azure.ts");
+
+  assert.match(workflow, /indexed `PartitionKey` plus\s+`RowKey` prefix range/u);
+  assert.match(workflow, /Never filter the history\s+by the non-key `generationId` property/u);
+  assert.match(workflow, /never issue one request per chunk/u);
+  assert.match(azureStore, /RowKey ge/u);
+  assert.match(azureStore, /RowKey lt/u);
+  assert.doesNotMatch(azureStore, /generationId eq/u);
+});
+
 test("structured Media Assets are not truncated by the legacy variant cap", () => {
   const publisher = read("skills/wwp-notion-publisher/SKILL.md");
   const scriptMap = read("references/script-map.md");
@@ -359,6 +393,51 @@ test("automatic goal continuations suppress duplicate no-change reports", () => 
   assert.match(cycle, /automatic goal continuation is not itself a workflow-state change/u);
   assert.match(cycle, /suppress a\s+duplicate user-visible status report/u);
   assert.match(cycle, /reported once with its exact next\s+trigger or review time/u);
+});
+
+test("item blockers cannot be promoted to a globally blocked Goal", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(producer, /continuation\.goalDisposition/u);
+  assert.match(producer, /canMarkGoalBlocked=false/u);
+  assert.match(producer, /workflow-wide blocker/u);
+  assert.match(cycle, /goalDisposition/u);
+  assert.match(cycle, /isolated work-item failures/u);
+});
+
+test("people sub-batches publish clean profiles without closing residual work", () => {
+  const people = read("skills/wwp-people-curator/SKILL.md");
+  const workflow = read("skills/wwp-people-curator/references/workflow.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(people, /publish the clean profiles as an explicit sub-batch/u);
+  assert.match(people, /return the work-level People stage to `pending`/u);
+  assert.match(people, /Use `completed` only after the work-level/u);
+  assert.match(people, /settle-people-coverage/u);
+  assert.match(workflow, /exact\s+remaining names\/credits and next trigger/u);
+  assert.match(workflow, /not a\s+reason to mark the complete production Goal blocked/u);
+  assert.match(workflow, /settle-people-coverage/u);
+  assert.match(workflow, /non-empty `fully_linked` canonical/u);
+  assert.match(workflow, /exact linked\/total\/residual counts/u);
+  assert.match(people, /authoritative `works` collection/u);
+  assert.match(people, /`candidates` intentionally omits `fully_linked` works/u);
+  assert.match(workflow, /Prefer an unlinked matching source row/u);
+  assert.match(workflow, /canonical person, department, compatible job, and character/u);
+  assert.match(workflow, /Never collapse a person's distinct departments/u);
+  assert.match(cycle, /incomplete-only `candidates` collection may be empty/u);
+});
+
+test("people targeted supplements allow reviewed stable IDs without forcing Wikidata", () => {
+  const people = read("skills/wwp-people-curator/SKILL.md");
+  const workflow = read("skills/wwp-people-curator/references/workflow.md");
+  const scripts = read("references/script-map.md");
+
+  assert.match(people, /reviewed IMDb or TMDB identity/u);
+  assert.match(workflow, /HTTPS `workCreditUrl` proving\s+the credit on that work/u);
+  assert.match(workflow, /must not infer biography, dates, images, alternate names, jobs, or\s+characters from a name match/u);
+  assert.match(scripts, /person-targeted-supplement\.mjs/u);
+  assert.match(scripts, /tool rejects name-only rows/u);
 });
 
 test("HDR color QC requires matched source-reference and final frames", () => {

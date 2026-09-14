@@ -10,8 +10,10 @@ import {
   buildEnrichmentCampaignReport,
   enqueueEnrichmentWorks,
   readEnrichmentCampaign,
+  recoverStaleInProgress,
   writeEnrichmentCampaign
 } from "./lib/work-enrichment-campaign.mjs";
+import { buildWorkflowContinuation } from "./lib/film-workflow-continuation.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -57,14 +59,14 @@ function parseArgs(argv) {
 
 function currentWorkIds(cycle) {
   const lanes = cycle.lanes ?? {};
-  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.production, lanes.productionCoverage, lanes.publication]
+  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.subtitleAcquisition, lanes.production, lanes.productionCoverage, lanes.publication]
     .flatMap((lane) => lane ?? []);
   return rows.map((row) => row.work_id ?? row.workId ?? row.ww_work_id ?? row.wwWorkId).filter(Boolean);
 }
 
 function currentWorkRefs(cycle, databasePath = ".local-data/wwp-film-workflow.sqlite") {
   const lanes = cycle.lanes ?? {};
-  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.production, lanes.productionCoverage, lanes.publication]
+  const rows = [lanes.intake, lanes.catalogMaintenance, lanes.subtitleAcquisition, lanes.production, lanes.productionCoverage, lanes.publication]
     .flatMap((lane) => lane ?? []);
   const refs = rows.map((row) => ({
     ledgerWorkId: row.work_id ?? row.workId,
@@ -96,6 +98,9 @@ function currentWorkRefs(cycle, databasePath = ".local-data/wwp-film-workflow.sq
 
 function loadEnrichmentCampaign(statePath, { limit, inputs = [], source = "saved_campaign" } = {}) {
   let state = readEnrichmentCampaign(statePath);
+  const recovered = recoverStaleInProgress(state);
+  state = recovered.state;
+  if (recovered.recovered.length > 0) writeEnrichmentCampaign(statePath, state);
   let enqueue = { added: [], existing: [] };
   if (inputs.length > 0) {
     enqueue = enqueueEnrichmentWorks(state, inputs, { source });
@@ -105,7 +110,31 @@ function loadEnrichmentCampaign(statePath, { limit, inputs = [], source = "saved
   const report = buildEnrichmentCampaignReport(state, { limit });
   report.statePath = path.resolve(statePath);
   report.enqueued = { added: enqueue.added, existing: enqueue.existing };
+  report.recoveredStaleInProgress = recovered.recovered;
   return report;
+}
+
+function filterCampaignReportToStage(report, stage, { limit = 3 } = {}) {
+  const keep = (rows) => (rows ?? []).filter((row) => row.currentStage === stage);
+  const due = keep(report.due);
+  const waitingForHuman = keep(report.waitingForHuman);
+  const blocked = keep(report.blocked);
+  const scheduledReviews = keep(report.scheduledReviews);
+  return {
+    ...report,
+    due: due.slice(0, limit),
+    waitingForHuman,
+    blocked,
+    scheduledReviews,
+    summary: {
+      total: due.length + waitingForHuman.length + blocked.length + scheduledReviews.length,
+      actionableNow: due.length,
+      waitingForHuman: waitingForHuman.length,
+      blocked: blocked.length,
+      scheduledReview: scheduledReviews.length,
+      completed: 0
+    }
+  };
 }
 
 function run(args) {
@@ -133,7 +162,7 @@ function applyCleanupCandidates(root, candidates) {
   for (const candidate of candidates) {
     const args = [path.join(root, "film-cleanup-candidates.mjs"), "--candidate-type", candidate.candidate_type];
     if (candidate.candidate_type === "playable_output" && candidate.variantId) {
-      args.push("--variant-id", String(candidate.variantId));
+      args.push("--variant-id", String(candidate.variantId), "--output-root", path.dirname(candidate.path));
     } else if (candidate.candidate_type === "source_input" && candidate.sourceId) {
       args.push("--source-id", String(candidate.sourceId));
     } else {
@@ -181,6 +210,7 @@ function buildSummary(scan, cycle) {
   const changedSources = roots.reduce((total, root) => total + (root.summary?.changed ?? 0), 0);
   const intakeCandidates = (laneRows.intake ?? []).length;
   const metadataCandidates = (laneRows.catalogMaintenance ?? []).length;
+  const subtitleCandidates = (laneRows.subtitleAcquisition ?? []).length;
   const productionCandidates = (laneRows.production ?? []).length;
   const seriesCoverageGaps = (laneRows.productionCoverage ?? []).length;
   const publicationPending = (laneRows.publication ?? []).length;
@@ -199,6 +229,7 @@ function buildSummary(scan, cycle) {
     removedSources: roots.reduce((total, root) => total + (root.summary?.removed ?? 0), 0),
     intakeCandidates,
     metadataCandidates,
+    subtitleCandidates,
     productionCandidates,
     seriesCoverageGaps,
     publicationPending,
@@ -215,6 +246,7 @@ function buildSummary(scan, cycle) {
     workMessage: [
       intakeCandidates && `待识别 ${intakeCandidates}`,
       metadataCandidates && `待补资料 ${metadataCandidates}`,
+      subtitleCandidates && `待获取字幕 ${subtitleCandidates}`,
       productionCandidates && `待制作 ${productionCandidates}`,
       seriesCoverageGaps && `剧集规格覆盖缺口 ${seriesCoverageGaps}`,
       publicationPending && `待发布闭环 ${publicationPending}`,
@@ -226,6 +258,7 @@ function buildSummary(scan, cycle) {
     hasWorkBeyondNewDiscovery: [
       laneRows.intake,
       laneRows.catalogMaintenance,
+      laneRows.subtitleAcquisition,
       laneRows.production,
       laneRows.productionCoverage,
       laneRows.publication,
@@ -248,9 +281,14 @@ function runMain(options, lock) {
   const root = path.resolve("tools");
   if (options.mode === PRODUCTION_MODES.PEOPLE_ONLY || options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY) {
     const enrichmentOnly = options.mode === PRODUCTION_MODES.ENRICHMENT_ONLY;
+    const savedCampaign = loadEnrichmentCampaign(options.enrichmentStatePath, {
+      // People-only needs the full summary to filter by stage, then applies
+      // the normal bounded limit to the returned due list.
+      limit: enrichmentOnly ? options.limit : 1_000_000
+    });
     const enrichmentCampaign = enrichmentOnly
-      ? loadEnrichmentCampaign(options.enrichmentStatePath, { limit: options.limit })
-      : null;
+      ? savedCampaign
+      : filterCampaignReportToStage(savedCampaign, "people", { limit: options.limit });
     const campaignWorkIds = enrichmentCampaign
       ? [...enrichmentCampaign.due, ...enrichmentCampaign.waitingForHuman, ...enrichmentCampaign.blocked, ...enrichmentCampaign.scheduledReviews]
           .map((work) => work.externalWorkId ?? work.pageId ?? work.ledgerWorkId)
@@ -267,22 +305,25 @@ function runMain(options, lock) {
       },
       scan: { skipped: true, reason: enrichmentOnly ? "enrichment_only_mode" : "people_only_mode" },
       enrichmentCampaign,
-      summary: enrichmentOnly
-        ? {
-            discoveryMessage: "资料补全模式未扫描影视输入目录。",
-            workMessage: enrichmentCampaign.summary.total
-              ? `已恢复资料补全批次：当前可推进 ${enrichmentCampaign.summary.actionableNow}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}，已完成 ${enrichmentCampaign.summary.completed}。具体下一步见 enrichmentCampaign。`
-              : "当前没有已保存的资料补全批次；需要先从影视本轮或历史补全清单加入作品。",
-            hasWorkBeyondNewDiscovery: enrichmentCampaign.summary.actionableNow > 0
-              || enrichmentCampaign.summary.waitingForHuman > 0
-              || enrichmentCampaign.summary.blocked > 0
-              || enrichmentCampaign.summary.scheduledReview > 0
-          }
-        : {
-            discoveryMessage: "人物专做模式未扫描影视输入目录。",
-            workMessage: "恢复已保存的人物 campaign；具体候选、配额和阻塞项由 people-cycle-state.json 报告。"
-          }
+      summary: {
+        discoveryMessage: enrichmentOnly
+          ? "资料补全模式未扫描影视输入目录。"
+          : "人物专做模式未扫描影视输入目录。",
+        workMessage: enrichmentCampaign.summary.total
+          ? `${enrichmentOnly ? "已恢复资料补全批次" : "已恢复人物补全批次"}：当前可推进 ${enrichmentCampaign.summary.actionableNow}，正在执行 ${enrichmentCampaign.summary.inProgress ?? 0}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}。具体下一步见 enrichmentCampaign。`
+          : `${enrichmentOnly ? "当前没有已保存的资料补全批次" : "当前没有已保存的人物补全批次"}。`,
+        hasWorkBeyondNewDiscovery: enrichmentCampaign.summary.actionableNow > 0
+          || enrichmentCampaign.summary.inProgress > 0
+          || enrichmentCampaign.summary.waitingForHuman > 0
+          || enrichmentCampaign.summary.blocked > 0
+          || enrichmentCampaign.summary.scheduledReview > 0
+      }
     };
+    result.continuation = buildWorkflowContinuation({
+      cycle: {},
+      enrichmentCampaign,
+      externalLaneRequired: null
+    });
     process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
     return;
   }
@@ -340,10 +381,11 @@ function runMain(options, lock) {
   if (enrichmentCampaign) {
     summary.enrichment = enrichmentCampaign.summary;
     summary.enrichmentMessage = enrichmentCampaign.summary.total
-      ? `资料补全批次：当前可推进 ${enrichmentCampaign.summary.actionableNow}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}，已完成 ${enrichmentCampaign.summary.completed}。`
+      ? `资料补全批次：当前可推进 ${enrichmentCampaign.summary.actionableNow}，正在执行 ${enrichmentCampaign.summary.inProgress ?? 0}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}，已完成 ${enrichmentCampaign.summary.completed}。`
       : "本轮没有可加入资料补全批次的作品。";
     summary.hasWorkBeyondNewDiscovery = summary.hasWorkBeyondNewDiscovery
       || enrichmentCampaign.summary.actionableNow > 0
+      || enrichmentCampaign.summary.inProgress > 0
       || enrichmentCampaign.summary.waitingForHuman > 0
       || enrichmentCampaign.summary.blocked > 0;
   }
@@ -372,6 +414,7 @@ function runMain(options, lock) {
     enrichmentCampaign,
     cycle
   };
+  result.continuation = buildWorkflowContinuation({ cycle, enrichmentCampaign });
   process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
 }
 

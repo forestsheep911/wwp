@@ -31,7 +31,7 @@ function parse(argv) {
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--season-page", "--spec-page", "--episode-page",
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
     "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail", "--canonical-source-id",
-    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at",
+    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at", "--scope-state",
     "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root", "--resolve-ip", "--local-address"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
   const booleans = new Set(["--json", "--pass", "--fail", "--dry-run", "--force-after-429", "--replace-expected-filename", "--no-proxy"]);
@@ -72,7 +72,7 @@ function output(value, json, human) {
   else process.stdout.write(`${human ?? JSON.stringify(value)}\n`);
 }
 
-function listCleanupQueue(db, outputRoot = "E:\\video_made", limit) {
+function listCleanupQueue(db, outputRoot, limit) {
   const rows = [
     ...collectCleanupCandidates(db, outputRoot).map((row) => ({ candidate_type: "playable_output", ...row })),
     ...collectSourceCleanupCandidates(db).map((row) => ({ candidate_type: "source_input", ...row }))
@@ -99,7 +99,10 @@ async function loadNotionAdapter(options = {}) {
     return module.createAdapter();
   }
   const { Client } = await import("@notionhq/client");
-  const auth = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+  // Reconciliation is read-only. Prefer the project's read-only integration
+  // so page visibility matches the other inspection tools and upload tokens
+  // cannot accidentally determine the ledger's readback scope.
+  const auth = process.env.NOTION_READ_ONLY_TOKEN || process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
   if (!auth) throw new Error("NOTION_API_KEY or NOTION_TOKEN is required");
   installNotionDnsOverride(options.resolve_ip || process.env.NOTION_API_RESOLVE_IP);
   const localAddress = options.local_address || process.env.NOTION_API_LOCAL_ADDRESS;
@@ -145,16 +148,27 @@ async function main() {
       if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("--limit must be between 1 and 20");
       const refreshedIntake = repo.refreshDueIntakeTasks({ limit });
       const refreshedMetadata = repo.refreshDueMetadataTasks({ limit });
+      const subtitleTaskSync = repo.syncSubtitleAcquisitionTasks({ limit });
+      let sourceDisposition = collectSourceDispositions(db);
+      const sourceIntakeAvailability = repo.syncSourceIntakeAvailability(sourceDisposition.items);
+      if (sourceIntakeAvailability.length > 0) sourceDisposition = collectSourceDispositions(db);
       const workflowTasks = repo.getWorkflowTaskSummary();
-      const sourceDisposition = collectSourceDispositions(db);
       const result = {
         refreshedIntakeTasks: refreshedIntake.map(task => task.id),
         refreshedMetadataTasks: refreshedMetadata.map(task => task.id),
+        subtitleTaskSync: {
+          candidateSourceIds: subtitleTaskSync.candidates.map(row => row.source_id),
+          createdTaskIds: subtitleTaskSync.created.map(task => task.id),
+          reopenedTaskIds: subtitleTaskSync.reopened.map(task => task.id),
+          resolvedTaskIds: subtitleTaskSync.resolved.map(task => task.id)
+        },
+        sourceIntakeAvailability: sourceIntakeAvailability.map(task => ({ id: task.id, sourceId: task.source_id, status: task.status, reason: task.reason })),
         status: repo.getStatusSummary(),
         lanes: {
           collaboration: repo.listWorkHandoffs({ limit: Math.min(limit, 3) }),
           intake: repo.listWorkflowTasks({ taskType: "intake", limit }),
           catalogMaintenance: repo.listWorkflowTasks({ taskType: "metadata_backfill", limit }),
+          subtitleAcquisition: repo.listWorkflowTasks({ taskType: "subtitle_acquisition", limit }),
           production: repo.listProductionQueue({ limit }),
           productionCoverage: repo.listSeriesCoverageGaps({ limit }),
           publication: repo.listPublicationCandidates({ limit }),
@@ -169,12 +183,13 @@ async function main() {
       const stage = requireOption(options, "stage", "--stage");
       if (stage === "intake") output(repo.listWorkflowTasks({ taskType: "intake", limit: options.limit }), options.json);
       else if (stage === "metadata" || stage === "catalog") output(repo.listWorkflowTasks({ taskType: "metadata_backfill", limit: options.limit }), options.json);
+      else if (stage === "subtitle" || stage === "subtitle-acquisition") output(repo.listWorkflowTasks({ taskType: "subtitle_acquisition", limit: options.limit }), options.json);
       else if (stage === "production") output(repo.listProductionQueue({ limit: options.limit }), options.json);
       else if (stage === "coverage") output(repo.listSeriesCoverageGaps({ limit: options.limit }), options.json);
       else if (stage === "publication") output(repo.listPublicationCandidates({ limit: options.limit }), options.json);
       else if (stage === "cleanup") output(listCleanupQueue(db, options.output_root, options.limit), options.json);
       else if (stage === "handoff" || stage === "collaboration") output(repo.listWorkHandoffs({ limit: options.limit }), options.json);
-      else throw new Error("--stage must be handoff|collaboration|intake|metadata|catalog|production|coverage|publication|cleanup");
+      else throw new Error("--stage must be handoff|collaboration|intake|metadata|catalog|subtitle|subtitle-acquisition|production|coverage|publication|cleanup");
     } else if (command === "task-status") {
       output(repo.getWorkflowTaskSummary(), options.json);
     } else if (command === "complete-task") {
@@ -193,6 +208,11 @@ async function main() {
         reason: options.failure_detail ?? "Source needs intake review",
         priorityScore: options.priority_score == null ? undefined : Number(options.priority_score)
       }), options.json, `scheduled intake review for source ${sourceId}`);
+    } else if (command === "set-work-scope") {
+      const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
+      const scopeState = requireOption(options, "scope_state", "--scope-state");
+      output(repo.setWorkScopeState(workId, scopeState, options.failure_detail ?? options.note ?? ""), options.json,
+        `work ${workId}: scope=${scopeState}`);
     } else if (command === "set-handoff") {
       const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
       const actor = options.actor ?? "ai";
@@ -402,6 +422,9 @@ async function main() {
     } else if (command === "defer-task") {
       const id = asId(requireOption(options, "task", "--task"), "--task");
       output(repo.transitionWorkflowTask(id, "deferred", { reason: options.failure_detail, nextRunAt: options.next_review_at }), options.json, `deferred workflow task ${id}`);
+    } else if (command === "wait-task") {
+      const id = asId(requireOption(options, "task", "--task"), "--task");
+      output(repo.transitionWorkflowTask(id, "waiting_user", { reason: requireOption(options, "failure_detail", "--failure-detail") }), options.json, `workflow task ${id} is waiting for user input`);
     } else if (command === "handoff") {
       const rows = repo.listManualUploadHandoffs({ limit: options.limit }).map((row) => ({
         variantId: row.variant_id, workTitle: row.work_title, year: row.year, specTitle: row.spec_title,
@@ -418,6 +441,7 @@ async function main() {
         collaboration: repo.listWorkHandoffs({ limit: 3 }).length,
         intake: workflowTasks["intake:pending"] ?? 0,
         metadata: workflowTasks["metadata_backfill:pending"] ?? 0,
+        subtitle: workflowTasks["subtitle_acquisition:pending"] ?? 0,
         production: repo.listProductionQueue({ limit: 50 }).length,
         publication: repo.listPublicationCandidates({ limit: 20 }).length,
         cleanup: listCleanupQueue(db, options.output_root).filter((row) => row.eligible).length

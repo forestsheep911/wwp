@@ -50,8 +50,8 @@ function quarantineDirectory(filePath, override) {
   return path.join(path.parse(path.resolve(filePath)).root, "待人工删除");
 }
 
-function uniqueQuarantinePath(sourcePath, quarantineDir, prefix) {
-  const extension = path.extname(sourcePath);
+function uniqueQuarantinePath(sourcePath, quarantineDir, prefix, sourceIsDirectory = false) {
+  const extension = sourceIsDirectory ? "" : path.extname(sourcePath);
   const base = path.basename(sourcePath, extension);
   let destination = path.join(quarantineDir, `${base}.${prefix}${extension}`);
   let suffix = 2;
@@ -62,8 +62,8 @@ function uniqueQuarantinePath(sourcePath, quarantineDir, prefix) {
   return destination;
 }
 
-function baseQuarantinePath(sourcePath, quarantineDir, prefix) {
-  const extension = path.extname(sourcePath);
+function baseQuarantinePath(sourcePath, quarantineDir, prefix, sourceIsDirectory = false) {
+  const extension = sourceIsDirectory ? "" : path.extname(sourcePath);
   const base = path.basename(sourcePath, extension);
   return path.join(quarantineDir, `${base}.${prefix}${extension}`);
 }
@@ -125,19 +125,29 @@ export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
       : candidate.sourceId != null
         ? `source-${candidate.sourceId}`
         : "uploaded";
-    const baseDestination = baseQuarantinePath(candidate.path, root, prefix);
     const sourceIsDirectory = fs.existsSync(candidate.path) && fs.statSync(candidate.path).isDirectory();
+    const baseDestination = baseQuarantinePath(candidate.path, root, prefix, sourceIsDirectory);
     const resumesPartialDirectory = sourceIsDirectory
       && fs.existsSync(baseDestination)
       && fs.statSync(baseDestination).isDirectory();
     const destination = resumesPartialDirectory
       ? baseDestination
-      : uniqueQuarantinePath(candidate.path, root, prefix);
+      : uniqueQuarantinePath(candidate.path, root, prefix, sourceIsDirectory);
     try {
       if (resumesPartialDirectory) mergeDirectoryIntoExisting(candidate.path, destination);
       else fs.renameSync(candidate.path, destination);
       moved.push({ candidateType: candidate.candidate_type, variantId: candidate.variantId ?? null, sourceId: candidate.sourceId ?? null, path: candidate.path, destination, isDirectory: candidate.isDirectory ?? false });
     } catch (error) {
+      if (sourceIsDirectory && error?.code === "EPERM" && !fs.existsSync(destination)) {
+        try {
+          mergeDirectoryIntoExisting(candidate.path, destination);
+          moved.push({ candidateType: candidate.candidate_type, variantId: candidate.variantId ?? null, sourceId: candidate.sourceId ?? null, path: candidate.path, destination, isDirectory: true, moveMode: "directory_contents_fallback" });
+          continue;
+        } catch (fallbackError) {
+          error = new Error(`${error.message}; directory contents fallback failed: ${fallbackError.message}`, { cause: fallbackError });
+          error.code = fallbackError?.code ?? "directory_fallback_failed";
+        }
+      }
       failed.push({
         candidateType: candidate.candidate_type,
         variantId: candidate.variantId ?? null,
@@ -321,7 +331,7 @@ function isEmptyDirectory(directory) {
 }
 
 export function collectCleanupCandidates(db, outputRoot) {
-  const root = path.resolve(outputRoot);
+  const root = outputRoot == null ? null : path.resolve(outputRoot);
   const rows = db.prepare(`
     SELECT variants.id AS variant_id, variants.output_path, variants.output_size_bytes,
            variants.publication_state, works.canonical_title, works.workflow_status
@@ -342,7 +352,11 @@ export function collectCleanupCandidates(db, outputRoot) {
       eligible: false,
       reasons: []
     };
-    if (!isInsideRoot(filePath, root)) {
+    if (filePath.split(/[\\/]/u).includes("待人工删除")) {
+      result.reasons.push("already_quarantined");
+      return result;
+    }
+    if (root && !isInsideRoot(filePath, root)) {
       result.reasons.push("outside_output_root");
       return result;
     }
@@ -364,12 +378,16 @@ export function collectSourceCleanupCandidates(db) {
     SELECT sources.id AS source_id, sources.work_id, sources.absolute_path, sources.relative_path, sources.source_kind,
            input_roots.path AS input_root_path,
            works.canonical_title, works.workflow_status, works.workflow_note,
-           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets' THEN 1 ELSE 0 END) AS linked_variant_count,
-           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+           SUM(CASE WHEN variants.id IS NOT NULL
+             AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets') THEN 1 ELSE 0 END) AS linked_variant_count,
+           SUM(CASE WHEN variants.id IS NOT NULL
+             AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets')
              THEN CASE WHEN variants.publication_state='sync_ready' THEN 1 ELSE 0 END ELSE 0 END) AS sync_ready_count,
-           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+           SUM(CASE WHEN variants.id IS NOT NULL
+             AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets')
              THEN CASE WHEN variants.publication_state IN ('sync_ready','cancelled') THEN 1 ELSE 0 END ELSE 0 END) AS closed_variant_count,
-           SUM(CASE WHEN variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets'
+           SUM(CASE WHEN variants.id IS NOT NULL
+             AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets')
              THEN CASE WHEN variants.production_state IN ('encoding','evaluated','selected')
                OR variants.publication_state NOT IN ('sync_ready','cancelled') THEN 1 ELSE 0 END ELSE 0 END) AS active_variant_count
     FROM sources
@@ -406,11 +424,15 @@ export function collectSourceCleanupCandidates(db) {
       result.reasons.push(row.work_id == null ? "empty_unbound_directory" : "empty_source_directory");
       return result;
     }
-    if (row.linked_variant_count === 0) return null;
+    const zeroVariantDuplicate = row.linked_variant_count === 0 && row.source_kind === "duplicate_source";
+    if (row.linked_variant_count === 0 && !zeroVariantDuplicate) return null;
     if (hasWorkColumn && row.work_id == null) {
       return null;
     }
-    if (row.active_variant_count > 0 || row.closed_variant_count !== row.linked_variant_count) result.reasons.push("linked_variants_not_closed");
+    if (!zeroVariantDuplicate
+      && (row.active_variant_count > 0 || row.closed_variant_count !== row.linked_variant_count)) {
+      result.reasons.push("linked_variants_not_closed");
+    }
     const expansionDecision = latestExpansionDecision(row.workflow_note);
     if (expansionDecision === "OPEN") result.reasons.push("source_expansion_open");
     else if (expansionDecision !== "CLOSED") result.reasons.push("source_expansion_unresolved");
@@ -421,7 +443,9 @@ export function collectSourceCleanupCandidates(db) {
       result.isDirectory = stats.isDirectory();
       if (result.isDirectory) {
         result.mediaFileCount = countMediaFiles(filePath, row.source_kind);
-        if (result.mediaFileCount > row.linked_variant_count) result.reasons.push("source_media_not_fully_covered");
+        if (!zeroVariantDuplicate && result.mediaFileCount > row.linked_variant_count) {
+          result.reasons.push("source_media_not_fully_covered");
+        }
       }
     }
     result.eligible = result.reasons.length === 0;

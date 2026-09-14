@@ -232,6 +232,27 @@ test("adapter accepts exact asset evidence when the recorded work page is tempor
   assert.equal(result.mediaAssetPageId, "asset-1");
 });
 
+test("adapter recovers a child page exposed by its recorded parent when page retrieval lags", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) {
+      if (page_id === "episode-1") throw Object.assign(new Error("object_not_found"), { code: "object_not_found" });
+      return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } };
+    } },
+    blocks: { children: { async list({ block_id }) {
+      if (block_id === "spec-1") return { results: [{ id: "episode-1", type: "child_page", child_page: { title: "Episode 1" } }], has_more: false };
+      if (block_id === "episode-1") return { results: [{ id: "media-1", type: "video", video: { caption: [{ plain_text: "Example.2025.mp4" }], file: { url: "https://example.test/video.mp4" } } }], has_more: false };
+      return { results: [], has_more: false };
+    } } },
+    dataSources: { async query() { return { results: [publishableAsset()] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", episode_page_id: "episode-1", expected_filename: "Example.2025.mp4"
+  });
+  assert.equal(result.structureVerified, true);
+  assert.equal(result.mediaVerified, true);
+  assert.equal(result.assetsVerified, true);
+});
+
 test("adapter rejects an arbitrary sibling media block when expected filename does not match", async () => {
   const client = {
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
