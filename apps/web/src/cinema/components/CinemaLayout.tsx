@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   Bell,
   ChartNoAxesCombined,
@@ -16,6 +16,7 @@ import {
   MessageCircle,
   MessageSquarePlus,
   Moon,
+  MoreHorizontal,
   ReceiptText,
   Search,
   ShieldCheck,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../../components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -124,6 +126,31 @@ export function CinemaLayout({
 }: CinemaLayoutProps) {
   const themeToggleTitle = theme === "dark" ? copy.layout.themeToLight : copy.layout.themeToDark;
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [touchMenuOpen, setTouchMenuOpen] = useState(false);
+  const touchMenuAction = useRef(false);
+  const touchMenuGroups = [
+    { title: "浏览与发现", items: [
+      { label: "人物索引", icon: UsersRound, action: onOpenPeople },
+      { label: "片库统计", icon: ChartNoAxesCombined, action: onOpenStatistics },
+      { label: copy.layout.watchlist, icon: Compass, action: onOpenWatchlist },
+      { label: copy.layout.forum, icon: MessageCircle, action: onOpenForum }
+    ] },
+    { title: "我的观影", items: [
+      { label: copy.layout.favorites, icon: Star, action: onOpenFavorites },
+      { label: copy.layout.history, icon: History, action: onOpenHistory },
+      { label: copy.layout.tasks, icon: ListChecks, action: onOpenTasks },
+      { label: copy.layout.nowPlaying, icon: Flame, action: onOpenNowPlaying }
+    ] },
+    { title: "服务与账户", items: [
+      { label: "个人中心", icon: UserCircle, action: () => onActiveTabChange("profile") },
+      ...(canChangePasscode ? [{ label: "站内信", icon: Bell, action: onOpenNotices, badge: noticeUnreadCount }] : []),
+      ...(canRequestMovie ? [{ label: copy.layout.request, icon: MessageSquarePlus, action: onOpenMovieRequest }] : []),
+      ...(canChangePasscode ? [{ label: copy.layout.spending, icon: ReceiptText, action: onOpenSpending }] : []),
+      { label: copy.layout.help, icon: HelpCircle, action: onOpenHelp },
+      { label: themeToggleTitle, icon: theme === "dark" ? Sun : Moon, action: onToggleTheme },
+      ...(showAdmin ? [{ label: copy.layout.admin, icon: ShieldCheck, action: () => onActiveTabChange("admin") }] : [])
+    ] }
+  ];
 
   return (
     <main className="min-h-[100dvh]">
@@ -135,6 +162,7 @@ export function CinemaLayout({
               type="button"
               onClick={onOpenHome}
               title={copy.layout.homeTitle}
+              aria-label="返回首页"
             >
               <img alt="" className="h-9 w-9 shrink-0 rounded-md sm:h-10 sm:w-10" src="/wwp-icon-64.png" />
               <span className="hidden min-w-0 sm:block">
@@ -143,6 +171,53 @@ export function CinemaLayout({
             </button>
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2">
+              <div className="flex min-w-0 items-center gap-2 xl:hidden" data-touch-header>
+                <Button className="min-h-11 gap-2 rounded-xl border-emerald-300/25 bg-emerald-300/10 px-4 text-emerald-100 sm:min-w-40 sm:justify-start" variant="outline" onClick={onOpenSearch} aria-label="搜索影片">
+                  <Search className="h-4 w-4" />
+                  <span>搜索影片</span>
+                </Button>
+                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" onClick={onOpenFavorites}>
+                  <Library className="h-4 w-4" />片单
+                </Button>
+                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" onClick={onOpenTasks}>
+                  <ListChecks className="h-4 w-4" />准备
+                </Button>
+                <Dialog open={touchMenuOpen} onOpenChange={setTouchMenuOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="relative min-h-11 rounded-xl px-3" variant="ghost" aria-label="更多功能">
+                      <MoreHorizontal className="h-5 w-5" />更多
+                      {canChangePasscode && noticeUnreadCount > 0 ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-300"><span className="sr-only">有未读站内信</span></span> : null}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="gap-5 sm:max-h-[min(85dvh,760px)]" onCloseAutoFocus={(event) => {
+                    // Do not steal focus from a destination dialog opened by a menu action.
+                    if (touchMenuAction.current && document.activeElement?.closest('[role="dialog"]')) {
+                      event.preventDefault();
+                    }
+                    touchMenuAction.current = false;
+                  }}>
+                    <DialogHeader className="pr-12">
+                      <DialogTitle>更多功能</DialogTitle>
+                      <DialogDescription>{accountLabel} · {accountDetail}</DialogDescription>
+                    </DialogHeader>
+                    {touchMenuGroups.map(group => <section key={group.title} className="grid gap-2" aria-label={group.title}>
+                      <h3 className="text-xs font-semibold text-slate-500">{group.title}</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        {group.items.map(item => <Button key={item.label} className="min-h-12 justify-start rounded-xl border-slate-800 px-3 text-sm" variant="outline" onClick={() => {
+                          touchMenuAction.current = true;
+                          setTouchMenuOpen(false);
+                          item.action();
+                        }}>
+                          <item.icon className="h-4 w-4 shrink-0 text-slate-400" />
+                          <span>{item.label}</span>
+                          {"badge" in item && Number(item.badge) > 0 ? <Badge className="ml-auto" variant="warning">{Number(item.badge)}</Badge> : null}
+                        </Button>)}
+                      </div>
+                    </section>)}
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <div className="hidden items-center gap-2 xl:flex" data-desktop-header>
               <Button type="button" variant="outline" size="icon" onClick={onOpenPeople} title="人物索引">
                 <UsersRound className="h-4 w-4" />
                 <span className="sr-only">人物索引</span>
@@ -221,6 +296,7 @@ export function CinemaLayout({
                   onOpenChange={setAccountMenuOpen}
                 />
               </div>
+              </div>
             </div>
           </div>
         </header>
@@ -249,7 +325,7 @@ export function CinemaLayout({
             <MobileNavButton active={activeTab === "favorites"} icon={<Library className="h-5 w-5" />} label="片单" onClick={onOpenFavorites} />
             <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} label="准备" onClick={onOpenTasks} />
             <MobileNavButton
-              active={!["library", "watchlist", "favorites", "tasks"].includes(activeTab)}
+              active={activeTab === "profile"}
               badge={noticeUnreadCount}
               icon={<CircleUserRound className="h-5 w-5" />}
               label="我的"

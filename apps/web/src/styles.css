@@ -1,5 +1,28 @@
 @import "tailwindcss";
 
+/* A tablet's wider viewport must not shrink touch controls to desktop sizes. */
+@media (any-pointer: coarse) {
+  [data-touch-header] {
+    display: flex;
+  }
+
+  [data-desktop-header] {
+    display: none;
+  }
+
+  [data-ui-button],
+  [data-library-filter] button,
+  [data-desktop-library-sidebar] button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  [data-ui-button-size="icon"] {
+    height: 44px;
+    width: 44px;
+  }
+}
+
 :root {
   color: #e2e8f0;
   background: #020617;

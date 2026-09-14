@@ -714,7 +714,7 @@ function DesktopBrowseFilter({
   };
 
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/72 shadow-xl shadow-black/10 backdrop-blur" aria-label="片库筛选条件">
+    <section data-library-filter className="overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/72 shadow-xl shadow-black/10 backdrop-blur" aria-label="片库筛选条件">
       <header className="group relative flex min-h-14 items-center justify-between gap-4 px-5">
         <button
           className="absolute inset-0 z-0 cursor-pointer rounded-t-xl text-left transition-colors hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400"
@@ -853,7 +853,7 @@ function FilterMultiChoiceRow({
 
   return (
     <div className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-start gap-3">
-      <div className="flex min-h-8 items-center gap-1">
+      <div className="flex min-h-8 flex-wrap items-center gap-1">
         <span className="text-xs font-bold text-slate-500">{label}</span>
         {values.length > 0 ? (
           <button
@@ -947,6 +947,7 @@ function LibraryHome({
   const [browseFilter, setBrowseFilter] = useState<BrowseFilterState>(emptyBrowseFilter);
   const [filterOpen, setFilterOpen] = useState(() => (
     typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+      && !window.matchMedia("(any-pointer: coarse)").matches
   ));
   const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
   const [visibleItemCount, setVisibleItemCount] = useState(browseInitialVisibleCount);
@@ -2807,24 +2808,25 @@ function MovieCard({
         ) : null}
       </div>
 
-      <div className="col-span-2 grid grid-cols-3 gap-2 sm:hidden">
-        <Button asChild className="min-h-11 gap-1 px-2 text-xs" variant="secondary">
+      <div className="col-span-2 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:hidden" data-movie-actions>
+        <Button asChild className="min-h-11 gap-1 rounded-lg px-3 text-sm">
           <a href={getDetailHref(result)} onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}>
-            查看版本
+            查看详情
             <ChevronRight className="h-3.5 w-3.5" />
           </a>
         </Button>
-        <Button className="min-h-11 gap-1 px-2 text-xs" type="button" variant="outline" onClick={() => onSummarize(result)}>
+        <Button className="min-h-11 gap-1 rounded-lg px-2 text-xs" type="button" variant="ghost" onClick={() => onSummarize(result)}>
           <Sparkles className="h-3.5 w-3.5" />
           AI简介
         </Button>
         <Button
-          className={`min-h-11 gap-1 px-2 text-xs ${
+          className={`min-h-11 gap-1 rounded-lg px-2 text-xs ${
             favoriteAssetKeys.has(result.assetKey)
               ? "border-amber-300/40 bg-amber-300/10 text-amber-200"
               : ""
           }`}
           type="button"
+          aria-pressed={favoriteAssetKeys.has(result.assetKey)}
           variant="outline"
           onClick={() => onToggleFavorite(result)}
         >
@@ -2888,37 +2890,39 @@ function SummaryText({ summary }: { summary: string }) {
   );
 }
 
-function AiSummaryButton({ className = "", onClick }: { className?: string; onClick: () => void }) {
+function AiSummaryButton({ className = "", showLabel = false, onClick }: { className?: string; showLabel?: boolean; onClick: () => void }) {
   return (
     <Button
-      className={`h-11 w-11 shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800 sm:h-8 sm:w-8 ${className}`}
+      className={`${showLabel ? "min-h-11 justify-self-start px-3" : "h-11 w-11 sm:h-8 sm:w-8"} shrink-0 border-slate-700 bg-slate-900/80 text-emerald-100 hover:bg-slate-800 ${className}`}
       type="button"
       variant="outline"
-      size="icon"
+      size={showLabel ? "default" : "icon"}
       onClick={onClick}
       title={copy.library.aiSummary}
       aria-label={copy.library.aiSummary}
     >
       <Sparkles className="h-4 w-4" />
-      <span className="sr-only">{copy.library.aiSummary}</span>
+      <span className={showLabel ? "" : "sr-only"}>{copy.library.aiSummary}</span>
     </Button>
   );
 }
 
-function FavoriteButton({ active, className = "", onClick }: { active: boolean; className?: string; onClick: () => void }) {
+function FavoriteButton({ active, className = "", showLabel = false, onClick }: { active: boolean; className?: string; showLabel?: boolean; onClick: () => void }) {
   const label = active ? copy.favorites.unfavorite : copy.favorites.favorite;
 
   return (
     <Button
-      className={`${active ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""} ${className}`}
+      className={`${active ? "border-amber-300/40 bg-amber-300/10 text-amber-200 hover:bg-amber-300/20" : ""} ${showLabel ? "min-h-11 px-3" : ""} ${className}`}
       type="button"
       variant="outline"
-      size="icon"
+      size={showLabel ? "default" : "icon"}
       onClick={onClick}
       title={label}
       aria-label={label}
+      aria-pressed={active}
     >
       <Star className={`h-4 w-4 ${active ? "fill-amber-300 text-amber-300" : ""}`} />
+      {showLabel ? <span>{active ? "已想看" : "想看"}</span> : null}
     </Button>
   );
 }
@@ -2942,17 +2946,16 @@ function CollectionMarkButton({
 
   return (
     <Button
-      className={active ? activeClass : ""}
+      className={`min-h-11 px-3 ${active ? activeClass : ""}`}
       type="button"
       variant="outline"
-      size="sm"
-      aria-pressed={active}
       onClick={onClick}
       title={label}
       aria-label={label}
+      aria-pressed={active}
     >
       <Icon className={`h-4 w-4 ${active ? "fill-current" : ""}`} />
-      <span>{mark === "watching" ? "在看" : mark === "watched" ? "已看" : "想看"}</span>
+      <span>{mark === "wantToWatch" ? "想看" : mark === "watching" ? "在看" : "已看"}</span>
     </Button>
   );
 }
@@ -3192,25 +3195,31 @@ function MovieDetailView({
   return (
     <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4 lg:mx-auto lg:w-full lg:max-w-6xl">
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
-        <Button className="w-full justify-start sm:w-auto" data-detail-back type="button" variant="ghost" size="sm" onClick={onBack}>
-          <ChevronLeft className="h-4 w-4" />
-          {backLabel}
-        </Button>
-        <div className="grid grid-cols-4 items-center gap-2 sm:flex">
+        <div className="flex items-center justify-between gap-3">
+          <Button className="min-h-11 justify-start" data-detail-back type="button" variant="ghost" size="sm" onClick={onBack}>
+            <ChevronLeft className="h-4 w-4" />
+            {backLabel}
+          </Button>
+          <span className="text-xs text-slate-500">{copy.library.variantCount(variantCount)}</span>
+        </div>
+        <div className={`grid ${explicitBrowseKind(result) === "tv" ? "grid-cols-3" : "grid-cols-2"} items-center gap-2 sm:flex`} aria-label="管理观影片单">
           <CollectionMarkButton
             active={Boolean(collectionEntry?.wantToWatchAt)}
             mark="wantToWatch"
             onClick={() => onUpdateCollectionMark(result, "wantToWatch")}
           />
           {explicitBrowseKind(result) === "tv" && (
-            <CollectionMarkButton active={Boolean(collectionEntry?.watchingAt)} mark="watching" onClick={() => onUpdateCollectionMark(result, "watching")} />
+            <CollectionMarkButton
+              active={Boolean(collectionEntry?.watchingAt)}
+              mark="watching"
+              onClick={() => onUpdateCollectionMark(result, "watching")}
+            />
           )}
           <CollectionMarkButton
             active={Boolean(collectionEntry?.watchedAt)}
             mark="watched"
             onClick={() => onUpdateCollectionMark(result, "watched")}
           />
-          <Badge className="min-h-11 justify-center sm:min-h-0" variant="secondary">{copy.library.variantCount(variantCount)}</Badge>
         </div>
       </div>
 
@@ -3223,7 +3232,7 @@ function MovieDetailView({
           <div className="min-w-0">
             <div className="grid min-w-0 gap-3 sm:flex sm:items-start sm:gap-2">
               <h2 className="min-w-0 flex-1 text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
-              <AiSummaryButton onClick={() => onSummarize(result)} />
+              <AiSummaryButton showLabel onClick={() => onSummarize(result)} />
             </div>
             <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
             {info ? <p className="mt-2 text-sm leading-6 text-slate-400">{info}</p> : null}
