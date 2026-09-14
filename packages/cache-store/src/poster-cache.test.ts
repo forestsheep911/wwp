@@ -55,9 +55,10 @@ test("posterRequestHeaders does not spoof referer for non-Douban poster download
 });
 
 test("posterRequestTimeoutMs bounds poster downloads without accepting unsafe configuration", () => {
-  assert.equal(posterRequestTimeoutMs(undefined), 30_000);
+  assert.equal(posterRequestTimeoutMs(undefined), 120_000);
   assert.equal(posterRequestTimeoutMs("15000"), 15_000);
-  assert.equal(posterRequestTimeoutMs("999"), 30_000);
-  assert.equal(posterRequestTimeoutMs("120001"), 30_000);
-  assert.equal(posterRequestTimeoutMs("not-a-number"), 30_000);
+  assert.equal(posterRequestTimeoutMs("999"), 120_000);
+  assert.equal(posterRequestTimeoutMs("120000"), 120_000);
+  assert.equal(posterRequestTimeoutMs("120001"), 120_000);
+  assert.equal(posterRequestTimeoutMs("not-a-number"), 120_000);
 });

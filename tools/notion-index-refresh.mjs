@@ -2,8 +2,8 @@
 
 import "dotenv/config";
 import { NotionSearchSource } from "../apps/api/src/notion-source.ts";
-import { preserveIndexedPersonCredits } from "../apps/api/src/person-credit-index-merge.ts";
-import { createSearchIndexStore } from "@wwpdw/cache-store";
+import { prepareIndexedAssetRefresh } from "../apps/api/src/indexed-asset-refresh.ts";
+import { createSearchIndexStore, createCacheStore } from "@wwpdw/cache-store";
 
 function parseArgs(args) {
   const options = {};
@@ -23,6 +23,7 @@ async function main() {
   const pageId = `${options.pageId}`.trim();
   const assetKey = `${options.assetKey ?? `notion-page-${pageId}`}`.trim();
   const searchIndex = createSearchIndexStore();
+  const posterCache = createCacheStore(searchIndex.backend === "azure" ? "azure" : process.env.CACHE_BACKEND === "filesystem" ? "filesystem" : "local");
   const source = new NotionSearchSource();
   const incoming = await source.refreshAsset({
     assetKey,
@@ -30,7 +31,9 @@ async function main() {
     title: options.title
   });
   if (!incoming) throw new Error(`Could not refresh Notion page ${pageId}.`);
-  const result = preserveIndexedPersonCredits(incoming, await searchIndex.getResult(assetKey));
+  const result = await prepareIndexedAssetRefresh(incoming, searchIndex, posterCache, {
+    refreshPosters: async () => (await source.refreshAsset({ assetKey, sourcePageId: pageId, title: options.title }))?.metadata?.posters
+  });
   await searchIndex.upsertResult(result);
   const credits = result.metadata?.work?.credits ?? result.metadata?.credits ?? [];
   console.log(JSON.stringify({
@@ -39,6 +42,8 @@ async function main() {
     assetKey,
     index: searchIndex.description,
     title: result.title,
+    posterCount: result.metadata?.posters?.length ?? 0,
+    uncachedPosterCount: result.metadata?.posters?.filter(poster => !poster.blobName && !poster.url.startsWith("/api/posters/")).length ?? 0,
     creditCount: credits.length,
     linkedCreditCount: credits.filter((credit) => Boolean(credit.personId)).length
   }, null, 2));

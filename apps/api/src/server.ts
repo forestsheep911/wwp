@@ -1007,7 +1007,20 @@ async function writeSearchResultsToIndex(results: SearchResult[], context: strin
   }
 
   try {
-    await searchIndex.upsertResults(results);
+    const { prepareIndexedAssetRefresh } = await import("./indexed-asset-refresh.js");
+    for (const result of results) {
+      const prepared = await prepareIndexedAssetRefresh(result, searchIndex, store, {
+        refreshPosters: searchSource.refreshAsset ? async () => (await searchSource.refreshAsset!({
+          assetKey: result.assetKey,
+          sourcePageId: result.sourcePageId,
+          title: result.title,
+          sourceBreadcrumb: result.sourceBreadcrumb
+        }))?.metadata?.posters : undefined
+      });
+      // Publish each successfully cached result before processing the next one.
+      // A later failure must not leave earlier results pointing at pruned images.
+      await searchIndex.upsertResult(prepared);
+    }
   } catch (error) {
     logWarn("api.search.index_write_failed", {
       context,

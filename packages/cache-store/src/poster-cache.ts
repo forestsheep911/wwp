@@ -38,7 +38,9 @@ export async function postersForSync(result: SearchResult, refreshPosters?: () =
 
 const notionHostedFilePattern = /(?:secure\.notion-static\.com|prod-files-secure\.s3\.)/i;
 const doubanImagePattern = /^https:\/\/img\d*\.doubanio\.com\//i;
-const defaultPosterRequestTimeoutMs = 30_000;
+// Maintained Notion originals can be megabytes, not thumbnail-sized. Keep a
+// bounded deadline without dropping valid images on slower cross-region links.
+const defaultPosterRequestTimeoutMs = 120_000;
 
 export interface PosterRefreshOptions {
   poster: MoviePoster;

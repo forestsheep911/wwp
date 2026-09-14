@@ -7,6 +7,7 @@ param(
     [string]$RegistryName = "acrwwcachee9219db7",
     [string]$ImageName = "wwpdw/api",
     [string]$ImageTag = "latest",
+    [switch]$ImageOnly,
     [string]$IdentityName = "id-ww-player-cache-dev",
     [string]$KeyVaultName = "kv-wwcache-e9219db7",
     [string]$NotionKeyVaultSecretName = "NOTION-READ-ONLY-TOKEN",
@@ -68,6 +69,21 @@ function Get-DotEnvValue {
 
 if (-not $JobName) {
     $JobName = if ($Mode -eq "full") { "job-ww-meta-index-full" } else { "job-ww-meta-index-incremental" }
+}
+
+# Focused code rollouts must not reset an existing job's schedule, identity,
+# credentials, resource budget, or source configuration.
+if ($ImageOnly) {
+    if ($ImageTag -eq "latest") { throw "ImageOnly requires an explicit release tag." }
+    $registryHost = & $AzCli acr show --name $RegistryName --resource-group $ResourceGroup --query loginServer --output tsv
+    if ($LASTEXITCODE -ne 0 -or -not $registryHost) { throw "Could not resolve registry." }
+    & $AzCli containerapp job show --name $JobName --resource-group $ResourceGroup --output none
+    if ($LASTEXITCODE -ne 0) { throw "ImageOnly requires an existing job." }
+    & $AzCli containerapp job update --name $JobName --resource-group $ResourceGroup --image "$registryHost/$ImageName`:$ImageTag" --output none
+    if ($LASTEXITCODE -ne 0) { throw "Metadata sync image update failed." }
+    & $AzCli containerapp job show --name $JobName --resource-group $ResourceGroup --query "{name:name,state:properties.provisioningState,image:properties.template.containers[0].image,trigger:properties.configuration.triggerType,cron:properties.configuration.scheduleTriggerConfig.cronExpression}" --output json
+    if ($LASTEXITCODE -ne 0) { throw "Metadata sync image verification failed." }
+    return
 }
 
 if ($DelayMs -lt 0) {
