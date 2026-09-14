@@ -725,12 +725,14 @@ export class AzureSearchIndexStore implements SearchIndexStore {
   }
 
   constructor() {
+    const clientOptions = azureSearchTableClientOptions();
     this.tableClient = this.config.connectionString
-      ? TableClient.fromConnectionString(this.config.connectionString, this.config.tableName)
+      ? TableClient.fromConnectionString(this.config.connectionString, this.config.tableName, clientOptions)
       : new TableClient(
         `https://${this.config.accountName}.table.core.windows.net`,
         this.config.tableName,
-        this.credential
+        this.credential,
+        clientOptions
       );
     this.description = `azure:${this.config.accountName}/${this.config.tableName}`;
   }
@@ -1080,4 +1082,18 @@ export class AzureSearchIndexStore implements SearchIndexStore {
 
     return runs;
   }
+}
+
+function azureSearchTableClientOptions() {
+  return {
+    retryOptions: {
+      maxRetries: 3,
+      tryTimeoutInMs: boundedAzureTryTimeout(process.env.SEARCH_INDEX_AZURE_TRY_TIMEOUT_MS, 30_000)
+    }
+  };
+}
+
+function boundedAzureTryTimeout(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(120_000, Math.max(5_000, Math.floor(parsed))) : fallback;
 }

@@ -67,12 +67,17 @@ export class TmdbPersonSource {
     }
   }
 
-  async fetchWorkCredits(input: { tmdbId: string; kind: "movie" | "series" }): Promise<WorkCreditEvidence> {
+  async fetchWorkCredits(input: { tmdbId: string; kind: "movie" | "series"; seasonNumber?: number }): Promise<WorkCreditEvidence> {
     const routeKind = input.kind === "series" ? "tv" : "movie";
-    const payload = await this.get<TmdbCreditsPayload>(`/${routeKind}/${input.tmdbId}/credits?language=en-US`);
+    const seasonPath = routeKind === "tv" && input.seasonNumber
+      ? `/${routeKind}/${input.tmdbId}/season/${input.seasonNumber}/credits?language=en-US`
+      : `/${routeKind}/${input.tmdbId}/credits?language=en-US`;
+    const payload = await this.get<TmdbCreditsPayload>(seasonPath);
     const observedAt = this.now().toISOString();
     return {
-      workExternalId: input.tmdbId,
+      workExternalId: input.seasonNumber
+        ? `${input.tmdbId}/season/${input.seasonNumber}`
+        : input.tmdbId,
       workKind: input.kind,
       credits: tmdbCredits(payload),
       observedAt

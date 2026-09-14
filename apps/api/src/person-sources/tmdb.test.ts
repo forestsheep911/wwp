@@ -57,6 +57,22 @@ test("maps TMDB person details into auditable evidence", async () => {
   assert.match(requested[0], /append_to_response=external_ids/);
 });
 
+test("uses season-scoped credits for a series season", async () => {
+  const requested: string[] = [];
+  const source = new TmdbPersonSource({
+    token: "test-token",
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async (input) => {
+      requested.push(String(input));
+      return Response.json({ cast: [{ id: 1, name: "Season Actor", order: 0 }] });
+    }
+  });
+  const result = await source.fetchWorkCredits({ tmdbId: "1408", kind: "series", seasonNumber: 2 });
+  assert.equal(result.credits[0].name, "Season Actor");
+  assert.equal(result.workExternalId, "1408/season/2");
+  assert.match(requested[0], /\/tv\/1408\/season\/2\/credits\?language=en-US/);
+});
+
 test("requires an explicit TMDB credential", () => {
   assert.throws(() => new TmdbPersonSource({ token: "", apiKey: "" }), /TMDB_API_READ_ACCESS_TOKEN/);
 });

@@ -86,6 +86,7 @@ test("downgrades a claimed verified Chinese biography until cross-source rewrite
   assert.match(profile.dataQuality.issues?.join(" ") ?? "", /missing_verified_chinese_biography/);
   assert.equal(chineseBiography?.status, "provisional");
   assert.equal(plan.summary.issueCount, 1);
+  assert.equal(plan.summary.issueDetails.length, 1);
   assert.equal(plan.nextCatalog.issues[0].kind, "biography_verification_incomplete");
 });
 
@@ -104,6 +105,30 @@ test("replaces an identical collected biography with the audited Notion version"
   const matches = plan.nextCatalog.people[personId].profile.biography?.texts?.filter((entry) => entry.language === "zh-CN" && entry.value === "人工中文小传") ?? [];
   assert.equal(matches.length, 1);
   assert.equal(matches[0].source, "notion");
+});
+
+test("discards malformed collected biography text instead of failing the Notion sync", () => {
+  const current = catalog();
+  current.people[personId].profile.biography = {
+    texts: [{
+      value: undefined as unknown as string,
+      language: "zh-CN",
+      source: "manual",
+      status: "verified",
+      observedAt: "2026-08-09T00:00:00.000Z"
+    }]
+  };
+
+  const plan = planPeopleNotionSync(current, [row()]);
+  const texts = plan.nextCatalog.people[personId].profile.biography?.texts ?? [];
+
+  assert.equal(plan.summary.applied, 1);
+  assert.equal(texts.some((entry) => typeof entry.value !== "string" || !entry.value.trim()), false);
+  assert.deepEqual(selectPersonBiographyTexts(plan.nextCatalog.people[personId].profile.biography), {
+    chinese: "人工中文小传",
+    english: "Editorial English biography",
+    fallback: "人工中文小传"
+  });
 });
 
 test("quarantines external identity changes while publishing a review issue", () => {
@@ -134,6 +159,7 @@ test("unknown, duplicate, and malformed rows never create identities", () => {
   assert.equal(plan.summary.invalid, 1);
   assert.equal(plan.summary.quarantined, 2);
   assert.equal(plan.summary.issueCount, 4);
+  assert.equal(plan.summary.issueDetails.length, 4);
 });
 
 test("incremental runner advances checkpoint only after successful publish and replays unchanged", async () => {

@@ -261,13 +261,19 @@ function orphanedLinkedPeople(state: PersonCatalogState) {
 
 function selectedBiography(profile: PersonProfile, language: RegExp) {
   return (profile.biography?.texts ?? [])
-    .filter((entry) => language.test(entry.language) && entry.value.trim())
-    .sort((left, right) => biographyRank(right) - biographyRank(left))[0];
+    .filter((entry) => language.test(entry.language) && String(entry.value ?? "").trim())
+    .sort((left, right) => biographyRank(right) - biographyRank(left)
+      || observedAtRank(right) - observedAtRank(left))[0];
 }
 
 function biographyRank(entry: PersonBiographyText) {
   const status = entry.status === "verified" ? 30 : entry.status === "strong" ? 20 : entry.status === "provisional" ? 10 : 0;
   return status + (entry.method === "editorial-rewrite" ? 3 : 0);
+}
+
+function observedAtRank(entry: PersonBiographyText) {
+  const value = Date.parse(entry.observedAt ?? "");
+  return Number.isFinite(value) ? value : 0;
 }
 
 function displayName(profile: PersonProfile) {

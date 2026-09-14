@@ -34,6 +34,7 @@ export function materializePersonEvidence(input: {
   evidence: PersonEvidence[];
   workCredits: MaterializedWorkCredits[];
   allocatePersonId: (externalIds: PersonExternalIds) => string;
+  ignoredWikidataIds?: string[];
   now?: string;
 }): PersonMaterializationResult {
   const now = input.now ?? new Date().toISOString();
@@ -44,6 +45,7 @@ export function materializePersonEvidence(input: {
   const assignments: Record<string, string> = {};
   const unresolved: PersonMaterializationResult["unresolved"] = [];
   const issues: PersonCatalogIssue[] = [];
+  const ignoredWikidataIds = new Set((input.ignoredWikidataIds ?? []).map((id) => id.trim().toUpperCase()).filter(Boolean));
 
   for (const evidence of sortedEvidence(input.evidence)) {
     const externalIds = normalizePersonExternalIds(evidence.externalIds);
@@ -85,6 +87,7 @@ export function materializePersonEvidence(input: {
         .map((idKey) => assignments[idKey] ?? personIdFromStateIndex(input.state, idKey))
         .find(Boolean);
       if (!personId) {
+        if (ignoredWikidataIds.has(String(credit.externalIds?.wikidata ?? "").trim().toUpperCase())) return credit;
         unresolved.push({
           workId: work.workId,
           creditName: credit.name,
@@ -185,7 +188,10 @@ function personIdFromStateIndex(state: PersonCatalogState, key: string) {
   const separator = key.indexOf(":");
   const source = key.slice(0, separator) as keyof PersonCatalogState["externalIdIndex"];
   const id = key.slice(separator + 1);
-  return state.externalIdIndex[source]?.[id];
+  const personId = state.externalIdIndex[source]?.[id];
+  // The derived index can outlive a deleted or partially restored profile.
+  // Never emit a credit reference unless the profile is present in the catalog.
+  return personId && state.people[personId] ? personId : undefined;
 }
 
 function uniqueNames(values: PersonProfile["names"]) {

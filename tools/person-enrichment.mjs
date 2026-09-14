@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   discoverPeopleCandidates,
+  blockedPersonEnrichmentReport,
   JsonEvidenceCache,
   LocalRunLease,
   readCheckpoint,
@@ -26,22 +27,24 @@ try {
   const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
   const candidates = discoverPeopleCandidates(snapshot, args.workIds);
   const checkpoint = args.resume ? await readCheckpoint(checkpointPath) : await readCheckpoint(`${checkpointPath}.new-run`);
-  const provider = args.offline ? undefined : new TmdbPersonSource();
   const catalogState = await createPersonCatalogStore().getState();
   const selectedWorkIds = args.personId
     ? (catalogState.creditsByPersonId[args.personId] ?? []).map((credit) => credit.workId)
     : args.workIds;
   const selectedCandidates = selectedWorkIds.length ? candidates.filter((candidate) => selectedWorkIds.includes(candidate.workId)) : candidates;
-  const report = await runPersonEnrichment({
-    candidates: selectedCandidates,
-    provider,
-    offline: args.offline,
-    limit: args.limit,
-    cache: new JsonEvidenceCache(path.join(root, "cache")),
-    checkpoint,
-    catalogState,
-    persistCheckpoint: (value) => writeJsonAtomic(checkpointPath, value)
-  });
+  const hasTmdbCredential = Boolean(process.env.TMDB_API_READ_ACCESS_TOKEN || process.env.TMDB_API_KEY);
+  const report = !args.offline && !hasTmdbCredential
+    ? blockedPersonEnrichmentReport(selectedCandidates, "TMDB credentials are unavailable; configure TMDB_API_READ_ACCESS_TOKEN or TMDB_API_KEY before retrying.")
+    : await runPersonEnrichment({
+      candidates: selectedCandidates,
+      provider: args.offline ? undefined : new TmdbPersonSource(),
+      offline: args.offline,
+      limit: args.limit,
+      cache: new JsonEvidenceCache(path.join(root, "cache")),
+      checkpoint,
+      catalogState,
+      persistCheckpoint: (value) => writeJsonAtomic(checkpointPath, value)
+    });
   await writeJsonAtomic(reportPath, report);
   process.stdout.write(`${JSON.stringify({ reportPath, mode: report.mode, candidates: report.candidateCount, completed: report.completedWorkIds.length, remaining: report.remainingWorkIds.length, proposedPeople: report.proposedProfiles.length, linkedCredits: report.proposedCredits.reduce((count, work) => count + work.credits.filter((credit) => credit.personId).length, 0), identityIssues: report.identityIssues.length }, null, 2)}\n`);
 } finally {

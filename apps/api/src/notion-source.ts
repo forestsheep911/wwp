@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import dns from "node:dns";
+import https from "node:https";
 import { Client } from "@notionhq/client";
 import type {
   MediaAssetType,
@@ -1180,11 +1181,12 @@ function creditEntries(directors: string[], writers: string[], people: string[])
     });
   });
 
-  writers.forEach((name, index) => {
+  writers.forEach((value, index) => {
+    const { name, job } = writerCredit(value);
     credits.push({
       name,
       department: "writing",
-      job: "Screenwriter",
+      job,
       order: index,
       source: "notion"
     });
@@ -1201,6 +1203,25 @@ function creditEntries(directors: string[], writers: string[], people: string[])
   });
 
   return credits;
+}
+
+function writerCredit(value: string) {
+  const match = value.match(/^(.*?)\s*[\[(（]\s*([^\])）]+?)\s*[\])）]\s*$/u);
+  if (!match?.[1] || !match[2]) return { name: value, job: "Screenwriter" };
+  const role = match[2].trim().toLowerCase();
+  if (/\b(?:novel|book|source material|based on)\b|原著|小说/u.test(role)) {
+    return { name: match[1].trim(), job: "Source Author" };
+  }
+  if (/\b(?:screenplay|screenwriter|screen play)\b|编剧/u.test(role)) {
+    return { name: match[1].trim(), job: "Screenwriter" };
+  }
+  if (/\b(?:story|story by)\b|故事/u.test(role)) {
+    return { name: match[1].trim(), job: "Story" };
+  }
+  if (/\bteleplay\b|电视脚本/u.test(role)) {
+    return { name: match[1].trim(), job: "Teleplay" };
+  }
+  return { name: value, job: "Screenwriter" };
 }
 
 export function creditsFromProperties(properties: JsonRecord) {
@@ -1844,9 +1865,11 @@ export class NotionSearchSource {
 
   constructor(private readonly options = defaultOptions) {
     installNotionDnsOverride();
+    const localAddress = process.env.NOTION_API_LOCAL_ADDRESS?.trim();
     this.notion = new Client({
       auth: process.env.NOTION_READ_ONLY_TOKEN,
       timeoutMs: this.options.requestTimeoutMs,
+      agent: localAddress ? new https.Agent({ keepAlive: true, localAddress }) : undefined,
       // A single work refresh can fan out into page, block, relation, and
       // Media Assets reads. Pace the transport so all of them share one lane.
       fetch: createNotionPacedFetch()

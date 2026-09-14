@@ -29,6 +29,7 @@ export interface PeopleNotionSyncPlan {
     quarantined: number;
     invalid: number;
     issueCount: number;
+    issueDetails: PersonCatalogIssue[];
   };
 }
 
@@ -166,7 +167,8 @@ export function planPeopleNotionSync(
       unchanged,
       quarantined,
       invalid: invalid.length,
-      issueCount: issues.length
+      issueCount: issues.length,
+      issueDetails: structuredClone(issues)
     }
   };
 }
@@ -229,7 +231,7 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
   addName(notionNames, row.originalName, { kind: "original" }, status, row);
   addName(notionNames, row.name, { kind: "display" }, status, row);
   for (const alias of row.aliases) addName(notionNames, alias, { kind: "alternate" }, status, row);
-  const biographyTexts = (current.biography?.texts ?? []).filter((entry) => entry.source !== "notion");
+  const biographyTexts = (current.biography?.texts ?? []).filter(isUsableCollectedBiographyText);
   addBiographyText(biographyTexts, row.biographyZh, "zh-CN", row, row.biographyZhStatus === "verified" && biographyEligibleForVerified, {
     method: row.biographyZhMethod,
     supportingSourceRefs: splitBiographySourceRefs(row.sources)
@@ -283,6 +285,17 @@ function profileFromNotion(current: PersonProfile, row: NotionPeopleSnapshot, bi
   return withPersonQualityAssessment(normalized, {
     reviewedAt: row.lastReviewedAt ?? current.dataQuality.reviewedAt
   });
+}
+
+function isUsableCollectedBiographyText(entry: PersonBiographyText): entry is PersonBiographyText {
+  return Boolean(
+    entry
+    && entry.source !== "notion"
+    && typeof entry.language === "string"
+    && entry.language.trim()
+    && typeof entry.value === "string"
+    && entry.value.trim()
+  );
 }
 
 function addBiographyText(

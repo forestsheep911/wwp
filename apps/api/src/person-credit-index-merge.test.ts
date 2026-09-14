@@ -44,10 +44,71 @@ test("Notion refresh preserves linked and expanded person credits", () => {
   ]);
 
   const merged = preserveIndexedPersonCredits(incoming, existing);
-  assert.equal(merged.metadata?.credits?.length, 2);
+  assert.equal(merged.metadata?.credits?.length, 3);
   assert.equal(merged.metadata?.credits?.[0].personId, "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb");
-  assert.equal(merged.metadata?.credits?.[1].name, "扩展演员");
+  assert.equal(merged.metadata?.credits?.[1].name, "Notion 新演员");
+  assert.equal(merged.metadata?.credits?.[2].name, "扩展演员");
   assert.deepEqual(merged.metadata?.work?.credits, merged.metadata?.credits);
+});
+
+test("a corrected plain Notion credit replaces the stale unlinked indexed value", () => {
+  const existing = result([
+    {
+      personId: "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb",
+      name: "艾玛·汤普森",
+      originalName: "Emma Thompson",
+      department: "writing",
+      job: "Screenwriter",
+      source: "wikidata",
+      externalIds: { wikidata: "Q123" }
+    },
+    { name: "Jane Austen", department: "writing", job: "Screenwriter", source: "notion" }
+  ]);
+  const incoming = result([
+    { name: "Jane Austen", department: "writing", job: "Source Author", order: 0, source: "notion" },
+    { name: "Emma Thompson", department: "writing", job: "Screenwriter", order: 1, source: "notion" }
+  ]);
+
+  const merged = preserveIndexedPersonCredits(incoming, existing);
+  assert.equal(merged.metadata?.credits?.length, 2);
+  assert.deepEqual(merged.metadata?.credits?.map((credit) => [credit.name, credit.job, credit.personId]), [
+    ["Jane Austen", "Source Author", undefined],
+    ["艾玛·汤普森", "Screenwriter", "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb"]
+  ]);
+});
+
+test("one person keeps separate linked credits for different departments", () => {
+  const existing = result([
+    {
+      personId: "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb",
+      name: "艾玛·汤普森",
+      originalName: "Emma Thompson",
+      department: "writing",
+      job: "Screenwriter",
+      source: "wikidata",
+      externalIds: { wikidata: "Q123" }
+    },
+    {
+      personId: "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb",
+      name: "艾玛·汤普森",
+      originalName: "Emma Thompson",
+      department: "acting",
+      job: "Actor",
+      source: "wikidata",
+      externalIds: { wikidata: "Q123" }
+    }
+  ]);
+  const incoming = result([
+    { name: "Emma Thompson", department: "writing", job: "Screenwriter", order: 0, source: "notion" },
+    { name: "Emma Thompson", department: "acting", job: "Actor", order: 0, source: "notion" }
+  ]);
+
+  const merged = preserveIndexedPersonCredits(incoming, existing);
+  assert.equal(merged.metadata?.credits?.length, 2);
+  assert.deepEqual(merged.metadata?.credits?.map((credit) => [credit.department, credit.personId]), [
+    ["writing", "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb"],
+    ["acting", "person_5f47c349-7b9d-437c-b2a0-e1aec2a68cbb"]
+  ]);
 });
 
 test("an enriched incoming credit merges only through a stable identity", () => {

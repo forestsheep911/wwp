@@ -16,6 +16,13 @@ export interface PeopleWorkCoverageRecord {
   creditCount: number;
   linkedCreditCount: number;
   unlinkedCreditCount: number;
+  unlinkedCredits: Array<{
+    name: string;
+    department: string;
+    job?: string;
+    character?: string;
+    externalIds?: MovieCreditEntry["externalIds"];
+  }>;
   departmentCounts: Record<string, number>;
   recommendedLane: "metadata_then_people" | "people_identity_linking" | "people_expansion" | "none";
 }
@@ -116,6 +123,13 @@ function toCoverageRecord(result: SearchResult): PeopleWorkCoverageRecord {
     creditCount: credits.length,
     linkedCreditCount,
     unlinkedCreditCount,
+    unlinkedCredits: credits.filter((credit) => !credit.personId).map((credit) => ({
+      name: credit.name,
+      department: credit.department,
+      ...(credit.job ? { job: credit.job } : {}),
+      ...(credit.character ? { character: credit.character } : {}),
+      ...(credit.externalIds ? { externalIds: credit.externalIds } : {})
+    })),
     departmentCounts: countDepartments(credits),
     recommendedLane: recommendedLane(status)
   };

@@ -109,3 +109,21 @@ test("does not use the immutable person id as a repair display name when Chinese
   assert.equal(report.queue[0]?.displayName, "Patrick Crowley");
   assert.notEqual(report.queue[0]?.displayName, item.personId);
 });
+
+test("uses the newest equally-ranked editorial biography after a repair", () => {
+  const item = profile("person-refreshed", {
+    biography: {
+      texts: [
+        { value: "人物资料来自 Wikidata；在《旧作品》中担任Actor。", language: "zh-CN", source: "notion", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["wikidata:Q2"], observedAt: "2026-08-01T00:00:00.000Z" },
+        { value: "This actor is documented in Wikidata and is credited as Actor.", language: "en", source: "notion", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["wikidata:Q2"], observedAt: "2026-08-01T00:00:00.000Z" },
+        { value: "这是一位长期从事电影与电视工作的创作者，早年从表演训练进入行业，后来在不同类型的作品中持续积累经验，并通过多次合作形成了稳定的职业方向。其代表作品覆盖商业制作与独立项目，能够在人物塑造、叙事节奏和类型表达之间建立清晰联系。", language: "zh-CN", source: "curated-review", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["wikidata:Q2", "imdb:nm2"], observedAt: "2026-08-31T00:00:00.000Z" },
+        { value: "This screen professional has built a sustained career across film and television, moving from early performance training into varied projects and long-running collaborations. Their representative work spans commercial productions and independent films, showing a clear interest in character, narrative rhythm, and genre form. The career record reflects continuing development rather than a single isolated credit.", language: "en", source: "curated-review", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["wikidata:Q2", "imdb:nm2"], observedAt: "2026-08-31T00:00:00.000Z" }
+      ]
+    }
+  });
+  const report = auditPeopleRepairCandidates(state([item], [{ personId: item.personId, workId: "work-refreshed" }]));
+
+  assert.equal(report.candidates.find((candidate) => candidate.personId === item.personId)?.reasons.includes("generic_biography"), false);
+  assert.equal(report.candidates.find((candidate) => candidate.personId === item.personId)?.reasons.includes("short_zh_biography"), false);
+  assert.equal(report.candidates.find((candidate) => candidate.personId === item.personId)?.reasons.includes("short_en_biography"), false);
+});

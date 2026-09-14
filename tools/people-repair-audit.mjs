@@ -6,6 +6,7 @@ import { auditPeopleRepairCandidates } from "../apps/api/src/people-repair-audit
 
 const options = parseArgs(process.argv.slice(2));
 if (options.backend) process.env.PERSON_CATALOG_BACKEND = options.backend;
+if (options.localDataDir) process.env.WWPDW_LOCAL_DATA_DIR = path.resolve(options.localDataDir);
 
 const store = createPersonCatalogStore();
 const state = await store.getState();
@@ -47,11 +48,12 @@ process.stdout.write(`${JSON.stringify({
 }, null, 2)}\n`);
 
 function parseArgs(values) {
-  const options = { backend: undefined, outputDir: undefined, candidateLimit: 100 };
+  const options = { backend: undefined, outputDir: undefined, candidateLimit: 100, localDataDir: undefined };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--backend") options.backend = required(values[++index], value);
     else if (value === "--output-dir") options.outputDir = required(values[++index], value);
+    else if (value === "--local-data-dir") options.localDataDir = required(values[++index], value);
     else if (value === "--candidate-limit") options.candidateLimit = positiveInteger(values[++index], value);
     else throw new Error(`Unknown argument: ${value}`);
   }

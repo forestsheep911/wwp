@@ -14,11 +14,12 @@ export interface EnrichmentWorkCandidate {
   title: string;
   kind: "movie" | "series";
   tmdbId: string;
+  seasonNumber?: number;
   workHash: string;
 }
 
 export interface PersonEnrichmentProvider {
-  fetchWorkCredits(input: { tmdbId: string; kind: "movie" | "series" }): Promise<WorkCreditEvidence>;
+  fetchWorkCredits(input: { tmdbId: string; kind: "movie" | "series"; seasonNumber?: number }): Promise<WorkCreditEvidence>;
   fetchPersonEvidence(tmdbId: string): Promise<PersonEvidence>;
 }
 
@@ -35,8 +36,14 @@ export interface EnrichmentCheckpoint {
 
 export interface PersonEnrichmentReport {
   schemaVersion: 1;
-  mode: "offline" | "network-dry-run";
+  mode: "offline" | "network-dry-run" | "blocked";
   generatedAt: string;
+  blockedReason?: string;
+  recoveryPlan?: {
+    scope: "provider-lane" | "identity" | "publication";
+    nextAction: string;
+    trigger: string;
+  };
   candidateCount: number;
   completedWorkIds: string[];
   cachedWorkIds: string[];
@@ -48,6 +55,31 @@ export interface PersonEnrichmentReport {
   failures: EnrichmentCheckpoint["failures"];
   remainingWorkIds: string[];
   estimatedNotionWrites: number;
+}
+
+export function blockedPersonEnrichmentReport(candidates: EnrichmentWorkCandidate[], reason: string, now = new Date().toISOString()): PersonEnrichmentReport {
+  return {
+    schemaVersion: 1,
+    mode: "blocked",
+    generatedAt: now,
+    blockedReason: reason,
+    recoveryPlan: {
+      scope: "provider-lane",
+      nextAction: "run the bounded Wikidata evidence pilot or resume the cached provider lane",
+      trigger: "Wikidata work/person IDs are available, or the configured provider credential is restored"
+    },
+    candidateCount: candidates.length,
+    completedWorkIds: [],
+    cachedWorkIds: [],
+    proposedPeople: [],
+    proposedProfiles: [],
+    proposedCredits: [],
+    identityIssues: [],
+    unresolved: candidates.map((candidate) => ({ workId: candidate.workId, reason })),
+    failures: [],
+    remainingWorkIds: candidates.map((candidate) => candidate.workId),
+    estimatedNotionWrites: 0
+  };
 }
 
 export class JsonEvidenceCache {
@@ -126,7 +158,9 @@ async function leaseOwnerHasExited(leasePath: string) {
       return (error as NodeJS.ErrnoException).code === "ESRCH";
     }
   } catch {
-    return false;
+    // A truncated lease cannot identify a live owner; treat it as stale so
+    // interrupted runs do not block the next resumable batch.
+    return true;
   }
 }
 
@@ -142,13 +176,17 @@ export function discoverPeopleCandidates(snapshot: unknown, workIds: string[] = 
       display?: { title?: string };
       titles?: Array<{ title?: string }>;
       updatedAt?: string;
+      seasonNumber?: number;
     } | undefined;
     const workId = work?.workId?.trim();
     const tmdbId = work?.externalIds?.tmdb?.trim();
     if (!workId || !tmdbId || (selected.size > 0 && !selected.has(workId))) continue;
     const title = work?.display?.title ?? work?.titles?.[0]?.title ?? workId;
     const kind = work?.kind === "series" ? "series" : "movie";
-    candidates.push({ workId, title, kind, tmdbId, workHash: hash({ workId, tmdbId, kind, updatedAt: work?.updatedAt }) });
+    const seasonNumber = kind === "series"
+      ? work?.seasonNumber ?? parseSeasonNumber(title)
+      : undefined;
+    candidates.push({ workId, title, kind, tmdbId, ...(seasonNumber ? { seasonNumber } : {}), workHash: hash({ workId, tmdbId, kind, seasonNumber, updatedAt: work?.updatedAt }) });
   }
   return candidates.sort((left, right) => left.workId.localeCompare(right.workId));
 }
@@ -197,11 +235,11 @@ export async function runPersonEnrichment(input: {
       continue;
     }
     try {
-      const cacheKey = `${candidate.kind}-${candidate.tmdbId}`;
+      const cacheKey = `${candidate.kind}-${candidate.tmdbId}${candidate.seasonNumber ? `-season-${candidate.seasonNumber}` : ""}`;
       let workEvidence = await input.cache.get<WorkCreditEvidence>("tmdb", "credits", cacheKey, "en-US", 30 * 86_400_000);
       if (workEvidence) report.cachedWorkIds.push(candidate.workId);
       else {
-        workEvidence = await input.provider.fetchWorkCredits({ tmdbId: candidate.tmdbId, kind: candidate.kind });
+        workEvidence = await input.provider.fetchWorkCredits({ tmdbId: candidate.tmdbId, kind: candidate.kind, ...(candidate.seasonNumber ? { seasonNumber: candidate.seasonNumber } : {}) });
         await input.cache.put("tmdb", "credits", cacheKey, "en-US", workEvidence);
       }
       const people = new Map<string, PersonEvidence>();
@@ -308,4 +346,19 @@ function checkpointPersonId(checkpoint: EnrichmentCheckpoint, externalIds: { tmd
 
 function safe(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function parseSeasonNumber(title: string) {
+  const arabic = title.match(/\bseason\s*(\d+)\b/i)?.[1];
+  if (arabic) return Number(arabic);
+  const chinese = title.match(/第([一二三四五六七八九十百零两]+)季/)?.[1];
+  return chinese ? chineseSeasonNumber(chinese) : undefined;
+}
+
+function chineseSeasonNumber(value: string) {
+  const digits: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (value === "十") return 10;
+  if (!value.includes("十")) return value.length === 1 ? digits[value] : undefined;
+  const [tens, ones] = value.split("十");
+  return (tens ? digits[tens] * 10 : 10) + (ones ? digits[ones] : 0);
 }

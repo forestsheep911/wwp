@@ -19,13 +19,30 @@ const checkpointPath = path.join(root, "checkpoint.json");
 const cache = new JsonEvidenceCache(path.join(root, "cache"));
 const lease = new LocalRunLease(path.join(root, "pilot.lock"));
 const limiter = new ProviderRateLimiter(args.intervalMs);
-const catalogBackend = resolveCatalogBackend(args.searchBackend);
+const catalogBackend = resolveCatalogBackend(args.catalogBackend ?? args.searchBackend);
 const productionLock = acquireProductionLock({ owner: "person-wikidata-pilot", mode: "people-only" });
+
+let failureWritten = false;
+async function recordFailure(error) {
+  if (failureWritten) return;
+  failureWritten = true;
+  await writeJsonAtomic(path.join(root, "failure.json"), {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    workId: args.workId,
+    wikidataId: args.wikidataId,
+    error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) }
+  });
+}
+
+process.on("unhandledRejection", (error) => void recordFailure(error));
+process.on("uncaughtException", (error) => void recordFailure(error));
 
 let stopping = false;
 const handleTermination = async (signal) => {
   if (stopping) return;
   stopping = true;
+  await recordFailure(new Error(`Pilot terminated by ${signal}.`));
   await lease.release();
   productionLock.release();
   process.exit(signal === "SIGINT" ? 130 : 143);
@@ -34,7 +51,7 @@ process.once("SIGINT", () => void handleTermination("SIGINT"));
 process.once("SIGTERM", () => void handleTermination("SIGTERM"));
 
 await lease.acquire();
-const watchdog = setTimeout(() => void handleTermination("SIGTERM"), 120_000);
+const watchdog = setTimeout(() => void handleTermination("SIGTERM"), args.watchdogMs);
 try {
   const work = await loadWork(args);
   const checkpoint = await readCheckpoint(checkpointPath);
@@ -86,6 +103,9 @@ try {
     evidence,
     workCredits: [{ workId: args.workId, title: work.title, credits: workEvidence.credits }],
     allocatePersonId: (ids) => allocatePersonId(checkpoint, ids),
+    // Non-human writing entities such as author duos remain as source credits,
+    // but must not block the human People catalog review.
+    ignoredWikidataIds: [...new Set([...excludedIds, ...skippedNonHuman])],
     now: generatedAt
   });
   checkpoint.updatedAt = generatedAt;
@@ -167,6 +187,9 @@ function findWork(snapshot, workId) {
 }
 
 async function loadWork(options) {
+  // Metadata-first pages may remain hidden and therefore absent from the
+  // public search index. Wikidata still supplies the authoritative credits.
+  if (options.title) return { title: options.title, credits: [] };
   if (!options.searchBackend) {
     const snapshot = JSON.parse(await readFile(path.resolve(options.snapshot), "utf8"));
     return findWork(snapshot, options.workId);
@@ -198,6 +221,7 @@ async function loadWork(options) {
 function parseArgs(values) {
   const result = {
     workId: undefined,
+    title: undefined,
     assetKey: undefined,
     wikidataId: undefined,
     kind: "movie",
@@ -205,13 +229,16 @@ function parseArgs(values) {
     intervalMs: 1300,
     snapshot: ".local-data/home-site/search-index.json",
     searchBackend: undefined,
+    catalogBackend: undefined,
     stateDir: undefined,
     output: undefined,
+    watchdogMs: 600_000,
     excludeWikidataIds: []
   };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--work-id") result.workId = required(values[++index], value);
+    else if (value === "--title") result.title = required(values[++index], value);
     else if (value === "--asset-key") result.assetKey = required(values[++index], value);
     else if (value === "--wikidata-id") result.wikidataId = required(values[++index], value);
     else if (value === "--kind") result.kind = required(values[++index], value) === "series" ? "series" : "movie";
@@ -219,8 +246,10 @@ function parseArgs(values) {
     else if (value === "--interval-ms") result.intervalMs = positiveInteger(values[++index], value);
     else if (value === "--snapshot") result.snapshot = required(values[++index], value);
     else if (value === "--search-backend") result.searchBackend = required(values[++index], value);
+    else if (value === "--catalog-backend") result.catalogBackend = required(values[++index], value);
     else if (value === "--state-dir") result.stateDir = required(values[++index], value);
     else if (value === "--output") result.output = required(values[++index], value);
+    else if (value === "--watchdog-ms") result.watchdogMs = positiveInteger(values[++index], value);
     else if (value === "--exclude-wikidata-id") result.excludeWikidataIds.push(required(values[++index], value));
     else throw new Error(`Unknown argument: ${value}`);
   }

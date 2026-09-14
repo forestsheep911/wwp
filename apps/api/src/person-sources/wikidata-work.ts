@@ -1,6 +1,6 @@
 import type { MovieCreditDepartment, MovieCreditEntry } from "@wwpdw/shared";
 import { normalizePersonExternalIds, normalizeWikidataId } from "@wwpdw/shared";
-import { fetchProviderJson, ProviderRateLimiter } from "./provider-http.js";
+import { fetchProviderJson, ProviderHttpError, ProviderRateLimiter } from "./provider-http.js";
 import type { FetchLike, WorkCreditEvidence } from "./types.js";
 
 interface WikidataClaim {
@@ -62,7 +62,20 @@ export class WikidataWorkCreditsSource {
         format: "json",
         origin: "*"
       });
-      const payload = await this.get<EntityPayload>(`https://www.wikidata.org/w/api.php?${params.toString()}`);
+      let payload: EntityPayload;
+      try {
+        payload = await this.get<EntityPayload>(`https://www.wikidata.org/w/api.php?${params.toString()}`);
+      } catch (error) {
+        if (!(error instanceof ProviderHttpError) || error.status !== 429) throw error;
+        payload = { entities: {} };
+        for (const wikidataId of batch) {
+          const entityPayload = await this.get<EntityPayload>(
+            `https://www.wikidata.org/wiki/Special:EntityData/${wikidataId}.json`
+          );
+          const entity = entityPayload.entities?.[wikidataId];
+          if (entity) payload.entities![wikidataId] = entity;
+        }
+      }
       for (const [id, entity] of Object.entries(payload.entities ?? {})) people.set(id, entity);
     }
     const credits = refs.flatMap((ref): MovieCreditEntry[] => {

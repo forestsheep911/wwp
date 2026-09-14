@@ -81,7 +81,8 @@ export type MovieMetadataSource =
   | "omdb"
   | "tspdt"
   | "search-index"
-  | "external";
+  | "external"
+  | "curated-review";
 
 export type MovieTitleKind = "primary" | "original" | "localized" | "alternate" | "sort" | "list";
 

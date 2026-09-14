@@ -79,6 +79,153 @@ test("merges reviewed links into the complete canonical source credit list", () 
   assert.equal(plan.nextCatalog.creditsByWorkId["work-1"].length, 1);
 });
 
+test("matches a reviewed person through a verified profile alias when the source row has no external id", () => {
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [
+    { name: "劳拉·比尔恩", department: "acting", job: "Actor", source: "tmdb" }
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    credits: structuredClone(sourceCredits),
+    work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) }
+  };
+  const reviewedPerson = structuredClone(profile);
+  reviewedPerson.personId = personId;
+  reviewedPerson.names = [
+    { value: "劳拉·布林", language: "zh-CN", kind: "display", source: "manual", status: "verified", observedAt: "2026-08-10T00:00:00.000Z" },
+    { value: "劳拉·比尔恩", language: "zh", kind: "alternate", source: "wikidata", status: "strong", observedAt: "2026-08-10T00:00:00.000Z" }
+  ];
+  const reviewed = report();
+  reviewed.proposedProfiles = [reviewedPerson];
+  reviewed.proposedCredits[0].credits = [{
+    name: "劳拉·布林",
+    originalName: "Laura Birn",
+    department: "acting",
+    job: "Actor",
+    source: "wikidata",
+    externalIds: { wikidata: "Q10" },
+    personId
+  }];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.summary.unlinkedCreditCount, 0);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+});
+
+test("uses existing catalog aliases to collapse an unlinked duplicate credit into the linked relation", () => {
+  const existing = structuredClone(profile);
+  existing.names = [
+    { value: "弗兰卡·波坦特", language: "zh-CN", kind: "display", source: "manual", status: "verified", observedAt: existing.updatedAt },
+    { value: "弗朗卡·波滕特", language: "zh-CN", kind: "alternate", source: "manual", status: "verified", observedAt: existing.updatedAt }
+  ];
+  existing.externalIds = { imdb: "nm0004376", wikidata: "Q65105" };
+  const current = emptyPersonCatalogState();
+  current.people[personId] = { profile: existing, workIds: ["work-1"], updatedAt: existing.updatedAt };
+  rebuildDerivedPersonIndexes(current, { "work-1": "作品一" });
+
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [
+    { personId, name: "弗兰卡·波坦特", department: "acting", job: "Actor", source: "wikidata", externalIds: existing.externalIds },
+    { name: "弗朗卡·波滕特", department: "acting", job: "Actor", source: "douban" }
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    credits: structuredClone(sourceCredits),
+    work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) }
+  };
+  const reviewed = report();
+  reviewed.proposedProfiles = [];
+  reviewed.proposedCredits[0].credits = [{
+    personId,
+    name: "弗朗卡·波滕特",
+    department: "acting",
+    job: "Actor",
+    source: "manual",
+    externalIds: existing.externalIds
+  }];
+
+  const plan = planReviewedPeopleReportApply(current, [movie], reviewed);
+  const credits = plan.updatedResults[0].metadata?.work?.credits ?? [];
+  assert.equal(credits.length, 1);
+  assert.deepEqual(credits.map((credit) => credit.personId), [personId]);
+  assert.equal(credits[0].name, "弗兰卡·波坦特");
+});
+
+test("reuses an existing canonical person when a reviewed report rediscovers the same stable identity", () => {
+  const existingPersonId = "person_323e4567-e89b-42d3-a456-426614174002";
+  const existing = structuredClone(profile);
+  existing.personId = existingPersonId;
+  existing.externalIds = { tmdb: "1125581", imdb: "nm4006608", wikidata: "Q18030614" };
+  const current = emptyPersonCatalogState();
+  current.people[existingPersonId] = {
+    profile: existing,
+    workIds: [],
+    updatedAt: existing.updatedAt
+  };
+  const reviewed = report();
+  const rediscovered = structuredClone(reviewed.proposedProfiles[0] ?? profile);
+  rediscovered.personId = "person_423e4567-e89b-42d3-a456-426614174003";
+  rediscovered.externalIds = existing.externalIds;
+  reviewed.proposedProfiles = [rediscovered];
+  reviewed.proposedCredits[0].credits[0].personId = rediscovered.personId;
+  const plan = planReviewedPeopleReportApply(current, [result("work-1")], reviewed);
+  assert.equal(plan.summary.profileCount, 1);
+  assert.equal(plan.nextCatalog.people[existingPersonId]?.profile.personId, existingPersonId);
+  assert.equal(plan.nextCatalog.people[rediscovered.personId], undefined);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, existingPersonId);
+});
+
+test("prefers checkpointed reviewed IDs and redirects a stale catalog identity", () => {
+  const retiredPersonId = "person_323e4567-e89b-42d3-a456-426614174002";
+  const retired = structuredClone(profile);
+  retired.personId = retiredPersonId;
+  const current = emptyPersonCatalogState();
+  current.people[retiredPersonId] = { profile: retired, workIds: ["work-old"], updatedAt: retired.updatedAt };
+  current.creditsByWorkId["work-old"] = [{ personId: retiredPersonId, name: "张三", department: "acting", source: "tmdb" }];
+  rebuildDerivedPersonIndexes(current, { "work-old": "旧作品" });
+  const plan = planReviewedPeopleReportApply(current, [result("work-1")], report(), "2026-08-10T01:00:00.000Z", { preferReviewedPersonIds: true });
+  assert.equal(plan.nextCatalog.people[retiredPersonId], undefined);
+  assert.ok(plan.nextCatalog.people[personId]);
+  assert.equal(plan.nextCatalog.redirects[retiredPersonId], personId);
+  assert.equal(plan.nextCatalog.creditsByWorkId["work-old"][0].personId, personId);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+});
+
+test("checkpointed reviewed IDs replace stale Notion page bindings after identity merge", () => {
+  const retiredPersonId = "person_323e4567-e89b-42d3-a456-426614174002";
+  const retired = structuredClone(profile);
+  retired.personId = retiredPersonId;
+  retired.sourceRefs = [{ source: "notion", id: "old-page", observedAt: retired.updatedAt }];
+  const current = emptyPersonCatalogState();
+  current.people[retiredPersonId] = { profile: retired, workIds: [], updatedAt: retired.updatedAt };
+  rebuildDerivedPersonIndexes(current);
+  const plan = planReviewedPeopleReportApply(current, [result("work-1")], report(), "2026-08-10T01:00:00.000Z", {
+    preferReviewedPersonIds: true,
+    reviewedNotionPageIds: { [personId]: "new-page" }
+  });
+  assert.deepEqual(
+    plan.nextCatalog.people[personId].profile.sourceRefs?.filter((ref) => ref.source === "notion").map((ref) => ref.id),
+    ["new-page"]
+  );
+  assert.equal(plan.summary.catalogChanged, true);
+});
+
+test("checkpointed reviewed IDs bind a newly created Notion person before first catalog publication", () => {
+  const current = emptyPersonCatalogState();
+  const plan = planReviewedPeopleReportApply(current, [result("work-1")], report(), "2026-08-10T01:00:00.000Z", {
+    preferReviewedPersonIds: true,
+    reviewedNotionPageIds: { [personId]: "new-page" }
+  });
+  assert.ok(plan.nextCatalog.people[personId]);
+  assert.deepEqual(
+    plan.nextCatalog.people[personId].profile.sourceRefs?.filter((ref) => ref.source === "notion").map((ref) => ref.id),
+    ["new-page"]
+  );
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+  assert.equal(plan.summary.catalogChanged, true);
+});
+
 test("replaces a cross-work-contaminated credit set only when every source guard matches", () => {
   const preservedPersonId = "person_323e4567-e89b-42d3-a456-426614174002";
   const preservedProfile = structuredClone(profile);
@@ -172,6 +319,43 @@ test("matches voice-actor review credits to legacy actor rows without appending 
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
 });
 
+test("uses an unmaterialized discovery profile alias to avoid duplicate credits", () => {
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [
+    { name: "P!nk", department: "acting", job: "Actor", source: "notion" }
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    credits: structuredClone(sourceCredits),
+    work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) }
+  };
+  const reviewed = report();
+  reviewed.proposedProfiles = [];
+  reviewed.creditIdentityProfiles = [{
+    ...structuredClone(profile),
+    personId: "person_223e4567-e89b-42d3-a456-426614174001",
+    names: [
+      { value: "Pink", kind: "display", source: "wikidata", status: "strong", observedAt: "2026-08-10T00:00:00.000Z" },
+      { value: "P!nk", kind: "alternate", source: "wikidata", status: "strong", observedAt: "2026-08-10T00:00:00.000Z" }
+    ],
+    externalIds: { wikidata: "Q160009" }
+  }];
+  reviewed.proposedCredits[0].credits = [{
+    name: "Pink",
+    originalName: "Pink",
+    department: "acting",
+    job: "Voice Actor",
+    source: "wikidata",
+    externalIds: { wikidata: "Q160009" }
+  }];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 0);
+  assert.equal(plan.summary.unlinkedCreditCount, 1);
+  assert.equal(plan.updatedResults.length, 0);
+  assert.equal(movie.metadata?.work?.credits?.length, 1);
+  assert.equal(movie.metadata?.work?.credits?.[0].name, "P!nk");
+});
+
 test("preserves distinct reviewed role rows when no canonical source row exists", () => {
   const reviewed = report();
   reviewed.proposedCredits[0].credits = [
@@ -219,6 +403,48 @@ test("rejects missing search work and unresolved identity issues before writes",
   const unsafe = report();
   unsafe.identityIssues.push({ kind: "external_id_conflict", message: "conflict", personIds: [personId] });
   assert.throws(() => planReviewedPeopleReportApply(emptyPersonCatalogState(), [result("work-1")], unsafe), /identity issue/);
+});
+
+test("publishes complete metadata-only people relations without inventing a search-index row", () => {
+  const reviewed = report();
+  reviewed.proposedCredits[0] = {
+    ...reviewed.proposedCredits[0],
+    workId: "wwm_metadata_only",
+    title: "资料作品",
+    sourceWorkExternalIds: { imdb: "tt0000001" },
+    metadataOnlyWork: {
+      mode: "metadata-only",
+      sourcePageId: "3d720ac1-2f0a-8150-a992-cd49d28c1781",
+      completeCreditSet: true
+    }
+  };
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [], reviewed);
+  assert.equal(plan.updatedResults.length, 0);
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.summary.unlinkedCreditCount, 0);
+  assert.equal(plan.nextCatalog.creditsByWorkId.wwm_metadata_only[0].personId, personId);
+  assert.equal(plan.nextCatalog.creditsByPersonId[personId][0].workTitle, "资料作品");
+});
+
+test("metadata-only publication rejects ledger IDs and incomplete credit sets", () => {
+  const reviewed = report();
+  reviewed.proposedCredits[0].metadataOnlyWork = {
+    mode: "metadata-only",
+    sourcePageId: "3d720ac1-2f0a-8150-a992-cd49d28c1781",
+    completeCreditSet: true
+  };
+  reviewed.proposedCredits[0].sourceWorkExternalIds = { imdb: "tt0000001" };
+  assert.throws(
+    () => planReviewedPeopleReportApply(emptyPersonCatalogState(), [], reviewed),
+    /stable wwm_\* work ID/
+  );
+
+  reviewed.proposedCredits[0].workId = "wwm_metadata_only";
+  reviewed.proposedCredits[0].credits[0].personId = undefined;
+  assert.throws(
+    () => planReviewedPeopleReportApply(emptyPersonCatalogState(), [], reviewed),
+    /non-empty, fully linked credit set/
+  );
 });
 
 test("rejects a discovery report whose source work identity conflicts with the canonical work", () => {
@@ -338,4 +564,47 @@ test("replaying a reviewed report preserves the authoritative Notion editorial o
   assert.ok(replay.nextCatalog.people[personId].profile.names.some((entry) => entry.value === "A later enriched alias"));
   assert.deepEqual(replay.nextCatalog.people[personId].profile.biography?.texts, syncedProfile.biography.texts);
   assert.deepEqual(replay.nextCatalog.people[personId].profile.lockedFields, ["biographyZh"]);
+});
+
+test("a reviewed biography repair fills a missing language without overwriting Notion", () => {
+  const current = emptyPersonCatalogState();
+  const notionProfile = structuredClone(profile);
+  notionProfile.sourceRefs = [{ source: "notion", id: "page-1", observedAt: profile.updatedAt }];
+  notionProfile.biography = {
+    texts: [{
+      value: "English reviewed biography with enough substantive detail for the quality gate.",
+      language: "en",
+      source: "notion",
+      status: "verified",
+      method: "editorial-rewrite",
+      observedAt: profile.updatedAt
+    }]
+  };
+  current.people[personId] = { profile: notionProfile, workIds: [], updatedAt: profile.updatedAt };
+  const reviewed = report();
+  reviewed.proposedProfiles[0].biography = {
+    texts: [
+      {
+        value: "这是一段经过审阅的中文人物简介，说明其职业经历、代表性工作和创作特点，并且保留足够的事实细节，便于读者理解其在影视制作中的位置。",
+        language: "zh-CN",
+        source: "manual",
+        status: "verified",
+        method: "editorial-rewrite",
+        observedAt: profile.updatedAt
+      },
+      {
+        value: "English reviewed biography with enough substantive detail for the quality gate.",
+        language: "en",
+        source: "manual",
+        status: "verified",
+        method: "editorial-rewrite",
+        observedAt: profile.updatedAt
+      }
+    ]
+  };
+  const plan = planReviewedPeopleReportApply(current, [result("work-1")], reviewed, "2026-08-10T02:00:00.000Z");
+  const texts = plan.nextCatalog.people[personId].profile.biography?.texts ?? [];
+  assert.equal(texts.filter((entry) => entry.language === "zh-CN").length, 1);
+  assert.equal(texts.find((entry) => entry.language === "en")?.source, "notion");
+  assert.equal(plan.summary.catalogChanged, true);
 });

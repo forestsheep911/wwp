@@ -92,6 +92,19 @@ test("OMDb comma-separated directors, writers, and cast become distinct structur
   ]);
 });
 
+test("writer role suffixes preserve source authors instead of calling them screenwriters", () => {
+  const richText = (value: string) => ({ type: "rich_text", rich_text: [{ plain_text: value }] });
+  const parsed = creditsFromProperties({
+    Writers: richText("Jane Austen (novel), Emma Thompson (screenplay), Original Name (unknown note)")
+  });
+
+  assert.deepEqual(parsed.credits.map((credit) => [credit.name, credit.job]), [
+    ["Jane Austen", "Source Author"],
+    ["Emma Thompson", "Screenwriter"],
+    ["Original Name (unknown note)", "Screenwriter"]
+  ]);
+});
+
 test("legacy basic info credits seed structured credits when dedicated fields are empty", () => {
   const richText = (value: string) => ({ type: "rich_text", rich_text: [{ plain_text: value }] });
   const parsed = creditsFromProperties({

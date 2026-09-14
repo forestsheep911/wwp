@@ -5,12 +5,14 @@ import type {
   PersonCatalogIssue,
   PersonCatalogState,
   PersonCreditRef,
+  PersonExternalIds,
   PersonProfile,
   SearchResult
 } from "@wwpdw/shared";
 import { normalizePersonExternalIds, normalizePersonNameSearchKey } from "@wwpdw/shared";
-import { rebuildDerivedPersonIndexes } from "@wwpdw/cache-store";
-import { assertVerifiedPersonProfileQuality } from "./person-biography-quality.js";
+import { mergePersonCatalogEntries, rebuildDerivedPersonIndexes } from "@wwpdw/cache-store";
+import { assertVerifiedPersonProfileQuality, reviewPersonCoreProfile } from "./person-biography-quality.js";
+import { withPersonQualityAssessment } from "./person-quality-score.js";
 
 export interface ReviewedCreditReplacementGuard {
   mode: "replace-contaminated";
@@ -27,12 +29,19 @@ export interface ReviewedCreditReplacementGuard {
 export interface ReviewedPeopleReport {
   generatedAt: string;
   proposedProfiles: PersonProfile[];
+  /** Discovery profiles used only to match aliases on unmaterialized credits. */
+  creditIdentityProfiles?: PersonProfile[];
   proposedCredits: Array<{
     workId: string;
     title: string;
     credits: MovieCreditEntry[];
     sourceWorkExternalIds?: Partial<MovieExternalIds>;
     creditReplacement?: ReviewedCreditReplacementGuard;
+    metadataOnlyWork?: {
+      mode: "metadata-only";
+      sourcePageId: string;
+      completeCreditSet: true;
+    };
   }>;
   identityIssues: PersonCatalogIssue[];
   unresolved?: Array<{ workId?: string; creditName?: string; reason: string }>;
@@ -56,10 +65,25 @@ export function planReviewedPeopleReportApply(
   currentCatalog: PersonCatalogState,
   searchResults: SearchResult[],
   report: ReviewedPeopleReport,
-  generatedAt = new Date().toISOString()
+  generatedAt = new Date().toISOString(),
+  options: { preferReviewedPersonIds?: boolean; reviewedNotionPageIds?: Record<string, string> } = {}
 ): PersonCatalogApplyPlan {
   if (report.identityIssues.length > 0) {
     throw new Error(`Reviewed report has ${report.identityIssues.length} unresolved identity issue(s).`);
+  }
+  const originalCatalog = structuredClone(currentCatalog);
+
+  // Reuse an existing canonical profile when a reviewed report rediscovers the
+  // same stable external identity. This is safe only for an unambiguous ID
+  // match; conflicting matches remain an explicit error for human review.
+  if (options.preferReviewedPersonIds) {
+    currentCatalog = canonicalizeCatalogToReviewedProfiles(
+      currentCatalog,
+      report.proposedProfiles,
+      options.reviewedNotionPageIds
+    );
+  } else {
+    report = remapReviewedReportToExistingPeople(currentCatalog, report);
   }
 
   const nextCatalog = structuredClone(currentCatalog);
@@ -95,15 +119,39 @@ export function planReviewedPeopleReportApply(
     if (affectedWorkIds.has(work.workId)) throw new Error(`Reviewed report contains duplicate work: ${work.workId}`);
     affectedWorkIds.add(work.workId);
     const matches = resultsByWorkId.get(work.workId) ?? [];
+    if (matches.length === 0 && work.metadataOnlyWork) {
+      assertMetadataOnlyWorkGuard(work, report);
+      const linked = work.credits.map((credit) => {
+        if (!credit.personId) throw new Error(`Metadata-only credit ${credit.name} in ${work.workId} is not linked.`);
+        assertStablePersonId(credit.personId);
+        if (!nextCatalog.people[credit.personId]) {
+          throw new Error(`Credit ${credit.name} in ${work.workId} references missing person ${credit.personId}.`);
+        }
+        return credit as MovieCreditEntry & { personId: string };
+      });
+      linkedCreditCount += linked.length;
+      nextCatalog.creditsByWorkId[work.workId] = dedupeCredits(linked);
+      workTitles[work.workId] = work.title;
+      continue;
+    }
     if (matches.length !== 1) throw new Error(`Expected exactly one search result for work ${work.workId}; found ${matches.length}.`);
 
     const original = matches[0];
     if (!original.metadata?.work) throw new Error(`Search result for ${work.workId} has no structured work metadata.`);
     assertSourceWorkIdentity(original, work.sourceWorkExternalIds);
     const sourceCredits = structuredClone(original.metadata.work.credits ?? original.metadata.credits ?? []);
-    const mergedCredits = work.creditReplacement
+    const mergedCreditsWithAliases = work.creditReplacement
       ? replaceContaminatedCredits(original, sourceCredits, work.credits, work.creditReplacement)
-      : mergeReviewedCredits(sourceCredits, work.credits);
+      : mergeReviewedCredits(
+          sourceCredits,
+          work.credits,
+          report.proposedProfiles,
+          [
+            ...(report.creditIdentityProfiles ?? []),
+            ...Object.values(nextCatalog.people).map((entry) => entry.profile)
+          ]
+        );
+    const mergedCredits = dedupeLinkedCreditRows(mergedCreditsWithAliases);
     const linked = mergedCredits.filter((credit): credit is MovieCreditEntry & { personId: string } => Boolean(credit.personId)).map((credit) => {
       assertStablePersonId(credit.personId);
       if (!nextCatalog.people[credit.personId]) {
@@ -163,7 +211,7 @@ export function planReviewedPeopleReportApply(
   ];
   rebuildDerivedPersonIndexes(nextCatalog, workTitles);
   assertNoDuplicateExternalIds(nextCatalog);
-  const catalogChanged = !sameJson(catalogComparable(currentCatalog), catalogComparable(nextCatalog));
+  const catalogChanged = !sameJson(catalogComparable(originalCatalog), catalogComparable(nextCatalog));
   if (catalogChanged) {
     nextCatalog.generatedAt = generatedAt;
     nextCatalog.source = {
@@ -188,6 +236,51 @@ export function planReviewedPeopleReportApply(
       catalogChanged
     }
   };
+}
+
+function dedupeLinkedCreditRows(credits: MovieCreditEntry[]) {
+  const result: MovieCreditEntry[] = [];
+  const linkedKeys = new Set<string>();
+  for (const credit of credits) {
+    if (!credit.personId) {
+      result.push(credit);
+      continue;
+    }
+    const key = [
+      credit.personId,
+      credit.department,
+      normalizePersonNameSearchKey(credit.job ?? ""),
+      normalizePersonNameSearchKey(credit.character ?? "")
+    ].join(":");
+    if (linkedKeys.has(key)) continue;
+    linkedKeys.add(key);
+    result.push(credit);
+  }
+  return result;
+}
+
+function assertMetadataOnlyWorkGuard(
+  work: ReviewedPeopleReport["proposedCredits"][number],
+  report: ReviewedPeopleReport
+) {
+  if (!/^wwm_[A-Za-z0-9_-]+$/.test(work.workId)) {
+    throw new Error(`Metadata-only work requires a stable wwm_* work ID; received ${work.workId}.`);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(work.metadataOnlyWork!.sourcePageId)) {
+    throw new Error(`Metadata-only work ${work.workId} requires an exact Notion source page ID.`);
+  }
+  if (!work.metadataOnlyWork!.completeCreditSet) {
+    throw new Error(`Metadata-only work ${work.workId} requires a complete reviewed credit set.`);
+  }
+  if (!Object.values(work.sourceWorkExternalIds ?? {}).some((value) => typeof value === "string" && value.trim())) {
+    throw new Error(`Metadata-only work ${work.workId} requires a stable external work identity.`);
+  }
+  if (work.credits.length === 0 || work.credits.some((credit) => !credit.personId)) {
+    throw new Error(`Metadata-only work ${work.workId} requires a non-empty, fully linked credit set.`);
+  }
+  if ((report.unresolved ?? []).some((entry) => !entry.workId || entry.workId === work.workId)) {
+    throw new Error(`Metadata-only work ${work.workId} still has unresolved credits.`);
+  }
 }
 
 function assertSourceWorkIdentity(original: SearchResult, sourceIds: Partial<MovieExternalIds> | undefined) {
@@ -292,17 +385,20 @@ export async function applyPersonCatalogPlan(input: {
 
 function mergeReviewedCredits(
   sourceCredits: MovieCreditEntry[],
-  reviewedCredits: MovieCreditEntry[]
+  reviewedCredits: MovieCreditEntry[],
+  reviewedProfiles: PersonProfile[] = [],
+  creditIdentityProfiles: PersonProfile[] = []
 ): MovieCreditEntry[] {
   const merged = structuredClone(sourceCredits);
   const sourceCreditCount = merged.length;
   const consumed = new Set<number>();
+  const identityProfiles = [...reviewedProfiles, ...creditIdentityProfiles];
+  const profilesByPersonId = new Map(identityProfiles.map((profile) => [profile.personId, profile]));
   for (const reviewed of reviewedCredits) {
-    const sourceIndex = merged.findIndex((source, index) => (
-      index < sourceCreditCount
-      && !consumed.has(index)
-      && sameCreditIdentity(source, reviewed)
-    ));
+    const reviewedProfile = reviewed.personId
+      ? profilesByPersonId.get(reviewed.personId)
+      : findCreditIdentityProfile(reviewed, identityProfiles);
+    const sourceIndex = bestCreditIdentityMatch(merged, sourceCreditCount, consumed, reviewed, reviewedProfile);
     if (!reviewed.personId) {
       if (sourceIndex < 0) merged.push(structuredClone(reviewed));
       continue;
@@ -323,22 +419,157 @@ function mergeReviewedCredits(
   return merged;
 }
 
-function sameCreditIdentity(left: MovieCreditEntry, right: MovieCreditEntry) {
+function bestCreditIdentityMatch(
+  sourceCredits: MovieCreditEntry[],
+  sourceCreditCount: number,
+  consumed: Set<number>,
+  reviewed: MovieCreditEntry,
+  reviewedProfile?: PersonProfile
+) {
+  const candidates: Array<{ index: number; score: number; linked: boolean }> = [];
+  for (let index = 0; index < sourceCreditCount; index += 1) {
+    if (consumed.has(index)) continue;
+    const source = sourceCredits[index];
+    const identityScore = creditIdentityScore(source, reviewed, reviewedProfile);
+    if (identityScore === 0) continue;
+    candidates.push({ index, score: identityScore, linked: Boolean(source.personId) });
+  }
+  // When two canonical rows describe one person, prefer the still-unlinked
+  // row even if the existing linked row carries stronger IDs. Otherwise an
+  // alias repair merely rewrites the relation that was already in place.
+  const eligible = reviewed.personId && candidates.some((candidate) => !candidate.linked)
+    ? candidates.filter((candidate) => !candidate.linked)
+    : candidates;
+  eligible.sort((left, right) => right.score - left.score || left.index - right.index);
+  return eligible[0]?.index ?? -1;
+}
+
+function findCreditIdentityProfile(credit: MovieCreditEntry, profiles: PersonProfile[]) {
+  const creditIds = normalizePersonExternalIds(credit.externalIds);
+  const matches = profiles.filter((profile) => hasSharedStableExternalId(
+    creditIds,
+    normalizePersonExternalIds(profile.externalIds)
+  ));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function sameCreditIdentity(left: MovieCreditEntry, right: MovieCreditEntry, reviewedProfile?: PersonProfile) {
+  return creditIdentityScore(left, right, reviewedProfile) > 0;
+}
+
+function creditIdentityScore(left: MovieCreditEntry, right: MovieCreditEntry, reviewedProfile?: PersonProfile) {
   const leftIds = normalizePersonExternalIds(left.externalIds);
   const rightIds = normalizePersonExternalIds(right.externalIds);
   for (const source of ["tmdb", "imdb", "wikidata"] as const) {
-    if (leftIds[source] && rightIds[source] && leftIds[source] === rightIds[source]) return true;
+    if (leftIds[source] && rightIds[source] && leftIds[source] === rightIds[source]) return 3;
   }
   const leftNames = [left.name, left.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
-  const rightNames = [right.name, right.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
+  const directRightNames = [right.name, right.originalName]
+    .filter(Boolean)
+    .map((value) => normalizePersonNameSearchKey(value!));
   const leftJob = normalizePersonNameSearchKey(left.job ?? "");
   const rightJob = normalizePersonNameSearchKey(right.job ?? "");
   const compatibleActingJobs = new Set(["actor", "voiceactor"]);
   const sameJob = leftJob === rightJob
     || (left.department === "acting" && compatibleActingJobs.has(leftJob) && compatibleActingJobs.has(rightJob));
-  return leftNames.some((name) => name && rightNames.includes(name))
-    && left.department === right.department
-    && sameJob;
+  if (left.department !== right.department || !sameJob) return 0;
+  if (leftNames.some((name) => name && directRightNames.includes(name))) return 2;
+  const profileNames = (reviewedProfile?.names ?? [])
+    .map((entry) => normalizePersonNameSearchKey(entry.value));
+  return leftNames.some((name) => name && profileNames.includes(name)) ? 1 : 0;
+}
+
+export function canonicalizeCatalogToReviewedProfiles(
+  input: PersonCatalogState,
+  profiles: PersonProfile[],
+  reviewedNotionPageIds: Record<string, string> = {}
+) {
+  let state = structuredClone(input);
+  for (const profile of profiles) {
+    const normalizedIds = normalizePersonExternalIds(profile.externalIds);
+    const owners = new Set(Object.entries(normalizedIds)
+      .map(([provider, value]) => state.externalIdIndex[provider as keyof PersonExternalIds]?.[value])
+      .filter((personId): personId is string => Boolean(personId && personId !== profile.personId)));
+    if (owners.size > 1) {
+      throw new Error(`Reviewed profile ${profile.personId} matches multiple existing people: ${[...owners].join(", ")}.`);
+    }
+    const retiredPersonId = [...owners][0];
+    if (!retiredPersonId) continue;
+    if (!state.people[profile.personId]) {
+      state.people[profile.personId] = { profile: structuredClone(profile), workIds: [], updatedAt: profile.updatedAt };
+    }
+    state = mergePersonCatalogEntries(state, profile.personId, retiredPersonId);
+  }
+  for (const profile of profiles) {
+    const notionPageId = reviewedNotionPageIds[profile.personId];
+    if (!notionPageId) continue;
+    const entry = state.people[profile.personId] ??= {
+      profile: structuredClone(profile),
+      workIds: [],
+      updatedAt: profile.updatedAt
+    };
+    const existing = entry.profile.sourceRefs?.find((ref) => ref.source === "notion" && ref.id === notionPageId);
+    entry.profile.sourceRefs = [
+      ...(entry.profile.sourceRefs ?? []).filter((ref) => ref.source !== "notion"),
+      existing ?? {
+        source: "notion",
+        id: notionPageId,
+        observedAt: profile.updatedAt
+      }
+    ];
+  }
+  return state;
+}
+
+function remapReviewedReportToExistingPeople(
+  currentCatalog: PersonCatalogState,
+  report: ReviewedPeopleReport
+): ReviewedPeopleReport {
+  const remap = new Map<string, string>();
+  for (const reviewed of report.proposedProfiles) {
+    const reviewedIds = normalizePersonExternalIds(reviewed.externalIds);
+    const matches = Object.values(currentCatalog.people)
+      .filter((entry) => hasSharedStableExternalId(reviewedIds, normalizePersonExternalIds(entry.profile.externalIds)))
+      .map((entry) => entry.profile.personId);
+    const uniqueMatches = [...new Set(matches)];
+    if (uniqueMatches.length > 1) {
+      throw new Error(`Reviewed profile ${reviewed.personId} matches multiple existing person identities.`);
+    }
+    if (uniqueMatches.length === 1) remap.set(reviewed.personId, uniqueMatches[0]);
+  }
+  if (remap.size === 0) return report;
+
+  const proposedProfiles = report.proposedProfiles.map((profile) => ({
+    ...structuredClone(profile),
+    personId: remap.get(profile.personId) ?? profile.personId
+  }));
+  const profileIds = new Set<string>();
+  for (const profile of proposedProfiles) {
+    if (profileIds.has(profile.personId)) {
+      throw new Error(`Reviewed report contains duplicate canonical personId ${profile.personId}.`);
+    }
+    profileIds.add(profile.personId);
+  }
+  return {
+    ...structuredClone(report),
+    proposedProfiles,
+    proposedCredits: report.proposedCredits.map((work) => ({
+      ...structuredClone(work),
+      credits: work.credits.map((credit) => ({
+        ...structuredClone(credit),
+        ...(credit.personId && remap.has(credit.personId) ? { personId: remap.get(credit.personId) } : {})
+      }))
+    }))
+  };
+}
+
+function hasSharedStableExternalId(
+  left: PersonExternalIds,
+  right: PersonExternalIds
+) {
+  return (["tmdb", "imdb", "wikidata"] as const).some((source) => (
+    Boolean(left[source]) && left[source] === right[source]
+  ));
 }
 
 function dedupeCredits(credits: Array<MovieCreditEntry & { personId: string }>): PersonCreditRef[] {
@@ -366,18 +597,16 @@ function mergeReviewedProfileWithNotionOverlay(current: PersonProfile | undefine
   // biography object, including any supplemental source texts it retained.
   // Re-composing those texts from an older reviewed report makes replays
   // oscillate by dropping or re-adding same-language source descriptions.
-  const biography = current.biography
-    ? structuredClone(current.biography)
-    : structuredClone(reviewed.biography);
+  const biography = mergeReviewedBiography(current, reviewed);
   // Preserve the complete current collections as well. They may contain aliases,
   // images, or references added by a later Notion sync or enrichment pass that
   // were not present in the older reviewed report being replayed. A subsequent
   // targeted Notion sync applies any newly reviewed editorial fields.
-  const names = structuredClone(current.names);
+  const names = mergeReviewedNames(current.names, reviewed.names);
   const profileImages = structuredClone(current.profileImages ?? []);
   const sourceRefs = structuredClone(current.sourceRefs);
 
-  return {
+  const merged: PersonProfile = {
     ...structuredClone(reviewed),
     names,
     departments: structuredClone(current.departments),
@@ -389,6 +618,56 @@ function mergeReviewedProfileWithNotionOverlay(current: PersonProfile | undefine
     dataQuality: structuredClone(current.dataQuality),
     updatedAt: current.updatedAt
   };
+  if (sameJson(names, current.names) && sameJson(biography, current.biography)) return merged;
+  // Re-score only after merging eligible reviewed additions. This preserves
+  // Notion-owned fields while allowing a biography repair to clear a stale
+  // partial-quality flag.
+  const quality = reviewPersonCoreProfile(merged);
+  return withPersonQualityAssessment({
+    ...merged,
+    dataQuality: {
+      ...merged.dataQuality,
+      status: merged.dataQuality?.status === "conflict"
+        ? "conflict"
+        : quality.eligibleForVerified ? "verified" : "partial",
+      ...(quality.issues.length ? { issues: quality.issues } : {}),
+      updatedAt: current.dataQuality?.updatedAt ?? current.updatedAt
+    }
+  }, { reviewedAt: current.dataQuality?.reviewedAt ?? current.updatedAt });
+}
+
+function mergeReviewedBiography(current: PersonProfile, reviewed: PersonProfile) {
+  const currentTexts = structuredClone(current.biography?.texts ?? []);
+  if (!current.biography) return structuredClone(reviewed.biography);
+  const locked = new Set(current.lockedFields ?? []);
+  const languages = new Set(currentTexts
+    .filter((text) => text.status === "verified")
+    .map((text) => text.language));
+  const additions = (reviewed.biography?.texts ?? []).filter((text) => (
+    text.status === "verified"
+    && !languages.has(text.language)
+    && !locked.has(text.language === "zh-CN" ? "biographyZh" : "biographyEn")
+  ));
+  return {
+    ...structuredClone(current.biography),
+    texts: [...additions.map((text) => structuredClone(text)), ...currentTexts]
+  };
+}
+
+function mergeReviewedNames(current: PersonProfile["names"], reviewed: PersonProfile["names"]) {
+  const verifiedValues = new Set(current
+    .filter((entry) => entry.status === "verified")
+    .map((entry) => [normalizePersonNameSearchKey(entry.value), entry.language ?? "", entry.kind].join(":")));
+  const allValues = new Set(current.map((entry) => [normalizePersonNameSearchKey(entry.value), entry.language ?? "", entry.kind, entry.source, entry.status].join(":")));
+  const additions = reviewed.filter((entry) => {
+    if (entry.status !== "verified" || entry.source !== "manual") return false;
+    const identityKey = [normalizePersonNameSearchKey(entry.value), entry.language ?? "", entry.kind].join(":");
+    const exactKey = [identityKey, entry.source, entry.status].join(":");
+    if (verifiedValues.has(identityKey) || allValues.has(exactKey)) return false;
+    allValues.add(exactKey);
+    return true;
+  });
+  return [...additions.map((entry) => structuredClone(entry)), ...structuredClone(current)];
 }
 
 function uniqueNameEntries(values: PersonProfile["names"]): PersonProfile["names"] {

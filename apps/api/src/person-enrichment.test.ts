@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { discoverPeopleCandidates, JsonEvidenceCache, LocalRunLease, runPersonEnrichment, type EnrichmentCheckpoint } from "./person-enrichment.js";
+import { blockedPersonEnrichmentReport, discoverPeopleCandidates, JsonEvidenceCache, LocalRunLease, runPersonEnrichment, type EnrichmentCheckpoint } from "./person-enrichment.js";
 import { ProviderHttpError } from "./person-sources/provider-http.js";
 
 const candidate = { workId: "work-1", title: "A Film", kind: "movie" as const, tmdbId: "10", workHash: "hash-1" };
@@ -27,6 +27,26 @@ test("discovers stable TMDB candidates from the current search snapshot", () => 
   assert.equal(result.length, 1);
   assert.equal(result[0].title, "A Film");
   assert.match(result[0].workHash, /^[a-f0-9]{64}$/);
+});
+
+test("extracts a season number so series credits stay season-scoped", () => {
+  const result = discoverPeopleCandidates({ entries: {
+    a: { result: { metadata: { work: { workId: "season-1", kind: "series", externalIds: { tmdb: "1408" }, display: { title: "House M.D. Season 2 (2005)" } } } } },
+    b: { result: { metadata: { work: { workId: "season-2", kind: "series", externalIds: { tmdb: "1408" }, display: { title: "豪斯医生 第六季 House M.D. Season 6 (2009)" } } } } }
+  } });
+  assert.equal(result[0].seasonNumber, 2);
+  assert.equal(result[1].seasonNumber, 6);
+  assert.notEqual(result[0].workHash, result[1].workHash);
+});
+
+test("records a stable blocked report when the network credential is unavailable", () => {
+  const report = blockedPersonEnrichmentReport([{ ...candidate, workId: "season-1", kind: "series", seasonNumber: 2 }], "missing TMDB credential", "2026-09-11T00:00:00.000Z");
+  assert.equal(report.mode, "blocked");
+  assert.equal(report.recoveryPlan?.scope, "provider-lane");
+  assert.match(report.recoveryPlan?.nextAction ?? "", /Wikidata evidence pilot/u);
+  assert.match(report.recoveryPlan?.trigger ?? "", /credential is restored/u);
+  assert.deepEqual(report.remainingWorkIds, ["season-1"]);
+  assert.equal(report.unresolved[0].reason, "missing TMDB credential");
 });
 
 test("offline mode makes no provider request and exposes remaining work", async () => {

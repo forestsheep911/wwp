@@ -100,6 +100,25 @@ test("allows a fully reviewed substantive biography to replace an unlocked edito
   assert.equal(values.biographyEn, incomingEn);
 });
 
+test("selects a quality-eligible reviewed biography ahead of an earlier short verified text", () => {
+  const observedAt = "2026-08-30T00:00:00.000Z";
+  const incomingZh = "这位演员早年从舞台和独立电影进入行业，随后在家庭剧、社会题材和商业制作之间持续工作，并通过对身体状态、语气和日常动作的细致控制形成具有辨识度的表演方法。其职业生涯包含多个阶段，也包括与重要导演和固定创作团队的反复合作；多部代表作品显示出她处理脆弱、幽默和人物韧性的能力。";
+  const incomingEn = "This actor began in stage and independent work before building a career across family drama, socially engaged cinema, and commercial production. Careful control of physical behavior, speech, and everyday gesture became central to a recognizable performance method. The career spans several stages and recurring collaborations with important directors, while representative works show an unusual ability to combine vulnerability, humor, and resilience.";
+  const values = managedPeopleValues({
+    ...profile(),
+    biography: { texts: [
+      { value: "演员。", language: "zh-CN", source: "notion", status: "verified", method: "editorial-rewrite", observedAt },
+      { value: "Actor.", language: "en", source: "notion", status: "verified", method: "editorial-rewrite", observedAt },
+      { value: incomingZh, language: "zh-CN", source: "manual", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["douban:1", "wikidata:Q1"], observedAt },
+      { value: incomingEn, language: "en", source: "manual", status: "verified", method: "editorial-rewrite", supportingSourceRefs: ["douban:1", "wikidata:Q1"], observedAt }
+    ] }
+  });
+  assert.equal(values.biographyZh, incomingZh);
+  assert.equal(values.biographyEn, incomingEn);
+  assert.equal(values.biographyZhStatus, "verified");
+  assert.equal(values.biographyEnStatus, "verified");
+});
+
 test("refuses to mutate immutable Person ID", () => {
   assert.throws(() => managedPeopleValues(profile(), { personId: "person-b", lockedFields: [] }), /immutable/);
 });
@@ -175,6 +194,69 @@ test("refuses duplicate Person ID rows before writing", async () => {
     pages: { create: async () => { throw new Error("unexpected"); }, update: async () => { throw new Error("unexpected"); }, retrieve: async () => row }
   }, "people-source", new ProviderRateLimiter(0));
   await assert.rejects(source.upsert(profile()), /Duplicate Notion People rows/);
+});
+
+test("preflights a whole batch against existing Notion external IDs before writing", async () => {
+  const existing = {
+    id: "page-existing",
+    properties: notionPeopleProperties(managedPeopleValues({ ...profile(), personId: "person-existing" }))
+  };
+  let writes = 0;
+  const source = new NotionPeopleSource({
+    dataSources: { query: async () => ({ results: [existing], has_more: false }) },
+    pages: {
+      create: async () => { writes += 1; return existing; },
+      update: async () => { writes += 1; return existing; },
+      retrieve: async () => existing
+    }
+  }, "people-source", new ProviderRateLimiter(0));
+  await assert.rejects(
+    source.assertBatchIdentitySafety([{ ...profile(), personId: "person-incoming" }]),
+    /would duplicate Notion People row page-existing/
+  );
+  assert.equal(writes, 0);
+});
+
+test("reuses one batch identity scan for subsequent upserts", async () => {
+  const profiles = [profile(), { ...profile(), personId: "person-b", externalIds: { tmdb: "2", imdb: "nm0000002" } }];
+  const pages = new Map<string, { id: string; properties: Record<string, unknown> }>();
+  let fullScans = 0;
+  const client = {
+    dataSources: { query: async (input: Record<string, any>) => {
+      if (!input.filter) {
+        fullScans += 1;
+        return { results: [...pages.values()], has_more: false };
+      }
+      const personId = input.filter.rich_text.equals;
+      return { results: [...pages.values()].filter((page) => (page.properties["Person ID"] as any)?.rich_text?.[0]?.text?.content === personId), has_more: false };
+    } },
+    pages: {
+      create: async (input: Record<string, unknown>) => {
+        const page = { id: `page-${pages.size + 1}`, properties: input.properties as Record<string, unknown> };
+        pages.set(page.id, page);
+        return page;
+      },
+      update: async (input: Record<string, unknown>) => pages.get(String(input.page_id))!,
+      retrieve: async (input: Record<string, unknown>) => pages.get(String(input.page_id))!
+    }
+  };
+  const source = new NotionPeopleSource(client, "people-source", new ProviderRateLimiter(0));
+  await source.assertBatchIdentitySafety(profiles);
+  await source.upsert(profiles[0]);
+  await source.upsert(profiles[1]);
+  assert.equal(fullScans, 1);
+});
+
+test("reports unrelated historical duplicates without blocking a clean incoming batch", async () => {
+  const duplicateA = { id: "page-old-a", properties: notionPeopleProperties(managedPeopleValues(profile())) };
+  const duplicateB = { id: "page-old-b", properties: notionPeopleProperties(managedPeopleValues({ ...profile(), personId: "person-duplicate" })) };
+  const incoming = { ...profile(), personId: "person-clean", externalIds: { tmdb: "99", imdb: "nm0000099" } };
+  const source = new NotionPeopleSource({
+    dataSources: { query: async () => ({ results: [duplicateA, duplicateB], has_more: false }) },
+    pages: { create: async () => duplicateA, update: async () => duplicateA, retrieve: async () => duplicateA }
+  }, "people-source", new ProviderRateLimiter(0));
+  const result = await source.assertBatchIdentitySafety([incoming]);
+  assert.equal(result.existingConflictCount, 2);
 });
 
 test("lists incrementally edited People rows with pagination and one shared query shape", async () => {

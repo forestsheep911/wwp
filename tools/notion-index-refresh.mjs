@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
-import { NotionSearchSource } from "../apps/api/src/notion-source.ts";
-import { prepareIndexedAssetRefresh } from "../apps/api/src/indexed-asset-refresh.ts";
-import { createSearchIndexStore, createCacheStore } from "@wwpdw/cache-store";
 
 function parseArgs(args) {
   const options = {};
@@ -12,14 +9,28 @@ function parseArgs(args) {
     if (arg === "--page-id") options.pageId = args[++index];
     else if (arg === "--title") options.title = args[++index];
     else if (arg === "--asset-key") options.assetKey = args[++index];
+    else if (arg === "--backend") options.backend = args[++index];
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pageId) throw new Error("--page-id is required.");
+  if (options.backend && !new Set(["local", "azure"]).has(options.backend)) {
+    throw new Error("--backend must be local or azure.");
+  }
   return options;
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.backend) process.env.SEARCH_INDEX_BACKEND = options.backend;
+  await import("tsx/esm");
+  const [notionSource, indexedRefresh, cacheStore] = await Promise.all([
+    import("../apps/api/src/notion-source.ts"),
+    import("../apps/api/src/indexed-asset-refresh.ts"),
+    import("@wwpdw/cache-store")
+  ]);
+  const { NotionSearchSource } = notionSource;
+  const { prepareIndexedAssetRefresh } = indexedRefresh;
+  const { createSearchIndexStore, createCacheStore } = cacheStore;
   const pageId = `${options.pageId}`.trim();
   const assetKey = `${options.assetKey ?? `notion-page-${pageId}`}`.trim();
   const searchIndex = createSearchIndexStore();

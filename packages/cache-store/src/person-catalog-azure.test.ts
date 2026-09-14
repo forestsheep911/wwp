@@ -32,6 +32,35 @@ class BatchMemoryTable extends MemoryTable {
   }
 }
 
+class QueryMemoryTable extends MemoryTable {
+  entityReads = 0;
+  listReads = 0;
+  listFilter = "";
+
+  override async getEntity<T extends object>(partitionKey: string, rowKey: string) {
+    this.entityReads += 1;
+    return super.getEntity<T>(partitionKey, rowKey);
+  }
+
+  async *listEntities<T extends object>(options?: { queryOptions?: { filter?: string } }) {
+    this.listReads += 1;
+    this.listFilter = options?.queryOptions?.filter ?? "";
+    for (const entity of this.entities.values()) yield structuredClone(entity) as T;
+  }
+}
+
+class FlakyReadTable extends MemoryTable {
+  failuresRemaining = 2;
+
+  override async getEntity<T extends object>(partitionKey: string, rowKey: string) {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+    }
+    return super.getEntity<T>(partitionKey, rowKey);
+  }
+}
+
 function state(): PersonCatalogState {
   return {
     schemaVersion: 1,
@@ -74,4 +103,30 @@ test("Azure person catalog batches snapshot chunks and switches the manifest aft
   assert.equal(table.transactionWrites, 1);
   assert.equal(table.manifestWrites, 1);
   assert.deepEqual(await store.getState(), largeState);
+});
+
+test("Azure person catalog reads one generation with a bounded table query", async () => {
+  const table = new QueryMemoryTable();
+  const writer = new AzurePersonCatalogStore({ tableClient: table });
+  const largeState = state();
+  largeState.aliasIndex.large = ["x".repeat(100_000)];
+  await writer.replaceState(largeState);
+
+  table.entityReads = 0;
+  assert.deepEqual(await writer.getState(), largeState);
+  assert.equal(table.entityReads, 1);
+  assert.equal(table.listReads, 1);
+  assert.match(table.listFilter, /PartitionKey eq 'personcatalog'/u);
+  assert.match(table.listFilter, /RowKey ge 'snapshot:[^']+:'/u);
+  assert.match(table.listFilter, /RowKey lt 'snapshot:[^']+:~'/u);
+  assert.doesNotMatch(table.listFilter, /generationId eq/u);
+});
+
+test("Azure person catalog retries transient reads before failing", async () => {
+  const table = new FlakyReadTable();
+  const store = new AzurePersonCatalogStore({ tableClient: table });
+  await store.replaceState(state());
+
+  assert.deepEqual(await store.getState(), state());
+  assert.equal(table.failuresRemaining, 0);
 });

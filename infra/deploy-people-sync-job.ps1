@@ -16,6 +16,8 @@ param(
     [string]$CronExpression = "0 0,12 * * *",
     [int]$PageSize = 100,
     [int]$OverlapMinutes = 10,
+    [double]$Cpu = 0.5,
+    [string]$Memory = "1Gi",
     [string]$AzCli = $(if ($env:WWPDW_AZ_CLI) { $env:WWPDW_AZ_CLI } else { "az" })
 )
 
@@ -108,8 +110,8 @@ if (-not $exists) {
         --registry-server $loginServer `
         --registry-identity $identity.id `
         --mi-user-assigned $identity.id `
-        --cpu 0.25 `
-        --memory 0.5Gi `
+        --cpu $Cpu `
+        --memory $Memory `
         --command node `
         --args node_modules/tsx/dist/cli.mjs apps/api/src/people-sync.ts `
         --secrets "$NotionContainerSecretName=keyvaultref:$notionSecretUri,identityref:$($identity.id)" `
@@ -127,8 +129,8 @@ if (-not $exists) {
         --name $JobName `
         --resource-group $ResourceGroup `
         --image $image `
-        --cpu 0.25 `
-        --memory 0.5Gi `
+        --cpu $Cpu `
+        --memory $Memory `
         --replica-timeout 1800 `
         --replica-retry-limit 1 `
         --cron-expression $CronExpression `

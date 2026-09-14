@@ -131,16 +131,22 @@ function addUtcMonths(value: string, months: number) {
 }
 
 function hasVerifiedName(profile: PersonProfile, language: RegExp) {
-  return profile.names.some((name) => language.test(name.language ?? "") && name.status === "verified" && name.value.trim());
+  return profile.names.some((name) => language.test(name.language ?? "") && name.status === "verified" && String(name.value ?? "").trim());
 }
 
 function selectedBiography(profile: PersonProfile, language: RegExp) {
   return (profile.biography?.texts ?? [])
-    .filter((entry) => language.test(entry.language) && entry.value.trim())
-    .sort((left, right) => biographyRank(right) - biographyRank(left))[0];
+    .filter((entry) => language.test(entry.language) && String(entry.value ?? "").trim())
+    .sort((left, right) => biographyRank(right) - biographyRank(left)
+      || observedAtRank(right) - observedAtRank(left))[0];
 }
 
 function biographyRank(entry: PersonBiographyText) {
   const status = entry.status === "verified" ? 30 : entry.status === "strong" ? 20 : entry.status === "provisional" ? 10 : 0;
   return status + (entry.method === "editorial-rewrite" ? 3 : 0);
+}
+
+function observedAtRank(entry: PersonBiographyText) {
+  const value = Date.parse(entry.observedAt ?? "");
+  return Number.isFinite(value) ? value : 0;
 }

@@ -4,6 +4,7 @@ import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 if (args.localDataDir) process.env.WWPDW_LOCAL_DATA_DIR = args.localDataDir;
+if (args.backend) process.env.PERSON_CATALOG_BACKEND = args.backend;
 const productionLock = acquireProductionLock({ owner: "notion-people-sync", mode: "people-only" });
 try {
   const result = await runPeopleNotionSyncFromEnvironment({
@@ -20,7 +21,7 @@ try {
 }
 
 function parseArgs(values) {
-  const result = { apply: false, limit: undefined, maxApplied: undefined, pageSize: undefined, stateDir: undefined, localDataDir: undefined, personIds: [] };
+  const result = { apply: false, limit: undefined, maxApplied: undefined, pageSize: undefined, stateDir: undefined, localDataDir: undefined, backend: undefined, personIds: [] };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--dry-run") continue;
@@ -31,9 +32,16 @@ function parseArgs(values) {
     else if (value === "--state-dir") result.stateDir = required(values[++index], "--state-dir");
     else if (value === "--person-id") result.personIds.push(required(values[++index], "--person-id"));
     else if (value === "--local-data-dir") result.localDataDir = required(values[++index], "--local-data-dir");
+    else if (value === "--backend") result.backend = backend(values[++index]);
     else throw new Error(`Unknown argument: ${value}`);
   }
   return result;
+}
+
+function backend(value) {
+  const parsed = required(value, "--backend").toLowerCase();
+  if (!new Set(["local", "azure"]).has(parsed)) throw new Error("--backend must be local or azure.");
+  return parsed;
 }
 
 function required(value, option) {

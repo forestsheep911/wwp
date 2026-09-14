@@ -50,3 +50,28 @@ test("rejects malformed work ids before requesting", async () => {
   const source = new WikidataWorkCreditsSource({ fetchImpl: async () => { throw new Error("unexpected"); } });
   await assert.rejects(source.fetchWorkCredits("not-a-qid"), /Invalid Wikidata work id/);
 });
+
+test("falls back to per-entity data when the people batch endpoint is rate limited", async () => {
+  const requested: string[] = [];
+  const source = new WikidataWorkCreditsSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes("w/api.php")) return new Response(null, { status: 429 });
+      if (url.endsWith("/Q1.json")) {
+        return Response.json({ entities: { Q1: { claims: {
+          P57: [{ mainsnak: { datavalue: { value: { id: "Q10" } } } }]
+        } } } });
+      }
+      const id = url.match(/EntityData\/(Q\d+)\.json$/)?.[1];
+      const labels: Record<string, string> = { Q10: "导演甲" };
+      return Response.json({ entities: { [id ?? ""]: { labels: { "zh-cn": { value: labels[id ?? ""] } } } } });
+    }
+  });
+
+  const result = await source.fetchWorkCredits("Q1");
+  assert.deepEqual(result.credits.map((credit) => credit.name), ["导演甲"]);
+  assert.equal(requested.filter((url) => url.includes("w/api.php")).length, 1);
+  assert.equal(requested.some((url) => url.endsWith("/Q10.json")), true);
+});

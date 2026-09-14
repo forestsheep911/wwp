@@ -121,3 +121,35 @@ test("keeps cross-namespace conflicts unresolved instead of merging", () => {
   assert.equal(result.issues[0].kind, "external_id_conflict");
   assert.equal(result.unresolved[0].reason, "ids_match_multiple_people");
 });
+
+test("does not reuse a stale external ID index entry for a missing profile", () => {
+  const state = emptyPersonCatalogState(observedAt);
+  state.externalIdIndex.imdb.nm0000001 = "person-deleted";
+  const result = materializePersonEvidence({
+    state,
+    evidence: [],
+    workCredits: [{ workId: "work-a", title: "A", credits: [
+      { name: "Former person", department: "acting", job: "Actor", externalIds: { imdb: "nm0000001" } }
+    ] }],
+    allocatePersonId: () => { throw new Error("must not allocate for an unmaterialized credit"); },
+    now: observedAt
+  });
+  assert.equal(result.creditReplacements[0].credits[0].personId, undefined);
+  assert.equal(result.unresolved[0].reason, "credit_identity_not_materialized");
+});
+
+test("does not block on an explicitly ignored non-person Wikidata credit", () => {
+  const state = emptyPersonCatalogState(observedAt);
+  const result = materializePersonEvidence({
+    state,
+    evidence: [],
+    ignoredWikidataIds: ["Q2749030"],
+    workCredits: [{ workId: "work-a", title: "A", credits: [
+      { name: "三上雅彦", department: "music", job: "Original Music Composer", externalIds: { wikidata: "Q2749030" } }
+    ] }],
+    allocatePersonId: () => { throw new Error("must not allocate for an ignored credit"); },
+    now: observedAt
+  });
+  assert.equal(result.creditReplacements[0].credits[0].personId, undefined);
+  assert.equal(result.unresolved.length, 0);
+});

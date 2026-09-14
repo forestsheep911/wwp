@@ -14,14 +14,16 @@ export function preserveIndexedPersonCredits(incoming: SearchResult, existing: S
 }
 
 function mergeCredits(existing: MovieCreditEntry[], incoming: MovieCreditEntry[]) {
-  const merged = existing.map((credit) => structuredClone(credit));
-  for (const credit of incoming.filter(isPersonEnrichedCredit)) {
-    const index = merged.findIndex((candidate) => sameIdentity(candidate, credit));
+  const merged = incoming.map((credit) => structuredClone(credit));
+  for (const credit of existing.filter(isPersonEnrichedCredit)) {
+    const index = merged.findIndex((candidate) => sameIdentity(candidate, credit) || sameCredit(candidate, credit));
     if (index >= 0) {
       merged[index] = {
-        ...structuredClone(credit),
         ...merged[index],
-        ...(credit.order !== undefined ? { order: credit.order } : {})
+        ...structuredClone(credit),
+        department: merged[index].department,
+        ...(merged[index].job ? { job: merged[index].job } : {}),
+        ...(merged[index].order !== undefined ? { order: merged[index].order } : {})
       };
     } else {
       merged.push(structuredClone(credit));
@@ -41,6 +43,8 @@ function isPersonEnrichedCredit(credit: MovieCreditEntry) {
 }
 
 function sameIdentity(left: MovieCreditEntry, right: MovieCreditEntry) {
+  if (left.department !== right.department) return false;
+  if (left.job && right.job && normalize(left.job) !== normalize(right.job)) return false;
   if (left.personId && right.personId) return left.personId === right.personId;
   for (const source of ["tmdb", "imdb", "wikidata"] as const) {
     const leftId = left.externalIds?.[source];
@@ -48,4 +52,22 @@ function sameIdentity(left: MovieCreditEntry, right: MovieCreditEntry) {
     if (leftId && rightId && leftId === rightId) return true;
   }
   return false;
+}
+
+function sameCredit(left: MovieCreditEntry, right: MovieCreditEntry) {
+  if (left.department !== right.department) return false;
+  if (left.job && right.job && normalize(left.job) !== normalize(right.job)) return false;
+  const leftNames = new Set([left.name, left.originalName].filter(Boolean).map((value) => normalize(value!)));
+  return [right.name, right.originalName]
+    .filter(Boolean)
+    .some((value) => leftNames.has(normalize(value!)));
+}
+
+function normalize(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLocaleLowerCase("und")
+    .replace(/[\p{P}\p{S}\s]+/gu, "")
+    .trim();
 }

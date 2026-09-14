@@ -221,11 +221,11 @@ const publicStatuses = new Set<PersonNameStatus>(["verified", "strong"]);
 
 export function selectPersonBiographyTexts(biography?: PersonBiography): PersonBiographyDisplayTexts {
   const entries = (biography?.texts ?? [])
-    .filter((entry) => entry.value.trim() && entry.status !== "rejected" && entry.status !== "conflict")
+    .filter((entry) => String(entry.value ?? "").trim() && entry.status !== "rejected" && entry.status !== "conflict")
     .sort((left, right) => biographyStatusRank(right.status) - biographyStatusRank(left.status));
-  const chinese = entries.find((entry) => /^zh(?:-|$)/i.test(entry.language))?.value.trim();
-  const english = entries.find((entry) => /^en(?:-|$)/i.test(entry.language))?.value.trim();
-  const fallback = chinese ?? english ?? entries[0]?.value.trim();
+  const chinese = entries.find((entry) => /^zh(?:-|$)/i.test(entry.language))?.value?.trim();
+  const english = entries.find((entry) => /^en(?:-|$)/i.test(entry.language))?.value?.trim();
+  const fallback = chinese ?? english ?? entries[0]?.value?.trim();
   return {
     ...(chinese ? { chinese } : {}),
     ...(english ? { english } : {}),

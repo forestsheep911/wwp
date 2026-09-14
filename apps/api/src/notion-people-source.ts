@@ -1,5 +1,5 @@
-import type { MovieCreditDepartment, PersonLockedField, PersonProfile } from "@wwpdw/shared";
-import { selectPersonBiographyTexts, selectPersonDisplayNames } from "@wwpdw/shared";
+import type { MovieCreditDepartment, PersonBiographyText, PersonExternalIds, PersonLockedField, PersonProfile } from "@wwpdw/shared";
+import { selectPersonDisplayNames } from "@wwpdw/shared";
 import { ProviderRateLimiter } from "./person-sources/provider-http.js";
 import { reviewChineseBiography, reviewEnglishBiography, type ChineseBiographyMethod } from "./person-biography-quality.js";
 import { assessPersonQuality } from "./person-quality-score.js";
@@ -88,14 +88,13 @@ export function managedPeopleValues(profile: PersonProfile, existing?: ExistingP
     original: locked.has("originalName") ? existing?.originalName : undefined
   });
   const status = bestNameStatus(profile);
-  const biographyTexts = selectPersonBiographyTexts(profile.biography);
-  const selectedChineseBiography = (profile.biography?.texts ?? [])
-    .filter((entry) => /^zh(?:-|$)/i.test(entry.language) && entry.value.trim() === biographyTexts.chinese)
-    .sort((left, right) => biographyStatusRank(right.status) - biographyStatusRank(left.status))[0];
-  const selectedEnglishBiography = (profile.biography?.texts ?? [])
-    .filter((entry) => /^en(?:-|$)/i.test(entry.language) && entry.value.trim() === biographyTexts.english)
-    .sort((left, right) => biographyStatusRank(right.status) - biographyStatusRank(left.status))[0];
   const biographySources = sharedSourceRefs(profile, existing?.sources);
+  const selectedChineseBiography = selectManagedBiography(profile.biography?.texts, /^zh(?:-|$)/i, biographySources, reviewChineseBiography);
+  const selectedEnglishBiography = selectManagedBiography(profile.biography?.texts, /^en(?:-|$)/i, biographySources, reviewEnglishBiography);
+  const biographyTexts = {
+    chinese: selectedChineseBiography?.value.trim(),
+    english: selectedEnglishBiography?.value.trim()
+  };
   const preserveChineseBiography = locked.has("biographyZh") || shouldPreserveVerifiedEditorialBiography(
     existing?.biographyZhStatus,
     existing?.biographyZhMethod,
@@ -222,7 +221,32 @@ export type PeopleUpsertResult = {
   values: PeopleManagedValues;
 };
 
+export type PeopleBatchIdentitySafety = {
+  scannedRows: number;
+  profileCount: number;
+  externalIdCount: number;
+  existingConflictCount: number;
+};
+
+export type PeopleBatchIdentityConflict = {
+  incomingPersonId: string;
+  existingPersonId: string;
+  pageId: string;
+  externalIds: string[];
+  incomingExternalIds: PersonExternalIds;
+  existingExternalIds: PersonExternalIds;
+};
+
+export class PeopleBatchIdentityConflictError extends Error {
+  constructor(readonly conflicts: PeopleBatchIdentityConflict[]) {
+    super(`People identity preflight found ${conflicts.reduce((sum, conflict) => sum + conflict.externalIds.length, 0)} conflict(s): ${conflicts.flatMap((conflict) => conflict.externalIds.map((externalId) => `Incoming ${conflict.incomingPersonId} would duplicate Notion People row ${conflict.pageId}: external ID ${externalId} already belongs to ${conflict.existingPersonId}`)).join("; ")}.`);
+    this.name = "PeopleBatchIdentityConflictError";
+  }
+}
+
 export class NotionPeopleSource {
+  private readonly identitySafePersonIds = new Set<string>();
+
   constructor(
     private readonly notion: NotionPeopleClient,
     private readonly dataSourceId: string,
@@ -231,7 +255,69 @@ export class NotionPeopleSource {
     if (!dataSourceId.trim()) throw new Error("NOTION_PEOPLE_DATA_SOURCE_ID is required.");
   }
 
+  async assertBatchIdentitySafety(profiles: PersonProfile[]): Promise<PeopleBatchIdentitySafety> {
+    assertUniqueExternalIds(profiles);
+    const existingByExternalId = new Map<string, Array<{ personId: string; pageId: string; externalIds: PersonExternalIds }>>();
+    const existingConflicts = new Set<string>();
+    const conflicts = new Map<string, PeopleBatchIdentityConflict>();
+    let scannedRows = 0;
+    let cursor: string | undefined;
+    do {
+      const response = await this.request(() => this.notion.dataSources.query({
+        data_source_id: this.dataSourceId,
+        page_size: 100,
+        ...(cursor ? { start_cursor: cursor } : {})
+      }));
+      for (const value of response.results) {
+        const snapshot = readNotionPeopleSnapshot(value as NotionPage);
+        scannedRows += 1;
+        for (const [provider, externalId] of Object.entries(snapshot.externalIds)) {
+          const key = normalizedExternalId(provider, externalId);
+          if (!key) continue;
+          const owners = existingByExternalId.get(key) ?? [];
+          if (owners.some((owner) => owner.personId !== snapshot.personId)) {
+            existingConflicts.add(key);
+          }
+          if (!owners.some((owner) => owner.personId === snapshot.personId)) {
+            owners.push({ personId: snapshot.personId, pageId: snapshot.pageId, externalIds: snapshot.externalIds });
+            existingByExternalId.set(key, owners);
+          }
+        }
+      }
+      cursor = response.has_more && response.next_cursor ? response.next_cursor : undefined;
+    } while (cursor);
+
+    let externalIdCount = 0;
+    for (const profile of profiles) {
+      for (const [provider, externalId] of Object.entries(profile.externalIds ?? {})) {
+        const key = normalizedExternalId(provider, externalId);
+        if (!key) continue;
+        externalIdCount += 1;
+        const conflictingOwners = (existingByExternalId.get(key) ?? []).filter((owner) => owner.personId !== profile.personId);
+        for (const existing of conflictingOwners) {
+          const conflictKey = `${profile.personId}\0${existing.personId}\0${existing.pageId}`;
+          const conflict: PeopleBatchIdentityConflict = conflicts.get(conflictKey) ?? {
+            incomingPersonId: profile.personId,
+            existingPersonId: existing.personId,
+            pageId: existing.pageId,
+            externalIds: [],
+            incomingExternalIds: profile.externalIds ?? {},
+            existingExternalIds: existing.externalIds
+          };
+          if (!conflict.externalIds.includes(key)) conflict.externalIds.push(key);
+          conflicts.set(conflictKey, conflict);
+        }
+      }
+    }
+    if (conflicts.size) throw new PeopleBatchIdentityConflictError([...conflicts.values()]);
+    for (const profile of profiles) this.identitySafePersonIds.add(profile.personId);
+    return { scannedRows, profileCount: profiles.length, externalIdCount, existingConflictCount: existingConflicts.size };
+  }
+
   async upsert(profile: PersonProfile): Promise<PeopleUpsertResult> {
+    if (!this.identitySafePersonIds.has(profile.personId)) {
+      await this.assertBatchIdentitySafety([profile]);
+    }
     const matches = await this.request(() => this.notion.dataSources.query({
       data_source_id: this.dataSourceId,
       filter: { property: "Person ID", rich_text: { equals: profile.personId } },
@@ -316,6 +402,11 @@ export class NotionPeopleSource {
   private request<T>(operation: () => Promise<T>) {
     return this.limiter.schedule(operation);
   }
+}
+
+function normalizedExternalId(provider: string, value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized ? `${provider.toLowerCase()}:${normalized}` : undefined;
 }
 
 interface NotionPage {
@@ -479,6 +570,30 @@ function biographyStatusRank(status?: string) {
   return ({ verified: 4, strong: 3, provisional: 2, conflict: 1, rejected: 0 } as Record<string, number>)[status ?? ""] ?? 0;
 }
 
+function selectManagedBiography(
+  texts: PersonBiographyText[] | undefined,
+  language: RegExp,
+  sharedSources: string[],
+  review: typeof reviewChineseBiography
+) {
+  return (texts ?? [])
+    .filter((entry) => language.test(entry.language) && entry.value.trim() && entry.status !== "rejected" && entry.status !== "conflict")
+    .map((entry, index) => ({
+      entry,
+      index,
+      eligible: review({
+        text: entry.value,
+        method: entry.method,
+        sourceRefs: entry.supportingSourceRefs?.length ? entry.supportingSourceRefs : sharedSources
+      }).eligibleForVerified
+    }))
+    .sort((left, right) =>
+      Number(right.eligible) - Number(left.eligible)
+      || biographyStatusRank(right.entry.status) - biographyStatusRank(left.entry.status)
+      || left.index - right.index
+    )[0]?.entry;
+}
+
 function biographyPublicationStatus(status?: string): ExistingPeopleValues["biographyZhStatus"] {
   if (status === "verified") return "verified";
   if (status === "conflict") return "conflict";
@@ -546,7 +661,7 @@ function sharedSourceRefs(profile: PersonProfile, existing?: string) {
     ...(existing ?? "").split(/[;\n]+/u),
     ...(profile.sourceRefs ?? []).map((ref) => ref.url ?? [ref.source, ref.id].filter(Boolean).join(":")),
     ...(profile.biography?.texts ?? []).flatMap((text) => text.supportingSourceRefs ?? [])
-  ].map((value) => value.trim()).filter(Boolean);
+  ].map((value) => String(value ?? "").trim()).filter(Boolean);
   return [...new Set(values)];
 }
 
