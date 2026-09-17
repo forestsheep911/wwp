@@ -23,6 +23,7 @@ interface SearchDialogProps {
   loading: boolean;
   open: boolean;
   query: string;
+  submittedQuery?: string;
   results: ResultWithCache[];
   people: PublicPersonSummary[];
   onOpenChange: (open: boolean) => void;
@@ -47,6 +48,7 @@ export function SearchDialog({
   loading,
   open,
   query,
+  submittedQuery,
   results,
   people,
   onOpenChange,
@@ -55,7 +57,7 @@ export function SearchDialog({
   onSelectResult,
   onSelectPerson
 }: SearchDialogProps) {
-  const normalizedQuery = query.trim();
+  const normalizedQuery = submittedQuery?.trim() ?? "";
   const hasQuery = normalizedQuery.length > 0;
   const [scope, setScope] = useState<SearchScope>("all");
   const [activeAssetKey, setActiveAssetKey] = useState<string | undefined>();
@@ -86,7 +88,7 @@ export function SearchDialog({
           <DialogTitle>{copy.search.title}</DialogTitle>
           <DialogDescription>{copy.search.description}</DialogDescription>
         </DialogHeader>
-        <form className="grid min-h-0 sm:h-full sm:grid-rows-[auto_auto_minmax(0,1fr)]" onSubmit={submit}>
+        <form className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)]" onSubmit={submit}>
           <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-950/95 px-2 pt-[env(safe-area-inset-top)] sm:gap-3 sm:px-4 sm:pt-0 sm:pr-14">
             <DialogClose className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-300 active:bg-slate-800 sm:hidden">
               <ArrowLeft className="h-5 w-5" />
@@ -95,16 +97,17 @@ export function SearchDialog({
             <Search className="h-5 w-5 shrink-0 text-slate-500" />
             <Input
               autoFocus
-              className="h-16 border-0 bg-transparent px-0 text-lg shadow-none focus-visible:ring-0"
+              className="h-16 min-w-0 border-0 bg-transparent px-0 text-lg shadow-none focus-visible:ring-0"
               enterKeyHint="search"
               inputMode="search"
               placeholder={copy.search.placeholder}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
             />
-            <span className="grid h-5 w-5 shrink-0 place-items-center" aria-hidden={!loading}>
-              {loading ? <Loader2 className="h-5 w-5 animate-spin text-emerald-300" /> : null}
-            </span>
+            <Button className="min-h-11 shrink-0 px-4" type="submit" disabled={!query.trim() || (loading && query.trim() === submittedQuery)}>
+              {loading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              搜索
+            </Button>
           </div>
 
           <div className="scrollbar-none flex min-h-13 items-center gap-2 overflow-x-auto border-b border-slate-900 bg-slate-950 px-3 py-2 sm:px-4">
@@ -321,7 +324,7 @@ function SearchIdleState() {
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
           <Search className="h-5 w-5" />
         </div>
-        <p className="text-sm font-semibold text-slate-300">{copy.search.idle}</p>
+        <p className="text-sm font-semibold text-slate-300">输入片名或人物，点击搜索或按回车</p>
       </div>
     </div>
   );

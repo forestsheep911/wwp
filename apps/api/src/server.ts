@@ -948,7 +948,7 @@ async function loadSearchResults(query: string): Promise<{
   cacheStatus: SearchLoadStatus;
 }> {
   if (searchResultCacheTtlMs <= 0) {
-    return loadSearchResultsFromPersistentSources(query, "disabled");
+    return loadSearchResultsFromPersistentSources(query);
   }
 
   const key = searchCacheKey(query);
@@ -958,10 +958,8 @@ async function loadSearchResults(query: string): Promise<{
     const currentRevision = await searchIndex.getRevision();
     if (currentRevision === cached.indexRevision) {
       cached.lastUsedAt = now;
-      const cachedResults = await refreshIndexedMediaAssetResults(query, cached.results);
-      cached.results = cloneSearchResults(cachedResults);
       return {
-        results: cloneSearchResults(cachedResults),
+        results: cloneSearchResults(cached.results),
         cacheStatus: "hit"
       };
     }
@@ -1090,8 +1088,7 @@ async function refreshIndexedMediaAssetResults(query: string, results: SearchRes
 }
 
 async function loadSearchResultsFromPersistentSources(
-  query: string,
-  disabledStatus: SearchLoadStatus = "live"
+  query: string
 ): Promise<{
   results: SearchResult[];
   cacheStatus: SearchLoadStatus;
@@ -1099,37 +1096,18 @@ async function loadSearchResultsFromPersistentSources(
   if (searchIndexEnabled) {
     try {
       const indexedResults = await searchIndex.search(query, searchIndexResultLimit);
-      if (indexedResults.length > 0) {
-        return {
-          results: await refreshIndexedMediaAssetResults(query, indexedResults),
-          cacheStatus: "index_hit"
-        };
-      }
+      return { results: indexedResults, cacheStatus: "index_hit" };
     } catch (error) {
       logWarn("api.search.index_read_failed", {
         query,
         ...errorLogFields(error)
       });
-      const liveResults = await searchSource.search(query);
-      void writeSearchResultsToIndex(liveResults, "index_read_failed_live");
-      return {
-        results: liveResults,
-        cacheStatus: "index_failed_live"
-      };
+      throw error;
     }
 
-    const liveResults = await searchSource.search(query);
-    void writeSearchResultsToIndex(liveResults, "index_miss_live");
-    return {
-      results: liveResults,
-      cacheStatus: "index_miss_live"
-    };
   }
 
-  return {
-    results: await searchSource.search(query),
-    cacheStatus: disabledStatus
-  };
+  throw new Error("Website search index is disabled; synchronize and enable the index before searching.");
 }
 
 function retrySearchQuery(job: CacheJob) {

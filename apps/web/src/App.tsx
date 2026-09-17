@@ -428,6 +428,7 @@ function CinemaApp() {
   const pendingLibraryScrollRestoreRef = useRef<{ key: string; top: number } | undefined>(undefined);
   const ownMovieRequestsRefreshRef = useRef<Promise<void> | undefined>(undefined);
   const searchPreviewRequestRef = useRef(0);
+  const [submittedSearch, setSubmittedSearch] = useState<{ query: string }>();
   const detailRequestRef = useRef(0);
   const directoryRequestRef = useRef(0);
   const searchDialogBaselineQueryRef = useRef(initialRoute.query);
@@ -1073,9 +1074,13 @@ function CinemaApp() {
 
   function runDialogSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
+    if (query.trim()) setSubmittedSearch({ query: query.trim() });
   }
 
   function openSearchDialog() {
+    setSubmittedSearch(undefined);
+    setSearchPreviewResults([]);
+    setSearchPreviewPeople([]);
     setSearchDialogError("");
     searchDialogBaselineQueryRef.current = query;
     searchDialogOriginRef.current = {
@@ -1084,9 +1089,6 @@ function CinemaApp() {
       query,
       scrollTop: window.scrollY
     };
-    if (query.trim() && results.length > 0) {
-      setSearchPreviewResults(results);
-    }
     setSearchOpen(true);
   }
 
@@ -2712,14 +2714,14 @@ function CinemaApp() {
   }, [unlocked]);
 
   useEffect(() => {
-    if (!searchOpen) {
+    if (!searchOpen || !submittedSearch) {
       searchPreviewRequestRef.current += 1;
       setSearchDialogError("");
       setSearchPreviewLoading(false);
       return;
     }
 
-    const normalizedQuery = query.trim();
+    const normalizedQuery = submittedSearch.query;
     const requestId = searchPreviewRequestRef.current + 1;
     searchPreviewRequestRef.current = requestId;
 
@@ -2733,6 +2735,7 @@ function CinemaApp() {
 
     setSearchDialogError("");
     setSearchPreviewLoading(true);
+    setSearchPreviewResults([]);
     setSearchPreviewPeople([]);
     const timer = window.setTimeout(async () => {
       void searchPeople(normalizedQuery, 8)
@@ -2764,10 +2767,13 @@ function CinemaApp() {
           setSearchPreviewLoading(false);
         }
       }
-    }, 300);
+    }, 0);
 
-    return () => window.clearTimeout(timer);
-  }, [query, searchOpen]);
+    return () => {
+      window.clearTimeout(timer);
+      searchPreviewRequestRef.current += 1;
+    };
+  }, [submittedSearch, searchOpen]);
 
   useEffect(() => {
     if (!unlocked) {
@@ -3215,10 +3221,19 @@ function CinemaApp() {
         loading={searchPreviewLoading || searchLoading}
         open={searchOpen}
         query={query}
+        submittedQuery={submittedSearch?.query}
         results={searchPreviewResults}
         people={searchPreviewPeople}
         onOpenChange={handleSearchDialogOpenChange}
-        onQueryChange={setQuery}
+        onQueryChange={(value) => {
+          setQuery(value);
+          searchPreviewRequestRef.current += 1;
+          setSubmittedSearch(undefined);
+          setSearchPreviewResults([]);
+          setSearchPreviewPeople([]);
+          setSearchPreviewLoading(false);
+          setSearchDialogError("");
+        }}
         onSearch={(event) => void runDialogSearch(event)}
         onSelectResult={openSearchResult}
         onSelectPerson={(nextPersonId) => {
