@@ -1,5 +1,6 @@
 import type { SearchResult } from "@wwpdw/shared";
 import { publicLibraryResults } from "./public-library.js";
+import type { PeopleProgress } from "./people-progress.js";
 
 export interface SiteStatisticItem {
   label: string;
@@ -25,6 +26,7 @@ export interface SiteStatistics {
   genres: SiteStatisticItem[];
   countries: SiteStatisticItem[];
   companies: SiteStatisticItem[];
+  peopleProgress?: PeopleProgress;
 }
 
 type SiteCategory = "movie" | "series";
@@ -36,6 +38,7 @@ export function buildSiteStatistics(
     people?: number;
     latestIndexedAt?: string;
     generatedAt?: string;
+    peopleProgress?: PeopleProgress;
   } = {}
 ): SiteStatistics {
   const visibleResults = publicLibraryResults(results);
@@ -85,7 +88,8 @@ export function buildSiteStatistics(
     decades: decadeOrder.map((label) => ({ label, count: decades.get(label) ?? 0 })),
     genres: rankedItems(genres),
     countries: rankedItems(countries, 10),
-    companies: rankedItems(companies)
+    companies: rankedItems(companies),
+    ...(options.peopleProgress ? { peopleProgress: options.peopleProgress } : {})
   };
 }
 

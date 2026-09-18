@@ -94,6 +94,7 @@ import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
 import { getPublicPerson, listPublicPeople, listPublicPersonIssues } from "./person-service.js";
 import { buildSiteStatistics, type SiteStatistics } from "./site-statistics.js";
+import { buildPeopleProgress } from "./people-progress.js";
 import { publicLibraryResults } from "./public-library.js";
 import { searchFilms } from "./film-search.js";
 import { mergeCachedPosters } from "./poster-refresh.js";
@@ -1963,15 +1964,15 @@ async function visiblePersonWorkIds() {
   }
 }
 
-async function loadSiteStatistics() {
-  if (siteStatisticsCache && siteStatisticsCache.expiresAt > Date.now()) {
+async function loadSiteStatistics(forceRefresh = false) {
+  if (!forceRefresh && siteStatisticsCache && siteStatisticsCache.expiresAt > Date.now()) {
     return siteStatisticsCache.value;
   }
   if (pendingSiteStatistics) return pendingSiteStatistics;
 
   pendingSiteStatistics = (async () => {
     const results = searchIndexEnabled
-      ? await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))
+      ? await searchIndex.search("", 1_000_000)
       : await searchSource.search("");
     const [indexStats, cachedAssets, domesticJobs, peopleState] = await Promise.all([
       searchIndexEnabled ? searchIndex.getStats() : Promise.resolve(undefined),
@@ -1986,7 +1987,8 @@ async function loadSiteStatistics() {
     const statistics = buildSiteStatistics(results, {
       readyAssetKeys,
       people: listPublicPeople(peopleState, { limit: 1 }).total,
-      latestIndexedAt: indexStats?.latestIndexedAt
+      latestIndexedAt: indexStats?.latestIndexedAt,
+      peopleProgress: buildPeopleProgress(results, peopleState)
     });
     siteStatisticsCache = { expiresAt: Date.now() + siteStatisticsCacheTtlMs, value: statistics };
     return statistics;
@@ -1997,9 +1999,9 @@ async function loadSiteStatistics() {
   return pendingSiteStatistics;
 }
 
-async function handleSiteStatistics(response: http.ServerResponse, context: RequestContext) {
+async function handleSiteStatistics(response: http.ServerResponse, context: RequestContext, forceRefresh = false) {
   const startedAt = Date.now();
-  const statistics = await loadSiteStatistics();
+  const statistics = await loadSiteStatistics(forceRefresh);
   logInfo("api.site_statistics", {
     requestId: context.requestId,
     titleCount: statistics.totals.titles,
@@ -2007,7 +2009,7 @@ async function handleSiteStatistics(response: http.ServerResponse, context: Requ
     durationMs: durationMs(startedAt)
   });
   sendJson(response, 200, statistics, {
-    "Cache-Control": "private, max-age=300, stale-while-revalidate=600",
+    "Cache-Control": "private, no-store",
     Vary: "Cookie"
   });
 }
@@ -5418,7 +5420,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method === "GET" && pathname === "/api/site-statistics") {
-      await handleSiteStatistics(response, context);
+      await handleSiteStatistics(response, context, url.searchParams.get("refresh") === "true");
       return;
     }
 

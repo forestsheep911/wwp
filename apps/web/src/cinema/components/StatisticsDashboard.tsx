@@ -8,6 +8,7 @@ import {
   Database,
   Globe2,
   Layers3,
+  ListChecks,
   MapPinned,
   Play,
   RefreshCw,
@@ -18,7 +19,7 @@ import { Bar, BarChart, CartesianGrid, LabelList, Pie, PieChart, XAxis, YAxis } 
 import { errorMessage, getSiteStatistics } from "../../api";
 import { Button } from "../../components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../../components/ui/chart";
-import type { SiteStatisticItem, SiteStatistics } from "../site-statistics";
+import type { PeopleProgress, SiteStatisticItem, SiteStatistics } from "../site-statistics";
 
 const numberFormat = new Intl.NumberFormat("zh-CN");
 const countChartConfig = {
@@ -34,10 +35,10 @@ export function StatisticsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  function load() {
+  function load(refresh = false) {
     setLoading(true);
     setError("");
-    getSiteStatistics()
+    getSiteStatistics(refresh)
       .then(setStatistics)
       .catch((loadError) => setError(errorMessage(loadError, "统计信息加载失败。")))
       .finally(() => setLoading(false));
@@ -57,7 +58,7 @@ export function StatisticsDashboard() {
             <h1 className="text-xl font-bold text-slate-100">暂时无法读取统计</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">{error}</p>
           </div>
-          <Button type="button" variant="outline" onClick={load}>
+          <Button type="button" variant="outline" onClick={() => load(true)}>
             <RefreshCw className="mr-2 h-4 w-4" />
             重试
           </Button>
@@ -80,7 +81,7 @@ export function StatisticsDashboard() {
           <div className="flex items-center gap-3 text-xs text-slate-500">
             <Database className="h-4 w-4 text-emerald-300" />
             <span>索引更新 {formatTimestamp(statistics.latestIndexedAt ?? statistics.generatedAt)}</span>
-            <button className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-900 hover:text-slate-100" type="button" title="刷新统计" onClick={load}>
+            <button className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-900 hover:text-slate-100" type="button" title="重新核算统计" onClick={() => load(true)} disabled={loading}>
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             </button>
           </div>
@@ -96,6 +97,8 @@ export function StatisticsDashboard() {
         <MetricCard icon={<Globe2 />} label="国家/地区" value={totals.countryCount} />
         <MetricCard icon={<Building2 />} label="制作公司" value={totals.companyCount} />
       </div>
+
+      {statistics.peopleProgress ? <PeopleProductionProgress progress={statistics.peopleProgress} generatedAt={statistics.generatedAt} /> : null}
 
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
         <DashboardPanel icon={<ChartPie />} title="内容构成" detail="电影 + 电视 = 总收录">
@@ -123,6 +126,62 @@ export function StatisticsDashboard() {
         <CompanyDistribution statistics={statistics} />
       </DashboardPanel>
     </section>
+  );
+}
+
+function PeopleProductionProgress({ progress, generatedAt }: { progress: PeopleProgress; generatedAt: string }) {
+  const relationPercent = progress.knownCreditCount > 0 ? progress.linkedCreditCount / progress.knownCreditCount * 100 : undefined;
+  const qualityPercent = progress.profileCount > 0 ? progress.qualityReadyCount / progress.profileCount * 100 : undefined;
+
+  return (
+    <DashboardPanel icon={<ListChecks />} title="人物制作进度" detail={`核算于 ${formatTimestamp(generatedAt)}`}>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <ProgressTrack
+          label="作品人物关联"
+          count={progress.linkedCreditCount}
+          total={progress.knownCreditCount}
+          percentage={relationPercent}
+          tone="emerald"
+          description={`已完整关联 ${numberFormat.format(progress.worksFullyLinked)} / ${numberFormat.format(progress.workCount)} 部；另有 ${numberFormat.format(progress.worksWithoutCredits)} 部尚无演职员名单。`}
+        />
+        <ProgressTrack
+          label="人物档案质量"
+          count={progress.qualityReadyCount}
+          total={progress.profileCount}
+          percentage={qualityPercent}
+          tone="amber"
+          description="达到 80 分、复审未过期，且没有待处理的 P0–P2 问题。"
+        />
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-800 pt-4 text-xs text-slate-500">
+        <span>待修补：<strong className="text-rose-300">P0 {progress.repairPriorities.P0}</strong> · <strong className="text-amber-200">P1 {progress.repairPriorities.P1}</strong> · <strong className="text-slate-300">P2 {progress.repairPriorities.P2}</strong></span>
+        <span>人物目录更新 {formatTimestamp(progress.personCatalogUpdatedAt)}</span>
+        <span>统计范围：影视索引中有作品 ID 的条目</span>
+      </div>
+    </DashboardPanel>
+  );
+}
+
+function ProgressTrack({ label, count, total, percentage, tone, description }: {
+  label: string;
+  count: number;
+  total: number;
+  percentage?: number;
+  tone: "emerald" | "amber";
+  description: string;
+}) {
+  const fill = tone === "emerald" ? "bg-emerald-300" : "bg-amber-300";
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+      <div className="flex items-end justify-between gap-4">
+        <div><p className="text-xs font-semibold text-slate-400">{label}</p><strong className="mt-2 block text-2xl font-black tabular-nums text-slate-100">{numberFormat.format(count)} <span className="text-sm font-medium text-slate-500">/ {numberFormat.format(total)}</span></strong></div>
+        <strong className="text-2xl font-black tabular-nums text-slate-100">{percentage === undefined ? "—" : `${percentage.toFixed(1)}%`}</strong>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800" role={percentage === undefined ? undefined : "progressbar"} aria-label={label} aria-valuemin={percentage === undefined ? undefined : 0} aria-valuemax={percentage === undefined ? undefined : 100} aria-valuenow={percentage}>
+        <span className={`block h-full rounded-full ${fill}`} style={{ width: `${percentage ?? 0}%` }} />
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
   );
 }
 

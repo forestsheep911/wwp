@@ -195,6 +195,25 @@ Automatic People sync may update names, aliases, biography, dates, birthplace, p
 
 The successful checkpoint and latest secret-safe report are stored under `WWPDW_PEOPLE_STATE_DIR`. Notion reads and reviewed writes share `notion-people.lock`, so a scheduled pull cannot observe a partially completed upsert batch.
 
+## Website progress panel
+
+The statistics page calculates People progress from the current movie search
+index and published person catalog. It shows linked credit rows out of all
+known credit rows, fully linked works, works with no credit list, and profiles
+without actionable P0–P2 quality or review issues. A credit whose `personId`
+has no published catalog profile remains unlinked for this calculation.
+
+`/api/site-statistics` caches the combined result in the API process for five
+minutes by default (`SITE_STATISTICS_CACHE_TTL_MS`). The page's refresh button
+uses `?refresh=true` to read both stores again immediately. Ordinary page views
+after cache expiry also reconcile from the stores, so a reviewed People apply
+or the scheduled Notion People/index sync changes the panel without a manual
+counter update. The panel displays the calculation and catalog timestamps.
+The denominator for relationships includes only known credit rows on indexed
+works; works without any credit rows are shown separately rather than treated
+as completed. Metadata-only works absent from the movie index are outside this
+panel's work scope until a canonical indexed record exists.
+
 ## Editorial rules
 
 - Lock `Chinese Name`, `English Name`, `Original Name`, `Biography ZH`, `Biography EN`, or `Profile URL` in Notion before making a manual correction that enrichment must preserve.

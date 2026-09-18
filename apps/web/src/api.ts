@@ -295,8 +295,8 @@ export function browseAssets(
   return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
 }
 
-export function getSiteStatistics() {
-  return request<SiteStatistics>(apiUrl("/api/site-statistics"));
+export function getSiteStatistics(refresh = false) {
+  return request<SiteStatistics>(apiUrl(refresh ? "/api/site-statistics?refresh=true" : "/api/site-statistics"));
 }
 
 export function searchPeople(query: string, limit = 20, offset = 0) {

@@ -3,6 +3,20 @@ export interface SiteStatisticItem {
   count: number;
 }
 
+export interface PeopleProgress {
+  scope: "indexed_works";
+  workCount: number;
+  worksWithoutCredits: number;
+  worksFullyLinked: number;
+  knownCreditCount: number;
+  linkedCreditCount: number;
+  profileCount: number;
+  qualityReadyCount: number;
+  repairPriorities: { P0: number; P1: number; P2: number };
+  qualityPolicyVersion: string;
+  personCatalogUpdatedAt?: string;
+}
+
 export interface SiteStatistics {
   generatedAt: string;
   latestIndexedAt?: string;
@@ -22,4 +36,5 @@ export interface SiteStatistics {
   genres: SiteStatisticItem[];
   countries: SiteStatisticItem[];
   companies: SiteStatisticItem[];
+  peopleProgress?: PeopleProgress;
 }
