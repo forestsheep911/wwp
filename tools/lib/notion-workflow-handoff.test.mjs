@@ -6,6 +6,7 @@ import {
   buildWorkflowUpdate,
   pendingHumanWorkflowNote,
   richTextPayload,
+  workVisibilityBlockers,
   workReleaseBlockers
 } from "./notion-workflow-handoff.mjs";
 
@@ -133,13 +134,37 @@ test("work release gate accepts a verified page without pending issues", () => {
   assert.deepEqual(workReleaseBlockers(releasablePage()), []);
 });
 
-test("work release gate rejects review, issue, and unacknowledged human input", () => {
+test("work visibility release is not blocked by metadata or follow-up issues", () => {
+  const candidate = releasablePage({
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Human Issue": { type: "rich_text", rich_text: [{ plain_text: "海报待修" }] },
+    "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "海报待修" }] },
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-08-28T00:00:00.000Z】 已检查。\n海报待修，后续补齐。" }]
+    }
+  });
+  assert.deepEqual(workVisibilityBlockers(candidate), []);
+});
+
+test("an explicit human visibility hold still blocks release", () => {
+  const candidate = releasablePage({
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-08-28T00:00:00.000Z】 已检查。\n暂不发布，保持隐藏。" }]
+    }
+  });
+  assert.deepEqual(workVisibilityBlockers(candidate), ["visibility_hold"]);
+});
+
+test("work completion still requires metadata and issue gates", () => {
   const candidate = releasablePage({
     "Needs Review": { type: "checkbox", checkbox: true },
     "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "海报待修" }] },
     "Workflow Note": {
       type: "rich_text",
-      rich_text: [{ plain_text: "【AI(^_^) 2026-08-28T00:00:00.000Z】 已检查。\n请先保留隐藏。" }]
+      rich_text: [{ plain_text: "【AI(^_^) 2026-08-28T00:00:00.000Z】 已检查。\n海报待修，后续补齐。" }]
     }
   });
   assert.deepEqual(workReleaseBlockers(candidate), ["needs_review", "ai_issue", "pending_human_note"]);

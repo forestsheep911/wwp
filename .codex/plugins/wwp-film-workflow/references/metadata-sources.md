@@ -4,6 +4,16 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 
 ## Order of Operations
 
+### Identity Gate Before Metadata Writes
+
+When a work page already has a trusted IMDb ID, a Douban search result is not
+safe merely because its title and year look similar. Fetch the candidate page
+and require its IMDb ID to match the trusted ID. If the candidate exposes a
+different ID, or exposes no IMDb ID, discard that Douban candidate and use the
+IMDb/OMDb fallback or leave the task pending with the exact identity conflict.
+Never write poster, synopsis, ratings, or structured credits from an
+identity-unverified Douban page.
+
 1. Inspect existing Notion fields and page text.
 2. Cross-check existing IDs/basic info against the work title, original media filenames, spec/source-page titles, and Media Assets before enrichment. Year/title/remake conflicts are identity incidents: correct the identity and clear every mismatched dependent field before filling anything else.
 3. Parse old Douban-style basic-info text when present.
@@ -24,6 +34,8 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
     poster and the core metadata projection.
 
 ## Current Notion Field Contract
+
+- `Douban Subject ID` and `Douban URL` are the maintained film/season identity pair. Only verified subject evidence may populate them; page text and person links are discovery material, not authority. The website reads the explicit numeric ID and rejects an inconsistent URL. Missing identity stays pending without hiding playable media. Require old-value guards for corrections and exact ID/URL readback before closing this identity step.
 
 - `上映日期` is the active release-date field. Do not write the removed legacy `Release Date` field.
 - `Release Year` is a numeric derived field for sort/filter/matching/index use. Derive it from a sourced release date first. A canonical title may be fallback evidence only when the year is the terminal parenthesized suffix, such as `(2004)`; never treat arbitrary four-digit title text such as `2046`, `1917`, `2001: A Space Odyssey`, or `Blade Runner 2049` as the release year.
@@ -50,7 +62,7 @@ This reference covers work-level metadata. Media Assets covers media-file/spec m
 - `Human Issue` is human-owned and contains values migrated from the former `Issue` field. Automation may read it but must not overwrite or clear it. `AI Issue` contains only concrete issues an AI check could not resolve during that pass; it is not an activity log.
 - `Media Availability` is media-operations state. Sourced work metadata must not mark a work playable without uploaded/probed media evidence.
 - Work-level metadata may be complete while `Media Availability` remains `needs_processing`, `source_only`, `blocked`, or `unknown`.
-- `Hide from Website` is a visibility safety gate. Keep it true when the work has no playable verified media, upload/encoding/applicable subtitle requirements are blocked, Media Assets are missing or inconsistent, or the user manually hid the work. A verified `国配` branch without Chinese subtitles has no blocked subtitle requirement; missing subtitles are optional later enrichment and do not justify hiding or review by themselves. Do not clear the flag just because metadata is now complete. If other specs look good but the flag is true, ask the user before clearing it.
+- `Hide from Website` is a playback visibility gate, not a metadata-completeness gate. Keep it true when the work has no playable verified media, upload/encoding/applicable subtitle requirements are blocked, Media Assets are missing or inconsistent, a structure/playback risk remains, or an explicit human visibility hold exists. A verified `国配` branch without Chinese subtitles has no blocked subtitle requirement; missing subtitles are optional later enrichment and do not justify hiding or review by themselves. Once one useful playable path passes exact readback, clear the automation-owned flag even when metadata, poster, `Needs Review`, `AI Issue`, or `Human Issue` still needs repair.
 - `Needs Review` is a quality/review gate. Set it when sourced metadata conflicts, the match is ambiguous, `未映射类型` is non-empty, AI advisory confidence is low or marks review, schema/media state disagrees, a manual decision is pending, or either issue field is non-empty. Clear it only after every concrete review reason is resolved and readback confirms the corrected state. Clearing review never clears `Human Issue` and must not automatically change `Hide from Website`.
 - `AI建议最低年龄`, `AI年龄建议置信度`, `内容风险标签`, `AI年龄建议理由`, and `人工年龄覆盖` are advisory/family fields. Run the AI advisory step after sourced fields are present.
 - `内容风险标签` must describe concrete, observable content such as violence,

@@ -21,6 +21,7 @@ function parseArgs(values) {
     else if (value === "--output") options.output = values[++index];
     else if (value === "--work-id") options.workId = values[++index];
     else if (value === "--source-page-id") options.sourcePageId = values[++index];
+    else if (value === "--source-work-id") options.sourceWorkId = values[++index];
     else throw new Error(`Unknown argument: ${value}`);
   }
   for (const key of ["report", "output", "workId", "sourcePageId"]) {

@@ -175,20 +175,11 @@ function playbackAssetComplete(page) {
     && selectName(properties["Media Availability"]).toLowerCase() === "playable"
     && Boolean(selectName(properties["Video Codec"]))
     && Boolean(selectName(properties.Container))
-    && checkboxValue(properties["Playback Verified"]) === true
-    && checkboxValue(properties["Hide from Website"]) === false
-    && checkboxValue(properties["Needs Review"]) !== true;
+    && checkboxValue(properties["Playback Verified"]) === true;
 }
 
 function playbackAssetGate(page) {
   if (!page) return { code: "media_asset_missing", detail: "No matching Media Assets row was found." };
-  const properties = page.properties ?? {};
-  if (checkboxValue(properties["Hide from Website"]) === true) {
-    return { code: "visibility_gate", detail: "Matching Media Assets row exists, but Hide from Website is true; do not clear it automatically." };
-  }
-  if (checkboxValue(properties["Needs Review"]) === true) {
-    return { code: "needs_review_gate", detail: "Matching Media Assets row exists, but Needs Review is true." };
-  }
   if (!playbackAssetComplete(page)) {
     return { code: "asset_fields_incomplete", detail: "Matching Media Assets row exists but required playable fields are incomplete." };
   }
@@ -332,7 +323,13 @@ export function createNotionTargetAdapter(client, {
           workType: target.work_type ?? null,
           notionMediaType: mediaType.actual,
           expectedNotionMediaType: mediaType.expected,
-          mediaTypeMatches: mediaType.matches
+          mediaTypeMatches: mediaType.matches,
+          visibilityAdvisory: asset
+            ? {
+              hidden: checkboxValue(asset.properties?.["Hide from Website"]) === true,
+              needsReview: checkboxValue(asset.properties?.["Needs Review"]) === true
+            }
+            : null
         }
       };
     }

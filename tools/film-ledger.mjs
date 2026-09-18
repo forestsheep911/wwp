@@ -31,7 +31,7 @@ function parse(argv) {
   const values = new Set(["--db", "--scan", "--stage", "--limit", "--manifest-dir", "--variant", "--variant-id", "--canonical-variant", "--source-id", "--work-id", "--canonical-title", "--expected-current", "--work-type", "--priority-score", "--notion-work-page", "--work-page", "--season-page", "--spec-page", "--episode-page",
     "--probe-path", "--quality-state", "--subtitle-evidence", "--audio-evidence", "--color-risk", "--members",
     "--output-path", "--output-size", "--target-size", "--spec-key", "--episode-number", "--output-spec", "--audio-variant", "--subtitle-variant", "--cut-variant", "--probe-path", "--qc-artifact", "--failure-code", "--failure-detail", "--expected-filename", "--media-block-id", "--media-asset-page-id", "--compact-decision", "--compact-detail", "--canonical-source-id",
-    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at", "--scope-state",
+    "--queue-state", "--organizer-report", "--corrections", "--production-manifest", "--year", "--task", "--next-review-at", "--scope-state", "--subtitle-state", "--subtitle-method", "--subtitle-samples",
     "--status", "--note", "--actor", "--input-root", "--enabled", "--output-root", "--resolve-ip", "--local-address"]);
   const repeated = new Set(["--queue-state", "--organizer-report", "--variant-id"]);
   const booleans = new Set(["--json", "--pass", "--fail", "--dry-run", "--force-after-429", "--replace-expected-filename", "--no-proxy"]);
@@ -146,6 +146,7 @@ async function main() {
     } else if (command === "cycle") {
       const limit = options.limit === undefined ? 3 : Number(options.limit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("--limit must be between 1 and 20");
+      const closedQuarantinedIntakeTasks = repo.closeQuarantinedSourceIntakeTasks();
       const refreshedIntake = repo.refreshDueIntakeTasks({ limit });
       const refreshedMetadata = repo.refreshDueMetadataTasks({ limit });
       const subtitleTaskSync = repo.syncSubtitleAcquisitionTasks({ limit });
@@ -155,6 +156,7 @@ async function main() {
       const workflowTasks = repo.getWorkflowTaskSummary();
       const result = {
         refreshedIntakeTasks: refreshedIntake.map(task => task.id),
+        closedQuarantinedIntakeTasks: closedQuarantinedIntakeTasks.map(task => task.id),
         refreshedMetadataTasks: refreshedMetadata.map(task => task.id),
         subtitleTaskSync: {
           candidateSourceIds: subtitleTaskSync.candidates.map(row => row.source_id),
@@ -315,6 +317,11 @@ async function main() {
       const reason = requireOption(options, "failure_detail", "--failure-detail");
       const source = repo.markDuplicateSource(sourceId, canonicalSourceId, { reason });
       output(source, options.json, `marked source ${sourceId} as duplicate of ${canonicalSourceId}`);
+    } else if (command === "mark-companion-source") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const reason = requireOption(options, "failure_detail", "--failure-detail");
+      const source = repo.markCompanionSource(sourceId, { reason });
+      output(source, options.json, `marked source ${sourceId} as companion evidence`);
     } else if (command === "rename-work") {
       const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
       const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");
@@ -403,6 +410,52 @@ async function main() {
         reason: options.failure_detail
       });
       output(source, options.json, `updated source ${sourceId} evidence`);
+    } else if (command === "review-subtitles") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const state = requireOption(options, "subtitle_state", "--subtitle-state");
+      if (!new Set(["verified", "confirmed_missing", "unknown"]).has(state)) {
+        throw new Error("--subtitle-state must be verified|confirmed_missing|unknown");
+      }
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      let previous = {};
+      try { previous = source.subtitle_evidence ? JSON.parse(source.subtitle_evidence) : {}; } catch { previous = {}; }
+      let sampleFiles = [];
+      if (options.subtitle_samples) {
+        sampleFiles = JSON.parse(options.subtitle_samples);
+        if (!Array.isArray(sampleFiles) || sampleFiles.some((value) => typeof value !== "string" || !value.trim())) {
+          throw new Error("--subtitle-samples must be a JSON array of non-empty paths");
+        }
+      }
+      const evidence = {
+        ...previous,
+        state,
+        reviewMethod: options.subtitle_method ?? previous.reviewMethod ?? "visual subtitle review",
+        reviewedAt: new Date().toISOString()
+      };
+      if (sampleFiles.length > 0) evidence.sampleFiles = sampleFiles;
+      if (state === "verified") {
+        evidence.verifiedChinese = true;
+        evidence.hasChineseSubtitle = true;
+        delete evidence.noChineseSubtitles;
+        delete evidence.hardGate;
+      } else if (state === "confirmed_missing") {
+        evidence.verifiedChinese = false;
+        evidence.hasChineseSubtitle = false;
+        evidence.noChineseSubtitles = true;
+        evidence.hardGate = "missing_chinese_subtitle";
+      } else {
+        delete evidence.hardGate;
+        delete evidence.noChineseSubtitles;
+        delete evidence.hasChineseSubtitle;
+        delete evidence.verifiedChinese;
+      }
+      const sourceRow = repo.updateSourceEvidence(sourceId, {
+        qualityState: state === "confirmed_missing" ? "subtitle_missing" : state === "verified" ? "subtitle_verified" : "unknown",
+        subtitleEvidence: evidence,
+        reason: options.failure_detail ?? `Subtitle review recorded as ${state}`
+      });
+      output(sourceRow, options.json, `reviewed subtitles for source ${sourceId}: ${state}`);
     } else if (command === "attach-variant-source") {
       const variantId = asId(requireOption(options, "variant", "--variant"));
       const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");

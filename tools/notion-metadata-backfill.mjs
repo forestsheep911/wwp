@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
+import { parseDoubanSubjectId, maintainedDoubanSubjectId } from "./lib/douban-identity.mjs";
 
 const VIEW_ID = "22920ac1-2f0a-801d-bcf4-000cc6950264";
 const DEFAULT_DELAY_MS = 6000;
@@ -200,6 +201,7 @@ function dotenv(name) {
 }
 
 function installNotionDnsOverride(address) {
+  if (dotenv("NOTION_API_DISABLE_DNS_OVERRIDE") === "1") return;
   const notionApiIp = address || dotenv("NOTION_API_RESOLVE_IP");
   if (!notionApiIp) return;
   const originalLookup = dns.lookup.bind(dns);
@@ -326,6 +328,8 @@ export function metadataGateSnapshot(properties = {}, metadata = {}, unresolvedG
   );
   return {
     hasExternalIdentity,
+    doubanIdentity: maintainedDoubanSubjectId(propText(properties["Douban Subject ID"]), propText(properties["Douban URL"]))
+      && propText(properties["Douban URL"]) ? "maintained" : "pending",
     missingCoreFields,
     humanIssue,
     aiIssue,
@@ -773,10 +777,13 @@ async function fetchJson(url, headers = {}) {
   return JSON.parse(text);
 }
 
+let lastNotionOperationAt = 0;
 async function withTransientNotionRetry(operation) {
   const delaysMs = [500, 1_500, 4_000];
   for (let attempt = 0; ; attempt += 1) {
     try {
+      await sleep(Math.max(0, 1100 - (Date.now() - lastNotionOperationAt)));
+      lastNotionOperationAt = Date.now();
       return await operation();
     } catch (error) {
       const delayMs = delaysMs[attempt];
@@ -957,6 +964,14 @@ export function metadataIdentityConflict(properties = {}, metadata = {}, context
     return { field: "Release Year", expected: expectedYear, actual: metadataYear };
   }
   return null;
+}
+
+// A trusted IMDb identity must never be silently replaced by a same-name
+// Douban hit whose page does not expose a matching IMDb identity.
+export function doubanIdentityUnverified(properties = {}, metadata = {}) {
+  const expected = existingImdbIdentity(properties).effectiveImdbId;
+  const actual = `${metadata.imdbId ?? ""}`.match(/tt\d+/i)?.[0]?.toLowerCase();
+  return Boolean(expected && (!actual || actual !== expected));
 }
 
 export function existingImdbIdentity(properties = {}) {
@@ -1262,6 +1277,7 @@ function notionFileName(name) {
 
 function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   const properties = page.properties;
+  assertDoubanIdentityCompatible(properties, metadata);
   const patch = {};
   const genres = mapGenres(metadata.genres ?? []);
   const existingIdentity = existingImdbIdentity(properties);
@@ -1368,8 +1384,8 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   if (!hasValue(properties, "Douban Subject ID") && metadata.subjectId) {
     patch["Douban Subject ID"] = { rich_text: richText(metadata.subjectId) };
   }
-  if (!hasValue(properties, "Douban URL") && metadata.subjectUrl) {
-    patch["Douban URL"] = { url: metadata.subjectUrl };
+  if (!hasValue(properties, "Douban URL") && metadata.subjectId) {
+    patch["Douban URL"] = { url: `https://movie.douban.com/subject/${metadata.subjectId}/` };
   }
   if ((options.forcePoster || !hasValue(properties, "Poster URL")) && metadata.posterUrl) {
     patch["Poster URL"] = { url: metadata.posterUrl };
@@ -1485,8 +1501,24 @@ function preferredDoubanSubjectId(properties, pageId, options = {}) {
     options.doubanSubjects?.get(pageId.replace(/-/g, ""));
   if (cliSubjectId) return cliSubjectId;
 
-  const existingSubjectId = propText(properties["Douban Subject ID"]) || propText(properties["Douban"]);
-  return existingSubjectId.match(/\d{4,12}/)?.[0];
+  return parseDoubanSubjectId(propText(properties["Douban Subject ID"]));
+}
+
+export function assertDoubanIdentityCompatible(properties, metadata) {
+  if (!metadata.subjectId) return;
+  const expected = parseDoubanSubjectId(metadata.subjectId);
+  if (!expected || (metadata.subjectUrl && parseDoubanSubjectId(metadata.subjectUrl) !== expected)) throw new Error("Invalid Douban film identity evidence");
+  for (const field of ["Douban Subject ID", "Douban URL"]) {
+    const current = propText(properties[field]);
+    if (current && parseDoubanSubjectId(current) !== expected) throw new Error(`Douban identity conflict in ${field}; use a reviewed exact-page correction`);
+  }
+}
+
+export function verifyDoubanIdentityReadback(properties, metadata) {
+  if (!metadata.subjectId) return { status: "pending", reason: "douban_identity_not_verified" };
+  const id = maintainedDoubanSubjectId(propText(properties["Douban Subject ID"]), propText(properties["Douban URL"]));
+  if (id !== metadata.subjectId || !propText(properties["Douban URL"])) throw new Error("Douban identity readback mismatch");
+  return { status: "verified", subjectId: id };
 }
 
 function snapshotProperty(property) {
@@ -1505,13 +1537,24 @@ function snapshotProperty(property) {
   return value ?? null;
 }
 
-async function processOmdbFallback(notion, page, options, title, existingImdbId) {
+async function processOmdbFallback(notion, page, options, title, existingImdbId, reviewedDoubanSubjectId = undefined) {
   const omdbMetadata = options.noExternal
     ? undefined
     : await fetchOmdbMetadata(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
   if (!omdbMetadata) return undefined;
 
-  const identityConflict = metadataIdentityConflict(page.properties, omdbMetadata, { title });
+  // A reviewed exact Douban identity may remain usable when the page endpoint
+  // is temporarily blocked or no longer exposes JSON-LD. Keep OMDb as the
+  // metadata source; only carry the explicit identity into the guarded patch.
+  const metadata = reviewedDoubanSubjectId
+    ? {
+        ...omdbMetadata,
+        subjectId: reviewedDoubanSubjectId,
+        subjectUrl: `https://movie.douban.com/subject/${reviewedDoubanSubjectId}/`
+      }
+    : omdbMetadata;
+
+  const identityConflict = metadataIdentityConflict(page.properties, metadata, { title });
   if (identityConflict) {
     return { pageId: page.id, title, status: "skipped", reason: "metadata_identity_conflict", identityConflict };
   }
@@ -1522,25 +1565,43 @@ async function processOmdbFallback(notion, page, options, title, existingImdbId)
     : needsPosterUpload
       ? await uploadPoster(notion, omdbMetadata, title)
       : undefined;
-  const patch = buildPatch(page, omdbMetadata, imdbRating, posterFile, options);
+  const patch = buildPatch(page, metadata, imdbRating, posterFile, options);
   if (Object.keys(patch).length === 0) {
-    return { pageId: page.id, title, status: "skipped", reason: "nothing_to_update", source: "omdb" };
+    return {
+      pageId: page.id,
+      title,
+      status: "skipped",
+      reason: "nothing_to_update",
+      source: reviewedDoubanSubjectId ? "omdb+reviewed-douban-identity" : "omdb",
+      doubanIdentity: reviewedDoubanSubjectId
+        ? { status: "reviewed", subjectId: reviewedDoubanSubjectId }
+        : { status: "pending", reason: "douban_identity_not_verified" }
+    };
   }
   let readback;
+  let doubanIdentity;
   if (!options.dryRun) {
     await withTransientNotionRetry(() => notion.pages.update({ page_id: page.id, properties: patch }));
     const verifiedPage = await withTransientNotionRetry(() => notion.pages.retrieve({ page_id: page.id }));
+    doubanIdentity = reviewedDoubanSubjectId
+      ? verifyDoubanIdentityReadback(verifiedPage.properties, metadata)
+      : undefined;
     readback = Object.fromEntries(Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])]));
   }
   return {
     pageId: page.id,
     title,
     status: options.dryRun ? "dry_run" : "updated",
-    source: "omdb",
+    source: reviewedDoubanSubjectId ? "omdb+reviewed-douban-identity" : "omdb",
+    doubanIdentity: doubanIdentity
+      ?? (reviewedDoubanSubjectId
+        ? { status: "reviewed", subjectId: reviewedDoubanSubjectId }
+        : { status: "pending", reason: "douban_identity_not_verified" }),
     fields: Object.keys(patch),
     fieldTypes: Object.fromEntries(Object.keys(patch).map((field) => [field, page.properties?.[field]?.type ?? null])),
     updatedFieldSources: Object.fromEntries(Object.keys(patch).map((field) => [field, "omdb"])),
-    ...(readback ? { readback } : {})
+    ...(readback ? { readback } : {}),
+    ...(reviewedDoubanSubjectId ? { subjectId: reviewedDoubanSubjectId } : {})
   };
 }
 
@@ -1562,6 +1623,8 @@ async function processPage(notion, pageRef, options, cookie) {
   const searchTitle = chineseTitle && releaseYear ? `${chineseTitle} (${releaseYear})` : chineseTitle || title;
   const existingInfo = [propText(page.properties["基本信息"]), propText(page.properties.note)].join(" ");
   const expectedType = propText(page.properties["影别"]);
+  const explicitDoubanSubjectId = options.doubanSubjects?.get(page.id)
+    ?? options.doubanSubjects?.get(page.id.replace(/-/g, ""));
   const forcedSubjectId = preferredDoubanSubjectId(page.properties, page.id, options);
   const subjectResult = forcedSubjectId
     ? { status: "ok", subject: { id: forcedSubjectId } }
@@ -1584,11 +1647,37 @@ async function processPage(notion, pageRef, options, cookie) {
   try {
     metadata = await fetchDoubanMetadata(subjectResult.subject.id, cookie, searchTitle);
   } catch (error) {
-    const fallback = await processOmdbFallback(notion, page, options, title, existingIdentity.effectiveImdbId);
+    const fallback = await processOmdbFallback(
+      notion,
+      page,
+      options,
+      title,
+      existingIdentity.effectiveImdbId,
+      explicitDoubanSubjectId
+    );
     if (fallback) return { ...fallback, doubanError: error.message };
     return { pageId: page.id, title, status: "error", message: error.message, source: "douban" };
   }
   const identityConflict = metadataIdentityConflict(page.properties, metadata, { title });
+  if (doubanIdentityUnverified(page.properties, metadata)) {
+    const fallback = await processOmdbFallback(notion, page, options, title, existingIdentity.effectiveImdbId);
+    if (fallback) {
+      return {
+        ...fallback,
+        doubanError: `Douban identity could not verify IMDb ${existingIdentity.effectiveImdbId}`,
+        subjectId: metadata.subjectId
+      };
+    }
+    return {
+      pageId: page.id,
+      title,
+      status: "skipped",
+      reason: "douban_identity_unverified",
+      expectedImdbId: existingIdentity.effectiveImdbId,
+      actualImdbId: metadata.imdbId ?? null,
+      subjectId: metadata.subjectId
+    };
+  }
   // A conflicting Douban candidate is unsafe even when preserving IMDb identity:
   // the candidate can belong to a different film and would otherwise overwrite
   // empty or stale metadata fields with unrelated values.
@@ -1645,14 +1734,17 @@ async function processPage(notion, pageRef, options, cookie) {
       status: "skipped",
       reason: "nothing_to_update",
       subjectId: metadata.subjectId,
+      doubanIdentity: verifyDoubanIdentityReadback(page.properties, metadata),
       metadataGate: metadataGateSnapshot(page.properties, metadata, unresolvedGenres)
     };
   }
 
   let readback;
+  let doubanIdentity;
   if (!options.dryRun) {
     await withTransientNotionRetry(() => notion.pages.update({ page_id: page.id, properties: patch }));
     const verifiedPage = await withTransientNotionRetry(() => notion.pages.retrieve({ page_id: page.id }));
+    doubanIdentity = verifyDoubanIdentityReadback(verifiedPage.properties, metadata);
     readback = Object.fromEntries(
       Object.keys(patch).map(name => [name, snapshotProperty(verifiedPage.properties?.[name])])
     );
@@ -1661,6 +1753,7 @@ async function processPage(notion, pageRef, options, cookie) {
   return {
     pageId: page.id,
     title,
+    doubanIdentity,
     newTitle: patch.Title?.title?.[0]?.text?.content,
     status: options.dryRun ? "dry_run" : "updated",
     subjectId: metadata.subjectId,
@@ -1752,5 +1845,7 @@ export {
   parseRuntimeMinutes,
   preferredDoubanSubjectId,
   fetchImdbRating,
+  fetchDoubanMetadata,
+  findDoubanSubject,
   splitListValue
 };

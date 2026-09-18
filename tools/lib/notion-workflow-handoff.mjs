@@ -76,10 +76,22 @@ export function humanIssueFromPage(page) {
   return propertyText(page?.properties?.[HUMAN_ISSUE_PROPERTY]);
 }
 
-export function workReleaseBlockers(page) {
+export function explicitVisibilityHoldFromPage(page) {
+  const note = pendingHumanWorkflowNoteFromPage(page);
+  return /(?:不要|暂不|先不|禁止|勿).{0,8}(?:发布|放出|同步)|(?:保持|继续).{0,8}(?:隐藏|下线)/u.test(note);
+}
+
+export function workVisibilityBlockers(page) {
   const properties = page?.properties ?? {};
   const blockers = [];
   if (properties["Hide from Website"]?.type !== "checkbox") blockers.push("hide_property_missing");
+  if (explicitVisibilityHoldFromPage(page)) blockers.push("visibility_hold");
+  return blockers;
+}
+
+export function workReleaseBlockers(page) {
+  const properties = page?.properties ?? {};
+  const blockers = workVisibilityBlockers(page).filter((blocker) => blocker !== "visibility_hold");
   if (properties["Metadata Status"]?.select?.name !== "verified") blockers.push("metadata_not_verified");
   if (properties["Needs Review"]?.checkbox !== false) blockers.push("needs_review");
   if (humanIssueFromPage(page)) blockers.push("human_issue");

@@ -1,4 +1,5 @@
 export * from "./member-collection.js";
+export * from "./douban-identity.js";
 import type { PersonExternalIds } from "./person-names.js";
 
 export * from "./person-identity.js";

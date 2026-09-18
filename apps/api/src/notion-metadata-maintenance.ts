@@ -4,13 +4,13 @@ import dns from "node:dns";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@notionhq/client";
+import { maintainedDoubanSubjectId } from "@wwpdw/shared";
 import { deriveMetadataCompleteness } from "./notion-metadata-completeness.js";
 import {
   collectMetadataHintsFromText,
   createMetadataHints,
   doubanSubjectUrl,
   imdbTitleUrl,
-  normalizeDoubanSubjectId,
   normalizeImdbId,
   normalizeTmdbId,
   notionManagedProperties,
@@ -559,18 +559,21 @@ async function planPage(
   }
 
   const existingImdb = normalizeImdbId(readManagedText(pageProperties, ["IMDb ID", "IMDb", "IMDB"]));
-  const existingDouban = normalizeDoubanSubjectId(readManagedText(pageProperties, ["Douban Subject ID", "Douban", "\u8c46\u74e3"]));
+  const rawDouban = readManagedText(pageProperties, ["Douban Subject ID"]);
+  const existingDouban = maintainedDoubanSubjectId(rawDouban, readManagedText(pageProperties, ["Douban URL"]));
   const existingTmdb = normalizeTmdbId(readManagedText(pageProperties, ["TMDB ID", "TMDB"]));
   const parsedImdb = hints.externalIds.imdb;
   const parsedDouban = hints.externalIds.douban;
   const parsedTmdb = hints.externalIds.tmdb;
   const imdb = existingImdb ?? parsedImdb;
-  const douban = existingDouban ?? parsedDouban;
+  // Text/links are discovery hints, never authority to fill film identity.
+  const douban = existingDouban;
   const tmdb = existingTmdb ?? parsedTmdb;
   const year = yearFromTitle(title);
   const structuredTitles = parseStructuredTitles(title);
   const workId = readManagedText(pageProperties, ["WW Work ID"]) ?? stableMovieWorkIdFromNotion(pageId, title, year);
   const conflicts = [
+    rawDouban && !existingDouban ? "Douban maintained ID/URL invalid or conflicting" : undefined,
     existingImdb && parsedImdb && existingImdb !== parsedImdb ? `IMDb ${existingImdb} != ${parsedImdb}` : undefined,
     existingDouban && parsedDouban && existingDouban !== parsedDouban ? `Douban ${existingDouban} != ${parsedDouban}` : undefined,
     existingTmdb && parsedTmdb && existingTmdb !== parsedTmdb ? `TMDB ${existingTmdb} != ${parsedTmdb}` : undefined

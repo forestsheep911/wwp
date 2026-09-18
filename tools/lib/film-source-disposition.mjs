@@ -26,6 +26,14 @@ function latestFailure(events) {
   return events.find((event) => event.event_type === "source_quarantine_failed") ?? null;
 }
 
+function workflowRecoveryTrigger(note) {
+  const lines = String(note ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.at(-1) ?? null;
+}
+
 function isIncompleteDownloadName(name) {
   return /(?:\.\!qB|\.part|\.crdownload|\.tmp)$/i.test(String(name ?? ""));
 }
@@ -118,10 +126,18 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push("source_marked_as_duplicate_container");
     nextTrigger = "保留规范源；不要重复制作或移动此路径";
     evidence.push({ type: "duplicate_source", value: "explicitly marked duplicate" });
-  } else if (source.source_kind === "subtitle_bundle") {
-    disposition = "companion_evidence";
-    reasons.push("subtitle_bundle_is_not_a_media_source");
-    nextTrigger = "将字幕作为对应视频源的伴随证据使用；不单独压制或上传";
+  } else if (["subtitle_bundle", "companion_evidence", "archive_bundle"].includes(source.source_kind)) {
+    disposition = source.source_kind === "archive_bundle" ? "archive_bundle" : "companion_evidence";
+    reasons.push(source.source_kind === "subtitle_bundle"
+      ? "subtitle_bundle_is_not_a_media_source"
+      : source.source_kind === "archive_bundle"
+        ? "archive_contains_no_recognized_media_file"
+        : "artwork_or_metadata_bundle_is_not_a_media_source");
+    nextTrigger = source.source_kind === "subtitle_bundle"
+      ? "将字幕作为对应视频源的伴随证据使用；不单独压制或上传"
+      : source.source_kind === "archive_bundle"
+        ? "先确认归档内容；如确有视频，解包后重新扫描，否则标记为非影视输入"
+        : "将海报、扫描图或 NFO 作为对应作品的伴随证据使用；不单独识别、压制或上传";
   } else if (!pathExists) {
     disposition = "source_missing";
     reasons.push("source_path_missing");
@@ -168,6 +184,15 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push("missing_chinese_subtitle");
     actionableNow = true;
     nextTrigger = "建立可恢复的字幕获取任务并采集候选；在取得可用中文字幕前不制作";
+  } else if (collectionMembersAlreadyTracked && variants.length === 0) {
+    // A split collection parent can still look newly discovered because the
+    // parent directory remains visible in the enabled input root. Once its
+    // leaf sources have been tracked/bound, the parent is a container record,
+    // not a fresh identity candidate. Keep it visible without reopening an
+    // old intake task; the child sources are the actual work items.
+    disposition = "collection_container_active";
+    reasons.push("collection_members_tracked_separately");
+    nextTrigger = "等待全部成员源各自闭环后再关闭并移动合集容器";
   } else if (pendingIntakeTask || (recentlyDiscoveredWithoutVariant && workflowStatus !== "暂缓")) {
     // A newly requeued source must not disappear behind the completed work's
     // long-term review date. The intake task or recent discovery is the
@@ -232,7 +257,9 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push(workflowStatus === "暂缓" ? "work_deferred_without_due_time" : "no_linked_variant_decision");
     actionableNow = workflowStatus !== "暂缓";
     needsHumanConfirmation = workflowStatus === "暂缓";
-    nextTrigger = workflowStatus === "暂缓" ? "补充明确恢复条件或人工决定" : "AI 完成制作价值评估并建立具体规格或关闭扩展";
+    nextTrigger = workflowStatus === "暂缓"
+      ? workflowRecoveryTrigger(source.workflow_note) || "补充明确恢复条件或人工决定"
+      : "AI 完成制作价值评估并建立具体规格或关闭扩展";
   } else if (cleanupCandidate?.reasons?.includes("source_media_not_fully_covered")) {
     disposition = "source_coverage_review";
     reasons.push(...cleanupCandidate.reasons);

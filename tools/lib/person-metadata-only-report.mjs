@@ -1,7 +1,7 @@
 const NOTION_PAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WORK_ID = /^wwm_[A-Za-z0-9_-]+$/;
 
-export function markMetadataOnlyWork(report, { workId, sourcePageId }) {
+export function markMetadataOnlyWork(report, { workId, sourcePageId, sourceWorkId = workId }) {
   if (!WORK_ID.test(`${workId ?? ""}`)) {
     throw new Error("--work-id must be the exact stable wwm_* ID read from Notion.");
   }
@@ -11,7 +11,7 @@ export function markMetadataOnlyWork(report, { workId, sourcePageId }) {
   if ((report.identityIssues ?? []).length > 0 || (report.unresolved ?? []).length > 0) {
     throw new Error("Metadata-only publication requires zero identity issues and zero unresolved credits.");
   }
-  const matches = (report.proposedCredits ?? []).filter((work) => work.workId === workId);
+  const matches = (report.proposedCredits ?? []).filter((work) => work.workId === sourceWorkId);
   if (matches.length !== 1) {
     throw new Error(`Expected exactly one proposed credit set for ${workId}; found ${matches.length}.`);
   }
@@ -25,9 +25,10 @@ export function markMetadataOnlyWork(report, { workId, sourcePageId }) {
 
   return {
     ...structuredClone(report),
-    proposedCredits: report.proposedCredits.map((entry) => entry.workId === workId
+    proposedCredits: report.proposedCredits.map((entry) => entry.workId === sourceWorkId
       ? {
           ...structuredClone(entry),
+          workId,
           metadataOnlyWork: {
             mode: "metadata-only",
             sourcePageId,

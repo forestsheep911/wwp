@@ -104,7 +104,7 @@ function isLegacyCarrier(result: SearchResult) {
 
 function toCoverageRecord(result: SearchResult): PeopleWorkCoverageRecord {
   const work = result.metadata?.work;
-  const credits = work?.credits ?? result.metadata?.credits ?? [];
+  const credits = expandUnlinkedCompositeCredits(work?.credits ?? result.metadata?.credits ?? []);
   const linkedCreditCount = credits.filter((credit) => Boolean(credit.personId)).length;
   const unlinkedCreditCount = credits.length - linkedCreditCount;
   const status = coverageStatus(credits.length, linkedCreditCount);
@@ -133,6 +133,19 @@ function toCoverageRecord(result: SearchResult): PeopleWorkCoverageRecord {
     departmentCounts: countDepartments(credits),
     recommendedLane: recommendedLane(status)
   };
+}
+
+// Historical imports sometimes collapsed several people into one slash-delimited
+// credit. Count each person separately so coverage cannot be closed prematurely.
+function expandUnlinkedCompositeCredits(credits: MovieCreditEntry[]): MovieCreditEntry[] {
+  return credits.flatMap((credit) => {
+    if (credit.personId || !credit.name.includes(" / ")) return [credit];
+    return credit.name.split(" / ").map((name) => ({
+      ...credit,
+      name: name.trim(),
+      externalIds: undefined
+    }));
+  });
 }
 
 function creditCount(result: SearchResult) {

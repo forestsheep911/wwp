@@ -174,11 +174,15 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       if (!source || source.work_id != null || source.source_kind === "duplicate_source") continue;
       const task = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`);
       if (!task || task.status === "done") continue;
-      if (disposition.disposition === "source_download_incomplete") {
+      if (disposition.disposition === "source_missing") {
+        // A source moved to quarantine or removed from an enabled root must
+        // close its stale intake task. Otherwise the next due-refresh turns a
+        // terminally absent source back into a production action.
+        changes.push(markSourceMissing(sourceId, true));
+      } else if (disposition.disposition === "source_download_incomplete") {
         if (task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) continue;
         changes.push(transitionWorkflowTask(task.id, "deferred", { reason: INCOMPLETE_SOURCE_INTAKE_REASON }));
-      } else if (disposition.disposition !== "source_missing"
-        && task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) {
+      } else if (task.status === "deferred" && task.reason === INCOMPLETE_SOURCE_INTAKE_REASON) {
         changes.push(requeueIntakeTask(sourceId, { reason: "Source download is now complete; resume identity, duplicate, and Notion-state analysis" }));
       }
     }
@@ -204,6 +208,22 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       }), at);
     }
     return dueTasks.map(task => db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(task.id));
+  }
+
+  function closeQuarantinedSourceIntakeTasks() {
+    const sources = db.prepare(`SELECT sources.id
+      , workflow_tasks.id AS task_id
+      FROM sources
+      JOIN input_roots ON input_roots.id = sources.input_root_id
+      JOIN workflow_tasks ON workflow_tasks.source_id = sources.id
+        AND workflow_tasks.task_type = 'intake'
+        AND workflow_tasks.status IN ('pending', 'in_progress', 'waiting_user', 'deferred')
+      WHERE sources.missing = 1
+        AND input_roots.path LIKE '%待人工删除%'`).all();
+    return sources.map(({ id, task_id: taskId }) => {
+      markSourceMissing(id, true);
+      return db.prepare("SELECT * FROM workflow_tasks WHERE id=?").get(taskId);
+    });
   }
 
   function upsertInputRoot(rootPath, options = {}) {
@@ -284,7 +304,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     const metadataDeferredUntil = metadataTask?.status === "deferred" && metadataTask.next_run_at
       ? metadataTask.next_run_at
       : null;
+    const metadataWaitingForUser = metadataTask?.status === "waiting_user";
+    const metadataInProgress = metadataTask?.status === "in_progress";
     if (work.next_review_at && work.next_review_at <= timestamp()
+      && !metadataWaitingForUser && !metadataInProgress
       && (!metadataDeferredUntil || metadataDeferredUntil <= timestamp())) {
       requeueMetadataTask(work.id, { reason: "Scheduled work-level metadata maintenance is due" });
     }
@@ -392,10 +415,16 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
       ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
         priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
-    } else if (source.source_kind === "duplicate_source") {
+    } else if (["duplicate_source", "companion_evidence", "subtitle_bundle"].includes(source.source_kind)) {
+      ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
+        status: "done", reason: "Source contains companion evidence only and is excluded from identity and production queues" });
+      // companion task is inserted as terminal so a new evidence-only source
+      // cannot briefly appear in the intake queue
       completeWorkflowTaskByKey(`intake:source:${source.id}`, {
         sourceId: source.id,
-        reason: "Source is an explicitly marked duplicate and is excluded from identity and production queues"
+        reason: source.source_kind === "duplicate_source"
+          ? "Source is an explicitly marked duplicate and is excluded from identity and production queues"
+          : "Source contains companion evidence only and is excluded from identity and production queues"
       });
     } else {
       ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
@@ -453,7 +482,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function markDuplicateSource(sourceId, canonicalSourceId, details = {}) {
-    return withTransaction(db, () => {
+    const result = withTransaction(db, () => {
       const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
       if (!source) throw new Error(`source not found: ${sourceId}`);
       const canonical = db.prepare("SELECT * FROM sources WHERE id=?").get(canonicalSourceId);
@@ -472,22 +501,63 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       });
       return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
     });
+    // Re-evaluate collection parents after the duplicate decision commits.
+    // Calling this outside the transaction lets the parent task observe the
+    // terminal child state in the same database snapshot.
+    if (result?.input_root_id != null) reconcileDeferredCollectionParents(result.input_root_id);
+    return result;
+  }
+
+  function markCompanionSource(sourceId, details = {}) {
+    const result = withTransaction(db, () => {
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      const at = timestamp();
+      db.prepare("UPDATE sources SET source_kind='companion_evidence', updated_at=? WHERE id=?").run(at, sourceId);
+      insertEvent.run("source", sourceId, "source_marked_companion_evidence", stableJson({
+        reason: details.reason ?? "Marked as companion evidence; not an independent media source"
+      }), at);
+      completeWorkflowTaskByKey(`intake:source:${sourceId}`, {
+        sourceId,
+        workId: source.work_id,
+        reason: details.reason ?? "Companion evidence; no independent production payload"
+      });
+      return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    });
+    if (result?.input_root_id != null) reconcileDeferredCollectionParents(result.input_root_id);
+    return result;
   }
 
   function reconcileDeferredCollectionParents(inputRootId) {
-    const allSources = db.prepare("SELECT id, relative_path, work_id FROM sources WHERE input_root_id=?").all(inputRootId);
+    const allSources = db.prepare("SELECT id, relative_path, absolute_path, work_id, source_kind FROM sources WHERE input_root_id=?").all(inputRootId);
     const parents = db.prepare(`SELECT workflow_tasks.id, workflow_tasks.task_key, sources.id AS source_id, sources.relative_path
       FROM workflow_tasks JOIN sources ON sources.id=workflow_tasks.source_id
-      WHERE workflow_tasks.task_type='intake' AND workflow_tasks.status='deferred' AND sources.input_root_id=?`).all(inputRootId);
+      WHERE workflow_tasks.task_type='intake'
+        AND workflow_tasks.status IN ('pending', 'in_progress', 'waiting_user', 'deferred')
+        AND sources.input_root_id=?`).all(inputRootId);
     for (const parent of parents) {
       const prefix = `${parent.relative_path}\\`.toLowerCase();
-      const descendants = allSources.filter((source) => source.id !== parent.source_id && source.relative_path.toLowerCase().startsWith(prefix));
-      const leaves = descendants.filter((source) => !descendants.some((other) => other.id !== source.id
-        && other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())));
-      if (leaves.length > 0 && leaves.every((source) => source.work_id != null)) {
+      const parentSource = db.prepare("SELECT absolute_path FROM sources WHERE id=?").get(parent.source_id);
+      const absolutePrefix = `${normalizeLedgerPath(parentSource?.absolute_path ?? "").replace(/[\\/]+$/u, "")}\\`.toLowerCase();
+      const isDescendant = (source, ancestor) => source.id !== ancestor.id && (
+        source.relative_path.toLowerCase().startsWith(`${ancestor.relative_path}\\`.toLowerCase())
+        || normalizeLedgerPath(source.absolute_path).toLowerCase().startsWith(
+          `${normalizeLedgerPath(ancestor.absolute_path).replace(/[\\/]+$/u, "")}\\`.toLowerCase()
+        )
+      );
+      const descendants = allSources.filter((source) => source.id !== parent.source_id
+        && (source.relative_path.toLowerCase().startsWith(prefix)
+          || normalizeLedgerPath(source.absolute_path).toLowerCase().startsWith(absolutePrefix)));
+      const leaves = descendants.filter((source) => !descendants.some((other) => isDescendant(other, source)));
+      // Explicit duplicate/companion classifications are terminal leaves even
+      // when they have no work binding, so they cannot keep reopening the
+      // parent collection intake task.
+      const terminalLeaf = (source) => source.work_id != null
+        || ["duplicate_source", "companion_evidence"].includes(source.source_kind);
+      if (leaves.length > 0 && leaves.every(terminalLeaf)) {
         completeWorkflowTaskByKey(parent.task_key, {
           sourceId: parent.source_id,
-          reason: `All ${leaves.length} collection member source(s) have verified work identities`
+          reason: `All ${leaves.length} collection member source(s) have verified identities or explicit terminal dispositions`
         });
       }
     }
@@ -1108,6 +1178,11 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         AND NOT EXISTS (
           SELECT 1 FROM workflow_tasks
           WHERE workflow_tasks.task_key = 'metadata:work:' || works.id
+            AND workflow_tasks.status IN ('waiting_user', 'in_progress')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_tasks
+          WHERE workflow_tasks.task_key = 'metadata:work:' || works.id
             AND workflow_tasks.status = 'deferred'
             AND workflow_tasks.next_run_at IS NOT NULL
             AND workflow_tasks.next_run_at > ?
@@ -1164,7 +1239,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       db.prepare(`UPDATE workflow_tasks
         SET status='done', reason='Source is no longer present in the configured input root',
             next_run_at=NULL, updated_at=?
-        WHERE source_id=? AND task_type='intake' AND status IN ('pending','in_progress','waiting_user')`)
+        WHERE source_id=? AND task_type='intake' AND status IN ('pending','in_progress','waiting_user','deferred')`)
         .run(at, sourceId);
     }
     return db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
@@ -1360,10 +1435,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, setInputRootEnabled, setWorkScopeState, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, updateSourceEvidence, splitSourceCollection, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
+  return { upsertInputRoot, setInputRootEnabled, setWorkScopeState, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, markCompanionSource, updateSourceEvidence, splitSourceCollection, reconcileCollectionIntake: reconcileDeferredCollectionParents, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listSeriesCoverageGaps, listPublicationCandidates, listManualUploadHandoffs,
-    getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, listDueNotionTargets,
+    getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, closeQuarantinedSourceIntakeTasks, listDueNotionTargets,
     getSchedulerState, setSchedulerState, recordNotionInspection, recordNotionFailure,
     findVariantByOutputPath, findVariantByNotionTarget, mergeDuplicateVariant, applyMigrationCorrection, correctVariantMetadata,
     ensureWorkflowTask, requeueMetadataTask, requeueIntakeTask, syncSourceIntakeAvailability, listWorkflowTasks,

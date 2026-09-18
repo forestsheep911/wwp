@@ -741,6 +741,7 @@ function CinemaApp() {
   }
 
   function openLibraryDetail(result: ResultWithCache) {
+    setActiveTab("library");
     rememberLibraryScrollPosition();
     setPersonId(undefined);
     setPerson(undefined);
@@ -2738,13 +2739,6 @@ function CinemaApp() {
     setSearchPreviewResults([]);
     setSearchPreviewPeople([]);
     const timer = window.setTimeout(async () => {
-      void searchPeople(normalizedQuery, 8)
-        .then((peopleResponse) => {
-          if (searchPreviewRequestRef.current === requestId) setSearchPreviewPeople(peopleResponse.people);
-        })
-        .catch(() => {
-          if (searchPreviewRequestRef.current === requestId) setSearchPreviewPeople([]);
-        });
       try {
         const response = await searchAssets(normalizedQuery);
         if (searchPreviewRequestRef.current !== requestId) {
@@ -3452,6 +3446,8 @@ function CinemaApp() {
             collection={{entries:favorites,revision:collectionRevision,undoImportId:collectionUndoId}}
             legacyRecords={legacyRecords} onImport={acceptCollection} />
           <FavoritesPanel
+            getDetailHref={libraryDetailHref}
+            onOpenDetail={openLibraryDetail}
             cachedAssets={cachedAssets}
             creditPolicy={creditPolicy}
             favorites={favorites}

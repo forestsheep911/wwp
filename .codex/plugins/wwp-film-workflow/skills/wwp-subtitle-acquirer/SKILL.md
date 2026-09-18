@@ -19,6 +19,20 @@ original-audio branch. Do not route a verified Mandarin-dubbed (`国配`) branch
 here merely because it lacks Chinese subtitles: that branch may complete now,
 with subtitle acquisition retained only as optional later enrichment.
 
+After inspecting rendered PGS samples, persist the decision before creating or
+resuming provider work:
+
+```powershell
+node tools/film-ledger.mjs review-subtitles --source-id <id> --subtitle-state confirmed_missing `
+  --subtitle-method "PGS multi-point visual review" `
+  --subtitle-samples '["<sample-early>","<sample-middle>","<sample-late>"]'
+```
+
+Use `verified` when usable Chinese subtitles are confirmed, or `unknown` when
+the samples are inconclusive. Do not represent a completed visual review only
+as legacy `verifiedChinese:false`; that value intentionally remains unknown and
+will not create the durable acquisition task.
+
 The film ledger is the integration boundary. A normal film cycle creates or
 reuses one durable `subtitle_acquisition` workflow task only for an explicit
 `confirmed_missing` state. The current v0.1 Companion can collect provider

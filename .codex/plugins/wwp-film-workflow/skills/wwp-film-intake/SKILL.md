@@ -7,7 +7,7 @@ description: Use when new movie or series source directories enter WWP, when a q
 
 This is the entry stage for every newly discovered resource. A source entering the input directory is a work item for analysis, not an automatic encode request.
 
-When one discovered directory contains several independently catalogued seasons, parts, or series entries, split it into member sources before production. Bind each member to its verified Notion work page and keep the collection parent only as discovery lineage; do not attach all episodes to the first title/year found in the folder name.
+When one discovered directory contains several independently catalogued seasons, parts, or series entries, split it into member sources before production. Bind each member to its verified Notion work page and keep the collection parent only as discovery lineage; do not attach all episodes to the first title/year found in the folder name. The split manifest is a required intake artifact, not an informal terminal decision: it records every member path, season/episode span, identity evidence, destination work, and unresolved coverage question.
 
 ## Responsibilities
 
@@ -31,7 +31,7 @@ When one discovered directory contains several independently catalogued seasons,
    move the duplicate row independently.
 3. For each new or changed source, identify the work using filename, folder, season/episode, original-language title, year, and known external IDs.
    If one directory is a collection, box set, multi-disc package, or contains multiple standalone film ISOs, split it into member sources before binding any work. Never bind a collection directory itself to one arbitrary film; each member keeps its own work identity, source evidence, and production decision. Duplicate 2D/3D or alternate-disc members may bind to the same work as separate sources.
-   For series, verify the mapped integer span against the canonical external episode count before binding. When files exceed that count, treat the excess as an identity incident requiring a sequel/season/part/extras decision, not as additional episodes of the first matching work.
+   For series, verify the mapped integer span against the canonical external episode count before binding. When files exceed that count, treat the excess as an identity incident requiring a sequel/season/part/extras decision, not as additional episodes of the first matching work. For each independently released season, verify the season-specific Douban subject and IMDb identity when available. A parent-series IMDb ID is only a discovery hint; it must not be copied into every season page without a season-scope check. If the season ID is unavailable, record the parent ID as provisional evidence and keep the season metadata task open until the title/year/episode scope is read back and confirmed.
    If later frame, stream, subtitle, or authoritative title evidence proves an already-bound source belongs to another existing work, do not route it again or create a new work. Use the auditable `correct-source-work` ledger operation with the exact reason, then re-read the destination work, its variants, and metadata task. If the source is only a copied collection/container and should never be produced, mark it explicitly as a duplicate source with `mark-duplicate-source`; a copied path must not remain an unbound identity candidate.
 4. Before evaluating subtitles, quality, or bitrate expansion, verify that the source path contains a media payload: a playable video file, a playlist with referenced media, or a complete disc structure. A directory containing only sidecar subtitles, artwork, or release notes is not a source. Record `missing_media_payload` with any discovered subtitle clues and keep it out of production candidates until the media itself returns.
    A subtitle-only bundle associated with a known video source is companion
@@ -39,7 +39,7 @@ When one discovered directory contains several independently catalogued seasons,
    encoding, and alignment, attach that evidence to the video source, and
    classify the bundle as `companion_evidence` rather than creating a variant.
 5. Search existing Notion coverage through multi-alias identity preflight before creating anything. Preserve possible duplicates for review instead of silently creating a second work page.
-6. Create or repair a work-level metadata task even when playable production is unsuitable, missing subtitles, deferred, or blocked by color/quality risk.
+6. Create or repair a work-level metadata task even when playable production is unsuitable, missing subtitles, deferred, or blocked by color/quality risk. For a split multi-season source, create one metadata task per season work only after the split manifest is complete; page creation and metadata backfill run immediately in parallel with production evaluation, but each page must pass exact title, `影别`, season scope, external-ID, and hidden-state readback before any spec tree is prepared.
 7. Route the source to one of: metadata-only, production evaluation, source/archive handling, series handling, deferred user decision, or rejected with reason.
 
 ## Queue Contract
@@ -64,4 +64,4 @@ An `intake` task is complete only after the source is bound to a verified work i
   independent variant is closed for production unless the user explicitly
   reopens the expansion. Do not repeatedly report it as a missing production
   decision; retain it only for the separate source-cleanup evidence gate.
-- A collection parent may be marked complete only after all recognizable members have been represented as child/member sources and each member has its own identity or an explicit deferred reason.
+- A collection parent may be marked complete only after all recognizable members have been represented as child/member sources and each member has its own identity or an explicit terminal decision. `duplicate_source` and `companion_evidence` are terminal decisions; an unbound member with no such decision remains an intake item.

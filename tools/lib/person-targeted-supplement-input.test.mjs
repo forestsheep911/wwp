@@ -51,10 +51,58 @@ test("rejects IMDb-only identity without exact work-credit evidence", () => {
   }), /workCreditUrl/);
 });
 
+test("rejects reviewed evidence names that cannot be materialized", () => {
+  assert.throws(() => validateTargetedSupplementInput({
+    ...base,
+    credits: [{
+      name: "Example Person",
+      department: "acting",
+      externalIds: { imdb: "nm1234567" },
+      workCreditUrl: "https://www.imdb.com/title/tt1234567/",
+      reviewedEvidence: {
+        externalIds: { imdb: "nm1234567" },
+        names: [{ name: "Example Person" }],
+        sourceRefs: [{ source: "imdb", id: "nm1234567" }]
+      }
+    }]
+  }), /names requires a non-empty value field/);
+});
+
 test("keeps the Wikidata discovery path concise", () => {
   const input = validateTargetedSupplementInput({
     ...base,
     credits: [{ name: "Known Person", department: "directing", externalIds: { wikidata: "Q42" } }]
   });
   assert.equal(input.credits[0].externalIds.wikidata, "Q42");
+});
+
+test("accepts and normalizes explicit legacy aliases", () => {
+  const input = validateTargetedSupplementInput({
+    ...base,
+    credits: [{
+      name: "Example Person",
+      department: "acting",
+      externalIds: { imdb: "nm1234567" },
+      legacyAliases: ["旧姓名", "旧姓名"],
+      workCreditUrl: "https://www.imdb.com/title/tt1234567/",
+      reviewedEvidence: {
+        externalIds: { imdb: "nm1234567" },
+        names: [{ value: "Example Person", language: "en", script: "Latn", kind: "display", source: "imdb", status: "strong" }],
+        sourceRefs: [{ source: "imdb", id: "nm1234567", url: "https://www.imdb.com/name/nm1234567/" }]
+      }
+    }]
+  });
+  assert.deepEqual(input.credits[0].legacyAliases, ["旧姓名"]);
+});
+
+test("rejects malformed legacy aliases", () => {
+  assert.throws(() => validateTargetedSupplementInput({
+    ...base,
+    credits: [{
+      name: "Example Person",
+      department: "acting",
+      externalIds: { wikidata: "Q42" },
+      legacyAliases: ["", 42]
+    }]
+  }), /legacyAliases/);
 });

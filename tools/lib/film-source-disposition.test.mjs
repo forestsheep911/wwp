@@ -47,6 +47,17 @@ test("waiting-user task is reported before generic production blockers", () => {
   assert.equal(item.nextTrigger, "确认版本范围");
 });
 
+test("archive-only input is visible but does not become phantom production work", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, source_kind: "archive_bundle", work_id: null, workflow_status: null },
+    tasks: [{ task_type: "intake", status: "pending", reason: "archive discovered" }]
+  });
+  assert.equal(item.disposition, "archive_bundle");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /解包后重新扫描/u);
+});
+
 test("future deferred variant reports its review time instead of pretending the queue is empty", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_note: "[规格扩展:OPEN] 高码率版延期" },
@@ -104,6 +115,30 @@ test("a recently discovered bound source remains actionable after intake is cons
   assert.deepEqual(item.reasons, ["source:newly_discovered"]);
 });
 
+test("a recently discovered split collection parent does not reopen intake after its leaves are bound", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      work_id: null,
+      canonical_title: null,
+      source_kind: "folder",
+      discovered_at: "2026-09-10T00:00:00.000Z",
+      next_review_at: "2026-11-12T00:00:00.000Z"
+    },
+    tasks: [{
+      task_type: "intake",
+      status: "done",
+      reason: "父合集已拆分；全部成员源已绑定"
+    }],
+    variants: [],
+    now: "2026-09-11T00:00:00.000Z"
+  });
+  assert.equal(item.disposition, "collection_container_active");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.deepEqual(item.reasons, ["collection_members_tracked_separately"]);
+});
+
 test("an explicitly deferred recent source does not reopen as new intake work", () => {
   const item = classifySourceDisposition({
     source: {
@@ -119,6 +154,19 @@ test("an explicitly deferred recent source does not reopen as new intake work", 
   assert.equal(item.actionableNow, false);
   assert.equal(item.needsHumanConfirmation, false);
   assert.match(item.nextTrigger, /扩展已关闭/u);
+});
+
+test("a deferred source exposes the latest Workflow Note as its recovery trigger", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      workflow_status: "暂缓",
+      workflow_note: "【AI(^_^) 2026-09-16】已建立条目\n【AI(^_^) 2026-09-17】待补中文字幕证据后再评估"
+    },
+    variants: []
+  });
+  assert.equal(item.disposition, "deferred_without_review_time");
+  assert.equal(item.nextTrigger, "【AI(^_^) 2026-09-17】待补中文字幕证据后再评估");
 });
 
 test("an open expansion marker retains a source without creating a phantom task", () => {
@@ -242,6 +290,18 @@ test("a parent directory with bound descendant sources is recognized as a collec
   });
   assert.equal(item.disposition, "collection_container_active");
   assert.equal(item.actionableNow, false);
+});
+
+test("a tracked collection parent is not reopened by a stale pending intake task", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, work_id: 42, source_kind: "series_folder", canonical_title: "Tracked series", workflow_status: null, workflow_note: null },
+    tasks: [{ task_type: "intake", status: "pending", reason: "Source contents changed" }],
+    variants: [],
+    collectionMembersAlreadyTracked: true
+  });
+  assert.equal(item.disposition, "collection_container_active");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
 });
 
 test("a source registered twice at the same physical path is not a new production candidate", () => {

@@ -120,6 +120,28 @@ test("release completion requires playable and verified metadata gates", () => {
   assert.match(handoff, /Neither metadata completion nor `sync_ready` alone\s+qualifies/u);
 });
 
+test("playable visibility is independent from metadata completion", () => {
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+  const media = read("references/notion-media-assets.md");
+
+  assert.match(publisher, /`posterPresent` and `coreMetadataPresent` are final-completion evidence, not visibility blockers/u);
+  assert.match(cycle, /Once that playable gate passes, release the\s+automation-owned work visibility/u);
+  assert.match(media, /only a missing\/inconsistent playable path or explicit visibility hold keeps publication pending/u);
+  assert.match(media, /one verified playable asset is sufficient for work-level visibility/u);
+  assert.match(publisher, /release the work if at least one exact playable asset passes/u);
+});
+
+test("visibility-first rule keeps metadata follow-up from rehiding a playable work", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(producer, /`Hide from Website` is not the metadata or review master switch/u);
+  assert.match(producer, /A work may therefore remain `AI 处理中` or `待人工确认` while already visible/u);
+  assert.match(cycle, /metadata incompleteness, a missing poster, `Needs Review`, or an AI\/human\s+follow-up issue must not re-check `Hide from Website`/u);
+  assert.match(cycle, /Only a missing\/invalid playable path, an unsafe page\/media structure/u);
+});
+
 test("release-first coverage is separate from source expansion", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const selector = read("skills/wwp-film-candidate-selector/SKILL.md");
@@ -179,6 +201,16 @@ test("goal idle reporting accounts for every source left in an input root", () =
   assert.match(workflowCycle, /complete disposition audit for every still-present/u);
 });
 
+test("archive-only sources have an explicit non-production disposition", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+  const scripts = read("references/script-map.md");
+  assert.match(cycle, /`archive_bundle`/u);
+  assert.match(cycle, /Archive-only directories with no recognized media file/u);
+  assert.match(scripts, /Archive-only folders.*`archiveCount`/u);
+  assert.match(producer, /archive_bundle/u);
+});
+
 test("completed outputs can return from staging before quarantine", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const cycle = read("references/workflow-cycle.md");
@@ -195,6 +227,15 @@ test("compact derivation verifies burned subtitle pixels before inheriting label
   assert.match(encoding, /sample real dialogue frames from the parent and identify the visible Chinese script/u);
   assert.match(encoding, /correct the parent spec, parent Media Asset, ledger variant, and the planned compact variant/u);
   assert.match(encoder, /Do not inherit `简`\/`繁`\/bilingual labels from filenames, old spec titles, or ledger text/u);
+});
+
+test("encode plans distinguish global stream indexes from relative audio and subtitle ordinals", () => {
+  const encoding = read("references/encoding-rules.md");
+  const series = read("skills/wwp-series-producer/SKILL.md");
+
+  assert.match(encoding, /`--subtitle-stream` accepts the subtitle ordinal, not the global stream index/u);
+  assert.match(encoding, /`--audio-stream` is relative to audio streams \(`a:0`, `a:1`, \.\.\.\), not the global ffprobe stream index/u);
+  assert.match(series, /create and retain a per-source subtitle map showing global ffprobe stream indexes versus subtitle ordinals/u);
 });
 
 test("color checks distinguish mixed-color films from monochrome sources", () => {
@@ -369,11 +410,17 @@ test("metadata task completion requires exact core and poster evidence", () => {
 test("multi-season shows use one database work page per season", () => {
   const seriesRules = read("references/series-rules.md");
   const seriesProducer = read("skills/wwp-series-producer/SKILL.md");
+  const intake = read("skills/wwp-film-intake/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
 
   assert.match(seriesRules, /separate database season work pages/u);
   assert.match(seriesRules, /human must move each existing spec page/u);
   assert.match(seriesProducer, /one database work entry for each verified season/u);
+  assert.match(seriesProducer, /season-specific Douban subject or IMDb ID/u);
+  assert.match(seriesProducer, /parent-series IMDb ID may be stored as provisional evidence/u);
   assert.match(seriesProducer, /parent-series page, another season page, or another work ID is a hard failure/u);
+  assert.match(intake, /split manifest is a required intake artifact/u);
+  assert.match(cycle, /Parent-series IMDb\/Douban hints must not be treated as season verification/u);
 });
 
 test("long-running continuous animation does not infer Notion seasons from source folders", () => {
@@ -426,6 +473,11 @@ test("people sub-batches publish clean profiles without closing residual work", 
   assert.match(workflow, /canonical person, department, compatible job, and character/u);
   assert.match(workflow, /Never collapse a person's distinct departments/u);
   assert.match(cycle, /incomplete-only `candidates` collection may be empty/u);
+  assert.match(people, /transient provider failures/u);
+  assert.match(workflow, /converted to `deferred`/u);
+  assert.match(people, /catalog-apply-run\.json/u);
+  assert.match(people, /no-progress error/u);
+  assert.match(people, /completed\/readback_verified/u);
 });
 
 test("people targeted supplements allow reviewed stable IDs without forcing Wikidata", () => {
@@ -438,6 +490,20 @@ test("people targeted supplements allow reviewed stable IDs without forcing Wiki
   assert.match(workflow, /must not infer biography, dates, images, alternate names, jobs, or\s+characters from a name match/u);
   assert.match(scripts, /person-targeted-supplement\.mjs/u);
   assert.match(scripts, /tool rejects name-only rows/u);
+  assert.match(people, /--reviewed-output/u);
+  assert.match(workflow, /When `identityIssues` and `unresolved` are both empty/u);
+  assert.match(workflow, /never promoted automatically/u);
+});
+
+test("historical people coverage feeds the campaign instead of disappearing", () => {
+  const enricher = read("skills/wwp-work-enricher/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+
+  assert.match(enricher, /historical People coverage audit is also an intake source/u);
+  assert.match(enricher, /historical_people_coverage/u);
+  assert.match(enricher, /absent from the campaign must never be silently omitted/u);
+  assert.match(cycle, /saved authoritative People coverage audit is an intake source/u);
+  assert.match(cycle, /must never synthesize a work ID from a title alone/u);
 });
 
 test("HDR color QC requires matched source-reference and final frames", () => {

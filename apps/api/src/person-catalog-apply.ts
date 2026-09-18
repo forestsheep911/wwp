@@ -22,7 +22,7 @@ export interface ReviewedCreditReplacementGuard {
   expectedLinkedPersonIds: string[];
   preserveExistingPersonIds?: string[];
   expectedWorkExternalIds: Partial<MovieExternalIds>;
-  authoritativeSource: "wikidata";
+  authoritativeSource: "wikidata" | "imdb" | "tmdb";
   authoritativeSourceWorkId: string;
 }
 
@@ -151,7 +151,11 @@ export function planReviewedPeopleReportApply(
             ...Object.values(nextCatalog.people).map((entry) => entry.profile)
           ]
         );
-    const mergedCredits = dedupeLinkedCreditRows(mergedCreditsWithAliases);
+    const mergedCredits = dedupeLinkedCreditRows(mergedCreditsWithAliases, [
+      ...(report.proposedProfiles ?? []),
+      ...(report.creditIdentityProfiles ?? []),
+      ...Object.values(nextCatalog.people).map((entry) => entry.profile)
+    ]);
     const linked = mergedCredits.filter((credit): credit is MovieCreditEntry & { personId: string } => Boolean(credit.personId)).map((credit) => {
       assertStablePersonId(credit.personId);
       if (!nextCatalog.people[credit.personId]) {
@@ -238,11 +242,20 @@ export function planReviewedPeopleReportApply(
   };
 }
 
-function dedupeLinkedCreditRows(credits: MovieCreditEntry[]) {
+function dedupeLinkedCreditRows(credits: MovieCreditEntry[], profiles: PersonProfile[] = []) {
   const result: MovieCreditEntry[] = [];
   const linkedKeys = new Set<string>();
+  const profilesByPersonId = new Map(profiles.map((profile) => [profile.personId, profile]));
+  const linkedCredits = credits.filter((credit) => Boolean(credit.personId));
   for (const credit of credits) {
     if (!credit.personId) {
+      const duplicateOfLinked = linkedCredits.some((linked) => (
+        linked.personId
+        && linked.department === credit.department
+        && compatibleCreditJobs(linked, credit)
+        && creditMatchesPersonAliases(credit, profilesByPersonId.get(linked.personId))
+      ));
+      if (duplicateOfLinked) continue;
       result.push(credit);
       continue;
     }
@@ -257,6 +270,22 @@ function dedupeLinkedCreditRows(credits: MovieCreditEntry[]) {
     result.push(credit);
   }
   return result;
+}
+
+function compatibleCreditJobs(left: MovieCreditEntry, right: MovieCreditEntry) {
+  const leftJob = normalizePersonNameSearchKey(left.job ?? "");
+  const rightJob = normalizePersonNameSearchKey(right.job ?? "");
+  if (leftJob === rightJob) return true;
+  const actingJobs = new Set(["actor", "voiceactor"]);
+  return left.department === "acting" && actingJobs.has(leftJob) && actingJobs.has(rightJob);
+}
+
+function creditMatchesPersonAliases(credit: MovieCreditEntry, profile?: PersonProfile) {
+  if (!profile) return false;
+  const creditNames = [credit.name, credit.originalName].filter(Boolean)
+    .map((value) => normalizePersonNameSearchKey(value!));
+  const profileNames = (profile.names ?? []).map((entry) => normalizePersonNameSearchKey(entry.value));
+  return creditNames.some((name) => name && profileNames.includes(name));
 }
 
 function assertMetadataOnlyWorkGuard(
@@ -464,16 +493,35 @@ function creditIdentityScore(left: MovieCreditEntry, right: MovieCreditEntry, re
     if (leftIds[source] && rightIds[source] && leftIds[source] === rightIds[source]) return 3;
   }
   const leftNames = [left.name, left.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
-  const directRightNames = [right.name, right.originalName]
+  const directRightNames = [
+    right.name,
+    right.originalName,
+    ...((right as MovieCreditEntry & { legacyAliases?: string[] }).legacyAliases ?? [])
+  ]
     .filter(Boolean)
     .map((value) => normalizePersonNameSearchKey(value!));
+  const exactName = leftNames.some((name) => name && directRightNames.includes(name));
+  const reviewedIds = normalizePersonExternalIds(reviewedProfile?.externalIds);
+  const sourceHasConflictingId = Object.entries(leftIds).some(([source, value]) => (
+    value && reviewedIds[source as keyof typeof reviewedIds] && value !== reviewedIds[source as keyof typeof reviewedIds]
+  ));
+  if (sourceHasConflictingId) return 0;
   const leftJob = normalizePersonNameSearchKey(left.job ?? "");
   const rightJob = normalizePersonNameSearchKey(right.job ?? "");
   const compatibleActingJobs = new Set(["actor", "voiceactor"]);
+  const compatibleWritingJobs = new Set(["writer", "screenwriter"]);
   const sameJob = leftJob === rightJob
     || (left.department === "acting" && compatibleActingJobs.has(leftJob) && compatibleActingJobs.has(rightJob));
-  if (left.department !== right.department || !sameJob) return 0;
-  if (leftNames.some((name) => name && directRightNames.includes(name))) return 2;
+  const sameWritingDepartment = left.department === "writing"
+    && compatibleWritingJobs.has(leftJob)
+    && compatibleWritingJobs.has(rightJob);
+  if (left.department !== right.department) return 0;
+  // A reviewed stable ID plus an exact source name is stronger than a
+  // provider-specific role description. This prevents `Actor` and
+  // `Self - Narrator` from becoming duplicate rows for one person.
+  if (exactName && Object.values(reviewedIds).some(Boolean)) return 2;
+  if (!sameJob && !sameWritingDepartment) return 0;
+  if (exactName) return 2;
   const profileNames = (reviewedProfile?.names ?? [])
     .map((entry) => normalizePersonNameSearchKey(entry.value));
   return leftNames.some((name) => name && profileNames.includes(name)) ? 1 : 0;

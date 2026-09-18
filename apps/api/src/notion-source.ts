@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns";
 import https from "node:https";
 import { Client } from "@notionhq/client";
+import { maintainedDoubanSubjectId } from "@wwpdw/shared";
 import type {
   MediaAssetType,
   MediaAvailability,
@@ -21,7 +22,6 @@ import {
   createMetadataHints,
   doubanSubjectUrl,
   imdbTitleUrl,
-  normalizeDoubanSubjectId,
   normalizeImdbId,
   normalizeTmdbId,
   stableMovieWorkIdFromNotion,
@@ -1316,6 +1316,10 @@ export function postersFromProperties(page: JsonRecord, properties: JsonRecord) 
   return posters;
 }
 
+export function doubanSubjectIdFromProperties(properties: JsonRecord) {
+  return maintainedDoubanSubjectId(propertyText(properties["Douban Subject ID"]), propertyText(properties["Douban URL"]));
+}
+
 function movieMetadataFromPage(
   page: JsonRecord,
   properties: JsonRecord,
@@ -1324,7 +1328,7 @@ function movieMetadataFromPage(
 ): MovieMetadata {
   const releaseDate = dateFromNamedProperty(properties, releaseDatePropertyPattern);
   const imdbId = normalizeImdbId(textFromNamedProperty(properties, imdbPropertyPattern, 120)) ?? metadataHints.externalIds.imdb;
-  const doubanSubjectId = normalizeDoubanSubjectId(metadataHints.externalIds.douban);
+  const doubanSubjectId = doubanSubjectIdFromProperties(properties);
   const tmdbId = normalizeTmdbId(metadataHints.externalIds.tmdb);
   const posters = postersFromProperties(page, properties);
   const type = listFromNamedProperty(properties, typePropertyPattern, 1)?.[0];

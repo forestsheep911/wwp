@@ -1,5 +1,38 @@
 @import "tailwindcss";
 
+/* Site-wide borderless surfaces, including portaled dialogs and menus.
+   Keep one-sided separators, form controls and focus rings intact. This also
+   covers older pages with inline Tailwind panel classes during migration. */
+:is(div, section, article, aside, header, footer, nav, button, a, span, ul, li, table, fieldset):is(
+  [class~="border"], [class~="sm:border"], [class~="md:border"], [class~="lg:border"]
+), [data-ui-card], [role="dialog"], [role="menu"], [data-ui-button] {
+  border-width: 0;
+}
+
+/* Neutral content panels blend into the page. Status colors, selected tabs,
+   poster artwork, inputs and floating overlay backplates are not reset. */
+:is([data-page-content], [role="dialog"]) :is(section, article, div):is(
+  [class~="border-slate-800"], [class~="border-slate-800/90"],
+  [class~="border-slate-700"], [data-ui-card]
+):not([role]):not([data-radix-popper-content-wrapper]):not([class~="inline-flex"]):not([class*="absolute"]):not([class*="fixed"]):not([class*="aspect-"]):not([class*="overflow-hidden"]),
+[data-page-content] :is(section, article)[class~="border"] {
+  background-color: transparent !important;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Single page gutter instead of nested card gutters. Retain vertical rhythm. */
+[data-page-content] :is(section, article)[class~="border"],
+[data-page-content] div[class~="grid"][class~="border"][class~="border-slate-800"],
+[data-page-content] [data-ui-card],
+[data-page-content] [data-ui-card] > div {
+  padding-inline: 0;
+}
+
+[data-page-content] :is(section, article)[class~="border"] + :is(section, article)[class~="border"] {
+  margin-top: 0.5rem;
+}
+
 /* A tablet's wider viewport must not shrink touch controls to desktop sizes. */
 @media (any-pointer: coarse) {
   [data-touch-header] {
@@ -108,6 +141,11 @@ video {
 
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/* Fit-content tab bars need their children's intrinsic widths. */
+[role="tablist"].scrollbar-none {
+  contain: none;
 }
 
 .gallery-results {

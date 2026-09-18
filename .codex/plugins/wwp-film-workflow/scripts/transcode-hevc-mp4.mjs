@@ -99,9 +99,27 @@ function parseArgs(argv) {
 
 function run(ffmpeg, args, label) {
   console.log(`${label}: ${ffmpeg} ${args.map(value => JSON.stringify(value)).join(" ")}`);
-  const result = spawnSync(ffmpeg, args, { stdio: "inherit", windowsHide: true });
+  const strictSmoke = args.includes("-xerror");
+  const result = strictSmoke
+    ? spawnSync(ffmpeg, args, { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8", windowsHide: true })
+    : spawnSync(ffmpeg, args, { stdio: "inherit", windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status}`);
+  if (strictSmoke) {
+    const stderr = result.stderr ?? "";
+    if (stderr) process.stderr.write(stderr);
+    const decoderFailure = stderr.match(/(?:Could not find ref with POC|Error constructing the frame RPS|error while decoding|corrupt decoded frame|Invalid data found when processing input)/iu);
+    if (decoderFailure) {
+      throw new Error(`${label} strict smoke failed on decoder error: ${decoderFailure[0]}`);
+    }
+  }
+}
+
+function smokeFailureArgs(duration) {
+  // A bounded smoke sample is a gate, not a best-effort preview. FFmpeg can
+  // otherwise exit 0 after recovering from decoder errors and leave a green
+  // or otherwise invalid sample that looks superficially complete.
+  return duration == null ? [] : ["-xerror"];
 }
 
 function probeVideoDimensions(input, videoStream) {
@@ -209,7 +227,7 @@ function main() {
     && new Set(["ass", "mov_text", "srt", "ssa", "subrip", "text", "webvtt"]).has(subtitleCodec);
   if (embeddedTextSubtitle) {
     // A bounded smoke test must not extract subtitles for the entire episode first.
-    run(options.ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostats", "-y", ...seekArgs, "-i", input, ...durationArgs, "-map", `0:s:${options.subtitleStream}`, "-f", "srt", extractedSubtitle], "extract-text-subtitle");
+    run(options.ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostats", ...smokeFailureArgs(options.duration), "-y", ...seekArgs, "-i", input, ...durationArgs, "-map", `0:s:${options.subtitleStream}`, "-f", "srt", extractedSubtitle], "extract-text-subtitle");
   }
   const scaleFilter = options.scale == null
     ? null
@@ -276,7 +294,7 @@ function main() {
     ...(options.audioLoudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [])
   ];
   const sharedInputArgs = [
-    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
+    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", ...smokeFailureArgs(options.duration), "-y",
     // Do not force filter worker counts here. On some 4K PGS/HDR sources,
     // explicit filter threading serializes the CUDA/CPU handoff and can make
     // the encode dramatically slower than FFmpeg's automatic scheduler.
@@ -310,7 +328,7 @@ function main() {
   }
 
   run(options.ffmpeg, [
-    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y", "-i", work,
+    "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", ...smokeFailureArgs(options.duration), "-y", "-i", work,
     ...(options.splitAudio ? ["-i", audioWork] : []),
     // Keep only the playable video/audio streams. Text-subtitle filters can
     // leave an auxiliary data stream in the MKV work file; copying all streams

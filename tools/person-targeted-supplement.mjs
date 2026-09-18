@@ -19,6 +19,7 @@ import {
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args.stateDir ?? path.dirname(args.output));
 const outputPath = path.resolve(args.output);
+const reviewedOutputPath = args.reviewedOutput ? path.resolve(args.reviewedOutput) : null;
 const inputPath = path.resolve(args.input);
 const cache = new JsonEvidenceCache(path.join(root, "cache"));
 const lease = new LocalRunLease(path.join(root, "targeted-supplement.lock"));
@@ -35,7 +36,7 @@ try {
   for (const credit of input.credits) {
     const wikidataId = credit.externalIds.wikidata;
     if (!wikidataId) {
-      evidence.push(reviewedEvidenceForCredit(credit));
+      evidence.push(withLegacyAliases(reviewedEvidenceForCredit(credit), credit));
       continue;
     }
     let person = await cache.get("wikidata", "person", wikidataId, "multilingual-human-v3-simplified-valid-dates", 30 * 86_400_000);
@@ -44,7 +45,7 @@ try {
       await cache.put("wikidata", "person", wikidataId, "multilingual-human-v3-simplified-valid-dates", person);
     }
     assertWikidataPersonRole(wikidataId, person, [credit.department]);
-    evidence.push(person);
+    evidence.push(withLegacyAliases(person, credit));
   }
 
   const catalog = await createPersonCatalogStore(args.backend).getState();
@@ -75,9 +76,16 @@ try {
     unresolved: materialized.unresolved
   };
   await writeJsonAtomic(outputPath, report);
+  let reviewedReportPath = null;
+  if (reviewedOutputPath && report.identityIssues.length === 0 && report.unresolved.length === 0) {
+    // Promote only a clean, evidence-reviewed supplement into the publish path.
+    await writeJsonAtomic(reviewedOutputPath, report);
+    reviewedReportPath = reviewedOutputPath;
+  }
   const credits = report.proposedCredits[0]?.credits ?? [];
   process.stdout.write(`${JSON.stringify({
     reportPath: outputPath,
+    reviewedReportPath,
     workId: input.work.workId,
     proposedProfiles: report.proposedProfiles.length,
     linkedCredits: credits.filter((credit) => credit.personId).length,
@@ -90,11 +98,12 @@ try {
 }
 
 function parseArgs(values) {
-  const result = { input: null, output: null, stateDir: null, backend: "azure", intervalMs: 1500 };
+  const result = { input: null, output: null, reviewedOutput: null, stateDir: null, backend: "azure", intervalMs: 1500 };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--input") result.input = required(values[++index], value);
     else if (value === "--output") result.output = required(values[++index], value);
+    else if (value === "--reviewed-output") result.reviewedOutput = required(values[++index], value);
     else if (value === "--state-dir") result.stateDir = required(values[++index], value);
     else if (value === "--backend") result.backend = required(values[++index], value);
     else if (value === "--interval-ms") result.intervalMs = positiveInteger(values[++index], value);
@@ -119,4 +128,25 @@ function positiveInteger(value, option) {
   const parsed = Number(required(value, option));
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${option} requires a positive integer`);
   return parsed;
+}
+
+function withLegacyAliases(evidence, credit) {
+  if (!evidence || !credit.legacyAliases?.length) return evidence;
+  const source = credit.externalIds.wikidata ? "wikidata" : "imdb";
+  return {
+    ...evidence,
+    names: [
+      ...evidence.names,
+      ...credit.legacyAliases.map((value) => ({
+        value,
+        language: "en",
+        script: "Latn",
+        kind: "alternate",
+        source,
+        status: "strong",
+        sourceRef: credit.workCreditUrl ?? evidence.sourceRefs[0]?.url,
+        observedAt: evidence.observedAt
+      }))
+    ]
+  };
 }

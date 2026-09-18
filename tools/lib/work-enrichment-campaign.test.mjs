@@ -5,15 +5,48 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   buildEnrichmentCampaignReport,
+  assertAuthoritativePeopleCoverage,
+  deferPeopleStageForCoverageFailure,
   emptyEnrichmentCampaign,
   enqueueEnrichmentWorks,
+  isTransientEnrichmentFailure,
   readEnrichmentCampaign,
   recoverStaleInProgress,
   resumeAuthorizedPeopleStage,
   settlePeopleStageFromCoverage,
+  reclassifyTransientBlockedStages,
   updateEnrichmentStage,
   writeEnrichmentCampaign
 } from "./work-enrichment-campaign.mjs";
+
+test("production People settlement rejects coverage that is not explicitly Azure", () => {
+  assert.throws(
+    () => assertAuthoritativePeopleCoverage({ searchStore: "local:movieindex" }),
+    /requires an Azure coverage audit/
+  );
+  assert.equal(assertAuthoritativePeopleCoverage({ searchStore: "local:movieindex" }, { allowLocal: true }), "local:movieindex");
+  assert.equal(assertAuthoritativePeopleCoverage({ searchStore: "azure:stwwcache/movieindex" }), "azure:stwwcache/movieindex");
+});
+
+test("authoritative coverage failure is recorded as a scheduled retry", () => {
+  const now = "2026-09-16T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_provider_gap",
+    metadataStatus: "verified"
+  }], { now });
+  const result = deferPeopleStageForCoverageFailure(
+    state,
+    { externalWorkId: "wwm_provider_gap" },
+    new Error("production People settlement requires an Azure coverage audit (searchStore=azure:*)"),
+    { now }
+  );
+  const people = result.work.stages.people;
+  assert.equal(people.status, "deferred");
+  assert.equal(people.nextReviewAt, "2026-09-16T06:00:00.000Z");
+  assert.match(people.reason, /权威人物覆盖读回失败/u);
+  assert.match(people.reason, /Azure coverage audit/u);
+  assert.match(people.nextTrigger, /重新生成 Azure/u);
+});
 
 test("post-publish people coverage returns a partial work to pending", () => {
   const now = "2026-09-13T00:00:00.000Z";
@@ -48,6 +81,133 @@ test("post-publish people coverage returns a partial work to pending", () => {
   assert.equal(result.work.stages.people.coverageResiduals[0].name, "Example Actor");
   assert.equal(result.work.stages.people.coverageResiduals[0].externalIds.imdb, "nm1234567");
   assert.match(result.work.stages.people.nextTrigger, /exact work-credit evidence/);
+  assert.equal(result.work.stages.people.coverageAttempts, 1);
+  const report = buildEnrichmentCampaignReport(result.state, { now });
+  assert.equal(report.due[0].nextAction, "run_wwp_people_targeted_supplement");
+});
+
+test("coverage settlement prefers an exact target over a stale candidate snapshot", () => {
+  const now = "2026-09-17T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_target_precedence",
+    pageId: "page-target-precedence",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_target_precedence" }, {
+    candidates: [{
+      workId: "wwm_target_precedence",
+      sourcePageId: "page-target-precedence",
+      status: "partially_linked",
+      creditCount: 34,
+      linkedCreditCount: 14,
+      unlinkedCreditCount: 20,
+      unlinkedCredits: [{ name: "Stale residual", department: "acting" }]
+    }],
+    targets: [{
+      workId: "wwm_target_precedence",
+      sourcePageId: "page-target-precedence",
+      status: "partially_linked",
+      creditCount: 15,
+      linkedCreditCount: 14,
+      unlinkedCreditCount: 1,
+      unlinkedCredits: [{ name: "Exact residual", department: "acting" }]
+    }]
+  }, { now });
+  const people = result.work.stages.people;
+  assert.equal(people.status, "pending");
+  assert.equal(people.missingFields[0], "1 unlinked canonical credits");
+  assert.equal(people.coverageResiduals[0].name, "Exact residual");
+});
+
+test("repeated identical people residuals become a work-local blocker", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  let { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_repeated_identity_gap",
+    metadataStatus: "verified"
+  }], { now });
+  const coverage = {
+    works: [{
+      workId: "wwm_repeated_identity_gap",
+      status: "partially_linked",
+      creditCount: 4,
+      linkedCreditCount: 3,
+      unlinkedCreditCount: 1,
+      unlinkedCredits: [{
+        name: "Unresolved Credit",
+        department: "acting",
+        externalIds: {}
+      }]
+    }]
+  };
+  let result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_repeated_identity_gap" }, coverage, { now });
+  assert.equal(result.work.stages.people.status, "pending");
+  assert.equal(result.work.stages.people.coverageAttempts, 1);
+  ({ state } = result);
+  result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_repeated_identity_gap" }, coverage, {
+    now: "2026-09-13T01:00:00.000Z"
+  });
+  const people = result.work.stages.people;
+  assert.equal(people.status, "blocked");
+  assert.equal(people.coverageAttempts, 2);
+  assert.equal(people.coverageResiduals[0].name, "Unresolved Credit");
+  assert.equal(people.nextTrigger, "new provider evidence or manual identity confirmation");
+  assert.match(people.reason, /连续 2 次/);
+});
+
+test("known non-person residuals remain deferred instead of escalating to a blocker", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  let { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_animal_credit",
+    metadataStatus: "verified"
+  }], { now });
+  const coverage = {
+    works: [{
+      workId: "wwm_animal_credit",
+      status: "partially_linked",
+      creditCount: 2,
+      linkedCreditCount: 1,
+      unlinkedCreditCount: 1,
+      unlinkedCredits: [{ name: "Terry", department: "acting", job: "Animal Actor", externalIds: {} }]
+    }]
+  };
+  let result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_animal_credit" }, coverage, { now });
+  ({ state } = result);
+  result = updateEnrichmentStage(state, { externalWorkId: "wwm_animal_credit" }, {
+    stage: "people",
+    status: "deferred",
+    reason: "已确认 Terry 是动物演员，不是可写入 People 的人物。",
+    nextReviewAt: "2026-12-16T00:00:00.000Z"
+  }, { now });
+  result = settlePeopleStageFromCoverage(result.state, { externalWorkId: "wwm_animal_credit" }, coverage, {
+    now: "2026-09-13T01:00:00.000Z"
+  });
+  assert.equal(result.work.stages.people.status, "deferred");
+  assert.equal(result.work.stages.people.coverageAttempts, 2);
+  assert.equal(result.work.stages.people.coverageResiduals[0].name, "Terry");
+});
+
+test("composite legacy credits route to normalization instead of person search", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  let { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_composite_credit",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_composite_credit" }, {
+    works: [{
+      workId: "wwm_composite_credit",
+      status: "partially_linked",
+      creditCount: 3,
+      linkedCreditCount: 1,
+      unlinkedCreditCount: 2,
+      unlinkedCredits: [
+        { name: "导演：甲 / 乙 / 丙", department: "directing", externalIds: {} },
+        { name: "Single Actor", department: "acting", externalIds: {} }
+      ]
+    }]
+  }, { now });
+  assert.equal(result.work.stages.people.status, "pending");
+  assert.match(result.work.stages.people.reason, /复合人物字段/u);
+  assert.match(result.work.stages.people.nextTrigger, /normalize composite credit rows/u);
 });
 
 test("post-publish people coverage completes a fully linked work from the all-works collection", () => {
@@ -61,6 +221,146 @@ test("post-publish people coverage completes a fully linked work from the all-wo
     works: [{ workId: "wwm_complete", status: "fully_linked", creditCount: 3, linkedCreditCount: 3, unlinkedCreditCount: 0 }]
   }, { now });
   assert.equal(result.work.stages.people.status, "completed");
+});
+
+test("exact people coverage completes when the producer omits its derived status", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_exact_counts_only",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_exact_counts_only" }, {
+    targets: [{
+      workId: "wwm_exact_counts_only",
+      creditCount: 9,
+      linkedCreditCount: 9,
+      unlinkedCreditCount: 0
+    }]
+  }, { now });
+  assert.equal(result.work.stages.people.status, "completed");
+});
+
+test("coverage settlement preserves an explicit stable blocker instead of reopening it as pending", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_identity_gap",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_identity_gap" }, {
+    works: [{
+      workId: "wwm_identity_gap",
+      status: "blocked",
+      reason: "remaining credits have no reliable stable identity",
+      nextTrigger: "new provider evidence or manual identity confirmation",
+      creditCount: 8,
+      linkedCreditCount: 6,
+      unlinkedCreditCount: 2,
+      unlinkedCredits: [
+        { name: "Unknown Credit", department: "acting" }
+      ]
+    }]
+  }, { now: "2026-09-13T01:00:00.000Z" });
+  assert.equal(result.work.stages.people.status, "blocked");
+  assert.equal(result.work.stages.people.reason, "remaining credits have no reliable stable identity");
+  assert.equal(result.work.stages.people.nextTrigger, "new provider evidence or manual identity confirmation");
+  assert.equal(result.work.stages.people.coverageResiduals[0].name, "Unknown Credit");
+});
+
+test("legacy stable blockers expose a deterministic next trigger", () => {
+  const now = "2026-09-13T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_legacy_blocker",
+    metadataStatus: "verified"
+  }], { now });
+  const result = updateEnrichmentStage(state, { externalWorkId: "wwm_legacy_blocker" }, {
+    stage: "people",
+    status: "blocked",
+    reason: "stable identity evidence is missing"
+  }, { now });
+  assert.equal(result.work.stages.people.nextTrigger, "resolve the recorded people blocker, then rerun the exact stage");
+  const report = buildEnrichmentCampaignReport(result.state, { now });
+  assert.equal(report.blocked[0].nextTrigger, "resolve the recorded people blocker, then rerun the exact stage");
+});
+
+test("coverage settlement schedules transient provider failures instead of leaving a permanent blocker", () => {
+  const now = "2026-09-15T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_transient_provider",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_transient_provider" }, {
+    works: [{
+      workId: "wwm_transient_provider",
+      status: "blocked",
+      reason: "Azure catalog read timeout",
+      creditCount: 2,
+      linkedCreditCount: 1,
+      unlinkedCreditCount: 1,
+      unlinkedCredits: [{ name: "待核验人物", externalIds: {} }]
+    }]
+  }, { now });
+  const people = result.work.stages.people;
+  assert.equal(people.status, "deferred");
+  assert.equal(people.nextReviewAt, "2026-09-15T06:00:00.000Z");
+  assert.match(people.reason, /临时供应商\/API故障/u);
+  assert.match(people.reason, /Azure catalog read timeout/u);
+  assert.deepEqual(people.coverageResiduals.map((item) => item.name), ["待核验人物"]);
+});
+
+test("empty canonical coverage is deferred instead of spinning as actionable work", () => {
+  const now = "2026-09-16T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_empty_canonical",
+    metadataStatus: "verified"
+  }], { now });
+  const result = settlePeopleStageFromCoverage(state, { externalWorkId: "wwm_empty_canonical" }, {
+    works: [{
+      workId: "wwm_empty_canonical",
+      status: "partially_linked",
+      creditCount: 0,
+      linkedCreditCount: 0,
+      unlinkedCreditCount: 0
+    }]
+  }, { now });
+  const people = result.work.stages.people;
+  assert.equal(people.status, "deferred");
+  assert.equal(people.nextReviewAt, "2026-09-16T06:00:00.000Z");
+  assert.deepEqual(people.missingFields, ["canonical people credits"]);
+  assert.match(people.reason, /canonical credits/u);
+});
+
+test("repairs legacy transient blockers into scheduled retries without touching stable blockers", () => {
+  const state = enqueueEnrichmentWorks(emptyEnrichmentCampaign(), [
+    { pageId: "legacy-transient", title: "Transient" },
+    { pageId: "stable-blocker", title: "Stable" }
+  ]).state;
+  let changed = updateEnrichmentStage(state, { pageId: "legacy-transient" }, {
+    stage: "people",
+    status: "blocked",
+    reason: "Notion API timeout while reading the canonical index"
+  }).state;
+  changed = updateEnrichmentStage(changed, { pageId: "stable-blocker" }, {
+    stage: "people",
+    status: "blocked",
+    reason: "identity ambiguity: two stable IDs conflict"
+  }).state;
+  const repaired = reclassifyTransientBlockedStages(changed, {
+    now: "2026-09-15T00:00:00.000Z"
+  });
+  const transient = repaired.state.works.find((work) => work.pageId === "legacy-transient").stages.people;
+  const stable = repaired.state.works.find((work) => work.pageId === "stable-blocker").stages.people;
+  assert.equal(repaired.repaired.length, 1);
+  assert.equal(transient.status, "deferred");
+  assert.equal(transient.nextReviewAt, "2026-09-15T06:00:00.000Z");
+  assert.equal(stable.status, "blocked");
+  assert.equal(stable.nextReviewAt, null);
+});
+
+test("treats missing exact readback and temporary canonical-index loss as retryable", () => {
+  assert.equal(isTransientEnrichmentFailure("Metadata fields were updated, but exact Notion readback omitted Metadata Status"), true);
+  assert.equal(isTransientEnrichmentFailure("canonical search index not found; retry after refresh"), true);
+  assert.equal(isTransientEnrichmentFailure("identity ambiguity: two stable IDs conflict"), false);
+  assert.equal(isTransientEnrichmentFailure("permission missing; page is not shared with the integration"), false);
 });
 
 test("authoritative coverage clears a stale people waiting-user reason", () => {
@@ -122,6 +422,51 @@ test("enrichment campaign preserves a serial next stage for each work", () => {
   assert.deepEqual(report.due[0].missingFields, ["principal_cast"]);
 });
 
+test("optional partial metadata does not block the People stage", () => {
+  const now = "2026-09-18T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_optional_metadata_gap",
+    metadataStatus: "partial",
+    metadataMissingFields: []
+  }], { now });
+  const report = buildEnrichmentCampaignReport(state, { now });
+  assert.equal(report.due[0].currentStage, "people");
+  assert.equal(report.due[0].nextAction, "run_wwp_people_curator");
+});
+
+test("explicit metadata gaps still keep the base-metadata stage first", () => {
+  const now = "2026-09-18T00:00:00.000Z";
+  const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_required_metadata_gap",
+    metadataStatus: "partial",
+    metadataMissingFields: ["可靠作品身份来源"]
+  }], { now });
+  const report = buildEnrichmentCampaignReport(state, { now });
+  assert.equal(report.due[0].currentStage, "base-metadata");
+  assert.equal(report.due[0].nextAction, "run_wwp_metadata_backfiller");
+});
+
+test("current film campaign can prioritize due People items inside a bounded report window", () => {
+  const report = buildEnrichmentCampaignReport({
+    works: [
+      { key: "honors", title: "荣誉", stages: {
+        "base-metadata": { status: "completed" },
+        people: { status: "completed" },
+        honors: { status: "pending" },
+        highlights: { status: "pending" }
+      } },
+      { key: "people", title: "人物", stages: {
+        "base-metadata": { status: "completed" },
+        people: { status: "pending" },
+        honors: { status: "pending" },
+        highlights: { status: "pending" }
+      } }
+    ]
+  }, { limit: 1, prioritizeStage: "people", now: "2026-09-17T00:00:00.000Z" });
+
+  assert.equal(report.due[0].currentStage, "people");
+});
+
 test("human confirmation and scheduled review remain visible instead of becoming idle", () => {
   const now = "2026-09-06T00:00:00.000Z";
   let { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
@@ -149,6 +494,34 @@ test("human confirmation and scheduled review remain visible instead of becoming
   assert.equal(report.summary.waitingForHuman, 1);
   assert.equal(report.summary.scheduledReview, 1);
   assert.equal(report.summary.actionableNow, 0);
+});
+
+test("blocked enrichment reports preserve the exact recovery contract", () => {
+  const now = "2026-09-06T00:00:00.000Z";
+  let { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    workId: "wwm_blocked_report",
+    metadataStatus: "verified"
+  }], { now });
+  ({ state } = updateEnrichmentStage(state, { externalWorkId: "wwm_blocked_report" }, {
+    stage: "people",
+    status: "blocked",
+    reason: "同一批人物残项无法建立稳定身份",
+    missingFields: ["2 unlinked canonical credits"],
+    coverageResiduals: [
+      { name: "待核验人物", department: "acting" },
+      { name: "另一待核验人物", department: "writing" }
+    ],
+    coverageAttempts: 2,
+    nextTrigger: "new provider evidence or manual identity confirmation"
+  }, { now }));
+  const report = buildEnrichmentCampaignReport(state, { now });
+  assert.equal(report.summary.blocked, 1);
+  assert.equal(report.blocked[0].nextTrigger, "new provider evidence or manual identity confirmation");
+  assert.equal(report.blocked[0].coverageAttempts, 2);
+  assert.deepEqual(report.blocked[0].coverageResiduals.map((row) => row.name), [
+    "待核验人物",
+    "另一待核验人物"
+  ]);
 });
 
 test("completed stage advances to the next serial stage and state round-trips", () => {
@@ -238,7 +611,7 @@ test("a stable blocked stage does not hide independent work already in progress"
   assert.equal(report.inProgress[0].actionableNow, false);
 });
 
-test("a future deferred stage can be bypassed but a due deferred stage cannot", () => {
+test("a deferred stage can be bypassed for independent People work whether due or not", () => {
   const now = "2026-09-06T00:00:00.000Z";
   const { state } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{ ledgerWorkId: 13 }], { now });
   const future = updateEnrichmentStage(state, { ledgerWorkId: 13 }, {
@@ -251,10 +624,10 @@ test("a future deferred stage can be bypassed but a due deferred stage cannot", 
     stage: "people",
     status: "in_progress"
   }, { now }));
-  assert.throws(() => updateEnrichmentStage(future, { ledgerWorkId: 13 }, {
+  assert.doesNotThrow(() => updateEnrichmentStage(future, { ledgerWorkId: 13 }, {
     stage: "people",
     status: "in_progress"
-  }, { now: "2026-09-08T00:00:00.000Z" }), /before current stage base-metadata/);
+  }, { now: "2026-09-08T00:00:00.000Z" }));
 });
 
 test("non-actionable outcomes require a concrete recovery condition", () => {
@@ -326,6 +699,69 @@ test("an explicit people objective can resume a clean preflight without another 
   });
   assert.equal(result.work.stages.people.status, "in_progress");
   assert.deepEqual(result.work.stages.people.humanConfirmationReasons, []);
+});
+
+test("a clean preflight can recover a previously blocked people stage", () => {
+  const now = "2026-09-15T00:00:00.000Z";
+  const reportPath = "C:\\batch\\recovered-report.json";
+  const { state: initial } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    externalWorkId: "work-recovered-people",
+    metadataStatus: "verified"
+  }], { now });
+  const { state } = updateEnrichmentStage(initial, { externalWorkId: "work-recovered-people" }, {
+    stage: "people",
+    status: "blocked",
+    reason: "canonical index was temporarily unavailable",
+    nextTrigger: "retry after index recovery"
+  }, { now });
+  const result = resumeAuthorizedPeopleStage(state, { externalWorkId: "work-recovered-people" }, {
+    preflight: { status: "ready_for_authorized_apply", reportPath },
+    reportPath,
+    now
+  });
+  assert.equal(result.work.stages.people.status, "in_progress");
+});
+
+test("people authorization is independent of a stable deferred metadata stage", () => {
+  const now = "2026-09-15T00:00:00.000Z";
+  const reportPath = "C:\\batch\\independent-report.json";
+  const { state: initial } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    externalWorkId: "work-independent-people",
+    metadataStatus: "verified"
+  }], { now });
+  const withDeferredMetadata = updateEnrichmentStage(initial, { externalWorkId: "work-independent-people" }, {
+    stage: "base-metadata",
+    status: "deferred",
+    reason: "exact metadata readback is temporarily unavailable",
+    nextReviewAt: "2026-09-20T00:00:00.000Z"
+  }, { now }).state;
+  const result = resumeAuthorizedPeopleStage(withDeferredMetadata, { externalWorkId: "work-independent-people" }, {
+    preflight: { status: "ready_for_authorized_apply", reportPath },
+    reportPath,
+    now
+  });
+  assert.equal(result.work.stages.people.status, "in_progress");
+});
+
+test("people authorization remains independent when deferred metadata is due", () => {
+  const now = "2026-09-15T00:00:00.000Z";
+  const reportPath = "C:\\batch\\due-independent-report.json";
+  const { state: initial } = enqueueEnrichmentWorks(emptyEnrichmentCampaign(now), [{
+    externalWorkId: "work-due-independent-people",
+    metadataStatus: "verified"
+  }], { now });
+  const withDueMetadata = updateEnrichmentStage(initial, { externalWorkId: "work-due-independent-people" }, {
+    stage: "base-metadata",
+    status: "deferred",
+    reason: "metadata retry is due",
+    nextReviewAt: "2026-09-14T00:00:00.000Z"
+  }, { now }).state;
+  const result = resumeAuthorizedPeopleStage(withDueMetadata, { externalWorkId: "work-due-independent-people" }, {
+    preflight: { status: "ready_for_authorized_apply", reportPath },
+    reportPath,
+    now
+  });
+  assert.equal(result.work.stages.people.status, "in_progress");
 });
 
 test("authorize-people preserves genuine identity gates", () => {

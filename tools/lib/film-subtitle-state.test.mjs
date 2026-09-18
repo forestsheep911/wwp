@@ -32,6 +32,9 @@ test("explicit absence is routed to subtitle acquisition", () => {
   assert.equal(classifyChineseSubtitleState({
     subtitleEvidence: { hardGate: "missing_chinese_subtitle", verifiedChinese: false }
   }), CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING);
+  assert.equal(classifyChineseSubtitleState({
+    subtitleEvidence: { internalProbeState: "sampled", noChineseSubtitles: true, confirmedMissing: true }
+  }), CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING);
 });
 
 test("contradictory evidence returns to review", () => {

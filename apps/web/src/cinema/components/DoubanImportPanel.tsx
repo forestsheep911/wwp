@@ -18,7 +18,7 @@ export function DoubanImportPanel({collection, onImport, legacyRecords, disabled
     setBusy(true);setMessage("");setPreview(undefined);setConfirmed(false);setPage(0);
     try {setPreview(await previewMemberCollection(data,strategy));} catch(e){setMessage(e instanceof Error ? e.message : "预览失败，请重试。");} finally {setBusy(false);}
   }
-  return <section className="grid gap-3 rounded-xl border border-slate-800 p-4">
+  return <section className="grid min-w-0 gap-3 rounded-xl border border-slate-800 p-4 [&_input]:max-w-full [&_select]:max-w-full [&_button]:whitespace-normal">
     <h2 className="font-semibold">导入豆瓣片单</h2>
     <p className="text-sm text-slate-400">上传纳豆 JSON 到本站，按豆瓣条目 ID 与完整片库索引匹配。确认后保存到当前账号，其他设备登录后也能读取。未匹配影片仍会保留。</p>
     <input disabled={disabled || busy} aria-label="选择豆瓣导出 JSON" type="file" accept=".json,application/json" onChange={async event=>{

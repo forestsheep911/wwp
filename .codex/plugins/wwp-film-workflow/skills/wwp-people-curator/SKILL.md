@@ -20,6 +20,15 @@ the lane from whichever candidates happen to be easiest to find.
 - Do not delay publishing a film because its people data is incomplete.
 - Do not run this skill as a second concurrent task beside film production. Its network commands share `.local-data/wwp-production-network.lock` with the film cycle; a live lock owner is a stop condition, not a retry signal.
 - Keep the integration seam at the reviewed report: the main workflow invokes this skill after routing, but must not duplicate its identity or publishing logic.
+- A clean targeted supplement must hand off through the standard reviewed-report artifact. Pass `--reviewed-output` to `person-targeted-supplement.mjs`; it may promote only a report with zero `identityIssues` and zero `unresolved` rows. Never hand-copy a diagnostic report into the publish path.
+- Before an authorized apply, reconcile stable IDs against both Azure and the
+  Notion checkpoint. If Notion already contains multiple legacy pages for the
+  same stable person, choose one canonical existing page, reuse its identity,
+  and record the other page IDs as duplicate evidence. Do not alternate
+  remapping between legacy pages and do not create a third page. When the
+  reviewed report still carries a new person ID, write an explicit
+  `canonicalization` artifact before preflight and rerun preflight on that
+  canonical report.
 - Treat bands, combinations, studios, companies, and other organizations as unresolved non-person entities. Never force them into `People / 创作人`.
 
 ## Route campaign commands deterministically
@@ -52,6 +61,13 @@ the lane from whichever candidates happen to be easiest to find.
   explicit request.
 - For Azure production applies, prefer 10-16 profiles per sub-batch once the catalog is large; if `person-catalog-apply` returns Azure Table `OperationTimedOut`, keep the backup, verify index rollback, and retry the same reviewed report in a smaller sub-batch rather than launching a duplicate apply.
 - Coverage audits against Azure must also have a finite read window; if the audit stalls, stop only that read, preserve the completed batch artifacts, record the timeout, and resume from the last cached candidate list instead of rerunning writes.
+- If the Azure person-catalog range query stalls or fails with a transient
+  timeout, rate-limit, or connection error, the catalog reader automatically
+  falls back to the manifest's known chunk keys with the existing per-request
+  timeout/retry policy. A caller may still set
+  `PERSON_CATALOG_AZURE_DISABLE_RANGE_QUERY=1` to force that path for a
+  diagnostic run. This does not weaken identity, backend, or readback gates;
+  do not start a second preflight while the first process is still live.
 - Treat `profile-budget` as the maximum number of candidate identities to review in one discovery pass, never as a per-work credit, cast, or publication limit. Preserve the complete discovered credit list and resume the same work in later passes when significant people remain.
 - Ordinary People repair and new-person expansion are both work-scoped. Pin one
   `activePeopleWorkId`, repair its existing important profiles, and create or
@@ -139,6 +155,60 @@ and continue with other eligible work.
   record must also retain the exact `unlinkedCredits` as `coverageResiduals`
   and a concrete `nextTrigger`; a count-only reason is insufficient for the
   next run to resume safely.
+  When `coverageResiduals` is non-empty, the campaign `nextAction` is
+  `run_wwp_people_targeted_supplement`: resume from those exact residual
+  credits and their evidence gaps. Do not restart broad discovery or publish
+  the same clean profiles again. After a targeted supplement, rerun the exact
+  coverage audit and settle the same item again.
+  Settlement is production-gated: the coverage report must identify an Azure
+  search store (`searchStore=azure:*`). A local catalog/index apply is only a
+  test artifact and cannot settle the production campaign; use
+  `--allow-local-coverage` only for an intentional local-only test.
+- If the Azure coverage readback cannot be established at all, use the bounded
+  provider-failure path to record `deferred`, preserving the exact error and
+  next Azure-readback trigger. Never leave the work in `AI处理中` merely
+  because the coverage command rejected a local/stale report. This exception
+  does not apply to malformed counts, ambiguous identities, or contradictory
+  stable IDs; those remain hard blockers.
+- Azure person-catalog range enumeration is only a read optimization. It has a
+  finite timeout and automatically falls back to deterministic generation-chunk
+  reads. Do not ask for a manual environment change or mark a clean People
+  batch as goal-blocked because the range query stalled. If both read paths
+  fail, record the exact provider error as `deferred` with a future retry time;
+  only identity, evidence, or data-integrity failures remain durable blockers.
+- If the authoritative coverage report itself says `blocked`, `waiting_user`,
+  or `deferred`, settlement must preserve that stable status instead of
+  reopening the stage as `pending`. Copy the report's exact reason,
+  `nextTrigger`, optional review time, and every remaining credit into the
+  campaign. `deferred` requires a valid future review time; `blocked` and
+  `waiting_user` require an actionable reason or human-confirmation request.
+  This prevents an unresolved identity/provider problem from becoming a
+  repeated due item or being mistaken for completed People coverage.
+
+- Classify transient provider failures separately from durable blockers. If the
+  authoritative coverage report says `blocked` only because of a timeout, 429,
+  rate limit, network/connection failure, or temporary API unavailability,
+  settle that People stage as `deferred` with a concrete `nextReviewAt` (the
+  supplied retry time, or six hours later), preserve the original error,
+  residual credits, and retry trigger. Do not ask the user to re-authorize a
+  clean batch for a transient failure, and do not leave such an item as a
+  permanent `blocked` row. Identity ambiguity, conflicting stable IDs, missing
+  canonical entities, and unsupported evidence remain genuine blockers.
+- A Notion checkpoint or successful catalog write is not enough to close a
+  People sub-batch. The apply command must pass its bounded exact-asset
+  readback for every changed work. If a relation is still missing after
+  retries, record the missing relation keys and continue from the residual work;
+  do not settle the stage as completed.
+- Treat a supplement result and work coverage as different ledgers. A targeted
+  report may contain only the newly verified profiles, while the catalog apply
+  summary may report cumulative links already present for the whole work. Never
+  use either number as the closure decision. The only closure input is the
+  fresh post-publish coverage audit for the complete canonical credit set;
+  preserve its `creditCount`, `linkedCreditCount`, `unlinkedCreditCount`, and
+  exact `unlinkedCredits` in the campaign settlement artifact.
+- The authorization preflight and both active stores must use the same backend
+  (`local` or `azure`). A backend mismatch is a pre-mutation blocker, not a
+  reason to write and hope that a later audit reads the same data.
 - This readback is a continuation loop, not a final report step: if exact
   coverage still contains unlinked credits, immediately create a bounded
   targeted supplement from that residual list, apply it, and read back the
@@ -147,11 +217,57 @@ and continue with other eligible work.
   next trigger, then settle as `pending` or `deferred`. A pilot's
   `profile-budget`, a successful Notion checkpoint, or a catalog backup never
   closes the loop.
+- A successful partial supplement is still useful progress: settle the work
+  back to `pending` with the reduced residual list and keep unrelated works
+  routable. If a residual has no stable person ID, do not downgrade the whole
+  batch or invent a profile; record the exact name, roles, sources already
+  checked, and the evidence needed to reopen that one credit. The next People
+  run must consume that saved residual list rather than rediscovering the
+  entire work.
+- Settlement records a deterministic fingerprint and attempt count for the
+  exact unresolved credit set. If the same non-empty residual set is returned
+  by two authoritative coverage passes without new identity evidence, the
+  work-local People stage automatically becomes `blocked` with the exact names
+  and `nextTrigger=new provider evidence or manual identity confirmation`.
+  This is a durable residual blocker, not a Goal-level stop; a changed
+  fingerprint or new evidence resets the count and may reopen the work.
+- A residual identity must not spin forever as ordinary `pending` work. After
+  two bounded research passes that cover different source families (for
+  example provider data plus an independent work-credit source) still cannot
+  establish a stable person ID, write an authoritative coverage record with
+  `status=blocked`, the exact residual name/department, the evidence already
+  checked, and `nextTrigger=new provider evidence or manual identity
+  confirmation`. This is a work-local identity blocker: keep the credit
+  visible, do not invent a profile, and continue unrelated People and film
+  work. Reopen only when that trigger produces new evidence; do not spend a
+  fresh cycle repeating the same searches.
+- Every `blocked`, `waiting_user`, or `deferred` People item must expose a
+  machine-readable `reason`, exact `nextTrigger`, and, when coverage is
+  incomplete, the full `coverageResiduals` list plus `coverageAttempts` in the
+  campaign report. A count-only summary is invalid. These are item-level
+  recovery conditions: the coordinator must keep other due works and film
+  lanes routable, and must never convert them into a Goal-level blocked state.
+- If the first work-credit provider returns no credits, classify that as
+  `source_miss` and run the bounded fallback sequence: IMDb title credits
+  with official name-page IDs, then verified TMDb credits, then a second
+  independent source or explicit human identity evidence. A provider search
+  suggestion is discovery only; it cannot publish a person without the
+  matching official person page and work-credit evidence. When a reviewed
+  provider uses a role-specific job label while the canonical source uses a
+  generic label, match by stable person ID plus department and exact or
+  verified name before appending any credit row. If an earlier attempt already
+  created duplicates, use the guarded exact-credit replacement path and retain
+  its asset, count, identity, and source-work guards.
 - Treat reasons that describe a missing tool, unsupported metadata-only path,
   or a blanket review requirement as historical observations, not permanent
   human gates. When the current toolchain can now produce authoritative
   coverage, run that path and settle from the readback; a fully linked result
   must clear the stale reason and human-confirmation text automatically.
+- A newly created or hidden metadata-only Notion work must not be temporarily
+  unhidden just to enter the playable search index. Use its exact stable
+  `WW Work ID` and the guarded metadata-only report path; the catalog apply
+  writes People relations and reverse links with `searchIndexWrites: 0`, then
+  the coverage audit settles the People stage.
 - Settle against the coverage report's authoritative `works` collection when
   present. `candidates` intentionally omits `fully_linked` works and is only a
   backward-compatible fallback; an empty candidate queue is not proof that the
@@ -161,6 +277,20 @@ and continue with other eligible work.
   duplicate relations with the same canonical person, department, compatible
   job, and character. Preserve separate acting, writing, directing, voice, or
   different-character rows for the same person.
+- When a residual credit is the same person under a different Chinese
+  transliteration, repair the original complete reviewed report rather than
+  applying a one-person subset. Add the stable external ID and `personId`, or
+  use an explicit `creditNameOverrides` entry keyed by that ID, then rerun the
+  full preflight and the complete Notion/catalog/coverage path. A partial
+  repair report must never replace the work's existing credit set.
+- Treat a credit whose name contains a provider-style person list (for example,
+  a long slash-separated cast string) or a combined directing label as a
+  `credit_shape_error`, not as one new person. Do not create a profile for the
+  whole string and do not keep retrying the same targeted supplement. First
+  normalize the canonical work-credit rows into one person/role per row using
+  stable IDs and source evidence; then rerun coverage. Until that repair is
+  read back, keep the work `pending` with the exact composite row and a
+  `credit normalization` next trigger.
 
 ## Run the workflow
 
@@ -233,7 +363,8 @@ by stable external IDs. When no Wikidata QID exists, the same tool may use a
 reviewed IMDb or TMDB identity only when the input includes the stable person
 ID, its person-page source reference, the matching work external ID, and an
 exact HTTPS work-credit page. Keep unsupported biography, date, image, and role
-details empty.
+details empty. Input preflight must validate the materializer shape, including a
+non-empty `reviewedEvidence.names[].value`, before any provider request starts.
 
 The required post-batch order is: (1) refresh the exact Azure work result by
 asset key, (2) compare `creditCount`, `linkedCreditCount`, and
@@ -247,6 +378,16 @@ Before network work, estimate request amplification: each work may require one w
 
 Give every external request a finite timeout (20 seconds by default), retry at most once with jitter, and checkpoint each completed response batch. A hung source must not hold the whole people run indefinitely.
 
+Before starting a People materialization or preflight against Azure, perform one
+bounded backend-read readiness check. If the credential, endpoint, or catalog
+read does not return within the configured window, stop before any Notion or
+catalog write, preserve the reviewed input/report, and settle the batch as
+`deferred` with the exact transport error and a future retry time. Do not let a
+provider read hang the workflow or repeatedly restart the same batch.
+For large chunked catalogs, use `PERSON_CATALOG_AZURE_READ_CONCURRENCY` (bounded
+to 1-64; default 32) rather than disabling range reads globally; reserve
+`PERSON_CATALOG_AZURE_DISABLE_RANGE_QUERY=1` for a diagnosed range-query failure.
+
 ### 3. Review identity before prose
 
 - Match by stable Wikidata, TMDB, IMDb, or equally strong identity evidence. Never merge by a name alone.
@@ -255,6 +396,7 @@ Give every external request a finite timeout (20 seconds by default), retry at m
 - Keep generated transliterations provisional. Use the formal, source-supported simplified Chinese name when available. Do not promote a Wikidata `zh-cn` label solely because it is the first localized label: compare it with the English/native name, occupation, and other aliases. If it is semantically unrelated to the person (for example, a common noun or machine-style label), retain it only as backend evidence and select a source-supported Chinese alias that matches the identity; record `wikidata_nonsemantic_label_gate`.
 - Exclude non-human entities and quarantine conflicting external IDs or ambiguous aliases. Wikidata `P31` values use the real entity-id field (`datavalue.value.id`); descriptions such as “animal actor” are a secondary safety signal, so a candidate with a non-human instance-of claim must never enter People even when its label looks like a person's name.
 - Check the Wikidata English description against the requested credit department before materialization. If a same-name human has only a clearly non-film identity (for example, an activist, politician, wrestler, or other sports identity) and no IMDb/TMDB crosswalk, exclude the QID and leave the credit unresolved; never repair an identity mismatch by name alone. The non-film occupation list must cover sports identities, not only athlete as a generic term. An acting credit explicitly marked as Self, Media, Newsreader, Host, or equivalent本人出镜 is a distinct cast relation: verify it with the exact work credit and a stable person crosswalk, preserve that job label, and do not reject it merely because the person's main occupation is journalist, presenter, or other non-film work.
+- Treat a legacy Wikidata QID that fails the department/identity role gate as a quarantined hint, not as a permanent blocker. Remove it from the publish input, record the rejection and error in the batch evidence, and continue only through a separately reviewed IMDb/TMDB identity with an exact person page and work-credit page. Never retry the same rejected QID or create a person from the name alone.
 - Before applying a reviewed report, compare its credits with the exact pre-pilot canonical work credits. Preserve every source/index credit that was not represented by the reviewed stable-identity set as an unlinked legacy credit; merge `personId` onto matched reviewed credits instead of replacing the source list with the shorter pilot subset. A lower-confidence or unresolved cast name must remain visible in the movie index and be queued for later review. Record `source_credit_preservation_gate` if an apply would reduce the canonical credit count.
 - After each apply, compare the exact canonical source-credit set with the materialized stable-identity set. Wikidata work credits are discovery evidence, not proof of complete coverage: when IMDb, TMDB, a verified Notion credit list, or another canonical source still contains significant unlinked creators or cast, keep the work pinned and publish a reviewed supplement batch. Mark the work complete only when every significant residual credit is linked or individually recorded as intentionally deferred with its source and next trigger. A profile budget, an empty Wikidata remainder, or one successful batch is never closure evidence.
 - During source-preserving merge, match each reviewed credit only against one unconsumed pre-pilot source row. Never match a later pilot credit against an already appended pilot row, because distinct department/role credits for one person must remain separate. Record `source_credit_duplicate_preservation_gate` if a merge collapses reviewed role rows.
@@ -328,7 +470,7 @@ Before scaling a changed biography strategy, run a five-person quality pilot con
    <physical-lan-ip> --no-proxy`. These three flags are inseparable; clearing an
    HTTP proxy alone does not bypass Mihomo TUN.
 5. Read back the changed rows and retain the complete Notion checkpoint.
-6. Apply the same reviewed report to the person catalog and search index. Pass the complete Notion checkpoint when those Notion Person IDs are canonical; catalog apply must then redirect matching legacy IDs instead of remapping the reviewed IDs back to stale catalog identities.
+6. Apply the same reviewed report to the person catalog and search index. Pass the complete Notion checkpoint when those Notion Person IDs are canonical; catalog apply must then redirect matching legacy IDs instead of remapping the reviewed IDs back to stale catalog identities. The apply run must leave `catalog-apply-run.json` beside the batch report. `completed/readback_verified` is required before coverage settlement; `failed_resumable` means the same reviewed batch remains open. If the authoritative unlinked-credit count is unchanged and no catalog/index row changed, stop with a no-progress error and rebuild from the exact residual credit list rather than calling the batch successful.
 7. For production, explicitly set both `PERSON_CATALOG_BACKEND=azure` and `SEARCH_INDEX_BACKEND=azure`; do not trust local `.env` defaults.
    The catalog apply must derive each reverse-link `workTitle` from the
    affected Azure work's primary `work.titles` entry, falling back to the

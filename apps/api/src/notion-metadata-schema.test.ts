@@ -11,6 +11,21 @@ import {
 } from "./notion-metadata-schema.js";
 import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
 import { schemaPatch } from "./notion-schema-migration.js";
+import { maintainedDoubanSubjectId, parseDoubanSubjectId } from "@wwpdw/shared";
+
+test("Douban film identity never comes from people, photos, books or arbitrary numbers", () => {
+  const hints = createMetadataHints();
+  for (const text of ["https://www.douban.com/personage/27233188/", "https://movie.douban.com/celebrity/1234567/", "https://book.douban.com/subject/1234567/", "豆瓣评分 7500", "https://movie.douban.com/photos/photo/1234567/"]) {
+    collectMetadataHintsFromText(hints, text);
+    assert.equal(parseDoubanSubjectId(text), undefined);
+  }
+  assert.equal(hints.externalIds.douban, undefined);
+  collectMetadataHintsFromText(hints, "https://movie.douban.com/subject/35801819/");
+  assert.equal(hints.externalIds.douban, "35801819");
+  assert.equal(maintainedDoubanSubjectId(undefined, "https://movie.douban.com/subject/35801819/"), undefined);
+  assert.equal(maintainedDoubanSubjectId("35801819", "https://movie.douban.com/subject/27233188/"), undefined);
+  assert.equal(maintainedDoubanSubjectId("35801819", "https://movie.douban.com/subject/35801819/"), "35801819");
+});
 
 test("collectMetadataHintsFromText captures official critic rating page URLs", () => {
   const hints = createMetadataHints();

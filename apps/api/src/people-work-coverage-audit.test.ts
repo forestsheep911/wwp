@@ -79,3 +79,18 @@ test("deduplicates legacy carriers by same movie IMDb and keeps the active riche
   assert.equal(report.works[0]?.workId, "active");
   assert.equal(report.works[0]?.status, "fully_linked");
 });
+
+test("expands unlinked slash-delimited historical credits before coverage is assessed", () => {
+  const report = auditPeopleWorkCoverage([
+    result("slash", "Historical import", [
+      { name: "Director A / Director B", department: "directing" },
+      { personId: "person-c", name: "Actor C", department: "acting" }
+    ])
+  ]);
+
+  const work = report.works[0];
+  assert.equal(work?.creditCount, 3);
+  assert.equal(work?.linkedCreditCount, 1);
+  assert.equal(work?.unlinkedCreditCount, 2);
+  assert.deepEqual(work?.unlinkedCredits.map((credit) => credit.name), ["Director A", "Director B"]);
+});

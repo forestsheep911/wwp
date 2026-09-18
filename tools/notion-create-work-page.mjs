@@ -97,6 +97,7 @@ function env(name) {
 }
 
 function installDnsOverride() {
+  if (env("NOTION_API_DISABLE_DNS_OVERRIDE") === "1") return;
   const address = env("NOTION_API_RESOLVE_IP");
   if (!address) return;
   const original = dns.lookup.bind(dns);
@@ -159,7 +160,22 @@ function seasonNumber(title) {
   return { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[chinese[1]];
 }
 
+function releaseYearFromTitle(title) {
+  const match = String(title ?? "").match(/\b((?:19|20)\d{2})\b/u);
+  return match ? Number(match[1]) : undefined;
+}
+
+function releaseYearFromPage(page) {
+  const property = Object.values(page.properties ?? {}).find((value) => value.type === "number" && value.number != null);
+  return property?.number ?? releaseYearFromTitle(pageTitle(page));
+}
+
 export function canReuseIdentityMatch(page, options) {
+  const requestedYear = Number.isInteger(options.year) ? options.year : releaseYearFromTitle(options.title);
+  const existingYear = releaseYearFromPage(page);
+  // An external ID can be stale or supplied for the wrong work. Never bind a
+  // ledger work to a page whose explicit release year contradicts it.
+  if (requestedYear !== undefined && existingYear !== undefined && requestedYear !== existingYear) return false;
   if (options.type !== "series") return true;
   const existingSeason = seasonNumber(pageTitle(page));
   const requestedSeason = seasonNumber(options.title);
@@ -218,6 +234,7 @@ async function main() {
   const work = ledgerWorkForOptions(options);
   options.type = work.work_type;
   options.title ??= work.canonical_title;
+  options.year ??= work.year ?? releaseYearFromTitle(options.title);
   installDnsOverride();
   const token = env("NOTION_WRITE_TOKEN") || env("NOTION_TOKEN");
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
@@ -273,7 +290,7 @@ async function main() {
   put(properties, library.dataSource, "Hide from Website", true, "checkbox", value => ({ checkbox: value }));
   put(properties, library.dataSource, "Needs Review", true, "checkbox", value => ({ checkbox: value }));
   put(properties, library.dataSource, "Media Availability", "needs_processing", "select", value => ({ select: { name: value } }));
-  put(properties, library.dataSource, "Developer Memo", "Metadata-first page created before playable production. Keep hidden and Needs Review until metadata readback and any later media workflow are complete.", "rich_text", value => ({ rich_text: richText(value) }));
+  put(properties, library.dataSource, "Developer Memo", "Metadata-first page created before playable production. Keep hidden only until a playable Media Assets path, structure, QC, and playback readback pass. Metadata and review gaps remain follow-up work and do not keep a playable work hidden.", "rich_text", value => ({ rich_text: richText(value) }));
 
   if (!options.apply) {
     console.log(JSON.stringify({ status: "would_create", title: options.title, type: options.type, properties }, null, 2));

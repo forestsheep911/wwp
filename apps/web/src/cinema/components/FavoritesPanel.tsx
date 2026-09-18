@@ -20,6 +20,7 @@ import { copy } from "../i18n";
 import type { CollectionMark, FavoriteEntry, ResultWithCache } from "../types";
 import { EmptyState } from "./EmptyState";
 import { PosterImage } from "./PosterImage";
+import { shouldOpenDetailInCurrentTab } from "../detail-link";
 
 interface FavoriteCandidate {
   entry: FavoriteEntry;
@@ -42,12 +43,16 @@ export function FavoritesPanel({
   cachedAssets,
   creditPolicy,
   favorites,
+  getDetailHref,
+  onOpenDetail,
   onRemove,
   onSelect
 }: {
   cachedAssets: CacheAsset[];
   creditPolicy: CreditPolicyResponse;
   favorites: FavoriteEntry[];
+  getDetailHref: (result: ResultWithCache) => string;
+  onOpenDetail: (result: ResultWithCache) => void;
   onRemove: (assetKey: string, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
@@ -73,24 +78,24 @@ export function FavoritesPanel({
   }
 
   return (
-    <section className="grid gap-4">
-      <div className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 sm:rounded-lg">
+    <section className="grid min-w-0 gap-4">
+      <div className="grid min-w-0 gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 shadow-2xl shadow-black/20 sm:rounded-lg sm:p-4">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold leading-tight text-slate-50">{copy.favorites.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{copy.favorites.description}</p>
         </div>
 
-        <Tabs defaultValue={defaultSection}>
-          <TabsList className="max-w-[calc(100vw-2rem)] justify-start overflow-x-auto rounded-xl bg-slate-950/72 sm:max-w-none sm:rounded-md">
+        <Tabs className="min-w-0" defaultValue={defaultSection}>
+          <TabsList className="grid w-full min-w-0 grid-cols-3 rounded-xl bg-slate-950/72 sm:flex sm:w-fit sm:rounded-md">
             {sections.map((section) => {
               const Icon = section.icon;
               return (
                 <TabsTrigger
-                  className="min-h-11 flex-none rounded-lg data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950 sm:min-h-8 sm:rounded-md"
+                  className="min-h-11 min-w-0 flex-wrap gap-1 rounded-lg px-1 text-xs data-[state=active]:bg-emerald-400 data-[state=active]:text-slate-950 sm:px-3 sm:text-sm sm:rounded-md"
                   key={section.mark}
                   value={section.mark}
                 >
-                  <Icon className={`h-4 w-4 ${section.className}`} />
+                  <Icon className={`hidden h-4 w-4 sm:block ${section.className}`} />
                   {copy.favorites.sections[section.mark]}
                   <Badge variant="secondary">{section.candidates.length}</Badge>
                 </TabsTrigger>
@@ -99,10 +104,12 @@ export function FavoritesPanel({
           </TabsList>
 
           {sections.map((section) => (
-            <TabsContent className="mt-4" key={section.mark} value={section.mark}>
+            <TabsContent className="mt-4 min-w-0" key={section.mark} value={section.mark}>
               <FavoriteSection
                 creditPolicy={creditPolicy}
                 section={section}
+                getDetailHref={getDetailHref}
+                onOpenDetail={onOpenDetail}
                 onRemove={onRemove}
                 onSelect={onSelect}
               />
@@ -128,25 +135,31 @@ function markTimestamp(entry: FavoriteEntry, mark: CollectionMark) {
 function FavoriteSection({
   creditPolicy,
   section,
+  getDetailHref,
+  onOpenDetail,
   onRemove,
   onSelect
 }: {
   creditPolicy: CreditPolicyResponse;
   section: (typeof favoriteSections)[number] & { candidates: FavoriteCandidate[] };
+  getDetailHref: (result: ResultWithCache) => string;
+  onOpenDetail: (result: ResultWithCache) => void;
   onRemove: (assetKey: string, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [limit, setLimit] = useState(50);
   return (
-    <div>
+    <div className="min-w-0">
       {section.candidates.length ? (
-        <div className="grid gap-3">
+        <div className="grid min-w-0 gap-3">
           {section.candidates.slice(0, limit).map((candidate) => (
             <FavoriteCard
               candidate={candidate}
               creditPolicy={creditPolicy}
               key={`${section.mark}-${candidate.entry.assetKey}`}
               mark={section.mark}
+              getDetailHref={getDetailHref}
+              onOpenDetail={onOpenDetail}
               onRemove={onRemove}
               onSelect={onSelect}
             />
@@ -167,7 +180,7 @@ function hydrateFavorite(entry: FavoriteEntry, cachedByAssetKey: Map<string, Cac
   const variants = result.variants ?? [];
   const hydratedVariants = variants.map((variant) => ({
     ...variant,
-    cache: variant.cache ?? cachedByAssetKey.get(variant.assetKey)
+    cache: cachedByAssetKey.get(variant.assetKey) ?? variant.cache
   }));
   const readyVariant = hydratedVariants.find((variant) => variant.cache?.status === "ready");
   const variant = readyVariant ?? hydratedVariants[0];
@@ -188,16 +201,27 @@ function FavoriteCard({
   candidate,
   creditPolicy,
   mark,
+  getDetailHref,
+  onOpenDetail,
   onRemove,
   onSelect
 }: {
   candidate: FavoriteCandidate;
   creditPolicy: CreditPolicyResponse;
   mark: CollectionMark;
+  getDetailHref: (result: ResultWithCache) => string;
+  onOpenDetail: (result: ResultWithCache) => void;
   onRemove: (assetKey: string, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const { entry, result, variant, ready } = candidate;
+  const unavailableLabel = result.source === "douban" ? "尚未匹配本站影片" : copy.favorites.noPlayableVariant;
+  const detailLink = variant ? {
+    href: getDetailHref(result),
+    onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (shouldOpenDetailInCurrentTab(event)) { event.preventDefault(); onOpenDetail(result); }
+    }
+  } : undefined;
   const tags = visibleTags(result.metadata?.genres).slice(0, 4);
   const timestamp = markTimestamp(entry, mark) ?? entry.addedAt;
   const removeLabel = mark === "favorite"
@@ -212,14 +236,14 @@ function FavoriteCard({
       : mark === "watching" ? copy.favorites.watchingAt(formatDateTime(timestamp)) : copy.favorites.watchedAt(formatDateTime(timestamp));
 
   return (
-    <article className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 sm:grid-cols-[76px_minmax(0,1fr)] sm:rounded-md lg:grid-cols-[84px_minmax(0,1fr)_minmax(280px,0.42fr)]">
-      <div className="w-28 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 sm:w-full sm:rounded-md">
+    <article className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-xl shadow-black/10 sm:grid-cols-[76px_minmax(0,1fr)] sm:rounded-md lg:grid-cols-[84px_minmax(0,1fr)_minmax(280px,0.42fr)]">
+      <a {...detailLink} aria-label={variant ? `查看${result.title}详情` : undefined} className="self-start overflow-hidden rounded-lg border border-slate-800 bg-slate-950 sm:rounded-md">
         <MoviePoster result={result} />
-      </div>
+      </a>
 
-      <div className="grid min-w-0 content-start gap-2">
+      <div className="grid min-w-0 content-start gap-2 [overflow-wrap:anywhere]">
         <div className="min-w-0">
-          <h3 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50">{result.title}</h3>
+          <h3 className="break-words text-base font-semibold leading-tight text-slate-50"><a {...detailLink}>{result.title}</a></h3>
           <p className="mt-1 text-xs text-slate-500">{metadataLine(result)}</p>
           {directorLine(result) ? (
             <p className="mt-1 text-xs font-semibold text-slate-500">{copy.library.director(directorLine(result))}</p>
@@ -238,17 +262,17 @@ function FavoriteCard({
         {entry.doubanImport?.rating != null && <p className="text-sm text-amber-200">我的评分：{entry.doubanImport.rating} / 10</p>}
         {entry.doubanImport?.comment && <p className="whitespace-pre-wrap break-words text-sm text-slate-300">我的短评：{entry.doubanImport.comment}</p>}
         {entry.doubanImport?.tags && <p className="text-xs text-slate-400">我的标签：{entry.doubanImport.tags}</p>}
-        <p className="min-w-0 truncate text-xs font-semibold text-slate-500">
+        <p className="min-w-0 break-words text-xs font-semibold leading-5 text-slate-500">
           <CalendarDays className="mr-1 inline h-3.5 w-3.5" />
           {stampedLabel}
-          {variant ? ` / ${variantSpecText(result.title, variant, { compact: true })}` : ` / ${copy.favorites.noPlayableVariant}`}
+          {variant ? ` / ${variantSpecText(result.title, variant, { compact: true })}` : ` / ${unavailableLabel}`}
           {ready && variant?.cache?.media?.contentLength && !variantHasSizeMetadata(variant) ? ` / ${formatBytes(variant.cache.media.contentLength)}` : ""}
         </p>
       </div>
 
-      <div className="grid content-between gap-3 sm:col-start-2 lg:col-start-auto">
+      <div className="col-span-2 grid min-w-0 content-between gap-3 sm:col-span-1 sm:col-start-2 lg:col-start-auto">
         <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
-          {ready ? <Badge variant="default">{copy.cache.status.ready}</Badge> : <Badge variant="muted">{copy.cache.notCached}</Badge>}
+          {variant && (ready ? <Badge variant="default">{copy.cache.status.ready}</Badge> : <Badge variant="muted">{copy.cache.notCached}</Badge>)}
           <Button
             type="button"
             size="icon"
@@ -270,14 +294,17 @@ function FavoriteCard({
         </div>
 
         {variant ? (
-          <Button className="w-full justify-center sm:w-auto sm:justify-self-end" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
+          <div className="flex min-w-0 flex-wrap gap-2 sm:justify-end">
+          <Button asChild variant="outline" size="sm"><a {...detailLink}>查看详情 · {result.variants?.length} 个规格</a></Button>
+          <Button className="justify-center" type="button" size="sm" variant={ready ? "default" : "secondary"} onClick={() => onSelect(result, variant)}>
             <Play className="h-4 w-4" />
             {ready ? copy.watchlist.play : copy.watchlist.prepare}
           </Button>
+          </div>
         ) : (
           <Badge className="justify-self-end" variant="danger">
             <Film className="h-3.5 w-3.5" />
-            {copy.favorites.noPlayableVariant}
+            {unavailableLabel}
           </Badge>
         )}
       </div>

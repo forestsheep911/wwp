@@ -24,6 +24,12 @@ function validateCredit(work, credit) {
   if (!credit?.name || !credit.department) {
     throw new Error("each credit requires name and department");
   }
+  if (credit.legacyAliases !== undefined) {
+    if (!Array.isArray(credit.legacyAliases) || credit.legacyAliases.some((value) => typeof value !== "string" || !value.trim())) {
+      throw new Error(`credit ${credit.name} legacyAliases must be a list of non-empty strings`);
+    }
+    credit.legacyAliases = [...new Set(credit.legacyAliases.map((value) => value.trim()))];
+  }
   const ids = normalizedIds(credit.externalIds);
   if (!STABLE_SOURCES.some((source) => ids[source])) {
     throw new Error(`credit ${credit.name} requires a stable Wikidata, TMDB, or IMDb ID`);
@@ -41,6 +47,9 @@ function validateCredit(work, credit) {
   }
   if (!Array.isArray(evidence.sourceRefs) || evidence.sourceRefs.length < 1) {
     throw new Error(`credit ${credit.name} requires reviewedEvidence.sourceRefs without Wikidata`);
+  }
+  if (evidence.names.some((name) => !name || typeof name.value !== "string" || !name.value.trim())) {
+    throw new Error(`credit ${credit.name} reviewedEvidence.names requires a non-empty value field`);
   }
   const evidenceIds = normalizedIds(evidence.externalIds);
   if (evidenceIds[source] !== ids[source]) {

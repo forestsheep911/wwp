@@ -1,4 +1,5 @@
 import type { SearchResult } from "@wwpdw/shared";
+import { publicLibraryResults } from "./public-library.js";
 
 export interface SiteStatisticItem {
   label: string;
@@ -37,7 +38,7 @@ export function buildSiteStatistics(
     generatedAt?: string;
   } = {}
 ): SiteStatistics {
-  const visibleResults = results.filter((result) => result.metadata?.hideFromWebsite !== true);
+  const visibleResults = publicLibraryResults(results);
   const works = groupSiteWorks(visibleResults);
   const readyAssetKeys = options.readyAssetKeys ?? new Set<string>();
   const categories: Record<SiteCategory, number> = { movie: 0, series: 0 };

@@ -15,15 +15,15 @@ export function createNotionUploadSelectorGuard({
   envLookup = (name) => process.env[name],
   controller = createClashController({ secret: process.env.CLASH_CONTROLLER_SECRET || "" })
 } = {}) {
-  const expectedRoute = String(envLookup("NOTION_UPLOAD_EXPECTED_ROUTE") || "").trim();
-  if (expectedRoute && !["direct", "jms-s801"].includes(expectedRoute)) {
+  const declaredRoute = String(envLookup("NOTION_UPLOAD_EXPECTED_ROUTE") || "").trim();
+  const expectedRoute = declaredRoute || "direct";
+  if (!["direct", "jms-s801"].includes(expectedRoute)) {
     throw new Error(`Unsupported NOTION_UPLOAD_EXPECTED_ROUTE: ${expectedRoute}`);
   }
 
   return {
-    expectedRoute: expectedRoute || null,
+    expectedRoute,
     async assert(label = "upload") {
-      if (!expectedRoute) return { enabled: false, label };
       const proxies = await controller.proxies();
       const notion = selector(proxies, NOTION_SELECTOR);
       if (expectedRoute === "direct") {

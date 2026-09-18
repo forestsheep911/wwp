@@ -53,3 +53,12 @@ test("series identity matching does not merge different seasons sharing one IMDb
     type: "series", title: "广告狂人 Mad Men (2007)"
   }), true);
 });
+
+test("identity matching rejects an explicit release-year conflict", () => {
+  assert.equal(canReuseIdentityMatch(titlePage("后窗 Rear Window (1954)"), {
+    type: "movie", title: "原野奇侠 Shane (1953)", year: 1953
+  }), false);
+  assert.equal(canReuseIdentityMatch(titlePage("原野奇侠 Shane (1953)"), {
+    type: "movie", title: "原野奇侠 Shane (1953)", year: 1953
+  }), true);
+});

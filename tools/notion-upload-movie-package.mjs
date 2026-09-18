@@ -370,7 +370,7 @@ async function createMoviePage(notion, library, options) {
     setCheckboxProperty("Hide from Website", true);
     setCheckboxProperty("Needs Review", true);
     setSelectProperty("Media Availability", options.mediaAvailability || "needs_processing");
-    setRichTextProperty("Developer Memo", options.developerMemo || "New work page created before playable upload, Media Assets readback, subtitles/QC, and playback verification are complete. Keep hidden and Needs Review until production evidence is verified.");
+    setRichTextProperty("Developer Memo", options.developerMemo || "New work page created before playable upload. Keep hidden only until Media Assets, structure, subtitles/QC, and playback verification pass; metadata and review follow-up do not keep a playable work hidden.");
   }
 
   console.log(`${options.apply ? "create" : "would create"} movie page: ${options.title}`);

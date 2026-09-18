@@ -10,6 +10,7 @@ import {
   buildEnrichmentCampaignReport,
   enqueueEnrichmentWorks,
   readEnrichmentCampaign,
+  reclassifyTransientBlockedStages,
   recoverStaleInProgress,
   writeEnrichmentCampaign
 } from "./lib/work-enrichment-campaign.mjs";
@@ -28,6 +29,10 @@ function parseArgs(argv) {
     // --force and bypasses this interval immediately.
     minFullCycleSec: 3600,
     force: false,
+    // Explicit collaboration requests must read Notion immediately even when
+    // the filesystem is unchanged. Automated continuations may still use the
+    // cadence guard below.
+    forceHandoff: false,
     applyCleanup: false,
     enrichmentStatePath: ".local-data/work-enrichment-campaign.json",
     mode: PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
@@ -39,6 +44,7 @@ function parseArgs(argv) {
     else if (arg === "--state") options.statePath = argv[++index];
     else if (arg === "--min-full-cycle-sec") options.minFullCycleSec = Number(argv[++index]);
     else if (arg === "--force") options.force = true;
+    else if (arg === "--force-handoff") options.forceHandoff = true;
     else if (arg === "--apply-cleanup") options.applyCleanup = true;
     else if (arg === "--enrichment-state") options.enrichmentStatePath = argv[++index];
     else if (arg === "--mode") options.mode = normalizeProductionMode(argv[++index]);
@@ -98,19 +104,30 @@ function currentWorkRefs(cycle, databasePath = ".local-data/wwp-film-workflow.sq
 
 function loadEnrichmentCampaign(statePath, { limit, inputs = [], source = "saved_campaign" } = {}) {
   let state = readEnrichmentCampaign(statePath);
+  // Old campaign rows may have recorded a provider/readback outage as a
+  // permanent blocker. Repair only the narrowly classified transient cases;
+  // identity, permission, and evidence gaps remain human/blocking states.
+  const repairedTransient = reclassifyTransientBlockedStages(state);
+  state = repairedTransient.state;
   const recovered = recoverStaleInProgress(state);
   state = recovered.state;
-  if (recovered.recovered.length > 0) writeEnrichmentCampaign(statePath, state);
+  if (repairedTransient.repaired.length > 0 || recovered.recovered.length > 0) {
+    writeEnrichmentCampaign(statePath, state);
+  }
   let enqueue = { added: [], existing: [] };
   if (inputs.length > 0) {
     enqueue = enqueueEnrichmentWorks(state, inputs, { source });
     state = enqueue.state;
     writeEnrichmentCampaign(statePath, state);
   }
-  const report = buildEnrichmentCampaignReport(state, { limit });
+  const report = buildEnrichmentCampaignReport(state, {
+    limit,
+    prioritizeStage: source === "current_film_batch" ? "people" : null
+  });
   report.statePath = path.resolve(statePath);
   report.enqueued = { added: enqueue.added, existing: enqueue.existing };
   report.recoveredStaleInProgress = recovered.recovered;
+  report.repairedTransientBlockedStages = repairedTransient.repaired;
   return report;
 }
 
@@ -311,18 +328,16 @@ function runMain(options, lock) {
           : "人物专做模式未扫描影视输入目录。",
         workMessage: enrichmentCampaign.summary.total
           ? `${enrichmentOnly ? "已恢复资料补全批次" : "已恢复人物补全批次"}：当前可推进 ${enrichmentCampaign.summary.actionableNow}，正在执行 ${enrichmentCampaign.summary.inProgress ?? 0}，待人工确认 ${enrichmentCampaign.summary.waitingForHuman}，阻塞 ${enrichmentCampaign.summary.blocked}，定时复核 ${enrichmentCampaign.summary.scheduledReview}。具体下一步见 enrichmentCampaign。`
-          : `${enrichmentOnly ? "当前没有已保存的资料补全批次" : "当前没有已保存的人物补全批次"}。`,
-        hasWorkBeyondNewDiscovery: enrichmentCampaign.summary.actionableNow > 0
-          || enrichmentCampaign.summary.inProgress > 0
-          || enrichmentCampaign.summary.waitingForHuman > 0
-          || enrichmentCampaign.summary.blocked > 0
-          || enrichmentCampaign.summary.scheduledReview > 0
+          : `${enrichmentOnly ? "当前没有已保存的资料补全批次" : "当前没有已保存的人物补全批次"}；本轮未扫描影视输入目录，不能据此判定整个工作流空闲。`,
+        // A scoped run cannot establish whole-workflow idleness because the
+        // other production lanes were intentionally not scanned.
+        hasWorkBeyondNewDiscovery: true
       }
     };
     result.continuation = buildWorkflowContinuation({
       cycle: {},
       enrichmentCampaign,
-      externalLaneRequired: null
+      externalLaneRequired: "film_lanes_not_scanned"
     });
     process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
     return;
@@ -332,7 +347,8 @@ function runMain(options, lock) {
   const now = Date.now();
   const lastFullCycleAt = Date.parse(state.lastFullCycleAt ?? "") || 0;
   const changed = scanChanged(scan);
-  const cooldownActive = !options.force
+  const handoffForced = options.force || options.forceHandoff;
+  const cooldownActive = !handoffForced
     && !changed
     && lastFullCycleAt > 0
     && now - lastFullCycleAt < options.minFullCycleSec * 1000;
@@ -354,7 +370,11 @@ function runMain(options, lock) {
   }
   const enrichmentCampaign = options.mode === PRODUCTION_MODES.FILM_AND_CURRENT_ENRICHMENT
     ? loadEnrichmentCampaign(options.enrichmentStatePath, {
-        limit: options.limit,
+        // The continuation router needs a wider bounded window than the
+        // three-item film handoff. Otherwise an early run of metadata items
+        // can hide an independently due People item behind the report slice.
+        // This reads the local campaign only; it does not add provider calls.
+        limit: Math.max(options.limit, 20),
         inputs: currentWorkRefs(cycle),
         source: "current_film_batch"
       })
@@ -363,12 +383,6 @@ function runMain(options, lock) {
   const nextFullCycleAt = cooldownActive
     ? new Date(lastFullCycleAt + options.minFullCycleSec * 1000).toISOString()
     : new Date(now + options.minFullCycleSec * 1000).toISOString();
-  writeState(options.statePath, {
-    lastScanAt: new Date(now).toISOString(),
-    lastFullCycleAt: fullCycleAt,
-    lastScanChanged: changed,
-    lastHandoffSkipped: cooldownActive
-  });
   const summary = buildSummary(scan, cycle);
   summary.cleanupExecution = {
     requested: options.applyCleanup,
@@ -402,6 +416,7 @@ function runMain(options, lock) {
       mode: "bounded_round",
       minFullCycleSec: options.minFullCycleSec,
       fullCycleSkipped: cooldownActive,
+      handoffForced,
       nextFullCycleAt,
       localScanRunsEveryInvocation: true,
       repeatPolicy: "每次调用都扫描本地输入；只有完整 Notion/账本轮次受最短间隔限制。发现文件变化、用户报告新批次或使用 --force 时立即执行完整轮次。"
@@ -415,6 +430,19 @@ function runMain(options, lock) {
     cycle
   };
   result.continuation = buildWorkflowContinuation({ cycle, enrichmentCampaign });
+  // Persist the continuation fingerprint with the cadence state. This makes
+  // duplicate wait reports suppressible across process invocations, while a
+  // changed input, due review, handoff, or stage transition naturally creates
+  // a new fingerprint on the next round.
+  writeState(options.statePath, {
+    lastScanAt: new Date(now).toISOString(),
+    lastFullCycleAt: fullCycleAt,
+    lastScanChanged: changed,
+    lastHandoffSkipped: cooldownActive,
+    continuationStateKey: result.continuation.reportPolicy?.unchangedStateKey ?? null,
+    continuationState: result.continuation.state ?? null,
+    continuationUpdatedAt: new Date(now).toISOString()
+  });
   process.stdout.write(`${options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2)}\n`);
 }
 

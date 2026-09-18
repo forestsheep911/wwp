@@ -77,8 +77,10 @@ test("workflow visibility accepts only explicit boolean values", () => {
   }
 });
 
-test("workflow visibility cannot be cleared outside the release gate", () => {
+test("workflow visibility has a separate release gate from completion", () => {
   const source = fs.readFileSync(scriptPath, "utf8");
-  assert.match(source, /Clearing Hide from Website requires --release-work/u);
+  assert.match(source, /--release-work and --release-visibility cannot be used together/u);
+  assert.match(source, /Clearing Hide from Website requires --release-work or --release-visibility/u);
+  assert.match(source, /set requires --page-id, --expected-title, and --status \(unless --release-visibility is used\)/u);
   assert.match(source, /visibilityRequested[\s\S]*Hide from Website[\s\S]*checkbox: options\.hide_from_website/u);
 });

@@ -6,25 +6,41 @@ import { LocalRunLease, writeJsonAtomic } from "../apps/api/src/person-enrichmen
 import { applyPersonCatalogPlan, planReviewedPeopleReportApply } from "../apps/api/src/person-catalog-apply.ts";
 import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 import { assertAuthorizedPersonPreflight } from "./lib/person-report-authorization.mjs";
+import { verifyPeopleCatalogReadback } from "./lib/people-catalog-readback.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const reportPath = path.resolve(args.report ?? ".local-data/people/dry-run-report.json");
 const stateDir = path.resolve(args.stateDir ?? ".local-data/people");
 const localDataDir = path.resolve(args.localDataDir ?? process.env.WWPDW_HOME_DATA_DIR ?? ".local-data/home-site");
 process.env.WWPDW_LOCAL_DATA_DIR = localDataDir;
+function storeBackend(store) {
+  return store.description?.startsWith("azure:") ? "azure" : "local";
+}
+let authorizationPreflight;
 if (args.apply && !args.confirmAuthorizedBatch) {
   throw new Error("--apply requires --confirm-authorized-batch after a clean preflight and explicit user authorization.");
 }
 if (args.apply && args.authorizationMode === "authorized_batch") {
   if (!args.preflight) throw new Error("--confirm-authorized-batch requires --preflight.");
-  const preflight = JSON.parse(await readFile(path.resolve(args.preflight), "utf8"));
-  assertAuthorizedPersonPreflight(preflight, reportPath);
+  authorizationPreflight = JSON.parse(await readFile(path.resolve(args.preflight), "utf8"));
+  assertAuthorizedPersonPreflight(authorizationPreflight, reportPath);
 }
 
 const lease = new LocalRunLease(path.join(stateDir, "catalog-apply.lock"));
 const productionLock = acquireProductionLock({ owner: "person-catalog-apply", mode: "people-only" });
+const runStatusPath = path.join(stateDir, "catalog-apply-run.json");
+let runStartedAt;
 try {
   await lease.acquire();
+  runStartedAt = new Date().toISOString();
+  await writeJsonAtomic(runStatusPath, {
+    schemaVersion: 1,
+    status: "in_progress",
+    phase: "planning",
+    startedAt: runStartedAt,
+    pid: process.pid,
+    reportPath
+  });
   const report = JSON.parse(await readFile(reportPath, "utf8"));
   let preferReviewedPersonIds = false;
   let reviewedNotionPageIds = {};
@@ -40,13 +56,27 @@ try {
   }
   const personStore = createPersonCatalogStore();
   const searchStore = createSearchIndexStore();
+  if (args.apply && authorizationPreflight?.catalogBackend) {
+    const expectedBackend = authorizationPreflight.catalogBackend;
+    const actualBackends = [storeBackend(personStore), storeBackend(searchStore)];
+    if (actualBackends.some((backend) => backend !== expectedBackend)) {
+      throw new Error(`People apply backend mismatch: preflight=${expectedBackend}, personStore=${actualBackends[0]}, searchStore=${actualBackends[1]}. Re-run preflight and apply with the same backend.`);
+    }
+  }
   let currentCatalog = await personStore.getState();
   for (const merge of args.personMerges) {
     currentCatalog = mergePersonCatalogEntries(currentCatalog, merge.canonicalPersonId, merge.retiredPersonId);
   }
   // Biography-only repair batches have no work credits to inspect or update.
   // Avoid downloading the complete production movie index for those runs.
-  const searchResults = report.proposedCredits?.length
+  const proposedWorkIds = [...new Set((report.proposedCredits ?? [])
+    .map((credit) => credit.workId)
+    .filter(Boolean))];
+  const requiresSearchIndexResult = (report.proposedCredits ?? []).some((credit) => !credit.metadataOnlyWork);
+  if (requiresSearchIndexResult && proposedWorkIds.length === 1 && !args.assetKey) {
+    throw new Error("Single-work People apply requires --asset-key to avoid scanning the complete search index.");
+  }
+  const searchResults = requiresSearchIndexResult
     ? args.assetKey
       ? [await searchStore.getResult(args.assetKey)].filter(Boolean)
       : await searchStore.search("", 1_000_000)
@@ -84,9 +114,32 @@ try {
     unlinkedCredits,
     ...plan.summary
   };
+  const baselineUnlinkedCredits = searchResults.flatMap((result) => {
+    const work = result.metadata?.work;
+    return (work?.credits ?? result.metadata?.credits ?? []).filter((credit) => !credit.personId);
+  }).length;
+  const noProgress = args.apply
+    && report.proposedCredits?.length > 0
+    && plan.summary.unlinkedCreditCount > 0
+    && plan.updatedResults.length === 0
+    && !plan.summary.catalogChanged;
+  if (noProgress) {
+    throw new Error(`People apply made no progress: residual credits remain=${plan.summary.unlinkedCreditCount}, catalog/index writes=0. Rebuild the supplement from the authoritative residual credit list before retrying.`);
+  }
   if (!args.apply) {
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
   } else {
+    await writeJsonAtomic(runStatusPath, {
+      schemaVersion: 1,
+      status: "in_progress",
+      phase: "writing",
+      startedAt: runStartedAt,
+      updatedAt: new Date().toISOString(),
+      pid: process.pid,
+      reportPath,
+      baselineUnlinkedCredits,
+      plannedUnlinkedCredits: unlinkedCredits.length
+    });
     const backupPath = path.join(stateDir, `apply-backup-${generatedAt.replace(/[:.]/g, "-")}.json`);
     await writeJsonAtomic(backupPath, {
       schemaVersion: 1,
@@ -96,8 +149,45 @@ try {
       searchResults: plan.originalResults
     });
     await applyPersonCatalogPlan({ plan, searchStore, personStore, indexedAt: generatedAt });
-    process.stdout.write(`${JSON.stringify({ ...output, backupPath }, null, 2)}\n`);
+    if (plan.updatedResults.length > 0) {
+      const readback = await verifyPeopleCatalogReadback({
+        searchStore,
+        expectedResults: plan.updatedResults,
+        attempts: 3,
+        delayMs: 1500
+      });
+      if (!readback.verified) {
+        throw new Error(`People catalog readback did not converge after ${readback.attempts} attempt(s): ${JSON.stringify(readback.failures)}`);
+      }
+    }
+    const completedOutput = { ...output, backupPath };
+    await writeJsonAtomic(runStatusPath, {
+      schemaVersion: 1,
+      status: "completed",
+      phase: "readback_verified",
+      startedAt: runStartedAt,
+      completedAt: new Date().toISOString(),
+      pid: process.pid,
+      reportPath,
+      result: completedOutput
+    });
+    process.stdout.write(`${JSON.stringify(completedOutput, null, 2)}\n`);
   }
+} catch (error) {
+  if (runStartedAt) {
+    await writeJsonAtomic(runStatusPath, {
+      schemaVersion: 1,
+      status: "failed_resumable",
+      phase: "error",
+      startedAt: runStartedAt,
+      failedAt: new Date().toISOString(),
+      pid: process.pid,
+      reportPath,
+      error: String(error?.message ?? error),
+      nextTrigger: "保留同一批次报告与备份；先检查 Azure/Notion 读回，再重试同一批次或按残余清单拆分"
+    });
+  }
+  throw error;
 } finally {
   await lease.release();
   productionLock.release();

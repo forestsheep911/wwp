@@ -113,6 +113,40 @@ test("matches a reviewed person through a verified profile alias when the source
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
 });
 
+test("matches compatible writer and screenwriter jobs in the same writing department", () => {
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [
+    { name: "约翰·罗奇", department: "writing", job: "Writer", source: "notion" }
+  ];
+  movie.metadata = {
+    ...movie.metadata,
+    credits: structuredClone(sourceCredits),
+    work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) }
+  };
+  const reviewed = report();
+  reviewed.proposedProfiles = [{
+    ...structuredClone(profile),
+    names: [
+      { value: "John Roach", language: "en", kind: "display", source: "imdb", status: "strong", observedAt: profile.updatedAt },
+      { value: "约翰·罗奇", language: "zh", kind: "alternate", source: "imdb", status: "strong", observedAt: profile.updatedAt }
+    ],
+    externalIds: { imdb: "nm0730034" }
+  }];
+  reviewed.proposedCredits[0].credits = [{
+    name: "John Roach",
+    department: "writing",
+    job: "Screenwriter",
+    source: "imdb",
+    externalIds: { imdb: "nm0730034" },
+    personId,
+    legacyAliases: ["约翰·罗奇"]
+  } as MovieCreditEntry & { legacyAliases: string[] }];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.summary.unlinkedCreditCount, 0);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+});
+
 test("uses existing catalog aliases to collapse an unlinked duplicate credit into the linked relation", () => {
   const existing = structuredClone(profile);
   existing.names = [
@@ -150,6 +184,32 @@ test("uses existing catalog aliases to collapse an unlinked duplicate credit int
   assert.equal(credits.length, 1);
   assert.deepEqual(credits.map((credit) => credit.personId), [personId]);
   assert.equal(credits[0].name, "弗兰卡·波坦特");
+});
+
+test("removes an old unlinked alias when the same work now has a linked person row", () => {
+  const current = emptyPersonCatalogState();
+  current.people[personId] = { profile: {
+    ...structuredClone(profile),
+    names: [
+      { value: "新译名", language: "zh-CN", kind: "display", source: "manual", status: "verified", observedAt: profile.updatedAt },
+      { value: "旧译名", language: "zh-CN", kind: "alternate", source: "manual", status: "verified", observedAt: profile.updatedAt }
+    ]
+  }, workIds: ["work-1"], updatedAt: profile.updatedAt };
+  rebuildDerivedPersonIndexes(current, { "work-1": "作品一" });
+  const movie = result("work-1");
+  const credits: MovieCreditEntry[] = [
+    { name: "旧译名", department: "acting", job: "Actor", source: "notion" },
+    { name: "新译名", department: "acting", job: "Actor", source: "wikidata", personId }
+  ];
+  movie.metadata = { ...movie.metadata, credits, work: { ...movie.metadata!.work!, credits } };
+  const reviewed = report();
+  reviewed.proposedProfiles = [];
+  reviewed.proposedCredits[0].credits = [];
+  reviewed.creditIdentityProfiles = [current.people[personId].profile];
+  const plan = planReviewedPeopleReportApply(current, [movie], reviewed);
+  const merged = plan.updatedResults[0]?.metadata?.work?.credits ?? [];
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].personId, personId);
 });
 
 test("reuses an existing canonical person when a reviewed report rediscovers the same stable identity", () => {
@@ -313,6 +373,27 @@ test("matches voice-actor review credits to legacy actor rows without appending 
   const reviewed = report();
   reviewed.proposedProfiles[0].names[0].value = "奥利维娅·科尔曼";
   reviewed.proposedCredits[0].credits = [{ personId, name: "奥利维娅·科尔曼", department: "acting", job: "Voice Actor", source: "wikidata", externalIds: { wikidata: "Q7088045" } }];
+  const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
+  assert.equal(plan.summary.linkedCreditCount, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 1);
+  assert.equal(plan.updatedResults[0].metadata?.work?.credits?.[0].personId, personId);
+});
+
+test("matches a stable reviewed identity when the provider role description differs", () => {
+  const movie = result("work-1");
+  const sourceCredits: MovieCreditEntry[] = [{ name: "David Attenborough", department: "acting", job: "Actor", source: "notion" }];
+  movie.metadata = { ...movie.metadata, credits: structuredClone(sourceCredits), work: { ...movie.metadata!.work!, credits: structuredClone(sourceCredits) } };
+  const reviewed = report();
+  reviewed.proposedProfiles[0].names[0].value = "David Attenborough";
+  reviewed.proposedProfiles[0].externalIds = { imdb: "nm0041003" };
+  reviewed.proposedCredits[0].credits = [{
+    personId,
+    name: "David Attenborough",
+    department: "acting",
+    job: "Self - Narrator",
+    source: "imdb",
+    externalIds: { imdb: "nm0041003" }
+  }];
   const plan = planReviewedPeopleReportApply(emptyPersonCatalogState(), [movie], reviewed);
   assert.equal(plan.summary.linkedCreditCount, 1);
   assert.equal(plan.updatedResults[0].metadata?.work?.credits?.length, 1);

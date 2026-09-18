@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, Film, Loader2, Search, UserRound } from "lucide-react";
 import type { PublicPersonSummary, SearchResult } from "@wwpdw/shared";
 import { Badge } from "../../components/ui/badge";
@@ -11,12 +11,12 @@ import {
   DialogHeader,
   DialogTitle
 } from "../../components/ui/dialog";
-import { Input } from "../../components/ui/input";
 import { basicInfoLine, bestSummary, formatDate, metadataLine, titleInitial, visibleTags } from "../format";
 import { genreBadgeClass } from "../genre-style";
 import { copy } from "../i18n";
 import type { ResultWithCache } from "../types";
 import { PosterImage } from "./PosterImage";
+import { createSearchSubmitGuard } from "../search-submit-guard";
 
 interface SearchDialogProps {
   error: string;
@@ -59,6 +59,8 @@ export function SearchDialog({
 }: SearchDialogProps) {
   const normalizedQuery = submittedQuery?.trim() ?? "";
   const hasQuery = normalizedQuery.length > 0;
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const submitGuard = useRef(createSearchSubmitGuard());
   const [scope, setScope] = useState<SearchScope>("all");
   const [activeAssetKey, setActiveAssetKey] = useState<string | undefined>();
   const visibleResults = useMemo(
@@ -75,8 +77,16 @@ export function SearchDialog({
   }, [normalizedQuery, visibleResults]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!submitGuard.current.accept(query, loading)) return;
     onSearch(event);
+    // Blur the input only; do not discard keyboard focus on the submit button.
+    inputRef.current?.blur();
   }
+
+  useEffect(() => {
+    if (!open) submitGuard.current = createSearchSubmitGuard();
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -88,23 +98,39 @@ export function SearchDialog({
           <DialogTitle>{copy.search.title}</DialogTitle>
           <DialogDescription>{copy.search.description}</DialogDescription>
         </DialogHeader>
-        <form className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)]" onSubmit={submit}>
+        <form action="/" method="get" role="search" className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)]" onSubmit={submit}>
           <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-950/95 px-2 pt-[env(safe-area-inset-top)] sm:gap-3 sm:px-4 sm:pt-0 sm:pr-14">
-            <DialogClose className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-300 active:bg-slate-800 sm:hidden">
+            <DialogClose type="button" className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-300 active:bg-slate-800 sm:hidden">
               <ArrowLeft className="h-5 w-5" />
               <span className="sr-only">返回</span>
             </DialogClose>
             <Search className="h-5 w-5 shrink-0 text-slate-500" />
-            <Input
+            <textarea
+              ref={inputRef}
+              rows={1}
+              wrap="off"
+              name="q"
+              aria-label="搜索片名、导演或演员"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               autoFocus
-              className="h-16 min-w-0 border-0 bg-transparent px-0 text-lg shadow-none focus-visible:ring-0"
+              className="block h-16 w-full min-w-0 resize-none overflow-hidden border-0 bg-transparent px-0 py-5 text-lg leading-6 text-slate-100 shadow-none outline-none placeholder:text-slate-500 focus-visible:ring-0"
               enterKeyHint="search"
-              inputMode="search"
-              placeholder={copy.search.placeholder}
+              placeholder="片名、导演或演员"
               value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
+              onChange={(event) => onQueryChange(event.target.value.replace(/[\r\n]+/g, " "))}
+              onCompositionStart={() => submitGuard.current.compositionStart()}
+              onCompositionEnd={() => submitGuard.current.compositionEnd()}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (event.repeat || submitGuard.current.blocksEnter(event.nativeEvent.isComposing, event.nativeEvent.keyCode)) return;
+                event.currentTarget.form?.requestSubmit();
+              }}
             />
-            <Button className="min-h-11 shrink-0 px-4" type="submit" disabled={!query.trim() || (loading && query.trim() === submittedQuery)}>
+            <Button className="min-h-11 shrink-0 px-4" type="submit" disabled={!query.trim() || loading}>
               {loading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
               搜索
             </Button>
@@ -324,7 +350,7 @@ function SearchIdleState() {
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-800 bg-slate-900 text-emerald-200">
           <Search className="h-5 w-5" />
         </div>
-        <p className="text-sm font-semibold text-slate-300">输入片名或人物，点击搜索或按回车</p>
+        <p className="text-sm font-semibold text-slate-300">输入片名、导演或演员，点击搜索查找影片</p>
       </div>
     </div>
   );

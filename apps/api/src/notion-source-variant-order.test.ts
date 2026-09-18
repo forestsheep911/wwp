@@ -4,10 +4,19 @@ import test from "node:test";
 import type { MediaVariant } from "@wwpdw/shared";
 import {
   completeStructuredMediaAssetVariants,
+  doubanSubjectIdFromProperties,
   creditsFromProperties,
   postersFromProperties,
   sortMediaAssetVariants
 } from "./notion-source.js";
+
+test("website takes Douban identity only from the maintained field, regardless of prose links", () => {
+  const rich = (value: string) => ({ type: "rich_text", rich_text: [{ plain_text: value }] });
+  const properties = { "基本信息": rich("https://www.douban.com/personage/27233188/ https://movie.douban.com/subject/35801819/") };
+  assert.equal(doubanSubjectIdFromProperties(properties), undefined);
+  assert.equal(doubanSubjectIdFromProperties({ ...properties, "Douban Subject ID": rich("35801819") }), "35801819");
+  assert.equal(doubanSubjectIdFromProperties({ ...properties, "Douban Subject ID": rich("35801819"), "Douban URL": { type: "url", url: "https://movie.douban.com/subject/1234567/" } }), undefined);
+});
 
 function episodeVariant(episodeNumber: number): MediaVariant {
   return {

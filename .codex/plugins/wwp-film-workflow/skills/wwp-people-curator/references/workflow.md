@@ -11,6 +11,37 @@ canonical-index, and timeout failures as explicit blockers with a next
 trigger; settle a fully linked post-publish report before leaving the queue.
 Do not perform a live full-library scan for this reconciliation.
 
+## Resume saved work before researching again
+
+At the beginning of every People run, build a bounded inventory of saved
+artifacts under `.local-data/people/`. Pair each latest report with its
+preflight, Notion checkpoint, and catalog-apply result using the report path
+and stable work/page IDs. Reconcile those IDs against the campaign entry
+before doing any provider or Wikidata request.
+
+- A complete `ready_for_authorized_apply` preflight with zero identity issues,
+  zero unresolved rows, and a matching reviewed report is the next action. It
+  may resume the same guarded apply even when the campaign stage is
+  `pending`, `deferred`, or a recoverable transient `blocked` state.
+- A saved successful Notion checkpoint with a missing or failed catalog apply
+  resumes the catalog apply/replay lane; it must not recreate People pages or
+  rerun discovery.
+- A `failed_resumable` apply resumes from its unchanged report and the last
+  verified sub-batch. Never rerun the whole report blindly after a timeout.
+- A report/preflight pair with a stable identity conflict, human-review gate,
+  missing work evidence, or mismatched work/page ID remains `blocked` or
+  `waiting_user`; do not auto-authorize it merely because the preflight file
+  exists.
+- If a saved artifact is malformed or incomplete but its upstream report and
+  stable IDs remain available, rebuild only the missing derived artifact and
+  continue the same batch. Record the repair before the next provider call.
+
+The resume inventory is part of queue calculation. A run must report counts
+for `resumable_apply`, `resumable_catalog_replay`, `artifact_repair`, and
+`needs_human_or_identity_review` separately. A non-empty resumable count is
+actionable work even when the Notion Workflow Status and filesystem are
+unchanged.
+
 ## Batch artifacts
 
 Use this layout:
@@ -50,6 +81,12 @@ does not contact Notion or external metadata providers:
 ```powershell
 node --import tsx tools/people-work-coverage-audit.mjs --backend azure --candidate-limit 100 --output .local-data/people/<batch-slug>/coverage-audit.json
 ```
+
+Always keep the `node --import tsx` launcher. The audit imports TypeScript
+modules from the API package; a bare `node tools/people-work-coverage-audit.mjs`
+can fail under newer Node versions with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`.
+Classify that as a launcher error, retry with the command above, and do not
+record it as a people-data or provider blocker.
 
 Give this Azure read a finite operational window. If it stalls, interrupt only
 the audit, retain the completed batch artifacts, record the timeout, and resume
@@ -185,8 +222,13 @@ a small JSON input with the exact work identity and 1-20 reviewed credit rows,
 then run:
 
 ```powershell
-node --import tsx tools/person-targeted-supplement.mjs --input .local-data/people/<batch-slug>/targeted-supplement-input.json --output .local-data/people/<batch-slug>/targeted-supplement-report.json --state-dir .local-data/people/<batch-slug>/targeted-supplement --backend azure
+node --import tsx tools/person-targeted-supplement.mjs --input .local-data/people/<batch-slug>/targeted-supplement-input.json --output .local-data/people/<batch-slug>/targeted-supplement-report.json --reviewed-output .local-data/people/<batch-slug>/reviewed-report.json --state-dir .local-data/people/<batch-slug>/targeted-supplement --backend azure
 ```
+
+When `identityIssues` and `unresolved` are both empty, the command writes the
+same audited report to `reviewed-output`; that file then enters the normal
+preflight, Notion upsert, catalog apply, and coverage-settlement path. A report
+with either category non-empty is never promoted automatically.
 
 Each row normally uses a verified Wikidata QID; include matching IMDb/TMDB IDs
 when available. If no Wikidata identity exists, a row may instead carry
@@ -307,6 +349,14 @@ that is absent from provider aliases, add an explicit `creditNameOverrides`
 entry keyed by stable external identity; do not use broad fuzzy person-name
 matching to force a merge.
 
+If the correction is discovered after an initial batch has already been
+published, patch the original complete reviewed report and rerun the complete
+authorized path. Do not apply a one-person subset against the same work: that
+can replace the work's merged credit list with a partial list. The repaired
+report must carry the stable external ID and canonical `personId` (or the
+explicit `creditNameOverrides` mapping), pass preflight again, and finish with
+an authoritative work-coverage readback.
+
 ## Apply editorial review
 
 Prepare `biography-reviews.json` with the reviewed bilingual text, source references, statuses, methods, and any credit-name corrections expected by the existing review tool. Compare each entry against the corresponding composed profile before running:
@@ -418,6 +468,11 @@ stage status:
 node tools/work-enrichment-campaign.mjs settle-people-coverage --item-key <work-key> --coverage .local-data/people/<batch-slug>/post-publish-coverage.json --json
 ```
 
+For production, generate the coverage file with
+`people-work-coverage-audit.mjs --backend azure`; settlement rejects local or
+backend-unknown coverage. A local report may be settled only for an explicit
+local test by adding `--allow-local-coverage`.
+
 The command completes People only for a non-empty `fully_linked` canonical
 credit set. Partial, unlinked, or still-missing credit coverage returns the
 stage to actionable `pending` with exact linked/total/residual counts. Invalid
@@ -438,6 +493,33 @@ relations only when canonical person, department, compatible job, and character
 all agree. Never collapse a person's distinct departments, voice/acting roles,
 or different characters merely because the names resolve to one identity.
 
+Settlement also stores a deterministic fingerprint and attempt count for the
+exact unresolved credit set. If two authoritative passes return the same
+non-empty residual set without new stable identity evidence, the work-local
+People stage is automatically changed to `blocked`, with the exact residual
+names and `nextTrigger=new provider evidence or manual identity confirmation`.
+The block does not stop unrelated works. A changed residual fingerprint or new
+provider/manual evidence resets the count and allows a fresh bounded pass.
+
+Do not let one unresolved person become an endless ordinary queue item. Once
+two bounded research passes have covered different source families and still
+cannot establish a stable external person ID, write the coverage row as an
+explicit `blocked` identity residual. Include the exact name and department,
+the source families already checked, and
+`nextTrigger=new provider evidence or manual identity confirmation`. The
+campaign keeps that credit visible and leaves the work open, but the blocked
+identity must not prevent unrelated works or other People lanes from running.
+Only new evidence may reopen it; do not repeat the same search set on every
+cycle.
+
+The coverage report is also a shape check. If one unlinked row is a combined
+director label or a long slash-separated cast list, mark it as a
+`credit_shape_error` and stop targeted person creation for that row. Repair the
+canonical credit list into one person/role per row from stable IDs and exact
+source evidence first. A composite row must remain a measured residual in
+`work-coverage.json`; it is not evidence that one giant Person profile should be
+created, and it must not be retried unchanged in the next cycle.
+
 When a historical campaign item is still `waiting_user` only because an older
 run requested blanket review, resume that exact item through the guarded
 preflight command instead of manually rewriting campaign JSON:
@@ -447,8 +529,10 @@ node tools/work-enrichment-campaign.mjs authorize-people --item-key <work-key> -
 ```
 
 The command accepts only `ready_for_authorized_apply`, requires the preflight to
-name the same report, and requires the selected work to be at the People
-`waiting_user` stage. Identity ambiguity therefore remains a human gate.
+name the same report, and requires the selected work to be at the People stage.
+That allows a newly clean preflight to recover a prior `blocked` or `deferred`
+row caused by a stale index/provider failure; it does not override identity
+ambiguity because that report cannot reach `ready_for_authorized_apply`.
 
 If the historical reason instead says that a publication or metadata-only
 coverage path did not exist, first re-evaluate it against the current tools.
@@ -563,8 +647,17 @@ Use the guarded converter instead of manually editing the report:
 
 ```powershell
 node tools/person-report-mark-metadata-only.mjs --report .local-data/people/<batch-slug>/reviewed-report.json --work-id <wwm-id> --source-page-id <notion-page-id> --output .local-data/people/<batch-slug>/metadata-only-report.json
+# If the reviewed report still carries a legacy numeric ledger id, add:
+# --source-work-id <legacy-ledger-id>
 node --import tsx tools/person-report-preflight.mjs --report .local-data/people/<batch-slug>/metadata-only-report.json --backend azure --output .local-data/people/<batch-slug>/metadata-only-preflight.json
 ```
+
+For a newly created or still-hidden Notion work page, run the Wikidata pilot with
+`--title` and the stable `WW Work ID`; do not temporarily unhide the page merely
+to make it appear in the playable search index. The authorized catalog apply
+must use the metadata-only report and preflight above. In this branch the apply
+does not require `--asset-key`, must report `searchIndexWrites: 0`, and must be
+followed by the metadata-only coverage audit before settling the People stage.
 
 Expected apply characteristics:
 
@@ -636,3 +729,14 @@ Open the deployed people directory and at least three changed person routes, inc
 
 Finally rerun the reviewed batch as a dry-run and require no unexpected writes.
 - 当人物没有 Wikidata QID 时，不应直接判定为无法补录。若 IMDb 或 TMDB 提供稳定人物 ID，且能核验人物页、作品演职员页与作品 ID 的对应关系，可走“reviewed stable-ID supplement”路径；输入必须保存 `reviewedEvidence`、来源 URL、观察时间和作品信用 URL。未达到这组证据要求时才进入待人工确认。
+
+### Transient provider failures
+
+There is one controlled exception to preserving a reported `blocked` status: a
+reason that is clearly a transient provider failure (timeout, HTTP 429/rate
+limit, network or connection failure, or temporary API unavailability) is
+converted to `deferred`. Use the provider retry time when available, otherwise
+schedule the next review six hours after settlement. Preserve the exact reason,
+residual credits, and next trigger. This is an automatic retry schedule, not a
+human approval gate; durable identity or evidence defects remain `blocked` or
+`waiting_user`.

@@ -13,6 +13,9 @@ const catalogBackend = options.backend
   ?? process.env.SEARCH_INDEX_BACKEND
   ?? process.env.CACHE_BACKEND
   ?? "local";
+if (catalogBackend === "azure" && process.env.PERSON_CATALOG_AZURE_DISABLE_RANGE_QUERY === "1") {
+  console.error("Azure person preflight: range query disabled; using bounded chunk reads.");
+}
 let catalog;
 let catalogSource = `local:${catalogPath}`;
 if (catalogBackend === "azure") {

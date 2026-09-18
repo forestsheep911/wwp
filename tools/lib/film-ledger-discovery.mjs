@@ -10,6 +10,7 @@ function fingerprintMaterial(entry) {
     mediaCount: entry.mediaCount,
     subtitleCount: entry.subtitleCount,
     nfoCount: entry.nfoCount,
+    archiveCount: entry.archiveCount,
     totalBytes: entry.totalBytes,
     latestFileMtime: entry.latestFileMtime ?? null,
     contentFingerprint: entry.contentFingerprint ?? null,
@@ -32,6 +33,7 @@ function legacyFingerprintEntry(entry) {
     mediaCount: entry.mediaCount,
     subtitleCount: entry.subtitleCount,
     nfoCount: entry.nfoCount,
+    archiveCount: entry.archiveCount,
     totalBytes: entry.totalBytes,
     largestMedia: entry.fingerprintMedia ?? entry.largestMedia,
     flags: entry.flags
@@ -41,6 +43,12 @@ function legacyFingerprintEntry(entry) {
 
 export function fingerprintEntry(entry) {
   return createHash("sha256").update(JSON.stringify(fingerprintMaterial(entry))).digest("hex");
+}
+
+// Older scans did not persist imageCount. Accept the short-lived expanded
+// fingerprint written by 0.1.99 without reopening every historical source.
+function expandedEvidenceFingerprintEntry(entry) {
+  return createHash("sha256").update(JSON.stringify({ ...fingerprintMaterial(entry), imageCount: entry.imageCount })).digest("hex");
 }
 
 function migrationFingerprintEntry(entry) {
@@ -74,8 +82,14 @@ function validatePayload(payload) {
 }
 
 function sourceKindFor(entry) {
-  // Subtitle-only directories are reusable companion evidence, never encode inputs.
+  // Subtitle- and artwork-only directories are reusable companion evidence,
+  // never independent encode inputs.
   if ((entry.mediaCount ?? 0) === 0 && (entry.subtitleCount ?? 0) > 0) return "subtitle_bundle";
+  if ((entry.mediaCount ?? 0) === 0 && ((entry.imageCount ?? 0) > 0 || (entry.nfoCount ?? 0) > 0)) return "companion_evidence";
+  // Archives without a recognized media file are not safe production inputs:
+  // they may be manga, documents, subtitles, or a container that still needs
+  // extraction. Keep them visible without creating a phantom intake task.
+  if ((entry.mediaCount ?? 0) === 0 && (entry.archiveCount ?? 0) > 0) return "archive_bundle";
   return entry.flags?.looksSeries ? "series_folder" : "folder";
 }
 
@@ -126,6 +140,7 @@ export function importScan(repo, payload) {
       continue;
     }
     const fingerprintMatches = previous && (previous.fingerprint === fingerprint
+      || previous.fingerprint === expandedEvidenceFingerprintEntry(entry)
       || previous.fingerprint === migrationFingerprintEntry(entry)
       || previous.fingerprint === legacyFingerprintEntry(entry));
     const flatPathRepair = Boolean(previous
@@ -166,11 +181,14 @@ export function importScan(repo, payload) {
       repo.requeueIntakeTask(source.id, {
         reason: "Flat source path repaired; inspect the newly reachable media identity and Notion state"
       });
-    } else if (!quarantineRoot && !syntheticMissing && state === "inserted") {
+    } else if (!quarantineRoot && !syntheticMissing && state === "inserted"
+      && !["companion_evidence", "subtitle_bundle", "archive_bundle"].includes(source.source_kind)) {
       repo.requeueIntakeTask(source.id, {
         reason: "New source discovered; inspect identity, duplicates, Notion state, and routing"
       });
-    } else if (!quarantineRoot && !syntheticMissing && state === "changed" && !isResolvedCollectionShrink(repo, root.id, source)) {
+    } else if (!quarantineRoot && !syntheticMissing && state === "changed"
+      && !["companion_evidence", "subtitle_bundle", "archive_bundle"].includes(source.source_kind)
+      && !isResolvedCollectionShrink(repo, root.id, source)) {
       repo.requeueIntakeTask(source.id, {
         reason: "Source contents changed; inspect added, replaced, or removed media before continuing"
       });
@@ -194,5 +212,9 @@ export function importScan(repo, payload) {
       }
     }
   }
+  // A prior split or manual member binding can leave the parent task pending
+  // even though every leaf is already identified. Reconcile this on every
+  // bounded scan so stale parent tasks cannot keep intake falsely actionable.
+  repo.reconcileCollectionIntake(root.id);
   return { root, summary };
 }

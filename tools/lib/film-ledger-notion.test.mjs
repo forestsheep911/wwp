@@ -371,7 +371,7 @@ test("adapter accepts an existing spec nested under a legacy callout without all
   assert.equal(result.structureVerified, true);
 });
 
-test("adapter rejects minimally linked or review-gated Media Assets rows", async () => {
+test("adapter rejects Media Assets rows without playback evidence", async () => {
   const client = {
     pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
     blocks: { children: { async list() { return { results: [{ id: "media-1", type: "video", video: { caption: [{ plain_text: "Expected.mp4" }], file: { url: "https://example.test/video.mp4" } } }] }; } } },
@@ -391,7 +391,34 @@ test("adapter rejects minimally linked or review-gated Media Assets rows", async
   });
   assert.equal(result.assetsVerified, false);
   assert.equal(result.mediaAssetPageId, "minimal-asset");
-  assert.equal(result.assetGateCode, "visibility_gate");
+  assert.equal(result.assetGateCode, "asset_fields_incomplete");
+});
+
+test("adapter allows a playable asset to remain visible while follow-up review is open", async () => {
+  const client = {
+    pages: { async retrieve({ page_id }) { return { id: page_id, parent: page_id === "work-1" ? { type: "workspace", workspace: true } : { type: "page_id", page_id: "work-1" } }; } },
+    blocks: { children: { async list() { return { results: [{ id: "media-1", type: "video", video: { caption: [{ plain_text: "Expected.mp4" }], file: { url: "https://example.test/video.mp4" } } }] }; } } },
+    dataSources: { async query() { return { results: [{
+      id: "reviewed-asset", properties: {
+        Work: { type: "relation", relation: [{ id: "work-1" }] },
+        "Source Page ID": { type: "rich_text", rich_text: [{ plain_text: "spec-1" }] },
+        "Media Block ID": { type: "rich_text", rich_text: [{ plain_text: "media-1" }] },
+        "Asset Type": { type: "select", select: { name: "playable_video" } },
+        "Media Availability": { type: "select", select: { name: "playable" } },
+        "Video Codec": { type: "select", select: { name: "hvc1" } },
+        Container: { type: "select", select: { name: "mp4" } },
+        "Playback Verified": { type: "checkbox", checkbox: true },
+        "Hide from Website": { type: "checkbox", checkbox: true },
+        "Needs Review": { type: "checkbox", checkbox: true }
+      }
+    }] }; } }
+  };
+  const result = await createNotionTargetAdapter(client, { mediaAssetsDataSourceId: "assets-ds" }).inspectTarget({
+    work_page_id: "work-1", spec_page_id: "spec-1", expected_filename: "Expected.mp4"
+  });
+  assert.equal(result.assetsVerified, true);
+  assert.equal(result.assetGateCode, null);
+  assert.deepEqual(result.evidence.visibilityAdvisory, { hidden: true, needsReview: true });
 });
 
 test("adapter rejects same-work Media Assets rows without target-specific evidence", async () => {

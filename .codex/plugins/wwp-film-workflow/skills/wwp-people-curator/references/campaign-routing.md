@@ -257,6 +257,14 @@ staging failure into a Goal-level blocker or human-review state. Reserve a
 blocker for missing source evidence, ambiguous identity, provider/API failure,
 or another condition the AI cannot resolve from retained state.
 
+For a person identity that remains unresolved after two bounded passes using
+different source families, stop treating the same residual as ordinary queue
+work. Record an explicit work-local `blocked` residual with the exact name,
+department, checked evidence, and next trigger (`new provider evidence or
+manual identity confirmation`). This blocker belongs to that credit only; the
+People cursor may continue with other works and lanes, and the same searches
+must not be repeated until the trigger changes.
+
 ## Explain every selection
 
 Before provider research or any write, create `selection-explanation.json` and

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseDoubanSubjectId } from "@wwpdw/shared";
 import { canonicalGenreOptions } from "./genre-taxonomy.js";
 
 export interface MovieIdentityHints {
@@ -32,8 +33,8 @@ export interface NotionManagedProperty {
 
 const imdbIdPattern = /\btt\d{6,10}\b/gi;
 const imdbUrlPattern = /imdb\.com\/title\/(tt\d{6,10})/gi;
-const doubanUrlPattern = /douban\.com\/subject\/(\d{4,12})/gi;
-const doubanTextPattern = /(?:douban|\u8c46\u74e3)[^\d]{0,24}(\d{4,12})/gi;
+const doubanUrlPattern = /https?:\/\/movie\.douban\.com\/subject\/(\d{4,12})(?=\/|[?#\s]|$)/gi;
+const doubanTextPattern = /^(?:Douban Subject ID|豆瓣电影ID|豆瓣条目ID)\s*[:：=]?\s*(\d{4,12})\s*$/gi;
 const tmdbUrlPattern = /themoviedb\.org\/movie\/(\d{1,12})/gi;
 const tmdbTextPattern = /\btmdb[^\d]{0,16}(\d{1,12})/gi;
 const rottenTomatoesUrlPattern = /https?:\/\/(?:www\.)?rottentomatoes\.com\/(?:m|tv)\/[^\s<>"'）)\],;]+/gi;
@@ -273,7 +274,7 @@ export function normalizeImdbId(value: string | undefined) {
 }
 
 export function normalizeDoubanSubjectId(value: string | undefined) {
-  return normalizeNumericId(value);
+  return parseDoubanSubjectId(value);
 }
 
 export function normalizeTmdbId(value: string | undefined) {

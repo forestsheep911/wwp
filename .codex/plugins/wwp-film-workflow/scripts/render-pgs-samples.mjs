@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 function usage() {
   console.log(`Usage:
-  node scripts/render-pgs-samples.mjs --input <media> --subtitle-stream <ordinal> --output-dir <directory> [--events 3] [--start <seconds>]
+  node scripts/render-pgs-samples.mjs --input <media> --subtitle-stream <ordinal> --output-dir <directory> [--events 3] [--start <seconds>] [--timeout-ms 180000]
 
 Extracts a bounded PGS subtitle sample, then renders the first distinct subtitle
 events at or after the optional start time over black images. It records evidence
@@ -16,11 +16,11 @@ production branch.
 }
 
 export function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", events: 3, start: 0 };
+  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", events: 3, start: 0, timeout_ms: 180000 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
-    else if (["--input", "--subtitle-stream", "--output-dir", "--events", "--start", "--ffmpeg", "--ffprobe"].includes(arg)) {
+    else if (["--input", "--subtitle-stream", "--output-dir", "--events", "--start", "--timeout-ms", "--ffmpeg", "--ffprobe"].includes(arg)) {
       options[arg.slice(2).replaceAll("-", "_")] = argv[++index];
     } else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -30,15 +30,18 @@ export function parseArgs(argv) {
   }
   options.events = Number(options.events);
   options.start = Number(options.start);
+  options.timeoutMs = Number(options.timeout_ms);
   options.subtitleStream = Number(options.subtitle_stream);
   if (!Number.isInteger(options.subtitleStream) || options.subtitleStream < 0) throw new Error("--subtitle-stream must be a non-negative ordinal");
   if (!Number.isInteger(options.events) || options.events < 1 || options.events > 12) throw new Error("--events must be 1-12");
   if (!Number.isFinite(options.start) || options.start < 0) throw new Error("--start must be a non-negative number of seconds");
+  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1) throw new Error("--timeout-ms must be a positive integer");
   return options;
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true });
+function run(command, args, timeoutMs) {
+  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true, timeout: timeoutMs });
+  if (result.error?.code === "ETIMEDOUT") throw new Error(`${command} timed out after ${timeoutMs}ms`);
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} failed: ${result.stderr.trim()}`);
   return result.stdout;
@@ -73,14 +76,14 @@ function main() {
   const supPath = path.join(tempDir, "sample.sup");
   try {
     const seekArgs = options.start > 0 ? ["-ss", String(options.start)] : [];
-    run(options.ffmpeg, ["-y", "-v", "error", ...seekArgs, "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath]);
-    const packetOutput = run(options.ffprobe, ["-v", "error", "-show_entries", "packet=pts_time", "-of", "csv=p=0", supPath]);
+    run(options.ffmpeg, ["-y", "-v", "error", ...seekArgs, "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath], options.timeoutMs);
+    const packetOutput = run(options.ffprobe, ["-v", "error", "-show_entries", "packet=pts_time", "-of", "csv=p=0", supPath], options.timeoutMs);
     const times = distinctEventTimes(packetOutput.split(/\r?\n/u), options.events);
     if (times.length === 0) throw new Error("No PGS subtitle events were extracted");
     const rendered = times.map((time, index) => {
       const output = path.join(outputDir, sampleName(input, options.subtitleStream, index));
       const duration = String(Math.max(Math.ceil(time + 3), 4));
-      run(options.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=1:d=${duration}`, "-i", supPath, "-filter_complex", "[0:v][1:s]overlay", "-ss", String(time + 0.5), "-frames:v", "1", output]);
+      run(options.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=1:d=${duration}`, "-i", supPath, "-filter_complex", "[0:v][1:s]overlay", "-ss", String(time + 0.5), "-frames:v", "1", output], options.timeoutMs);
       return { eventTimeSeconds: time, output };
     });
     process.stdout.write(`${JSON.stringify({ input, subtitleStream: options.subtitleStream, sourceStartSeconds: options.start, rendered }, null, 2)}\n`);

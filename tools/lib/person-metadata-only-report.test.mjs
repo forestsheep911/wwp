@@ -35,3 +35,15 @@ test("rejects unresolved or partially linked metadata-only reports", () => {
   delete unlinked.proposedCredits[0].credits[0].personId;
   assert.throws(() => markMetadataOnlyWork(unlinked, { workId: "wwm_example", sourcePageId: pageId }), /fully linked/u);
 });
+
+test("remaps a legacy ledger work id to the stable Notion work id", () => {
+  const report = cleanReport();
+  report.proposedCredits[0].workId = "327";
+  const result = markMetadataOnlyWork(report, {
+    sourceWorkId: "327",
+    workId: "wwm_stable",
+    sourcePageId: pageId
+  });
+  assert.equal(result.proposedCredits[0].workId, "wwm_stable");
+  assert.equal(result.proposedCredits[0].metadataOnlyWork.mode, "metadata-only");
+});

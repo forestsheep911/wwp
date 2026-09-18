@@ -19,6 +19,7 @@ import {
   pageTitle,
   pendingHumanWorkflowNoteFromPage,
   propertyText,
+  workVisibilityBlockers,
   workReleaseBlockers,
   workflowNoteFromPage,
   workflowStateFromPage
@@ -37,7 +38,7 @@ function loadDotEnv() {
 function parse(argv) {
   const values = new Set(["--page-id", "--expected-title", "--status", "--note", "--actor", "--limit", "--db", "--local-address", "--hide-from-website"]);
   const repeated = new Set(["--page-id"]);
-  const booleans = new Set(["--apply", "--json", "--release-work"]);
+  const booleans = new Set(["--apply", "--json", "--release-work", "--release-visibility"]);
   const options = { db: DEFAULT_DB, apply: false, json: false };
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -159,15 +160,22 @@ async function queryActionable(notion, dataSourceId, limit) {
 
 async function applySet(notion, page, options) {
   const releaseWork = options.release_work === true;
+  const releaseVisibility = options.release_visibility === true;
   const visibilityRequested = typeof options.hide_from_website === "boolean";
+  if (releaseWork && releaseVisibility) {
+    throw new Error("--release-work and --release-visibility cannot be used together");
+  }
   if (releaseWork && options.status !== "已完成") {
     throw new Error("--release-work requires --status 已完成");
   }
   if (releaseWork && options.hide_from_website === true) {
     throw new Error("--release-work cannot keep the work hidden");
   }
-  if (options.hide_from_website === false && !releaseWork) {
-    throw new Error("Clearing Hide from Website requires --release-work");
+  if (releaseVisibility && options.hide_from_website !== false) {
+    throw new Error("--release-visibility requires --hide-from-website false");
+  }
+  if (options.hide_from_website === false && !releaseWork && !releaseVisibility) {
+    throw new Error("Clearing Hide from Website requires --release-work or --release-visibility");
   }
   if (visibilityRequested && page.properties?.["Hide from Website"]?.type !== "checkbox") {
     throw new Error("Hide from Website checkbox is missing");
@@ -176,8 +184,15 @@ async function applySet(notion, page, options) {
   if (releaseBlockers.length) {
     throw new Error(`Work release blocked: ${releaseBlockers.join(", ")}`);
   }
+  if (releaseVisibility) {
+    const visibilityBlockers = workVisibilityBlockers(page);
+    if (visibilityBlockers.length) {
+      throw new Error(`Work visibility release blocked: ${visibilityBlockers.join(", ")}`);
+    }
+  }
+  const nextStatus = options.status || workflowStateFromPage(page);
   const update = buildWorkflowUpdate(page, {
-    status: options.status,
+    status: nextStatus,
     note: options.note,
     actor: options.actor ?? "ai",
     at: new Date().toISOString(),
@@ -188,10 +203,10 @@ async function applySet(notion, page, options) {
   if (!options.apply) return { page, update, applied: false };
   await notion.pages.update({ page_id: page.id, properties: update.properties });
   const readback = await notion.pages.retrieve({ page_id: page.id });
-  if (workflowStateFromPage(readback) !== options.status) {
+  if (workflowStateFromPage(readback) !== nextStatus) {
     throw new Error(`Workflow status readback failed for ${page.id}`);
   }
-  const expectedVisibility = releaseWork ? false : options.hide_from_website;
+  const expectedVisibility = releaseWork || releaseVisibility ? false : options.hide_from_website;
   if (typeof expectedVisibility === "boolean"
     && readback.properties?.["Hide from Website"]?.checkbox !== expectedVisibility) {
     throw new Error(`Work visibility readback failed for ${page.id}`);
@@ -279,8 +294,8 @@ async function main() {
 
     if (command === "set") {
       const pageId = extractId(options.page_id?.[0]);
-      if (!pageId || !options.status || !options.expected_title) {
-        throw new Error("set requires --page-id, --expected-title, and --status");
+      if (!pageId || (!options.status && !options.release_visibility) || !options.expected_title) {
+        throw new Error("set requires --page-id, --expected-title, and --status (unless --release-visibility is used)");
       }
       const page = await notion.pages.retrieve({ page_id: pageId });
       assertExpectedPageTitle(page, options.expected_title);

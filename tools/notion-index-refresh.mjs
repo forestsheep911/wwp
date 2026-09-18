@@ -10,6 +10,9 @@ function parseArgs(args) {
     else if (arg === "--title") options.title = args[++index];
     else if (arg === "--asset-key") options.assetKey = args[++index];
     else if (arg === "--backend") options.backend = args[++index];
+    else if (arg === "--resolve-ip") options.resolveIp = args[++index];
+    else if (arg === "--local-address") options.localAddress = args[++index];
+    else if (arg === "--no-proxy") options.noProxy = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pageId) throw new Error("--page-id is required.");
@@ -21,6 +24,14 @@ function parseArgs(args) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.resolveIp) process.env.NOTION_API_RESOLVE_IP = options.resolveIp;
+  if (options.localAddress) process.env.NOTION_API_LOCAL_ADDRESS = options.localAddress;
+  if (options.noProxy) {
+    process.env.NOTION_PROXY_URL = "";
+    process.env.HTTP_PROXY = "";
+    process.env.HTTPS_PROXY = "";
+    process.env.ALL_PROXY = "";
+  }
   if (options.backend) process.env.SEARCH_INDEX_BACKEND = options.backend;
   await import("tsx/esm");
   const [notionSource, indexedRefresh, cacheStore] = await Promise.all([

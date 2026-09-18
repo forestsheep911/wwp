@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { defaultCreditPolicy, mockSearchResults } from "@wwpdw/shared";
 import { CinemaLayout } from "../../src/cinema/components/CinemaLayout";
 import { LibraryTab } from "../../src/cinema/components/LibraryTab";
+import { FavoritesPanel } from "../../src/cinema/components/FavoritesPanel";
+import { DoubanImportPanel } from "../../src/cinema/components/DoubanImportPanel";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../../src/components/ui/dialog";
 import type { AppTab, BrowseChannel, BrowseViewId, ResultWithCache } from "../../src/cinema/types";
 import "../../src/styles.css";
@@ -18,7 +20,7 @@ function Review() {
   const partial = new URLSearchParams(location.search).has("partial");
   const [partialState, setPartialState] = useState("loading");
   const [partialFilms, setPartialFilms] = useState(films);
-  const [activeTab, setTab] = useState<AppTab>("library");
+  const [activeTab, setTab] = useState<AppTab>(new URLSearchParams(location.search).has("collection") ? "favorites" : "library");
   const [channel, setChannel] = useState<BrowseChannel>("recommended");
   const [view, setView] = useState<BrowseViewId>("recent");
   const [detail, setDetail] = useState<ResultWithCache>();
@@ -27,6 +29,17 @@ function Review() {
   const [noticeOpen, setNoticeOpen] = useState(false);
   const noop = () => {};
   const placeholder = <p data-review-action>{action || activeTab}</p>;
+  const entries = Array.from({ length: 1002 }, (_, i) => ({
+    assetKey: `saved-${i}`, title: films[0].title, addedAt: "2026-09-17",
+    [i < 953 ? "wantToWatchAt" : i < 957 ? "watchingAt" : "watchedAt"]: "2026-09-17",
+    result: { ...films[0], assetKey: `saved-${i}`, metadata: { ...films[0].metadata, posters: [{source: "blob" as const, url: "/api/posters/fixture.webp"}] }, variants: i % 2 ? [] : films[0].variants }
+  }));
+  const collection = <div className="grid min-w-0 gap-4">
+    <DoubanImportPanel collection={{entries,revision:"fixture"}} onImport={noop} legacyRecords={[]} disabled />
+    <FavoritesPanel favorites={entries} cachedAssets={[]} creditPolicy={defaultCreditPolicy} onRemove={noop}
+      getDetailHref={film => `?detail=${film.assetKey}`} onOpenDetail={film => {setDetail(film);setTab("library");}}
+      onSelect={() => setAction("prepare")} />
+  </div>;
   const library = <LibraryTab creditPolicy={defaultCreditPolicy} query="" error="" viewMode="gallery"
     results={[]} browseChannel={channel} browseResults={loading ? [] : partial ? partialFilms : films} browseView={view} browseLoading={loading}
     browseLoadingMore={partial && partialState === "loading"} browseHasMore={partial && partialState !== "done"} browseLoadMode="paged" historyItems={[]} trackedItems={[]}
@@ -39,7 +52,7 @@ function Review() {
     onRefreshBrowse={noop} onViewModeChange={noop} onSelect={noop} onDownload={noop} />;
   return <><CinemaLayout activeTab={activeTab} accountLabel="测试观众" accountDetail="普通账户" canChangePasscode canRequestMovie
     noticeUnreadCount={3} theme="dark" library={library} people={placeholder} statistics={placeholder} cached={placeholder}
-    forum={placeholder} history={placeholder} favorites={placeholder} watchlist={placeholder} nowPlaying={placeholder}
+    forum={placeholder} history={placeholder} favorites={collection} watchlist={placeholder} nowPlaying={placeholder}
     help={placeholder} profile={placeholder} tasks={placeholder} showAdmin={false} onActiveTabChange={setTab} onLock={noop}
     onOpenHome={() => setTab("library")} onOpenPeople={() => setTab("people")} onOpenStatistics={() => setTab("statistics")}
     onOpenHelp={() => setTab("help")} onOpenForum={() => setTab("forum")} onOpenFavorites={() => setTab("favorites")}

@@ -3,6 +3,7 @@ import type { CollectionDocumentStore } from "@wwpdw/cache-store";
 import { CollectionConflict } from "@wwpdw/cache-store";
 import { collectionDoubanId, collectionStatus, parseDoubanImport } from "@wwpdw/shared";
 import type { CollectionPreview, CollectionPreviewRow, CollectionResponse, DoubanRecord, ImportStrategy, MemberCollectionEntry as Entry, SearchResult } from "@wwpdw/shared";
+import { publicLibraryResults } from "./public-library.js";
 
 interface Document extends CollectionResponse {
   undo?: { id: string; revision: string; entries: Entry[] };
@@ -20,7 +21,8 @@ const hasValue = (value: unknown) => value !== null && value !== undefined && va
 
 function catalogMap(catalog: SearchResult[]) {
   const map = new Map<string, SearchResult[]>();
-  for (const result of catalog) {
+  for (const result of publicLibraryResults(catalog)) {
+    map.set(`asset:${result.assetKey}`, [result]);
     const id = collectionDoubanId(result);
     if (!id) continue;
     const list = map.get(id) ?? [];
@@ -30,9 +32,10 @@ function catalogMap(catalog: SearchResult[]) {
   return map;
 }
 function bind(entry: Entry, index: Map<string, SearchResult[]>) {
-  const matches = index.get(entryId(entry)) ?? [];
+  const matches = index.get(entryId(entry)) ?? index.get(`asset:${entry.assetKey}`) ?? [];
   const result = matches.find(item => item.assetKey === entry.assetKey) ?? (matches.length === 1 ? matches[0] : undefined);
-  return result ? { ...entry, assetKey: result.assetKey, result } : entry;
+  // Saved snapshots must not advertise variants that have since been removed.
+  return result ? { ...entry, assetKey: result.assetKey, result } : { ...entry, result: { ...entry.result, variants: [], cache: undefined } };
 }
 function fromRecord(record: DoubanRecord): Entry {
   const now = new Date().toISOString();
@@ -97,7 +100,7 @@ export function buildCollectionPlan(records: DoubanRecord[], current: Entry[], c
 }
 
 export class MemberCollectionService {
-  constructor(private readonly store: CollectionDocumentStore, private readonly catalog: () => Promise<SearchResult[]>) {}
+  constructor(private readonly store: CollectionDocumentStore, private readonly catalog: () => Promise<SearchResult[]>, private readonly hydrate: (result: SearchResult) => Promise<SearchResult> = async result => result) {}
   private key(owner: string) { return `collection:${owner}`; }
   private async document(owner: string) {
     const stored = await this.store.read<Document>(this.key(owner));
@@ -106,7 +109,12 @@ export class MemberCollectionService {
   async get(owner: string): Promise<CollectionResponse> {
     const { value } = await this.document(owner);
     const index = catalogMap(await this.catalog());
-    return { entries: value.entries.map(entry => bind(entry, index)), revision: value.revision, undoImportId: value.undo?.revision === value.revision ? value.undo.id : undefined };
+    const entries: Entry[] = [];
+    for (const saved of value.entries) {
+      const entry = bind(saved, index);
+      entries.push({ ...entry, result: await this.hydrate(entry.result) });
+    }
+    return { entries, revision: value.revision, undoImportId: value.undo?.revision === value.revision ? value.undo.id : undefined };
   }
   async preview(owner: string, data: unknown, strategy: ImportStrategy): Promise<CollectionPreview> {
     if (!["replace", "douban", "site"].includes(strategy)) throw new Error("请选择有效的导入策略。");

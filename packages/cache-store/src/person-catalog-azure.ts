@@ -42,7 +42,7 @@ const payloadChunkChars = 30_000;
 // 4 MiB; groups of ten have a much safer service-time margin.
 const transactionChunkCount = 10;
 const transientReadDelaysMs = [250, 750, 1_500];
-const readConcurrency = 8;
+const defaultReadConcurrency = 32;
 
 export class AzurePersonCatalogStore implements PersonCatalogStore {
   readonly description: string;
@@ -72,16 +72,10 @@ export class AzurePersonCatalogStore implements PersonCatalogStore {
       if (!manifest.generationId || !manifest.chunkCount || manifest.chunkCount < 1) {
         throw new Error("Person catalog manifest is incomplete.");
       }
-      const chunks = this.tableClient.listEntities
-        ? await this.readGeneration(manifest.generationId, manifest.chunkCount)
-        : await mapConcurrent(manifest.chunkCount, readConcurrency, async (index) => {
-          const entity = await withTransientRetry(() => this.tableClient.getEntity<PersonCatalogEntity>(
-            partitionKey,
-            chunkRowKey(manifest.generationId!, index)
-          ));
-          if (typeof entity.payload !== "string") throw new Error(`Person catalog chunk is missing: ${index}`);
-          return entity.payload;
-        });
+      const disableRangeQuery = process.env.PERSON_CATALOG_AZURE_DISABLE_RANGE_QUERY === "1";
+      const chunks = this.tableClient.listEntities && !disableRangeQuery
+        ? await this.readGenerationWithFallback(manifest.generationId, manifest.chunkCount)
+        : await this.readChunksByKey(manifest.generationId, manifest.chunkCount);
       return parseState(chunks.join(""));
     } catch (error) {
       if (isNotFound(error)) return emptyState();
@@ -154,6 +148,58 @@ export class AzurePersonCatalogStore implements PersonCatalogStore {
       throw new Error(`Person catalog generation is incomplete: expected ${chunkCount}, found ${chunks.size}; missing ${missing.slice(0, 10).join(",")}`);
     }
     return Array.from({ length: chunkCount }, (_, index) => chunks.get(index)!);
+  }
+
+  private async readGenerationWithFallback(generationId: string, chunkCount: number) {
+    try {
+      // Range enumeration is an optimization. Bound it so a stalled Azure
+      // iterator can fall back to deterministic generation-chunk reads.
+      return await withTimeout(
+        this.readGeneration(generationId, chunkCount),
+        personCatalogRangeQueryTimeoutMs(),
+        "Azure person catalog range query timed out"
+      );
+    } catch (error) {
+      if (!isTransientReadError(error)) throw error;
+      return this.readChunksByKey(generationId, chunkCount);
+    }
+  }
+
+  private async readChunksByKey(generationId: string, chunkCount: number) {
+    return mapConcurrent(chunkCount, personCatalogReadConcurrency(), async (index) => {
+      const entity = await withTransientRetry(() => this.tableClient.getEntity<PersonCatalogEntity>(
+        partitionKey,
+        chunkRowKey(generationId, index)
+      ));
+      if (typeof entity.payload !== "string") throw new Error(`Person catalog chunk is missing: ${index}`);
+      return entity.payload;
+    });
+  }
+}
+
+function personCatalogReadConcurrency() {
+  const configured = Number(process.env.PERSON_CATALOG_AZURE_READ_CONCURRENCY);
+  if (!Number.isFinite(configured)) return defaultReadConcurrency;
+  return Math.min(64, Math.max(1, Math.floor(configured)));
+}
+
+function personCatalogRangeQueryTimeoutMs() {
+  const configured = Number(process.env.PERSON_CATALOG_AZURE_RANGE_QUERY_TIMEOUT_MS);
+  if (!Number.isFinite(configured)) return 15_000;
+  return Math.min(120_000, Math.max(1_000, Math.floor(configured)));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(message), { code: "ETIMEDOUT" })), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

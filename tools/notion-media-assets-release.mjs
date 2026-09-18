@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
-import { pendingHumanWorkflowNoteFromPage } from "./lib/notion-workflow-handoff.mjs";
+import { explicitVisibilityHoldFromPage } from "./lib/notion-workflow-handoff.mjs";
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -54,9 +54,12 @@ after all evidence matches and verifies the updated row by direct readback.
 Network workaround:
   --resolve-ip <api-ip> --local-address <lan-ip>
 
-Pass the exact Work page ID to --release-work-page only after every manifest item has passed its exact
-Media Assets readback. It releases the matching work page after confirming all
-items belong to that page and the work has no Human Issue.`);
+  Pass the exact Work page ID to --release-work-page when at least one manifest
+ item has passed its exact Media Assets readback. It releases the matching work
+ page after confirming all items belong to that page; blocked optional or
+ incomplete items remain hidden and are reported for later repair. Metadata/review
+ issues remain intact; an explicit human note requesting that the work stay
+ hidden still blocks the work release.`);
 }
 
 function dotenv(name) {
@@ -136,12 +139,11 @@ async function retrieveAssetPage(notion, item) {
 
 function releaseWorkPatch(page) {
   const properties = page.properties ?? {};
-  if (pendingHumanWorkflowNoteFromPage(page)) {
-    throw new Error("Refusing to release work page with an unacknowledged human Workflow Note.");
+  if (explicitVisibilityHoldFromPage(page)) {
+    throw new Error("Refusing to release work page with an explicit human visibility hold.");
   }
   const patch = {};
   if (properties["Hide from Website"]?.type === "checkbox") patch["Hide from Website"] = { checkbox: false };
-  if (properties["Needs Review"]?.type === "checkbox") patch["Needs Review"] = { checkbox: false };
   if (properties["Media Availability"]?.type === "select") patch["Media Availability"] = { select: { name: "playable" } };
   return patch;
 }
@@ -225,6 +227,10 @@ export function validateReleaseCandidate(page, item) {
   };
 }
 
+export function hasPlayableWorkReleaseEvidence(summary) {
+  return (summary.released ?? 0) + (summary.alreadyReleased ?? 0) + (summary.wouldRelease ?? 0) > 0;
+}
+
 function readManifest(manifestPath) {
   const payload = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   if (!Array.isArray(payload.items) || payload.items.length === 0) {
@@ -300,8 +306,8 @@ async function main() {
     if (expectedWorkIds.length !== 1 || !sameNotionId(expectedWorkIds[0], options.releaseWorkPageId)) {
       throw new Error("--release-work-page must exactly match the sole expected Work page in the manifest.");
     }
-    if (summary.blocked > 0 || summary.wouldRelease > 0) {
-      throw new Error("Refusing to release work page before every Media Asset is fully released.");
+    if (!hasPlayableWorkReleaseEvidence(summary)) {
+      throw new Error("Refusing to release work page: no verified playable Media Asset passed the exact release checks.");
     }
     const work = await notion.pages.retrieve({ page_id: options.releaseWorkPageId });
     const patch = releaseWorkPatch(work);
@@ -310,12 +316,16 @@ async function main() {
       const readback = await notion.pages.retrieve({ page_id: work.id });
       const readbackProperties = readback.properties ?? {};
       if (readbackProperties["Hide from Website"]?.checkbox !== false
-        || readbackProperties["Needs Review"]?.checkbox !== false
         || readbackProperties["Media Availability"]?.select?.name !== "playable") {
         throw new Error("Work page release readback failed.");
       }
     }
-    workRelease = { pageId: work.id, action: options.apply ? "released" : "would_release" };
+    workRelease = {
+      pageId: work.id,
+      action: options.apply ? "released" : "would_release",
+      blockedAssetsRemainHidden: summary.blocked > 0,
+      blockedAssetCount: summary.blocked
+    };
   }
   const report = {
     generatedAt: new Date().toISOString(),

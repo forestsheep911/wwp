@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { validateReleaseCandidate } from "./notion-media-assets-release.mjs";
+import { hasPlayableWorkReleaseEvidence, validateReleaseCandidate } from "./notion-media-assets-release.mjs";
 
 test("release writer serializes Notion requests at one-second intervals", () => {
   const source = fs.readFileSync(path.resolve("tools/notion-media-assets-release.mjs"), "utf8");
@@ -135,4 +135,17 @@ test("requires the manifest to state the movie or series episode expectation", (
     () => validateReleaseCandidate(page(true), incomplete),
     /requires expectedEpisodeNumber/
   );
+});
+
+test("asset release does not require metadata review to be closed", () => {
+  const reviewed = page(true);
+  reviewed.properties["Needs Review"] = property("checkbox", true);
+  const result = validateReleaseCandidate(reviewed, item);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "release");
+});
+
+test("one verified asset can release work visibility while optional assets remain blocked", () => {
+  assert.equal(hasPlayableWorkReleaseEvidence({ released: 1, alreadyReleased: 0, wouldRelease: 0, blocked: 3 }), true);
+  assert.equal(hasPlayableWorkReleaseEvidence({ released: 0, alreadyReleased: 0, wouldRelease: 0, blocked: 3 }), false);
 });

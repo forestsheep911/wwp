@@ -15,6 +15,27 @@ test("parseArgs accepts a bounded positive subtitle sample start", () => {
   assert.equal(options.subtitleStream, 2);
   assert.equal(options.events, 5);
   assert.equal(options.start, 600.5);
+  assert.equal(options.timeoutMs, 180000);
+});
+
+test("parseArgs accepts a positive subtitle sample timeout", () => {
+  const options = parseArgs([
+    "--input", "movie.mkv",
+    "--subtitle-stream", "2",
+    "--output-dir", "samples",
+    "--timeout-ms", "30000"
+  ]);
+
+  assert.equal(options.timeoutMs, 30000);
+});
+
+test("parseArgs rejects a non-positive subtitle sample timeout", () => {
+  assert.throws(() => parseArgs([
+    "--input", "movie.mkv",
+    "--subtitle-stream", "0",
+    "--output-dir", "samples",
+    "--timeout-ms", "0"
+  ]), /--timeout-ms must be a positive integer/);
 });
 
 test("parseArgs rejects a negative subtitle sample start", () => {

@@ -57,12 +57,14 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 Treat the exact phrase `开始制作影视库` as the end-to-end start command. Do not ask the user to restate the workflow.
 
 1. Read enabled input roots and pending work from `.local-data/wwp-film-workflow.sqlite`. If the ledger has no enabled input root, use a directory explicitly supplied in the same request; ask for one only when neither source exists.
-2. Run `node tools/film-workflow-cycle.mjs --limit 3 --mode film-and-current-enrichment --apply-cleanup --json` before reading any lanes. This is the default single-line production mode: finish the bounded film round first, reach a stable checkpoint, move only guarded cleanup-eligible items to their same-volume `待人工删除`, and register exact current film work IDs in the saved base-metadata → People → honors → highlights campaign. Use `--mode film-only` for a film-only round, `--mode people-only` to resume the narrower saved People campaign, and `--mode enrichment-only` to resume all saved enrichment stages without scanning film inputs. Never launch film and enrichment network stages as separate concurrent tasks. This single entry point performs a fresh bounded scan of every enabled input root in film modes, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. The local scan always runs in film modes, while the Notion handoff/full round is throttled for one hour after an unchanged scan; a changed input bypasses that cooldown. When the user reports a new batch, run the same command with `--force`, because an automatic continuation may already have registered the batch before the user-facing turn. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, cleanup moves/failures, and enrichment due/blocked/human/deferred counts. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
+2. Run `node tools/film-workflow-cycle.mjs --limit 3 --force --mode film-and-current-enrichment --apply-cleanup --json` before reading any lanes when the user explicitly says `开始制作影视库`, reports manual upload completion, changes a Workflow Status/Note, or asks to continue. This explicit handoff read is mandatory even when the filesystem is unchanged. The default single-line production mode finishes the bounded film round first, reaches a stable checkpoint, moves only guarded cleanup-eligible items to their same-volume `待人工删除`, and registers exact current film work IDs in the saved base-metadata → People → honors → highlights campaign. Use `--mode film-only` for a film-only round, `--mode people-only` to resume the narrower saved People campaign, and `--mode enrichment-only` to resume all saved enrichment stages without scanning film inputs. Never launch film and enrichment network stages as separate concurrent tasks. This single entry point performs a fresh bounded scan of every enabled input root in film modes, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. Automatic continuation rounds may omit `--force` and use the one-hour unchanged-scan cooldown. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, cleanup moves/failures, and enrichment due/blocked/human/deferred counts. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
 3. Claim a bounded actionable handoff before changing it, following `../../references/workflow-handoff.md`. Continue the other workflow lanes after the handoff batch.
 4. For each bounded batch, identify new resources and existing works needing metadata/spec repair before selecting playable production. Start work-page creation and metadata backfill as soon as a scanned work is identified. Apply release-first coverage: after the minimum production gates pass, prioritize one releaseable playable for each eligible newly arrived work before supplemental depth on an already covered work. Run independent metadata, destination-page preparation, upload, QC, and encoding work concurrently when practical; use long encode/upload wait time for the non-conflicting lanes. While a long encode or upload is active, monitor that process instead of starting rapid repeated full cycles. After an unchanged scan, wait for that process to close, a user-reported new input batch, or an urgent Workflow Note change before starting another full cycle.
-5. Continue through destination structure, playable production, upload handoff, Media Assets, and targeted readback. Reconcile at most three registered Notion targets per run. Media-block reconciliation is only the publication lane, not the workflow trigger or completion test.
+5. Continue through destination structure, playable production, upload handoff, Media Assets, and targeted readback. Before any upload, register the exact ledger target with work/spec/episode page IDs and expected filename. Appending a Notion block does not register a target automatically; if upload preceded registration, register it immediately and keep publication at `assets_pending` until Media Assets creation and exact readback succeed. Reconcile at most three registered Notion targets per run. Media-block reconciliation is only the publication lane, not the workflow trigger or completion test.
 6. Record uncertain or deferred decisions and continue with other candidates instead of interrupting the batch. Ask only when a decision blocks every useful next action or requires user-only evidence/action.
 7. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final playable completion. Before setting `Workflow Status=已完成`, run exact metadata maintenance/readback for the work page, require `Metadata Status=verified`, empty `Human Issue` and `AI Issue`, a usable poster, and targeted live-site readback of the poster and core metadata. If playable publication is complete but this metadata gate is not, keep the work in `AI 处理中`, requeue or defer its metadata task with the exact missing fields, and say explicitly that playback is complete while release completion is pending. Supplemental variants do not block this first-release state.
+
+   **Visibility-first rule:** `Hide from Website` is not the metadata or review master switch. Once one exact playable variant has passed the uploaded-block, structure, Media Assets, ffprobe/QC, ledger `sync_ready`, and live-readback gates, clear the work-level hide flag even when `Metadata Status=partial`, `Needs Review=true`, a poster is missing, or `AI Issue`/`Human Issue` records follow-up work. Keep only the defective asset/spec hidden. Keep the whole work hidden only when no playable path has passed, a playback/structure/Media Assets defect can affect viewing, or the user has explicitly requested a visibility hold. A work may therefore remain `AI 处理中` or `待人工确认` while already visible on the website; that status means follow-up work remains, not that playback must be withheld.
 8. Before completing a released work, create exact ledger variants for every source-supported supplemental spec worth revisiting. Keep later variants `selected` or `deferred` with `next_review_at`, and mirror the latest decision in `Workflow Note` as `[规格扩展:OPEN] ...` or `[规格扩展:CLOSED] ...`. Do not create a new Notion property or a generic placeholder task for this marker.
 9. When work-level metadata is complete but no first playable specification can continue, set `Workflow Status=暂缓` with an AI-marked recovery condition. Do not use work-level `暂缓` merely because a released work still has deferred supplemental variants.
 10. Treat `enrichmentCampaign.due` as executable work, not a recommendation.
@@ -82,7 +84,9 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
   move failed (including file-in-use/permission evidence), active AI work,
   waiting for human confirmation/upload, scheduled review with its next time,
   retained for an explicit open expansion, or missing identity/coverage/closure
-  evidence. Never collapse these states into “没有新的可进行项”.
+  evidence. Never collapse these states into “没有新的可进行项”. An
+  archive-only input is reported as `archive_bundle` while awaiting
+  extraction/triage; it is not a film-intake action.
 - `cleanup_ready` is executable work. Move that exact eligible source to its
   same-volume `待人工删除` directory with the guarded cleanup tool. If the move
   fails, persist and report the OS error and source path; do not silently leave
@@ -90,12 +94,29 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 - Treat an automatic goal continuation as a scheduling opportunity, not as a request to repeat the last status message.
 - After one bounded cycle reports no filesystem delta and no due actionable item, do not immediately run another full cycle or send another user-visible "no change" message. Wait for a real trigger: new user input, a changed source fingerprint, a due ledger review, an active encode/upload transition, or an urgent Workflow Note handoff.
 - During long encoding or upload work, report only meaningful progress checkpoints, completion, failure, or a decision request. Do not emit heartbeat-style prose merely because the goal mechanism resumed the thread.
+- Persist `continuation.reportPolicy.unchangedStateKey` after each round. When
+  `suppressDuplicate=true`, do not send another user-facing idle/wait message
+  while that key and the listed `resumeOn` triggers are unchanged. A new input
+  fingerprint, due review, process transition, Workflow Note change, or human
+  evidence change invalidates the key and permits a fresh report.
 - Read the top-level `continuation` object as the Goal decision gate. A local
   Notion, identity, upload, cleanup, or source failure freezes only that item.
   When `continuation.state=actionable_now`, continue another due lane; only
 `continuation.canDeclareWorkflowIdle=true` permits calling the whole workflow
   idle. If `canDeclareNoDueAction=true` but the workflow is not idle, list every
   `remainingConditions` category and its exact next trigger.
+- When `continuation.goalDisposition=continue`, execute the returned
+  `continuation.nextAction` first. It is the bounded routing handoff and carries
+  the exact lane and target identifiers; do not turn aggregate actionable counts
+  into a status-only report.
+- When that next action is an already-eligible People item, route it before
+  ordinary metadata backfill after publication, guarded cleanup, and new-source
+  intake. This is a scheduling rule, not a gate bypass: People identity,
+  authorization, evidence, and readback checks remain mandatory.
+- If `continuation.routingGap.code=actionable_work_without_route`, treat the
+  round as a workflow routing defect: repair or rerun the bounded ledger cycle
+  before reporting anything as idle or Goal-blocked. An actionable count without
+  a concrete `nextAction` is never evidence that there is no work.
 - Read `continuation.goalDisposition` before changing Goal state. `continue`
   requires another bounded item, `stable_wait` means every remaining item is
   waiting on a named trigger, and `idle` requires the full idle gate. The
@@ -109,7 +130,12 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 - Include `continuation.decisionMessage` in the round decision and obey
   `continuation.blockerScope`. `blockerScope=item` means the failure belongs to
   named rows only and can never justify stopping the Goal while another lane is
-  due.
+due.
+- Use `continuation.blockerReport.items` when handing off a blocked, waiting,
+  or scheduled item. Preserve its exact identifier, reason, and `nextTrigger`;
+  do not report only an aggregate count. `goalBlocker=null` and
+  `goalMayStop=false` are the normal item-level result, not evidence that the
+  whole Goal is blocked.
 - Before saying there is nothing to do, check all workflow lanes and distinguish `waiting until due` from `waiting for user evidence`. Report the concrete blocker once, with the next trigger or review time, and suppress identical follow-ups until that evidence changes.
 - Follow `continuation.recheckPolicy`: `continue_now` means perform one bounded action and read back state; `event_or_due_time` means do not poll on a short fixed interval and wait for one of its listed triggers. `pollingAllowed=false` never means the workflow is idle unless `canDeclareWorkflowIdle=true`.
 
@@ -119,6 +145,9 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
   `people-only`, `enrichment-only`, the narrower `film-and-current-people`, and
   the default `film-and-current-enrichment`. Add future modes to
   the central mode registry; do not recreate a second autonomous People task.
+- A scoped `people-only` or `enrichment-only` run never proves whole-workflow
+  idleness: it must leave `film_lanes_not_scanned` as an external-lane
+  condition, and the next full bounded film cycle remains required.
 - `film-and-current-enrichment` means film first, then base metadata, People,
   honors, and highlights for the exact work IDs selected in the current film
   batch. `film-and-current-people` remains available as a deliberately narrower
@@ -131,6 +160,12 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
   `.local-data/wwp-production-network.lock`. If another live owner holds it,
   stop and report that owner instead of retrying in parallel. A dead process's
   stale lock may be reclaimed by the lock helper.
+- A variant labelled `encoding` is active only while an observed process command
+  line targets its exact output. Reconcile stale encoding rows before scheduling
+  new work: record the evidence, close an existing incomplete file as
+  `qc_failed` or return an absent-output row to `selected`, and preserve an
+  explicit retry trigger. Never let a stale encoding row masquerade as a live
+  process or block unrelated production.
 - Preserve the People skill's identity, biography, publication, checkpoint, and
   convergence gates. Integration changes scheduling ownership, not editorial
   standards or resumability.
@@ -251,7 +286,7 @@ toggle, callout, or base-like visual containers.
 - New input directory, queue discovery, or "which one should we do": use `wwp-film-intake` and then `wwp-film-candidate-selector`.
 - Existing work pages needing fields, identity repair, or AI advisory refresh: use `wwp-library-maintainer` and `wwp-metadata-backfiller`.
 - Playable transcode, subtitles, audio variants, QC, or output files: use `wwp-playable-encoder`.
-- A subtitle-dependent source with explicitly confirmed missing Chinese subtitles: use `wwp-subtitle-acquirer` before deferring playable production. `verifiedChinese:false` alone is legacy unknown evidence and must return to source review rather than disappearing or starting acquisition. Provider capture is evidence collection; the local workflow still owns compatibility, quality, timing, and final selection.
+- A subtitle-dependent source with explicitly confirmed missing Chinese subtitles: use `wwp-subtitle-acquirer` before deferring playable production. After visual subtitle sampling confirms absence, persist both `quality_state=subtitle_missing` and `subtitle_evidence.hardGate=missing_chinese_subtitle`; `verifiedChinese:false` alone is legacy unknown evidence and must return to source review rather than disappearing or starting acquisition. Provider capture is evidence collection; the local workflow still owns compatibility, quality, timing, and final selection.
 - A work-level `CLOSED` expansion decision suppresses downstream subtitle-acquisition and intake reopens for that source. Keep the source visible as retained history, but do not let missing-subtitle evidence recreate an actionable task unless the user explicitly reopens the expansion.
 - A verified Mandarin-dubbed (`国配`) branch without Chinese subtitles: continue through normal production and publication. Treat subtitles as optional future enrichment, record one concise note, and do not set `暂缓`, `Needs Review`, or `Hide from Website` for that reason alone. A separate foreign-original-audio branch remains subtitle-dependent.
 - Series, seasons, episodes, SxxEyy mapping, or episode pages: use `wwp-series-producer`.
@@ -282,7 +317,7 @@ Every execution cycle must treat these as parallel work lanes, in this order:
 
 1. **Collaboration handoff**: mirror and claim at most three explicit actionable `Workflow Status` rows. Ignore `人工上传中`; `已上传待 AI 收尾` is the manual-upload completion signal.
 2. **Intake**: inspect a small batch of newly discovered or changed source directories, resolve identity and duplicate risk, bind each source, and create its work-level metadata task.
-3. **Metadata maintenance**: process a small batch of new and old work pages independently of playback. Fill sourced fields, repair canonical identity, generate AI advisory values after sourced data is coherent, and record unresolved `AI Issue` items. Close a metadata task only after the exact page reads back as `Metadata Status=verified`; `partial` must remain pending or be explicitly deferred with missing-core evidence and a review time.
+3. **Metadata maintenance**: process a small batch of new and old work pages independently of playback. Fill sourced fields, repair canonical identity, generate AI advisory values after sourced data is coherent, and record unresolved `AI Issue` items. If a newly identified work has no Notion page yet, the first metadata action is exact identity/duplicate preflight followed by `notion-create-work-page.mjs --work-id <id> --apply`; read back the page ID, `影别`, title, and initial hidden state before running the backfiller. Do not report this as an ordinary metadata no-op or close its task while page creation remains incomplete. Close a metadata task only after the exact page reads back as `Metadata Status=verified`; `partial` must remain pending or be explicitly deferred with missing-core evidence and a review time.
 4. **Production**: first cover each eligible new work with one releaseable spec, then select due supplemental variants by fan value. Prepare the destination structure before encoding. A verified `国配` branch passes the subtitle gate without Chinese subtitles; record the missing subtitle as optional enrichment rather than deferring it.
 5. **Publication and Media Assets**: reconcile only bounded exact targets. Prefer resumable automatic upload; use manual upload as a recorded fallback, not the normal path. A missing upload is a pending handoff, not a reason to stop the other lanes.
 6. **Source/archive and deferred maintenance**: retain blocked, user-decision, source-only, cleanup, and later-backfill tasks with reasons and next-review times; do not silently discard them.

@@ -2,7 +2,7 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
-## Stable Contract (0.1.93)
+## Stable Contract (0.1.106)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as
@@ -17,6 +17,14 @@ probe; manual upload is an explicit, bounded fallback coordinated through
 An optional mounted `G:` external disk may be used as a probed temporary
 staging or quarantine volume when another volume lacks space; it is not a fixed
 input/output root and its actual path must be recorded in the ledger.
+
+Identity reuse is guarded by the verified ledger identity, not by an external
+ID alone. Before linking an existing Notion page, the tool must compare the
+requested release year (from the ledger or canonical title) with the page's
+release year/title evidence. A contradictory year rejects the match and sends
+the item back to identity review; it must never bind the work or rewrite the
+matched page. This protects against stale or wrongly supplied IMDb/Douban IDs
+being resolved to a different work.
 
 Film production and all catalog enrichment have one scheduler rather than
 autonomous tasks. The scheduler accepts `film-only`, `people-only`,
@@ -48,6 +56,18 @@ recovery plan. A clean fallback batch may continue to the next item, but it
 must not be promoted to `completed` merely because profiles were materialized
 or a Notion upsert returned success.
 
+Worker-exit rule: `in_progress` means an observable owner process with a
+checkpoint, not merely an old Notion status. Each enrichment run must retain
+its report, preflight, write checkpoint, and owner evidence under its batch
+directory. If the owner exits without a verified result, the next cycle must
+classify the exact failure as `deferred` (temporary provider/transport issue)
+or `blocked` (identity, permission, evidence, or integrity issue), preserve
+the artifacts, and record a concrete next trigger. It must not keep the work
+in `AI处理中` indefinitely or call it complete. For Azure People catalog
+writes, retry the unchanged reviewed report only after readback/rollback
+verification and reduce the apply to one independently verified sub-batch at
+a time, preferably 10-16 profiles once the catalog is large.
+
 For exact pages already handed off for a manual tree move, a changed Notion
 `last_edited_time` is a **recheck trigger**, not completion proof. The next
 bounded cycle must retrieve that recorded page and inspect the expected
@@ -58,15 +78,28 @@ media evidence pass; do not infer a completed upload from the timestamp alone.
 No item exits the workflow merely because encoding, upload, or a Media Assets
 write succeeded. A playable variant reaches playable completion only after
 structure, media block, ffprobe-backed Media Assets, ledger `sync_ready`, and
-playable readback pass. Release completion is stricter: the exact work page must
-additionally read back as `Metadata Status=verified`, have empty issue fields and
-a usable maintained poster, then pass parent release, targeted website sync, and
-live readback of both the playable assets and core work metadata. Only then may
+playable readback pass. Once that playable gate passes, release the
+automation-owned work visibility and perform playable website readback even if
+metadata, poster, `Needs Review`, or issue follow-up remains open. Release
+completion is stricter: the exact work page must additionally read back as
+`Metadata Status=verified`, have empty issue fields and a usable maintained
+poster, then pass parent release, targeted website sync, and live readback of
+both the playable assets and core work metadata. Only then may
 `Workflow Status=已完成` be set for the current release. Source-value completion is
 separate: concrete selected/deferred supplemental variants remain actionable and
 retain the source even after the first release. The local output may move to
 `E:\\待人工删除` after its exact playable evidence is safe, but the source cannot
 move while any linked expansion variant remains open.
+
+This is a deliberate visibility-first split, not an exception to the release
+checks: metadata incompleteness, a missing poster, `Needs Review`, or an AI/human
+follow-up issue must not re-check `Hide from Website` after a verified playable
+path is live. Those defects stay in their own queues while the work remains
+visible. Only a missing/invalid playable path, an unsafe page/media structure,
+an unresolved Media Assets/readback defect, a concrete playback risk, or an
+explicit human visibility hold may keep the whole work hidden. Unfinished
+supplemental specs remain hidden individually and do not hide a work whose first
+useful spec is already playable.
 
 The 0.1.29 production policy is release-first coverage. For a newly arrived
 batch, start one releaseable spec for every eligible work before using the
@@ -105,6 +138,28 @@ later subtitle search separate. A foreign-original-audio branch without usable
 Chinese subtitles remains subtitle-dependent and continues through the bounded
 subtitle-acquisition/deferred route.
 
+Smoke validation is a production gate, not an advisory preview. Every new
+video/color/subtitle path must pass a bounded strict decode before a full
+encode is claimed. The smoke artifact must be checked at a known dialogue
+timestamp (and at more than one timestamp when HDR, Dolby Vision, or stream
+selection is uncertain). FFmpeg exit code 0 is insufficient: decoder stderr,
+green/flat/magenta output, frozen or missing picture, and absent expected
+burned subtitles all keep the source in an AI-blocked/deferred state. Record
+the exact stream, timestamp, failure evidence, and next retry condition in the
+ledger; do not create a Media Assets row or upload a failed smoke result.
+PGS extraction is separately bounded: `render-pgs-samples.mjs` uses a 180-second
+per-command timeout by default. A timeout is recorded as a technical evidence
+failure, not retried in a tight loop. When random seeking into a UHD stream
+fails but a片头连续样片 passes, the workflow may continue from the片头 path
+while retaining the seek failure and scheduling a later multi-point check.
+After inspecting the rendered images, record the result immediately with
+`node tools/film-ledger.mjs review-subtitles --source-id <id> --subtitle-state verified|confirmed_missing|unknown`.
+For `confirmed_missing`, include the rendered sample paths with
+`--subtitle-samples '["<path1>","<path2>"]'`; do not leave the result as the
+legacy `verifiedChinese:false` shape. This command writes the canonical
+`state`, `hardGate`, and `quality_state` values that drive the durable subtitle
+acquisition task.
+
 ## Work Areas and Queues
 
 The workflow has seven work areas. Six have explicit ledger queues; source/archive
@@ -113,26 +168,35 @@ high-frequency queue. Every cycle checks these areas in order, using a small bat
 and the local SQLite ledger:
 
 1. **Collaboration handoff**: query only actionable `Workflow Status` values, mirror them into SQLite, and claim at most three. Separately, recheck up to three exact ledger-recorded pages that have an unresolved AI move/upload handoff when their Notion edit time or child topology changed. The recheck is evidence gathering, not an implicit claim or release. An enrichment stage left `in_progress` without a new record for six hours is an abandoned claim: recover it to `deferred`, preserve the old reason, set a one-hour review time, and record the exact resume trigger. Never leave a stale `AI处理中` claim indefinitely and never recover it as `已完成`.
-2. **Intake**: scan every enabled input root, import new or changed sources, identify the work, check duplicate aliases, and bind or defer the source. Immediately after a source is bound, persist the representative probe path plus quality, subtitle, audio, color, and episode-coverage evidence with `film-ledger.mjs update-source`; do not leave verified stream facts only in terminal output or chat. A repeated scan of the same physical path under the same input root and work is one source only: retain the preferred record with the strongest probe evidence, classify later records as `duplicate_source`, and exclude them from production selection so they cannot create false "needs selection" work. If later frame, stream, subtitle, or authoritative title evidence proves an existing binding wrong, use the auditable `correct-source-work` operation and re-evaluate the destination work; do not create a second work. A copied collection/container with no independent production value must be marked with `mark-duplicate-source` even when its filesystem path differs, otherwise it remains an unbound identity candidate on every cycle.
-3. **Catalog maintenance**: create or reuse the work page, then backfill missing or stale work-level metadata for newly identified works and selected older works. This includes canonical title/identity, poster and external IDs, ratings fallbacks, AI advisory fields, `Needs Review`, `AI Issue`, `Human Issue`, and `Last AI Check Time`. This lane is independently executable and may reach `verified` before any spec exists, but its verified result is still a mandatory gate for later release completion. After duplicate preflight or a verified Douban heading establishes the canonical title, run metadata backfill with `--preserve-existing-identity`; OMDb may supplement fields but must not rewrite that title to its English display name.
-   Metadata, People, honors, and highlights retain separate checkpoints. An
-   earlier stage in a concrete stable `blocked`, `waiting_user`, or not-yet-due
-   `deferred` state does not freeze an independently executable later stage.
-   When a later stage is actually running, campaign reporting must surface that
+2. **Intake**: scan every enabled input root, import new or changed sources, identify the work, check duplicate aliases, and bind or defer the source. Immediately after a source is bound, persist the representative probe path plus quality, subtitle, audio, color, and episode-coverage evidence with `film-ledger.mjs update-source`; do not leave verified stream facts only in terminal output or chat. A repeated scan of the same physical path under the same input root and work is one source only: retain the preferred record with the strongest probe evidence, classify later records as `duplicate_source`, and exclude them from production selection so they cannot create false "needs selection" work. If later frame, stream, subtitle, or authoritative title evidence proves an existing binding wrong, use the auditable `correct-source-work` operation and re-evaluate the destination work; do not create a second work. A copied collection/container with no independent production value must be marked with `mark-duplicate-source` even when its filesystem path differs, otherwise it remains an unbound identity candidate on every cycle. A directory containing only subtitles, artwork, NFO, or other non-media evidence is recorded as `companion_evidence`, its intake task closes, and it never enters identity or production selection; the evidence remains available to attach to the real video source. For a multi-season series, the split manifest is a mandatory checkpoint: do not create specs or bind all leaves to one season until every leaf has a verified season/episode identity or an explicit terminal decision. Parent-series IMDb/Douban hints must not be treated as season verification. After a collection is split, every bounded scan must reconcile the parent task against both relative and absolute descendant paths; once all leaf members are bound, the parent intake task closes automatically, regardless of whether it was still pending, deferred, or waiting for review. The parent must never remain as a false unbound candidate after its members have identities.
+3. **Catalog maintenance**: create or reuse the work page, then backfill missing or stale work-level metadata for newly identified works and selected older works. This includes canonical title/identity, poster and external IDs, ratings fallbacks, AI advisory fields, `Needs Review`, `AI Issue`, `Human Issue`, and `Last AI Check Time`. This lane is independently executable and may reach `verified` before any spec exists, but its verified result is still a mandatory gate for later release completion. After duplicate preflight or a verified Douban heading establishes the canonical title, run metadata backfill with `--preserve-existing-identity`; OMDb may supplement fields but must not rewrite that title to its English display name. If a metadata task has no linked Notion work page, it is not a normal backfill attempt: route it first through the exact identity preflight and `notion-create-work-page.mjs --work-id <id> --apply`, then read back the page type, title, hidden state, and page ID before continuing metadata. Keep that task actionable and never close it as `nothing_to_update` while page creation is still pending.
+  Metadata, People, honors, and highlights retain separate checkpoints. An
+  earlier stage in a concrete stable `blocked`, `waiting_user`, or not-yet-due
+  `deferred` state does not freeze an independently executable later stage.
+  The continuation router must honor this independence: when a saved People
+  item is due, it is selected before ordinary catalog-maintenance work (after
+  publication, cleanup, and new-source intake). A partial metadata queue must
+  not hide a due People batch; the People campaign still enforces its own
+  identity, authorization, and readback gates.
+  When a later stage is actually running, campaign reporting must surface that
   `in_progress` stage while preserving the earlier issue for later recovery.
   An `in_progress` stage is an active claim, not a due item: do not re-run or
   re-claim it on the next cycle. Keep it visible as active work and wait for a
   recorded stage result or process termination; recover it to `deferred` only
   after the six-hour stale-claim rule, preserving the reason and next trigger.
-4. **Production**: evaluate source quality, Chinese subtitle evidence, audio/language choices, value, and risk; prepare destination pages before encoding. Once identity and duplicate preflight pass, create the hidden work page and its complete destination tree immediately, then start metadata backfill and encoding as independent lanes. A provisional prepared spec title may omit its size; it must never invent a target size, and must be renamed from measured final episode bytes before upload. Rank uncovered eligible new works ahead of supplemental variants until the batch has first-release coverage. The production queue has two explicit kinds: `source_selection` for a bound, usable source that has no selected variant yet, and `variant` for an already selected spec. A released work's concrete selected/deferred supplemental variants remain valid queue records even when its work-level status is `已完成`; do not suppress those variant rows merely because the parent released. Only enabled input roots participate; synthetic `@flat/...` output indexes do not re-enter automatically. A zero production queue means both kinds were checked and are empty; it must never mean only that no variant exists. Directory-scan subtitle counts cover external files only, so zero sidecars means internal streams are still unprobed rather than proving Chinese subtitles are absent. After probing and hard-sub inspection, route a worthwhile subtitle-dependent source with no verified Chinese subtitle through the bounded `wwp-subtitle-acquirer` handoff; keep it waiting/deferred without blocking metadata or other production candidates. A verified `国配` branch is not subtitle-dependent and proceeds without that handoff; record missing subtitles only as optional enrichment.
+4. **Production**: evaluate source quality, Chinese subtitle evidence, audio/language choices, value, and risk; prepare destination pages before encoding. Once identity and duplicate preflight pass, create the hidden work page and its complete destination tree immediately, then start metadata backfill and encoding as independent lanes. A provisional prepared spec title may omit its size; it must never invent a target size, and must be renamed from measured final episode bytes before upload. Rank uncovered eligible new works ahead of supplemental variants until the batch has first-release coverage. The production queue has two explicit kinds: `source_selection` for a bound, usable source that has no selected variant yet, and `variant` for an already selected spec. A released work's concrete selected/deferred supplemental variants remain valid queue records even when its work-level status is `已完成`; do not suppress those variant rows merely because the parent released. Only enabled input roots participate; synthetic `@flat/...` output indexes do not re-enter automatically. A zero production queue means both kinds were checked and are empty; it must never mean only that no variant exists. Directory-scan subtitle counts cover external files only, so zero sidecars means internal streams are still unprobed rather than proving Chinese subtitles are absent. After probing and hard-sub inspection, route a worthwhile subtitle-dependent source with no verified Chinese subtitle through the bounded `wwp-subtitle-acquirer` handoff; keep it waiting/deferred without blocking metadata or other production candidates. A verified `国配` branch is not subtitle-dependent and proceeds without that handoff; record missing subtitles only as optional enrichment. Before `start-production`, the selected stream/tone-map/subtitle path must pass the strict bounded smoke gate above; a failed smoke is a source/variant blocker, not a successful production attempt. Before trusting `encoding` as active, require an observed owner process whose command line targets the exact variant output; an `encoding` row with no owner is stale work, so record the stale-claim evidence, move it to `qc_failed` when a failed/incomplete output exists or back to `selected` when no output exists, and expose the retry trigger. Never count a stale encoding row as a live process or let it suppress other production lanes.
    Every local cycle also audits series specification coverage without calling Notion. When one published per-episode specification establishes a broader episode universe and another published per-episode specification covers only a strict subset, every missing episode needs an explicit selected, deferred, or terminally cancelled ledger variant. A partial specification with no such rows is production work even when the season is already `已完成`; do not report the cycle as idle. Ignore explicit smoke/sample files and special/OVA/SP specifications rather than turning them into a season-wide commitment.
 Legacy flat-source guard: when a synthetic or root-flat ledger row no longer has a real backing file or folder, mark that source `missing` and remove it from the production queue. Do not keep selecting a stale row merely because the old ledger record remains.
 
-5. **Publication**: reconcile only bounded exact targets for upload, page structure, Media Assets, and website-sync readiness. Before creating a destination spec page, scan the work's existing child spec pages and Media Assets rows and compare a normalized variant signature (cut/edition, resolution, codec/container, audio and subtitle treatment, and actual or rounded per-file size); a materially equivalent playable asset occupies the target even if its title or filename wording differs. Adopt/backfill it or stop the duplicate route. Prepare exact destination pages first. If later source validation cancels production, archive that prepared page only when exact parent/title readback proves it still contains zero child blocks; preserve any uploaded or human-edited page for review. For bounded metadata or structure API calls, an inherited proxy `ECONNRESET`/TLS failure is transport evidence, not a page-permission verdict: retry the exact target once through explicit proxy bypass, then use the configured Notion hostname DNS override bound to the physical LAN address when available. This API-only recovery does not waive the separate upload route proof and must not trigger a broad rescan. Probe final files and enforce browser-compatible stream tags before Notion access, prefer resumable automatic upload after a route probe, retry only the same failed part with bounded backoff, and use manual upload only as a recorded fallback. A root-level or unverified media block remains a publication issue, not an intake or metadata issue. Each variant has one encode/remux owner at a time: before starting or resuming either phase, check the exact output/work path and process command line, terminate duplicate owners, and preserve the completed work file for one controlled retry. Never let two remux processes write the same `.part.mp4`. When checking website coverage, compare the full detail-page/index variant count and exact asset keys; the library card may intentionally preview only three variants and must not be treated as a sync-loss signal.
+Upload registration guard: before any automatic or manual upload, register the exact ledger target with work/spec/episode page IDs and expected filename. An upload tool is not ledger-aware merely because it appended a Notion block. If an upload happened before registration, register it immediately, reconcile the exact page, and keep the variant in `assets_pending` until Media Assets creation and readback succeed.
+
+5. **Publication**: reconcile only bounded exact targets for upload, page structure, Media Assets, and website-sync readiness. Before creating a destination spec page, scan the work's existing child spec pages and Media Assets rows and compare a normalized variant signature (cut/edition, resolution, codec/container, audio and subtitle treatment, and actual or rounded per-file size); a materially equivalent playable asset occupies the target even if its title or filename wording differs. Adopt/backfill it or stop the duplicate route. Prepare exact destination pages first. If later source validation cancels production, archive that prepared page only when exact parent/title readback proves it still contains zero child blocks; preserve any uploaded or human-edited page for review. For bounded metadata or structure API calls, an inherited proxy `ECONNRESET`/TLS failure is transport evidence, not a page-permission verdict: retry the exact target once through explicit proxy bypass, then use the configured Notion hostname DNS override bound to the physical LAN address when available. This API-only recovery does not waive the separate upload route proof and must not trigger a broad rescan. Probe final files and enforce browser-compatible stream tags before Notion access, prefer resumable automatic upload after a route probe, retry only the same failed part with bounded backoff, and use manual upload only as a recorded fallback. A root-level or unverified media block remains a publication issue, not an intake or metadata issue. Each variant has one encode/remux owner at a time: before starting or resuming either phase, check the exact output/work path and process command line, terminate duplicate owners, and preserve the completed work file for one controlled retry. On Windows, prefer a tracked foreground `exec_command` session for long encodes; before recording `encoding`, resolve and test the exact source path, launch one correctly quoted command line, then verify the live owner command line and output growth. If launch fails, immediately return the variant to `selected` and record the concrete path or argument error. Never let two remux processes write the same `.part.mp4`. When checking website coverage, compare the full detail-page/index variant count and exact asset keys; the library card may intentionally preview only three variants and must not be treated as a sync-loss signal.
  6. **Source/archive maintenance**: keep source-only/original-disc records, manual-upload handoffs, retention decisions, and safe deletion candidates aligned with the ledger and verified Notion state. Do not delete merely because a file is old.
     Website coverage incident rule: when a user reports that Notion has more specifications than the website, refresh and audit that exact work page first. Compare the full detail/index result by exact asset keys; the library card intentionally previews at most three variants. Do not recreate or hide variants based on the card alone. If the full result is short, classify it as a real publication/index defect and repair the exact missing target; if it is complete, record the report as a preview misunderstanding and leave Notion unchanged.
 7. **Local cleanup**: inspect both completed playable outputs and their bound source inputs every cycle. Notion status alone never makes the workflow idle: enabled input roots with unselected/unfinished sources remain a continuation condition. A playable output is cleanup-eligible either after its exact ledger path, recorded byte size, and `sync_ready` state agree, or after a successful upload release manifest identifies the exact local file and accepted Notion media block; it does not wait for the parent work's metadata or `Workflow Status=已完成` gate. A source is cleanup-eligible only when its expansion decision is closed, every linked variant is `sync_ready` or terminally cancelled, no variant is selected/deferred/encoding/QC/publication-pending, and the source still exists. Report candidates first, then move approved files or directories to the same-volume `待人工删除` directory; never final-delete as part of a normal cycle.
-   The cycle must return a complete disposition audit for every still-present,
+   Collection parents close after every leaf is either bound or explicitly
+   terminal (`duplicate_source` or `companion_evidence`); an unbound leaf with
+   neither decision remains actionable. The cycle must return a complete disposition audit for every still-present,
    ledger-tracked source under enabled input roots. `sourceFollowup` distinguishes
    cleanup-ready, move-failed, active AI work, publication pending, waiting for
    human, scheduled review, open expansion, and missing identity/coverage/closure
@@ -152,6 +216,15 @@ Legacy flat-source guard: when a synthetic or root-flat ledger row no longer has
    is not execution, and an active campaign is not an idle workflow. Use an
    explicit historical input file to add older works; never turn this into an
    unbounded Notion-library scan.
+
+People provider recovery rule: Azure catalog range enumeration is an optional
+optimization, not a prerequisite for the People lane. It has a finite timeout
+and falls back automatically to known generation chunks. A stalled range read
+therefore remains a retryable provider condition and must not stop the film
+lane, intake lane, or unrelated People items. Only after both read paths fail
+should the exact item be recorded as `deferred` with a future retry time;
+identity ambiguity, conflicting stable IDs, and malformed coverage remain
+item-local blockers with their evidence and recovery trigger.
 
 ## Cycle start
 
@@ -197,6 +270,11 @@ must inspect and report these lanes, even when one currently has zero pending ro
 
 - **New resources**: scan enabled input roots and bind newly discovered or changed
   sources to works, including source-only or metadata-only candidates.
+  Archive-only directories with no recognized media file are classified as
+  `archive_bundle`: they remain visible in the residual audit but do not create
+  an executable film intake task. The next trigger is to inspect/extract the
+  archive and rescan it; if it is manga, documents, or other non-film material,
+  record that disposition rather than inventing a work.
   A changed fingerprint on an existing bound source must reopen its intake task;
   do not treat a previously completed source as permanently immutable. A source
   that was only temporarily absent is reopened only when its previous intake
@@ -325,11 +403,14 @@ playable file, and no Media Assets.
 - Prepare the page structure, set `Workflow Status=待人工上传`, and name the destinations in `Workflow Note`. The user sets `人工上传中` while uploading and `已上传待 AI 收尾` only when the upload batch is complete.
 - Automatic upload is the default for playable outputs. Run a bounded route probe first, preserve the multipart manifest, and resume accepted parts after interruption. Switch to manual handoff only when throughput is below the safe-start threshold, bounded retries still fail, or the user explicitly requests it.
 - When either VPN traffic-counter URL is configured, automatic route probes and uploads record a baseline, a bounded five-minute cadence, and a completion sample in an adjacent redacted `.vpn-traffic.json` report. The first counter currently represents LA/JMS and resets monthly on day 2; the optional `_2` counter represents the temporary London allowance and may disappear after that subscription ends. Never expose the URLs. Treat counter growth as advisory shared-account evidence, not proof of this process's route. Clash `DIRECT`/non-`DIRECT` connection evidence remains authoritative; notify the user when sustained growth projects allowance exhaustion before reset.
-- People campaign status is reconciled from the newest bounded local preflight and post-publish coverage artifacts before reporting blockers. A clean authorized preflight clears a stale `waiting_user` label under an explicit People objective; identity, canonical-index, and timeout evidence remains a real blocker.
+- People campaign status is reconciled from the newest bounded local preflight and post-publish coverage artifacts before reporting blockers. A clean authorized preflight may recover a stale `waiting_user`, `blocked`, or `deferred` label under an explicit People objective; identity ambiguity remains a human gate, while a recovered canonical-index/provider failure may be retried without manual JSON edits.
+- A saved authoritative People coverage audit is an intake source, not merely a report. For every `missing_credits`, `unlinked_only`, or `partially_linked` candidate, reconcile the exact `ww_work_id` and canonical page ID, then enqueue absent candidates into the campaign with source `historical_people_coverage` before calculating the People lane. Candidates that cannot be uniquely reconciled remain explicit identity blockers; they must never disappear because they were found outside the current film batch, and the workflow must never synthesize a work ID from a title alone.
+- If exact People coverage returns zero canonical credits, persist it as a bounded `deferred` readback gap with `canonical people credits` and a review time; do not treat the empty result as completion or leave it as an always-due `pending` loop. The retry must reread the authoritative source before creating another supplement.
+- Every normal cycle also repairs legacy enrichment rows whose blocker is a narrowly classified transient provider/readback failure (API/network outage, missing exact Notion gate readback, or temporary canonical-index loss) into a six-hour `deferred` retry. This repair is persisted before routing. Identity conflicts, permission failures, missing source evidence, and unresolved human decisions remain `blocked`/`waiting_user` and are never auto-reclassified.
 - A closed work scope suppresses downstream subtitle-acquisition and intake reopens. The source remains retained history, but missing-subtitle evidence cannot recreate an actionable task until the user explicitly reopens the work expansion.
 - Website metadata sync must bound each external poster request, serve only Azure-owned copies of the Notion poster and preserve an existing owned copy when a transient cache request fails, and continue processing the batch. A single slow poster host must not hold unrelated completed media outside the website index; the affected work still requires a later successful poster readback before its poster gate is considered verified. Never expose a temporary Notion URL or use Douban/other poster URL fallbacks. If Notion has no poster, leave it missing and continue synchronization; this is a source-metadata issue.
 - DIRECT remains the default and ordinary proxy routes remain forbidden for large Notion transfers. When a DIRECT multipart connection degrades after accepted parts, preserve its upload session and accepted-part boundary, recycle only that uploader's connection, and try a bounded number of fresh DIRECT connections first. One controlled exception exists for JMS Freedom `s801` when those resumable same-route retries still cannot complete a necessary high-volume batch inside the upload expiry, or proactively when unavoidable large traffic makes protection of the normal allowance the recorded reason for the batch. This is never an automatic proxy fallback: use `tools/with-notion-upload-route.mjs` to inspect the current selector topology, save the existing choices, temporarily select and read back `Notion -> JMS London 节点 -> JMS London s801 - Reality`, run the probe with `--expected-route jms-s801`, prove that exact chain, verify completion-speed feasibility, monitor the actual counted-byte ratio, and restore plus read back both saved choices on success, failure, or interruption. An already configured selectable s801 node is enough; do not require or create a permanent dedicated routing rule or group for it. If the names differ, accept only a uniquely discovered `s801` member whose final chain is observed exactly. The provider's dynamic multiplier means counted usage may be approximately transferred bytes divided by the current multiplier, but its multiplier-10 20GB-download example is not proof of Notion-upload accounting; estimate from accepted upload bytes and counter deltas, and report an unmeasurable zero delta as unknown. Any s1-s5, automatic, generic `Match`, ambiguous node, or unexpected proxy chain remains a hard stop. s801 is a courtesy service with no quality, uptime, or continued-availability guarantee and may be taken offline at any time.
-- Every s801 wrapper invocation must include a concrete `--reason` naming the estimated batch size or DIRECT failure evidence. The wrapper passes that reason to the uploader for audit. Run the probe and uploader with their explicit-proxy bypass option (`--no-proxy`) so Clash TUN and the temporary selectors, rather than `HTTPS_PROXY` or `NOTION_PROXY_URL`, own the exact route. A generic desire to use a proxy is insufficient, and unavailable s801 must not obstruct the default DIRECT path.
+- Every s801 wrapper invocation must include a concrete `--reason` naming the estimated batch size or DIRECT failure evidence. The wrapper passes that reason to the uploader for audit. Run the probe and uploader with their explicit-proxy bypass option (`--no-proxy`) so Clash TUN and the temporary selectors, rather than `HTTPS_PROXY` or `NOTION_PROXY_URL`, own the exact route. A generic desire to use a proxy is insufficient, and unavailable s801 must not obstruct the default DIRECT path. All formal uploaders fail closed to `Notion -> 国内直连` even when invoked without the wrapper; only an explicit wrapper declaration can enable s801.
 - For series, normal publication is one playable file per Episode page. Multi-episode collections are opt-in exceptions and must not be produced merely to reduce upload count.
 - A local output/source file is deletable only after the ledger and Notion evidence show that the required asset is already accounted for, or the user explicitly authorizes deletion of that specific class of file.
 - `G:` is an optional external holding volume. Before using it, check that it is
@@ -339,6 +420,8 @@ playable file, and no Media Assets.
   root, or proof that a cleanup gate has passed.
 - For verified finished outputs approved for cleanup, use `E:\待人工删除` as the default quarantine directory. Keep it outside the production output root: do not place it under `E:\video_made`. Moving to quarantine is not final deletion and does not itself authorize deletion.
 - A source moved to a same-volume `待人工删除` directory exits normal input-root scanning, but it does not lose expansion value. Before final human deletion or when repairing a known spec gap, resolve the exact quarantined source from the ledger and recheck useful original audio, dubbed audio, commentary, subtitle, compact, and higher-bitrate branches. Directory placement alone must never close or cancel a supplemental variant.
+- When the disposition audit confirms `source_missing` for a source that has left an enabled input root, the cycle closes only its stale intake task with an explicit missing/quarantine reason. It must not requeue that task as a new intake candidate; reappearance in an enabled root remains the only condition that reopens it.
+- At the start of a ledger cycle, reconcile already-registered `missing=1` sources whose registered root is a disabled `待人工删除` quarantine. This guard runs before due-task refresh, so legacy pending/deferred intake rows cannot resurrect quarantined files as new work. It does not scan quarantine contents, and a later reappearance under an enabled root still reopens the source through normal discovery.
 - Keep every `待人工删除` root disabled in the input-root registry. A deliberate quarantine audit may update existence for exact previously registered sources, but unknown children are skipped and never create a new source or intake task.
 
 ## Stop condition
@@ -382,6 +465,19 @@ The settlement ledger must preserve those exact residual credit objects in
 count loses the handoff needed for the next targeted supplement.
 
 The cycle's top-level `continuation` object is the machine-readable Goal gate.
+When `goalDisposition=continue`, its `nextAction` is the required routing
+handoff: it names the first bounded lane, exact task/source/work/variant target
+when available, and the reason. Execute that lane before reporting the round as
+stopped; do not reconstruct a different priority from aggregate counts. If the
+explicit ledger lanes are empty while `sourceDisposition.actionableNow` is
+non-zero, route through the matching actionable `cycle.lanes.sourceFollowup`
+entry and preserve its `nextTrigger`; an aggregate count without a routable
+target is an invalid continuation result.
+If any lane reports `actionableNow > 0` but no `nextAction` can be constructed,
+the cycle must return `state=routing_incomplete` and
+`actionable_work_without_route`. This is a scheduler/ledger contract failure:
+repair the route or rerun the bounded cycle; never call it idle, stable wait, or
+workflow-wide blocked.
 `actionable_now` means the round must continue even when another item is locally
 blocked. `waiting_for_human`, `locally_blocked`, and `scheduled_review` are stable
 non-idle states and must retain their exact recovery condition; they do not make
@@ -389,6 +485,10 @@ unrelated lanes stop. Only `canDeclareWorkflowIdle=true` permits an idle claim.
 Before saying that no action is currently due, report every entry named by
 `remainingConditions` together with the exact item-level trigger from
 `cycle.lanes.sourceFollowup` or `enrichmentCampaign`.
+The continuation builder must also carry each source disposition's `reasons`
+array into the item-level `conditionRows.reason` field, and must fall back to
+`next_review_at` when an enrichment row has no custom trigger. A category count
+without the preserved reason and recovery trigger is not a sufficient handoff.
 
 `continuation.goalDisposition` separates scheduler behavior from item status:
 `continue` selects another bounded item, `stable_wait` records named triggers
@@ -404,6 +504,17 @@ decision report. `blockerScope=item` explicitly forbids promoting an aggregate
 item count to a Goal blocker. When `goalDisposition=continue`, the next action
 must be selected before reporting the round as stopped, even if one exact item
 has a network, identity, review, upload, or file-lock failure.
+The machine-readable `continuation.blockerReport.items` is the authoritative
+item-level handoff for local blockers, human waits, and scheduled reviews. Each
+row must retain its exact identifier, reason, and `nextTrigger`; a count without
+these details is insufficient. `goalBlocker` remains null for ordinary cycles,
+and `goalMayStop=false` means the Goal layer must not convert those rows into a
+workflow-wide blocked state.
+For enrichment settlement, an authoritative stage result of `blocked`,
+`waiting_user`, or `deferred` is a stable item disposition, not a fresh `pending`
+claim. Preserve its reason and next trigger, and only make it due again after
+the recorded recovery evidence or review time. This keeps a failed People
+identity lookup from repeatedly reclaiming the same item while other lanes run.
 
 `continuation.recheckPolicy` is the scheduler handoff. When its `mode` is
 `continue_now`, perform one bounded action and read the state again. When its
@@ -414,4 +525,10 @@ not suppress independent work in another lane; it only prevents repeated
 polling of a stable wait item. `pollingAllowed=false` must not be summarized as
 "没有可做的事" unless the full idle gate is also true.
 
-Final playable completion still requires the exact Notion structure, completed file upload and destination media block, ffprobe-backed Media Assets, and local-ledger `sync_ready`. Release completion additionally requires exact work-page `Metadata Status=verified`, empty issue fields, a usable poster, parent work-page release, incremental website sync, and live API readback of both playable assets and core metadata. An accepted multipart part, a completed local encode, `sync_ready` alone, or an on-disk search index is not final release proof. Release completion does not close concrete supplemental variants or authorize source cleanup.
+Scoped runs such as `people-only` and `enrichment-only` deliberately skip the
+film intake, production, publication, and cleanup lanes. They must emit an
+explicit `film_lanes_not_scanned` external-lane condition and may never be
+used as evidence that the whole workflow is idle or globally blocked. After a
+scoped run, the next whole-workflow trigger is a normal bounded film cycle.
+
+Final playable completion still requires the exact Notion structure, completed file upload and destination media block, ffprobe-backed Media Assets, and local-ledger `sync_ready`. Once one useful playable path passes those playback gates, release its work-level visibility and perform incremental website sync even if metadata, poster, `Needs Review`, or issue follow-up remains open; those defects are recorded for later repair and do not by themselves justify `Hide from Website=true`. Final workflow completion is a separate, stricter gate: it additionally requires exact work-page `Metadata Status=verified`, empty issue fields, a usable poster, and live API readback of both playable assets and core metadata. An accepted multipart part, a completed local encode, `sync_ready` alone, or an on-disk search index is not final release proof. Release visibility does not close concrete supplemental variants or authorize source cleanup.

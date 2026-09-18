@@ -63,3 +63,11 @@ test("bitmap subtitles ending before the feature do not truncate the video", () 
 test("full source encodes do not stop at the shortest mapped stream", () => {
   assert.doesNotMatch(script, /options\.duration == null \? \["-shortest"\]/u);
 });
+
+test("bounded smoke samples fail closed on decoder errors", () => {
+  assert.match(script, /function smokeFailureArgs\(duration\)/u);
+  assert.match(script, /duration == null \? \[\] : \["-xerror"\]/u);
+  assert.match(script, /\.\.\.smokeFailureArgs\(options\.duration\)/gu);
+  assert.match(script, /Could not find ref with POC/u);
+  assert.match(script, /strict smoke failed on decoder error/u);
+});

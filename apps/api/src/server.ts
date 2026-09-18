@@ -94,12 +94,14 @@ import { mergePreparedLineAssets } from "./playback-lines.js";
 import { serveStaticWeb } from "./static-web.js";
 import { getPublicPerson, listPublicPeople, listPublicPersonIssues } from "./person-service.js";
 import { buildSiteStatistics, type SiteStatistics } from "./site-statistics.js";
+import { publicLibraryResults } from "./public-library.js";
+import { searchFilms } from "./film-search.js";
 import { mergeCachedPosters } from "./poster-refresh.js";
 
 const port = Number(process.env.API_PORT ?? 8787);
 const store = createCacheStore();
 const searchIndex = createSearchIndexStore();
-const memberCollections = new MemberCollectionService(createCollectionDocumentStore(), () => searchIndex.listAllResults());
+const memberCollections = new MemberCollectionService(createCollectionDocumentStore(), () => searchIndex.listAllResults(), result => store.hydrateMoviePosterUrls(result));
 const personCatalog = createPersonCatalogStore();
 const tspdtBrowseStore = createTspdtBrowseStore();
 const accessStore = createAccessStore();
@@ -1006,7 +1008,7 @@ async function writeSearchResultsToIndex(results: SearchResult[], context: strin
 
   try {
     const { prepareIndexedAssetRefresh } = await import("./indexed-asset-refresh.js");
-    for (const result of results) {
+    for (const result of publicLibraryResults(results)) {
       const prepared = await prepareIndexedAssetRefresh(result, searchIndex, store, {
         refreshPosters: searchSource.refreshAsset ? async () => (await searchSource.refreshAsset!({
           assetKey: result.assetKey,
@@ -1451,8 +1453,8 @@ async function cacheAssetsForLines(assetKeys: string[], line?: PlaybackLine) {
 async function handleSearch(url: URL, response: http.ServerResponse, context: RequestContext) {
   const startedAt = Date.now();
   const query = url.searchParams.get("q")?.trim() ?? "";
-  const searchLoad = await loadSearchResults(query);
-  const searchResults = searchLoad.results;
+  if (!searchIndexEnabled) throw new Error("Website search index is disabled.");
+  const searchResults = searchFilms(await searchIndex.listAllResults(), query);
   rememberResults(searchResults);
   const line = optionalPlaybackLine(url.searchParams.get("line"));
   const results = await enrichResultsWithCache(searchResults, line);
@@ -1462,7 +1464,7 @@ async function handleSearch(url: URL, response: http.ServerResponse, context: Re
     query,
     resultCount: results.length,
     variantCount: results.reduce((count, item) => count + (item.variants?.length ?? 0), 0),
-    searchCache: searchLoad.cacheStatus,
+    searchCache: "index_only_films",
     searchCacheEntries: searchResultCache.size,
     durationMs: durationMs(startedAt)
   });
@@ -1634,7 +1636,8 @@ function resultMatchesBrowseChannel(result: SearchResult, channel: BrowseChannel
 }
 
 function filterBrowseResults(results: SearchResult[], channel: BrowseChannel) {
-  return channel === "recommended" ? results : results.filter((result) => resultMatchesBrowseChannel(result, channel));
+  const visible = publicLibraryResults(results);
+  return channel === "recommended" ? visible : visible.filter((result) => resultMatchesBrowseChannel(result, channel));
 }
 
 function browseRatingCandidates(result: SearchResult) {
@@ -1865,7 +1868,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     try {
       searchResults = mode === "random"
         ? channel === "recommended"
-          ? await searchIndex.sample(limit)
+          ? sampleSearchResults(filterBrowseResults(await searchIndex.search("", 1_000_000), channel), limit)
           : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit)
         : (searchIndex.backend === "local"
           ? await searchIndex.search("", fetchLimit)
@@ -2029,15 +2032,15 @@ async function serveStaticTspdtBrowse(
       return false;
     }
 
-    const catalogRevision = `tspdt:${state.generatedAt}:${state.entries.length}`;
+    const publicResults = publicLibraryResults(state.entries.map((entry) => entry.result));
+    const catalogRevision = `tspdt:${state.generatedAt}:${publicResults.length}`;
     const pagination = resolveBrowseOffset({
       requestedOffset: options.offset,
       requestedRevision: options.requestedRevision,
       currentRevision: catalogRevision
     });
-    const pageEntries = state.entries.slice(pagination.offset, pagination.offset + options.limit);
-    const pageResults = pageEntries.map((entry) => entry.result);
-    const hasMore = state.entries.length > pagination.offset + options.limit;
+    const pageResults = publicResults.slice(pagination.offset, pagination.offset + options.limit);
+    const hasMore = publicResults.length > pagination.offset + options.limit;
     rememberResults(pageResults);
     const results = await enrichResultsWithCache(pageResults, options.line);
 

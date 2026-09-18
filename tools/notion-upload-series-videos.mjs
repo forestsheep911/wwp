@@ -317,6 +317,10 @@ export function validateSeriesSpecTitle(title) {
   return value;
 }
 
+export function effectiveSpecTitle(options, specPage) {
+  return options.targetSpecPageId ? specPage.title : (options.specTitle || specPage.title);
+}
+
 export function validateCollectionOptIn(files, specTitle, allowCollections = false) {
   const collectionFiles = files.filter(file => Number(file.episodeEnd) > Number(file.episode));
   const collectionTitle = /\/\s*合集|per\s*collection/iu.test(String(specTitle ?? ""));
@@ -429,7 +433,7 @@ async function createSeriesPage(notion, library, options) {
   setIfProperty(properties, library.dataSource, "Hide from Website", { checkbox: true });
   setIfProperty(properties, library.dataSource, "Needs Review", { checkbox: true });
   setIfProperty(properties, library.dataSource, "Media Availability", { select: { name: "needs_processing" } });
-  setRichTextProperty("Developer Memo", "New series page created before playable upload, Media Assets readback, subtitles/QC, and playback verification are complete. Keep hidden and Needs Review until production evidence is verified.");
+  setRichTextProperty("Developer Memo", "New series page created before playable upload. Keep hidden only until Media Assets, structure, subtitles/QC, and playback verification pass; metadata and review follow-up do not keep a playable work hidden.");
 
   console.log(`${options.apply ? "create" : "would create"} series page: ${options.title}`);
   if (!options.apply) return { id: "(dry-run)", properties };
@@ -775,8 +779,17 @@ async function appendEpisodeVideo(notion, episodePage, file, fileUploadId, apply
   }
 }
 
-async function assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, replaceExistingVideo = false) {
+export function shouldSkipEpisodeTargetPreflight({ manifest = null, fileName = "", replaceExistingVideo = false } = {}) {
+  return !replaceExistingVideo && manifest?.uploads?.[fileName]?.status === "uploaded";
+}
+
+async function assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, replaceExistingVideo = false, manifest = null) {
   for (const file of selectedFiles) {
+    // A previous run may have completed the Notion file upload and page append
+    // before the process was interrupted. Its manifest entry is the durable
+    // idempotency evidence; do not reject that already-completed target while
+    // checking the remaining files in the same batch.
+    if (shouldSkipEpisodeTargetPreflight({ manifest, fileName: file.name, replaceExistingVideo })) continue;
     const episodePage = episodePages.get(episodeRangeKey(file.episode, file.episodeEnd));
     if (!episodePage) throw new Error(`Missing episode target for ${file.name}`);
     const blocks = await listChildren(notion, episodePage.id);
@@ -829,7 +842,9 @@ async function main() {
   let episodePages = specPage.id === "(dry-run)" ? new Map() : await collectEpisodePages(notion, specPage.id);
   // Filename tags are hints only. They must not rename a prepared spec because
   // burned-in subtitle language can differ from tags inherited from a source.
-  const specTitle = options.specTitle || specPage.title;
+  // An explicit target is authoritative. A caller may pass a stale or
+  // filename-derived --spec-title, but it must not rename a prepared page.
+  const specTitle = effectiveSpecTitle(options, specPage);
   validateSeriesSpecTitle(specTitle);
   episodePages = await ensureEpisodePages(notion, specPage.id, episodePages, selectedFiles, options.apply, options.createEpisodes, options.apiDelayMs);
 
@@ -857,10 +872,9 @@ async function main() {
     return;
   }
 
-  await assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, options.replaceExistingVideo);
-
   const manifestPath = path.join(".local-data", `notion-series-video-upload-${page.id.replace(/-/g, "")}.json`);
   const manifest = readManifest(manifestPath);
+  await assertSelectedEpisodeTargetsAreEmpty(notion, episodePages, selectedFiles, options.replaceExistingVideo, manifest);
   const trafficMonitor = createVpnTrafficMonitor({
     envLookup: dotenv,
     reportPath: `${manifestPath}.vpn-traffic.json`

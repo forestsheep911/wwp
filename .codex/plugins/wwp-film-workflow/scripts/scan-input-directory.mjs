@@ -6,6 +6,8 @@ import path from "node:path";
 const mediaExt = new Set([".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi", ".wmv", ".iso"]);
 const subtitleExt = new Set([".srt", ".ass", ".ssa", ".sup", ".idx", ".sub", ".pgs"]);
 const nfoExt = new Set([".nfo"]);
+const imageExt = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"]);
+const archiveExt = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"]);
 
 function usage() {
   console.log(`Usage:
@@ -91,6 +93,8 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
   const media = [];
   let subtitleCount = 0;
   let nfoCount = 0;
+  let imageCount = 0;
+  let archiveCount = 0;
   let totalBytes = 0;
   let latestFileMtime = 0;
   const contentEntries = [];
@@ -117,6 +121,8 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
       addUnique(subtitleHints, classifySubtitleHint(path.basename(file)));
     }
     if (nfoExt.has(ext)) nfoCount += 1;
+    if (imageExt.has(ext)) imageCount += 1;
+    if (archiveExt.has(ext)) archiveCount += 1;
   }
 
   media.sort((a, b) => b.bytes - a.bytes);
@@ -133,6 +139,8 @@ function summarizeFiles(name, relativePath, files, root, maxSamples, warnings = 
     subtitleScope: "external_files_only",
     internalSubtitleProbe: "not_run",
     nfoCount,
+    imageCount,
+    archiveCount,
     totalBytes,
     latestFileMtime: latestFileMtime ? new Date(latestFileMtime).toISOString() : null,
     totalGB: Number((totalBytes / 1024 / 1024 / 1024).toFixed(2)),

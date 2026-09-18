@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPatch, candidateYearConflict, existingImdbIdentity, fetchImdbRating, metadataGateSnapshot, metadataIdentityConflict, parseArgs, parseInfoPairs, preferredDoubanSubjectId, simplifiedChineseTitleFromDouban } from "./notion-metadata-backfill.mjs";
+import { buildPatch, candidateYearConflict, doubanIdentityUnverified, existingImdbIdentity, fetchImdbRating, metadataGateSnapshot, metadataIdentityConflict, parseArgs, parseInfoPairs, preferredDoubanSubjectId, simplifiedChineseTitleFromDouban } from "./notion-metadata-backfill.mjs";
 
 test("parses physical direct access and the explicit timestamp recovery switch", () => {
   const options = parseArgs(["--page-id", "page-1", "--local-address", "192.168.1.22", "--skip-metadata-updated-at", "--dry-run"]);
@@ -96,6 +96,15 @@ test("fetchImdbRating falls back to IMDb when OMDb has no rating", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("rejects a Douban hit that cannot prove the trusted IMDb identity", () => {
+  const properties = pageWithProperties({
+    "IMDb ID": filledRichText("tt31514146")
+  }).properties;
+  assert.equal(doubanIdentityUnverified(properties, { imdbId: "tt34361658" }), true);
+  assert.equal(doubanIdentityUnverified(properties, {}), true);
+  assert.equal(doubanIdentityUnverified(properties, { imdbId: "tt31514146" }), false);
 });
 
 function emptyProperty(type) {

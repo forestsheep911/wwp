@@ -156,7 +156,7 @@ export function CinemaLayout({
     <main className="min-h-[100dvh]">
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
         <header className="sticky top-0 z-[100] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
-          <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-5 sm:py-3 md:px-8 xl:px-10">
+          <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-4 sm:py-3 xl:px-6">
             <button
               className="group flex min-h-11 min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               type="button"
@@ -301,7 +301,7 @@ export function CinemaLayout({
           </div>
         </header>
 
-        <div className="grid w-full gap-4 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4 md:px-8 xl:px-10">
+        <div data-page-content className="grid w-full gap-6 px-3 pb-[calc(var(--mobile-nav-height)+env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-4 sm:pb-5 sm:pt-4 xl:px-6">
           <div className="min-w-0 overflow-x-clip">
             <TabsContent className="mt-0" value="library">{library}</TabsContent>
             <TabsContent className="mt-0" value="people">{people}</TabsContent>

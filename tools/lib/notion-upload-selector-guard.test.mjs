@@ -18,9 +18,14 @@ function controller(state = { Notion: "国内直连", "JMS London 节点": "JMS 
   };
 }
 
-test("is inert unless the guarded wrapper declares an expected route", async () => {
+test("defaults to a fail-closed direct route when no wrapper declaration exists", async () => {
   const guard = createNotionUploadSelectorGuard({ envLookup: () => "", controller: controller() });
-  assert.deepEqual(await guard.assert("part 1"), { enabled: false, label: "part 1" });
+  assert.equal(guard.expectedRoute, "direct");
+  assert.deepEqual(await guard.assert("part 1"), {
+    enabled: true,
+    expectedRoute: "direct",
+    chain: ["Notion", "国内直连"]
+  });
 });
 
 test("accepts direct only while the Notion selector remains direct", async () => {

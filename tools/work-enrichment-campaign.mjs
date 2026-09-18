@@ -5,14 +5,18 @@ import path from "node:path";
 import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 import {
   buildEnrichmentCampaignReport,
+  assertAuthoritativePeopleCoverage,
+  deferPeopleStageForCoverageFailure,
   enqueueEnrichmentWorks,
   recoverStaleInProgress,
+  reclassifyTransientBlockedStages,
   readEnrichmentCampaign,
   resumeAuthorizedPeopleStage,
   settlePeopleStageFromCoverage,
   updateEnrichmentStage,
   writeEnrichmentCampaign
 } from "./lib/work-enrichment-campaign.mjs";
+import { discoverPeopleResumeArtifacts, summarizePeopleResumeArtifacts } from "./lib/people-resume-artifacts.mjs";
 
 const DEFAULT_STATE = ".local-data/work-enrichment-campaign.json";
 
@@ -25,7 +29,8 @@ function parseArgs(argv) {
     inputs: [],
     missingFields: [],
     humanConfirmationReasons: [],
-    json: false
+    json: false,
+    allowLocalCoverage: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -45,13 +50,15 @@ function parseArgs(argv) {
     else if (arg === "--missing-field") options.missingFields.push(argv[++index]);
     else if (arg === "--human-confirmation") options.humanConfirmationReasons.push(argv[++index]);
     else if (arg === "--next-review-at") options.nextReviewAt = argv[++index];
+    else if (arg === "--next-trigger") options.nextTrigger = argv[++index];
     else if (arg === "--preflight") options.preflight = argv[++index];
     else if (arg === "--report") options.report = argv[++index];
     else if (arg === "--coverage") options.coverage = argv[++index];
+    else if (arg === "--allow-local-coverage") options.allowLocalCoverage = true;
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!options.command) throw new Error("command is required: status|enqueue|record|authorize-people|settle-people-coverage");
+  if (!options.command) throw new Error("command is required: status|resume-artifacts|enqueue|enqueue-coverage|record|authorize-people|settle-people-coverage|repair-transient-blockers");
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 20) throw new Error("--limit must be between 1 and 20");
   return options;
 }
@@ -68,7 +75,7 @@ function output(value, json) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const lock = options.command === "status"
+  const lock = ["status", "resume-artifacts"].includes(options.command)
     ? null
     : acquireProductionLock({ owner: "work-enrichment-campaign", mode: "enrichment-only" });
   try {
@@ -77,7 +84,15 @@ function main() {
     state = recovered.state;
     if (recovered.recovered.length > 0) writeEnrichmentCampaign(options.state, state);
     let mutation = null;
-    if (options.command === "enqueue") {
+    if (options.command === "resume-artifacts") {
+      const entries = discoverPeopleResumeArtifacts(path.resolve(".local-data/people"), { campaign: state });
+      output({
+        root: path.resolve(".local-data/people"),
+        summary: summarizePeopleResumeArtifacts(entries),
+        entries: entries.slice(0, options.limit)
+      }, options.json);
+      return;
+    } else if (options.command === "enqueue") {
       const inputs = options.inputs.flatMap(readInputWorks);
       if (options.externalWorkId || options.pageId || options.ledgerWorkId) {
         inputs.push({
@@ -89,6 +104,24 @@ function main() {
       }
       if (inputs.length === 0) throw new Error("enqueue requires --input or a work identifier");
       mutation = enqueueEnrichmentWorks(state, inputs, { source: options.source });
+      state = mutation.state;
+      writeEnrichmentCampaign(options.state, state);
+    } else if (options.command === "enqueue-coverage") {
+      if (!options.coverage) throw new Error("enqueue-coverage requires --coverage");
+      const coverage = JSON.parse(readFileSync(path.resolve(options.coverage), "utf8"));
+      const candidates = coverage.works ?? coverage.candidates;
+      if (!Array.isArray(candidates)) throw new Error("coverage must contain a works or candidates array");
+      const inputs = candidates
+        .filter((candidate) => ["missing_credits", "unlinked_only", "partially_linked"].includes(candidate.status))
+        .map((candidate) => ({
+          externalWorkId: candidate.workId ?? candidate.externalWorkId ?? candidate.wwWorkId,
+          pageId: candidate.sourcePageId ?? candidate.pageId ?? candidate.notionWorkPageId,
+          title: candidate.title
+        }))
+        .filter((candidate) => candidate.externalWorkId && candidate.pageId && candidate.title)
+        .slice(0, options.limit);
+      if (inputs.length === 0) throw new Error("coverage contains no bounded, uniquely identified incomplete works");
+      mutation = enqueueEnrichmentWorks(state, inputs, { source: "historical_people_coverage" });
       state = mutation.state;
       writeEnrichmentCampaign(options.state, state);
     } else if (options.command === "record") {
@@ -104,7 +137,8 @@ function main() {
         reason: options.reason,
         missingFields: options.missingFields,
         humanConfirmationReasons: options.humanConfirmationReasons,
-        nextReviewAt: options.nextReviewAt
+        nextReviewAt: options.nextReviewAt,
+        nextTrigger: options.nextTrigger
       });
       state = mutation.state;
       writeEnrichmentCampaign(options.state, state);
@@ -126,12 +160,26 @@ function main() {
     } else if (options.command === "settle-people-coverage") {
       if (!options.coverage) throw new Error("settle-people-coverage requires --coverage");
       const coverage = JSON.parse(readFileSync(path.resolve(options.coverage), "utf8"));
-      mutation = settlePeopleStageFromCoverage(state, {
+      const selector = {
         key: options.key,
         ledgerWorkId: options.ledgerWorkId,
         externalWorkId: options.externalWorkId,
         pageId: options.pageId
-      }, coverage);
+      };
+      try {
+        assertAuthoritativePeopleCoverage(coverage, { allowLocal: options.allowLocalCoverage });
+        mutation = settlePeopleStageFromCoverage(state, selector, coverage);
+      } catch (error) {
+        // A provider/backend mismatch is a retryable readback failure. Do not
+        // leave the Notion-facing work in AI处理中, but keep malformed counts,
+        // ambiguous identities, and other integrity errors fail-closed.
+        if (!/production People settlement requires an Azure coverage audit/iu.test(String(error?.message ?? error))) throw error;
+        mutation = deferPeopleStageForCoverageFailure(state, selector, error);
+      }
+      state = mutation.state;
+      writeEnrichmentCampaign(options.state, state);
+    } else if (options.command === "repair-transient-blockers") {
+      mutation = reclassifyTransientBlockedStages(state);
       state = mutation.state;
       writeEnrichmentCampaign(options.state, state);
     } else if (options.command !== "status") {
@@ -140,6 +188,7 @@ function main() {
     const report = buildEnrichmentCampaignReport(state, { limit: options.limit });
     report.statePath = path.resolve(options.state);
     if (mutation?.added) report.mutation = { added: mutation.added, existing: mutation.existing };
+    if (mutation?.repaired) report.mutation = { repaired: mutation.repaired, nextReviewAt: mutation.nextReviewAt };
     report.recoveredStaleInProgress = recovered.recovered;
     if (mutation?.work) report.mutation = {
       updated: mutation.work.key,

@@ -12,7 +12,7 @@ function result(assetKey: string, metadata: Record<string, unknown>, variants = 
     updatedAt: "2026-01-01",
     summary: "",
     metadata,
-    variants
+    variants: variants.map(variant => ({ sourceUrl: "https://example.test/video.mp4", ...variant }))
   } as never;
 }
 

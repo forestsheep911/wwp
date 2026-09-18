@@ -12,6 +12,10 @@ const store = createPersonCatalogStore();
 const catalog = await store.getState();
 const report = buildMetadataOnlyPeopleCoverage(catalog, options);
 report.catalogSource = store.description;
+// Settlement uses the backend marker to distinguish an authoritative Azure
+// catalog readback from an intentional local test. Keep this explicit for
+// metadata-only works, which do not have a movie-index searchStore.
+report.catalogBackend = store.description;
 const outputPath = path.resolve(options.output);
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");

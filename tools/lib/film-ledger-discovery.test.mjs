@@ -305,6 +305,25 @@ test("importScan classifies subtitle-only directories as companion bundles", () 
   } finally { f.close(); }
 });
 
+test("importScan classifies artwork-only directories as companion evidence", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-artwork-only-"));
+  try {
+    const artwork = path.join(root, "Artwork", "scan.png");
+    mkdirSync(path.dirname(artwork), { recursive: true });
+    writeFileSync(artwork, "fixture");
+    const result = importScan(f.repo, { root, entries: [entry({ name: "Artwork", relativePath: "Artwork",
+      fileCount: 1, mediaCount: 0, subtitleCount: 0, nfoCount: 0, imageCount: 1, totalBytes: 7, largestMedia: [] })] });
+    const source = f.db.prepare("SELECT * FROM sources WHERE relative_path='Artwork'").get();
+    assert.equal(source.source_kind, "companion_evidence");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+    assert.equal(result.summary.inserted, 1);
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("importScan does not mark an existing collection member missing", () => {
   const f = fixture();
   const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-root-"));
@@ -424,6 +443,61 @@ test("importScan recognizes resolved collection members stored below a season pa
 
     const parentTask = f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`);
     assert.equal(parentTask.status, "done");
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importScan closes a pending collection parent once every member is bound", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-collection-pending-parent-"));
+  try {
+    const member = path.join(root, "Collection", "member.mkv");
+    mkdirSync(path.dirname(member), { recursive: true });
+    writeFileSync(member, "fixture");
+    importScan(f.repo, {
+      root,
+      entries: [entry({ name: "Collection", relativePath: "Collection", fileCount: 1, mediaCount: 1,
+        totalBytes: 7, largestMedia: [{ relativePath: "Collection\\member.mkv", bytes: 7, extension: ".mkv" }] })]
+    });
+    const parent = f.db.prepare("SELECT * FROM sources WHERE relative_path='Collection'").get();
+    const child = f.repo.upsertDiscoveredSource({
+      inputRootId: parent.input_root_id,
+      relativePath: "Collection\\member.mkv",
+      absolutePath: member,
+      fingerprint: "member",
+      sourceKind: "collection_member",
+      missing: false
+    });
+    const work = f.repo.ensureWork({ canonicalTitle: "Bound Member", year: 2026, workType: "movie" });
+    f.repo.bindSourceToWork(child.id, work.id);
+    const parentTask = f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`);
+    assert.equal(parentTask.status, "done");
+  } finally {
+    f.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("importScan closes a nested collection member when its file leaves are bound", () => {
+  const f = fixture();
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-scan-nested-pending-parent-"));
+  try {
+    const folder = path.join(root, "Collection", "Member");
+    const file = path.join(folder, "part.mkv");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(file, "fixture");
+    importScan(f.repo, { root, entries: [entry({ name: "Member", relativePath: "Member", absolutePath: folder, fileCount: 1,
+      mediaCount: 1, totalBytes: 7, largestMedia: [{ relativePath: "Member\\part.mkv", bytes: 7, extension: ".mkv" }] })] });
+    const parent = f.db.prepare("SELECT * FROM sources WHERE relative_path='Member'").get();
+    const child = f.repo.upsertDiscoveredSource({ inputRootId: parent.input_root_id,
+      relativePath: "Collection\\Member\\part.mkv", absolutePath: file, fingerprint: "part",
+      sourceKind: "episode_member", missing: false });
+    const work = f.repo.ensureWork({ canonicalTitle: "Nested Bound Member", year: 2026, workType: "series" });
+    f.repo.bindSourceToWork(child.id, work.id);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?")
+      .get(`intake:source:${parent.id}`).status, "done");
   } finally {
     f.close();
     rmSync(root, { recursive: true, force: true });

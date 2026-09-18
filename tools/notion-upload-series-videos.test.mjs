@@ -10,8 +10,10 @@ import {
   collectSourceFiles,
   filterEpisodeRange,
   isStaleUploadedFileUploadError,
+  shouldSkipEpisodeTargetPreflight,
   validateCollectionOptIn,
-  validateSeriesSpecTitle
+  validateSeriesSpecTitle,
+  effectiveSpecTitle
 } from "./notion-upload-series-videos.mjs";
 
 const scriptPath = path.resolve("tools/notion-upload-series-videos.mjs");
@@ -27,6 +29,20 @@ test("series uploader documents and accepts prepare-only mode", () => {
   assert.match(result.stdout, /--allow-collections/);
 });
 
+test("explicit target spec keeps the prepared page title", () => {
+  assert.equal(
+    effectiveSpecTitle(
+      { targetSpecPageId: "spec-page", specTitle: "警与囚 s01 英语原声" },
+      { title: "警与囚 第一季 英语原声 简英 1080p H.265" }
+    ),
+    "警与囚 第一季 英语原声 简英 1080p H.265"
+  );
+  assert.equal(
+    effectiveSpecTitle({ targetSpecPageId: "", specTitle: "New spec" }, { title: "Old spec" }),
+    "New spec"
+  );
+});
+
 test("stale completed Notion upload sessions are restartable", () => {
   assert.equal(isStaleUploadedFileUploadError({
     code: "validation_error",
@@ -36,6 +52,13 @@ test("stale completed Notion upload sessions are restartable", () => {
     code: "validation_error",
     message: "File upload with ID `upload` has a status of `pending`."
   }), false);
+});
+
+test("a completed manifest entry skips only that file's episode preflight", () => {
+  const manifest = { uploads: { "E01.mp4": { status: "uploaded" } } };
+  assert.equal(shouldSkipEpisodeTargetPreflight({ manifest, fileName: "E01.mp4" }), true);
+  assert.equal(shouldSkipEpisodeTargetPreflight({ manifest, fileName: "E02.mp4" }), false);
+  assert.equal(shouldSkipEpisodeTargetPreflight({ manifest, fileName: "E01.mp4", replaceExistingVideo: true }), false);
 });
 
 test("prepare-only without a source directory requires an explicit episode range", () => {

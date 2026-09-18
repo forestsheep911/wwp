@@ -5,9 +5,28 @@ description: Use when WWP film or series work pages need title, Douban, IMDb, OM
 
 # WWP Metadata Backfiller
 
+## Maintained Douban identity
+
+`Douban Subject ID` (numeric film/season subject ID) and `Douban URL` are the
+authoritative identity pair. Verify the fetched subject against the existing
+IMDb identity and work/season scope, then write both fields and require exact
+readback. Personage/celebrity IDs and prose hints are never movie identity.
+Do not silently overwrite a conflicting existing pair; use an exact-page,
+evidence-backed correction with old-value guards. When no verified subject
+exists, record `douban_identity_not_verified` as pending in the report/task;
+do not claim the Douban identity step is complete. This pending identity alone
+does not hide playable works. Historical repairs must be cached, resumable,
+rate-limited, and preserve personal collection marks and unrelated fields.
+
 This fills work-level metadata. It is separate from Media Assets, which describes specific media files and specs.
 
 ## Workflow
+
+Identity gate: when a work page already has a trusted IMDb ID, reject a
+same-name, same-year Douban result if its fetched page has a different IMDb ID
+or no IMDb ID. Fall back to IMDb/OMDb by the trusted ID, or keep the task
+pending with the exact mismatch; never apply metadata from the unverified
+Douban page.
 
 1. Inspect existing Notion fields before fetching external data.
 2. If a scanned film or series does not have a work page yet, create/reuse the work page for cataloging even when playable media is blocked, low quality, missing, or deferred. Metadata collection is a high-priority track and is not gated by video readiness.

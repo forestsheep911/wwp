@@ -99,6 +99,45 @@ test("source disposition defers incomplete-download intake and reopens it when a
   } finally { f.close(); }
 });
 
+test("source-missing disposition closes a stale intake task", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "quarantined movie",
+      absolutePath: "X:\\待人工删除\\quarantined movie.source-1",
+      fingerprint: "quarantined-1",
+      sourceKind: "folder"
+    });
+    const result = f.repo.syncSourceIntakeAvailability([{ sourceId: source.id, disposition: "source_missing" }]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].missing, 1);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+  } finally { f.close(); }
+});
+
+test("cycle cleanup closes stale intake tasks under disabled quarantine roots", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\待人工删除");
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "old source.source-1",
+      absolutePath: "X:\\待人工删除\\old source.source-1",
+      fingerprint: "old-source-1",
+      sourceKind: "folder"
+    });
+    f.repo.markSourceMissing(source.id, true);
+    const task = f.db.prepare("SELECT id FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`);
+    f.repo.transitionWorkflowTask(task.id, "pending", { reason: "legacy stale task" });
+    const closed = f.repo.closeQuarantinedSourceIntakeTasks();
+    assert.deepEqual(closed.map(row => row.source_id), [source.id]);
+    assert.equal(closed[0].status, "done");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "done");
+  } finally { f.close(); }
+});
+
 test("correctSourceWork records an auditable identity correction", () => {
   const f = fixture();
   try {
@@ -373,6 +412,32 @@ test("deferred metadata tasks requeue from task next_run_at even without work ne
   } finally { f.close(); }
 });
 
+test("metadata tasks waiting for a user are not reopened by a due work review", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "WaitingUserMetadata");
+    f.db.prepare("UPDATE works SET next_review_at=? WHERE id=?").run("2026-07-19T00:00:00.000Z", work.id);
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "waiting_user", {
+      reason: "AI age recommendation needs human confirmation"
+    });
+    assert.deepEqual(f.repo.refreshDueMetadataTasks({ now: "2026-07-20T00:00:00.000Z" }), []);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "waiting_user");
+  } finally { f.close(); }
+});
+
+test("identity refresh preserves a waiting metadata task", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "WaitingUserIdentityRefresh");
+    f.db.prepare("UPDATE works SET next_review_at=? WHERE id=?").run("2026-07-19T00:00:00.000Z", work.id);
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "waiting_user", { reason: "Review needed" });
+    f.repo.ensureWork({ canonicalTitle: "WaitingUserIdentityRefresh", year: 2025, workType: "movie" });
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "waiting_user");
+  } finally { f.close(); }
+});
+
 test("null-year works and renamed sources remain idempotent", () => {
   const f = fixture();
   try {
@@ -461,6 +526,34 @@ test("nested collection parents close after every leaf source is identified", ()
     f.repo.splitSourceCollection(nested.id, [{ relativePath: "Collection\\Nested\\Leaf.mkv", absolutePath: "X:\\queue\\Collection\\Nested\\Leaf.mkv", fingerprint: "leaf", workId: movie.id }]);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${nested.id}`).status, "done");
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`).status, "done");
+  } finally { f.close(); }
+});
+
+test("collection parent closes when remaining leaves are explicit duplicate containers", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const parent = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection", absolutePath: "X:\\queue\\Collection", fingerprint: "collection", sourceKind: "collection" });
+    const canonical = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection\\Movie.mkv", absolutePath: "X:\\queue\\Collection\\Movie.mkv", fingerprint: "movie", sourceKind: "collection_member" });
+    const duplicate = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Collection\\Movie", absolutePath: "X:\\queue\\Collection\\Movie", fingerprint: "container", sourceKind: "collection_member" });
+    const work = f.repo.ensureWork({ canonicalTitle: "Movie", year: 2025, workType: "movie" });
+    f.repo.bindSourceToWork(canonical.id, work.id);
+    f.repo.markDuplicateSource(duplicate.id, canonical.id, { reason: "Copied container" });
+    const task = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE task_key=?").get(`intake:source:${parent.id}`);
+    assert.equal(task.status, "done");
+    assert.match(task.reason, /explicit terminal dispositions/u);
+  } finally { f.close(); }
+});
+
+test("companion evidence marking closes intake without entering production", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const source = f.repo.upsertDiscoveredSource({ inputRootId: root.id, relativePath: "Scans", absolutePath: "X:\\queue\\Scans", fingerprint: "scans", sourceKind: "folder" });
+    const marked = f.repo.markCompanionSource(source.id, { reason: "Image-only scan directory" });
+    assert.equal(marked.source_kind, "companion_evidence");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+    assert.equal(f.repo.getEvents({ entityType: "source", entityId: source.id }).at(-1).event_type, "source_marked_companion_evidence");
   } finally { f.close(); }
 });
 

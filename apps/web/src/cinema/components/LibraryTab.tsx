@@ -2178,7 +2178,7 @@ function AgeRecommendationPanel({ result }: { result: SearchResult }) {
   return (
     <section
       aria-label={recommendation.tooltip}
-      className="grid gap-2.5 rounded-md border border-slate-800 bg-slate-950/80 px-4 py-3"
+      className="grid gap-2.5 py-1"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {recommendation.label && recommendation.variant ? (
@@ -3193,15 +3193,30 @@ function MovieDetailView({
   const variantCount = result.variants?.length ?? 0;
 
   return (
-    <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:rounded-lg sm:p-4 lg:mx-auto lg:w-full lg:max-w-6xl">
-      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
+    <section data-movie-detail className="grid min-w-0 gap-5 py-2 sm:py-3 lg:mx-auto lg:w-full lg:max-w-6xl">
+      <div>
         <div className="flex items-center justify-between gap-3">
           <Button className="min-h-11 justify-start" data-detail-back type="button" variant="ghost" size="sm" onClick={onBack}>
             <ChevronLeft className="h-4 w-4" />
             {backLabel}
           </Button>
-          <span className="text-xs text-slate-500">{copy.library.variantCount(variantCount)}</span>
         </div>
+      </div>
+
+      <div className="grid min-w-0 items-start gap-6 md:grid-cols-[minmax(180px,28%)_minmax(0,1fr)] md:gap-7">
+        <div className="mx-auto w-full max-w-[260px] overflow-hidden rounded-lg md:mx-0 md:max-w-none">
+          <MoviePoster result={result} />
+        </div>
+
+        <div className="grid min-w-0 content-start gap-5">
+          <div className="min-w-0">
+            <h2 className="min-w-0 break-words text-2xl font-semibold leading-tight text-slate-50 sm:text-3xl">{result.title}</h2>
+            <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
+            {info ? <p className="mt-2 break-words text-sm leading-6 text-slate-400">{info}</p> : null}
+            {directors ? (
+              <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>
+            ) : null}
+          </div>
         <div className={`grid ${explicitBrowseKind(result) === "tv" ? "grid-cols-3" : "grid-cols-2"} items-center gap-2 sm:flex`} aria-label="管理观影片单">
           <CollectionMarkButton
             active={Boolean(collectionEntry?.wantToWatchAt)}
@@ -3221,25 +3236,6 @@ function MovieDetailView({
             onClick={() => onUpdateCollectionMark(result, "watched")}
           />
         </div>
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <div className="mx-auto w-full max-w-[220px] overflow-hidden rounded-xl border border-slate-800 bg-slate-950 sm:rounded-lg">
-          <MoviePoster result={result} />
-        </div>
-
-        <div className="grid min-w-0 content-start gap-4">
-          <div className="min-w-0">
-            <div className="grid min-w-0 gap-3 sm:flex sm:items-start sm:gap-2">
-              <h2 className="min-w-0 flex-1 text-2xl font-semibold leading-tight text-slate-50">{result.title}</h2>
-              <AiSummaryButton showLabel onClick={() => onSummarize(result)} />
-            </div>
-            <p className="mt-2 text-sm text-slate-400">{metadataLine(result)}</p>
-            {info ? <p className="mt-2 text-sm leading-6 text-slate-400">{info}</p> : null}
-            {directors ? (
-              <p className="mt-2 text-sm font-semibold text-slate-300">{copy.library.director(directors)}</p>
-            ) : null}
-          </div>
 
           <LinkedCredits result={result} onOpenPerson={onOpenPerson} />
 
@@ -3284,8 +3280,11 @@ function MovieDetailView({
 
           <AgeRecommendationPanel result={result} />
 
-          <div className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:rounded-md">
-            <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>
+          <div className="grid gap-3 border-t border-slate-800/60 pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-200">{copy.library.intro}</h3>
+              <AiSummaryButton showLabel onClick={() => onSummarize(result)} />
+            </div>
             <p className="whitespace-pre-wrap text-sm leading-7 text-slate-300">{summary}</p>
           </div>
 
@@ -3318,18 +3317,18 @@ function LinkedCredits({ result, onOpenPerson }: { result: SearchResult; onOpenP
   const pendingCount = credits.filter((credit) => !credit.personId).length;
   const labels: Record<string, string> = { directing: "导演", writing: "编剧", acting: "演员", production: "制片", camera: "摄影", editing: "剪辑", music: "音乐" };
   return (
-    <section className="grid gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3" aria-label="主创与卡司">
+    <section className="grid min-w-0 gap-3" aria-label="主创与卡司">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-slate-400">主创与卡司 · {credits.length} 人</h3>
         {pendingCount ? <p className="text-[11px] text-slate-500">{pendingCount} 人关系已收录，人物资料待补</p> : null}
       </div>
       <div className="flex flex-wrap gap-2">
         {credits.map((credit, index) => credit.personId ? (
-          <button className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 py-1 text-xs font-semibold text-emerald-100 transition hover:border-emerald-300/60 hover:bg-emerald-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" key={`${credit.personId}-${credit.department}-${credit.job ?? ""}-${index}`} onClick={() => onOpenPerson(credit.personId!)} type="button">
+          <button className="min-h-11 max-w-full rounded-md py-2 pr-3 text-left text-sm font-semibold text-emerald-100 transition hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" key={`${credit.personId}-${credit.department}-${credit.job ?? ""}-${index}`} onClick={() => onOpenPerson(credit.personId!)} type="button">
             <span className="text-emerald-300/70">{labels[credit.department] ?? credit.job ?? "主创"}</span> {credit.name}
           </button>
         ) : (
-          <span className="rounded-full border border-dashed border-slate-700 px-2.5 py-1 text-xs text-slate-400" key={`${credit.name}-${credit.department}-${index}`} title="关系已收录，人物资料待补">
+          <span className="max-w-full py-2 pr-3 text-sm text-slate-400" key={`${credit.name}-${credit.department}-${index}`} title="关系已收录，人物资料待补">
             {labels[credit.department] ?? credit.job ?? "主创"} {credit.name} <span className="text-slate-600">· 待建档</span>
           </span>
         ))}

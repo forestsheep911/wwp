@@ -100,12 +100,10 @@ async function main() {
     workAction = { pageId: work.id, before: work.properties?.["Hide from Website"]?.checkbox ?? null, after: options.hidden };
     if (options.apply) {
       await notion.pages.update({ page_id: work.id, properties: {
-        "Hide from Website": { checkbox: options.hidden },
-        "Needs Review": { checkbox: options.hidden }
+        "Hide from Website": { checkbox: options.hidden }
       } });
       const readback = await notion.pages.retrieve({ page_id: work.id });
-      if (readback.properties?.["Hide from Website"]?.checkbox !== options.hidden
-        || (options.hidden && readback.properties?.["Needs Review"]?.checkbox !== true)) {
+      if (readback.properties?.["Hide from Website"]?.checkbox !== options.hidden) {
         throw new Error(`Work visibility readback failed for ${work.id}`);
       }
     }
