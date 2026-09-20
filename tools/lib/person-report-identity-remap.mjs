@@ -12,8 +12,16 @@ export function remapReportToExistingPeople(report, conflictArtifact) {
     const existingIds = new Set(entries.map((entry) => entry.existingPersonId));
     const pageIds = new Set(entries.map((entry) => entry.pageId));
     const externalIds = new Set(entries.flatMap((entry) => entry.externalIds ?? []));
-    if (existingIds.size !== 1 || pageIds.size !== 1 || externalIds.size < 2) {
-      throw new Error(`Cannot safely remap ${incomingPersonId}: expected one existing person/page and at least two matching stable IDs.`);
+    const incomingProfile = (report.proposedProfiles ?? []).find((profile) => profile.personId === incomingPersonId);
+    const hasReviewedWorkCredit = (incomingProfile?.sourceRefs ?? []).some((sourceRef) => (
+      sourceRef?.source === "imdb-work-credit"
+      && /^https:\/\/www\.imdb\.com\/title\/tt\d+\/fullcredits\/?$/iu.test(String(sourceRef.url ?? ""))
+    ));
+    const singleReviewedImdbIdentity = externalIds.size === 1
+      && [...externalIds][0].startsWith("imdb:")
+      && hasReviewedWorkCredit;
+    if (existingIds.size !== 1 || pageIds.size !== 1 || (externalIds.size < 2 && !singleReviewedImdbIdentity)) {
+      throw new Error(`Cannot safely remap ${incomingPersonId}: expected one existing person/page and at least two matching stable IDs, or one exact IMDb ID with reviewed work-credit evidence.`);
     }
     const incomingExternalIds = entries[0]?.incomingExternalIds;
     const existingExternalIds = entries[0]?.existingExternalIds;

@@ -32,6 +32,30 @@ test("rejects a remap supported by only one stable ID", () => {
   }] }), /at least two matching stable IDs/);
 });
 
+test("allows one exact IMDb identity when the incoming profile carries reviewed work-credit evidence", () => {
+  const report = {
+    proposedProfiles: [{
+      personId: "incoming",
+      sourceRefs: [{
+        source: "imdb-work-credit",
+        id: "tt1234567",
+        url: "https://www.imdb.com/title/tt1234567/fullcredits/"
+      }]
+    }],
+    proposedCredits: [{ credits: [{ personId: "incoming" }] }]
+  };
+  const output = remapReportToExistingPeople(report, { conflicts: [{
+    incomingPersonId: "incoming",
+    existingPersonId: "existing",
+    pageId: "page-1",
+    externalIds: ["imdb:nm1234567"],
+    incomingExternalIds: { imdb: "nm1234567" },
+    existingExternalIds: { imdb: "nm1234567" }
+  }] });
+  assert.equal(output.proposedProfiles[0].personId, "existing");
+  assert.equal(output.proposedCredits[0].credits[0].personId, "existing");
+});
+
 test("rejects conflicts that point at multiple existing people", () => {
   assert.throws(() => remapReportToExistingPeople({ proposedProfiles: [] }, { conflicts: [
     { incomingPersonId: "person-new", existingPersonId: "person-a", pageId: "page-a", externalIds: ["imdb:nm1"], incomingExternalIds: { imdb: "nm1", tmdb: "1" }, existingExternalIds: { imdb: "nm1" } },
