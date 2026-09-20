@@ -1984,16 +1984,9 @@ export class NotionSearchSource {
 
     try {
       const result = await this.pageToSearchResultWithRetry(page, { libraryMode: true });
-      if (!hasPlayableMedia(result)) {
-        return {
-          pageId,
-          title,
-          lastEditedTime,
-          deleteAssetKey: `notion-page-${pageId}`,
-          skipped: "no_playable_media"
-        };
-      }
-
+      // Keep visible catalog pages in the index even before a playable variant
+      // exists. Public playback lists filter non-playable results separately,
+      // while metadata and People enrichment need the canonical work record.
       return {
         pageId,
         title,
@@ -2062,10 +2055,9 @@ export class NotionSearchSource {
     const result = await this.pageToSearchResult(page as JsonRecord, {
       libraryMode: Boolean(library)
     });
-    if (library && !hasPlayableMedia(result)) {
-      return undefined;
-    }
-
+    // An explicit page refresh also serves metadata-first catalog records and
+    // People enrichment. Playback indexes filter non-playable records later;
+    // do not discard a visible work here merely because it has no media yet.
     const exact = findResultByAssetKey([result], input.assetKey);
     if (exact) {
       return exact;

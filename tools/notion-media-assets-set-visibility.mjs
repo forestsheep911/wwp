@@ -4,15 +4,20 @@ import dns from "node:dns";
 import https from "node:https";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
+import {
+  visibilityHideReasonIsConcrete,
+  workVisibilityHideReasonIsConcrete
+} from "./lib/notion-workflow-handoff.mjs";
 
 function parseArgs(argv = process.argv.slice(2)) {
-  const options = { workPage: "", sourcePages: [], hidden: null, updateWork: false, report: ".local-data/notion-media-assets-visibility.json", resolveIp: "", localAddress: "", apply: false };
+  const options = { workPage: "", sourcePages: [], hidden: null, reason: "", updateWork: false, report: ".local-data/notion-media-assets-visibility.json", resolveIp: "", localAddress: "", apply: false };
   for (let index = 0; index < argv.length; index += 1) {
     const [name, inline] = argv[index].split(/=(.*)/s);
     const value = () => inline ?? argv[++index];
     if (name === "--work-page") options.workPage = value();
     else if (name === "--source-page") options.sourcePages.push(value());
     else if (name === "--hidden") options.hidden = value() === "true";
+    else if (name === "--reason") options.reason = value();
     else if (name === "--update-work") options.updateWork = true;
     else if (name === "--report") options.report = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
@@ -22,6 +27,12 @@ function parseArgs(argv = process.argv.slice(2)) {
   }
   if (!options.workPage || options.sourcePages.length === 0 || options.hidden === null) {
     throw new Error("--work-page, one or more --source-page, and --hidden true|false are required.");
+  }
+  const hideReasonIsConcrete = options.updateWork
+    ? workVisibilityHideReasonIsConcrete(options.reason)
+    : visibilityHideReasonIsConcrete(options.reason);
+  if (options.hidden === true && !hideReasonIsConcrete) {
+    throw new Error("--hidden true requires --reason with a concrete viewing, structure, Media Assets, or explicit human-hold reason; metadata follow-up is not a hiding reason.");
   }
   if (new Set(options.sourcePages).size !== options.sourcePages.length) throw new Error("--source-page values must be unique.");
   return options;
@@ -108,7 +119,7 @@ async function main() {
       }
     }
   }
-  const report = { generatedAt: new Date().toISOString(), apply: options.apply, workPageId: options.workPage, hidden: options.hidden, actions, workAction };
+  const report = { generatedAt: new Date().toISOString(), apply: options.apply, workPageId: options.workPage, hidden: options.hidden, reason: options.reason || null, actions, workAction };
   fs.mkdirSync(path.dirname(path.resolve(options.report)), { recursive: true });
   fs.writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   console.log(JSON.stringify({ report: options.report, apply: options.apply, matched: actions.length, changed: options.apply ? actions.length : 0 }, null, 2));

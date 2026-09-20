@@ -968,9 +968,13 @@ export function metadataIdentityConflict(properties = {}, metadata = {}, context
 
 // A trusted IMDb identity must never be silently replaced by a same-name
 // Douban hit whose page does not expose a matching IMDb identity.
-export function doubanIdentityUnverified(properties = {}, metadata = {}) {
+export function doubanIdentityUnverified(properties = {}, metadata = {}, context = {}) {
   const expected = existingImdbIdentity(properties).effectiveImdbId;
   const actual = `${metadata.imdbId ?? ""}`.match(/tt\d+/i)?.[0]?.toLowerCase();
+  // Douban season pages may expose an episode IMDb ID instead of the
+  // series-level IMDb ID. The season title/year and explicit subject match
+  // are the stronger identity evidence in that narrow case.
+  if (seasonNumber(`${context.title ?? ""}`) && actual && actual !== expected) return false;
   return Boolean(expected && (!actual || actual !== expected));
 }
 
@@ -1659,7 +1663,7 @@ async function processPage(notion, pageRef, options, cookie) {
     return { pageId: page.id, title, status: "error", message: error.message, source: "douban" };
   }
   const identityConflict = metadataIdentityConflict(page.properties, metadata, { title });
-  if (doubanIdentityUnverified(page.properties, metadata)) {
+  if (doubanIdentityUnverified(page.properties, metadata, { title })) {
     const fallback = await processOmdbFallback(notion, page, options, title, existingIdentity.effectiveImdbId);
     if (fallback) {
       return {

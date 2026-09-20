@@ -430,10 +430,12 @@ async function createSeriesPage(notion, library, options) {
   setRichTextProperty("English Title", options.englishTitle);
   if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
   if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "TV Series" } };
-  setIfProperty(properties, library.dataSource, "Hide from Website", { checkbox: true });
+  // The parent is a catalog entry and may be visible before its first upload.
+  // Empty or unsafe episode/spec pages are handled at their own level.
+  setIfProperty(properties, library.dataSource, "Hide from Website", { checkbox: false });
   setIfProperty(properties, library.dataSource, "Needs Review", { checkbox: true });
   setIfProperty(properties, library.dataSource, "Media Availability", { select: { name: "needs_processing" } });
-  setRichTextProperty("Developer Memo", "New series page created before playable upload. Keep hidden only until Media Assets, structure, subtitles/QC, and playback verification pass; metadata and review follow-up do not keep a playable work hidden.");
+  setRichTextProperty("Developer Memo", "New series page created before playable upload. Keep the catalog entry visible; hide only an unsafe child episode/spec/asset or the whole work for a concrete playback risk or explicit human hold.");
 
   console.log(`${options.apply ? "create" : "would create"} series page: ${options.title}`);
   if (!options.apply) return { id: "(dry-run)", properties };

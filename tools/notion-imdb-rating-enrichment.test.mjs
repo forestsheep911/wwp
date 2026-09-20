@@ -55,6 +55,24 @@ test("planImdbRatingUpdates does not overwrite existing IMDB评分", () => {
   assert.equal(plan.updateFields.length, 0);
 });
 
+test("planImdbRatingUpdates allows an exact forced correction of an existing rating", () => {
+  const plan = planImdbRatingUpdates(
+    pageWithProperties({
+      "IMDB评分": { type: "number", number: 7.7 },
+      "Metadata Source": { type: "multi_select", multi_select: [{ name: "omdb" }] },
+      "Metadata Updated At": { type: "date", date: null }
+    }),
+    { id: "tt0100157", averageRating: 7.8, numVotes: 269348, source: "imdb-datasets" },
+    { force: true, now: "2026-09-18" }
+  );
+
+  assert.equal(plan.updates["IMDB评分"].number, 7.8);
+  assert.deepEqual(plan.updates["Metadata Source"].multi_select, [
+    { name: "omdb" },
+    { name: "imdb-datasets" }
+  ]);
+});
+
 test("planImdbRatingUpdates skips null or missing IMDb fallback scores", () => {
   const plan = planImdbRatingUpdates(
     pageWithProperties(),

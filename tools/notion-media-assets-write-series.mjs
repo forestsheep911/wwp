@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { visibilityHideReasonIsConcrete } from "./lib/notion-workflow-handoff.mjs";
 
 const DEFAULT_MAX_ASSETS = 200;
 
@@ -552,9 +553,18 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Languages", asMultiSelect(metadata.subtitleLanguages));
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
-  // A discovered media block on the exact episode-range page is the workflow's upload proof.
+  // A discovered media block on the exact episode-range page is the workflow's
+  // upload proof. Do not re-hide a watchable episode merely because metadata,
+  // review, or sibling episodes still need work. An explicit manifest hold is
+  // still honored.
   setIfProperty(properties, dataSource, "Playback Verified", { checkbox: true });
-  setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
+  // Do not let an inherited manifest default hide a watchable episode. A
+  // hidden asset needs an explicit, concrete reason; metadata follow-up is
+  // recorded elsewhere and remains visible.
+  setIfProperty(properties, dataSource, "Hide from Website", {
+    checkbox: candidate.hideFromWebsite === true
+      && visibilityHideReasonIsConcrete(candidate.visibilityReason)
+  });
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
   setIfProperty(properties, dataSource, "Asset URL", candidate.assetUrl ? { url: candidate.assetUrl } : undefined);
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
@@ -956,6 +966,8 @@ function normalizeMetadataOverrides(manifestPath) {
     specPageId: item.specPageId,
     workTitle: item.workTitle,
     developerMemo: item.developerMemo ?? defaults.developerMemo,
+    hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
+    visibilityReason: item.visibilityReason ?? defaults.visibilityReason,
     replaceExistingFields: normalizeReplaceExistingFields(
       item.replaceExistingFields ?? defaults.replaceExistingFields,
       item.label || item.originalFileName || item.mediaBlockId || `item-${index + 1}`
@@ -998,6 +1010,8 @@ function applyMetadataOverrides(candidates, overrides) {
       specPageId: override.specPageId ?? candidate.specPageId,
       workTitle: override.workTitle ?? candidate.workTitle,
       developerMemo: override.developerMemo ?? candidate.developerMemo,
+      hideFromWebsite: override.hideFromWebsite ?? candidate.hideFromWebsite,
+      visibilityReason: override.visibilityReason ?? candidate.visibilityReason,
       replaceExistingFields: override.replaceExistingFields,
       metadata: {
         ...(candidate.metadata ?? {}),

@@ -41,3 +41,15 @@ test("explicit asset page corrections support historical empty titles without cr
   assert.match(source, /Media Block ID.*candidate\.mediaBlockId/);
   assert.match(source, /Original File Name.*candidate\.originalFileName/);
 });
+
+test("new source-only rows do not become visibility blockers by default", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /A source-only row is not exposed as a playable website variant/u);
+  assert.match(source, /visibilityHideReasonIsConcrete\(candidate\.visibilityReason\)/u);
+});
+
+test("an inherited hide flag cannot hide an asset without a concrete reason", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /stale\/over-conservative manifest/u);
+  assert.match(source, /candidate\.hideFromWebsite === true[\s\S]*visibilityHideReasonIsConcrete/u);
+});

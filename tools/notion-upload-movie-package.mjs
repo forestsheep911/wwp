@@ -367,10 +367,12 @@ async function createMoviePage(notion, library, options) {
   if (Number.isFinite(options.year)) properties["Release Year"] = { number: options.year };
   if (library.dataSource.properties?.["影别"]?.type === "select") properties["影别"] = { select: { name: "Movie" } };
   if (options.initialGates) {
-    setCheckboxProperty("Hide from Website", true);
+    // A work page is also a metadata/catalog entry. Do not hide it merely
+    // because its first playable asset has not arrived yet.
+    setCheckboxProperty("Hide from Website", false);
     setCheckboxProperty("Needs Review", true);
     setSelectProperty("Media Availability", options.mediaAvailability || "needs_processing");
-    setRichTextProperty("Developer Memo", options.developerMemo || "New work page created before playable upload. Keep hidden only until Media Assets, structure, subtitles/QC, and playback verification pass; metadata and review follow-up do not keep a playable work hidden.");
+    setRichTextProperty("Developer Memo", options.developerMemo || "New work page created before playable upload. Keep the catalog entry visible; hide only an unsafe child spec/asset or the whole work for a concrete playback risk or explicit human hold.");
   }
 
   console.log(`${options.apply ? "create" : "would create"} movie page: ${options.title}`);

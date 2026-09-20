@@ -188,7 +188,7 @@ test("series writer rejects playable files under source specs", () => {
   assert.equal(playablePlacementIssue("银河英雄传说 繁 H.265 0.06-0.23GB/集", "Galaxy.Heroes.1988.E001.h265.cht.low.mp4"), null);
 });
 
-test("new upload-backed series assets are marked playback verified without changing visibility", () => {
+test("new upload-backed series assets are visible when no viewing risk is recorded", () => {
   const properties = buildAssetProperties(mediaAssetsDataSource, {
     workPageId: "work-page",
     name: "检察官的提案 / Episode 02",
@@ -196,6 +196,23 @@ test("new upload-backed series assets are marked playback verified without chang
     originalFileName: "The.Prosecutors.Proposal.S01E02.1080p.h265.kor.cht.mp4",
     sourcePageId: "episode-page",
     mediaBlockId: "media-block",
+    metadata: { episodeNumber: 2, resolution: "1080p", videoCodec: "hevc", container: "mp4" }
+  });
+
+  assert.equal(properties["Playback Verified"].checkbox, true);
+  assert.equal(properties["Hide from Website"].checkbox, false);
+});
+
+test("an explicit series visibility hold remains honored", () => {
+  const properties = buildAssetProperties(mediaAssetsDataSource, {
+    workPageId: "work-page",
+    name: "检察官的提案 / Episode 02",
+    displayLabel: "检察官的提案 第一季 繁 1080p / Episode 02",
+    originalFileName: "The.Prosecutors.Proposal.S01E02.1080p.h265.kor.cht.mp4",
+    sourcePageId: "episode-page",
+    mediaBlockId: "media-block",
+    hideFromWebsite: true,
+    visibilityReason: "播放无声，等待替换音轨",
     metadata: { episodeNumber: 2, resolution: "1080p", videoCodec: "hevc", container: "mp4" }
   });
 

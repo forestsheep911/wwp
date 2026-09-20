@@ -5,6 +5,7 @@ import https from "node:https";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { visibilityHideReasonIsConcrete } from "./lib/notion-workflow-handoff.mjs";
 
 function parseArgs() {
   const options = {
@@ -615,10 +616,20 @@ function buildAssetProperties(dataSource, candidate) {
   setIfProperty(properties, dataSource, "Subtitle Regions", asMultiSelect(metadata.subtitleRegions));
   setIfProperty(properties, dataSource, "Source Lineage", asMultiSelect(metadata.sourceLineage));
   // A discovered playable block on the exact destination page is the workflow's upload proof.
-  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: candidate.assetType === "playable_video" });
-  if (candidate.hideFromWebsite !== false) {
-    setIfProperty(properties, dataSource, "Hide from Website", { checkbox: true });
-  }
+  // Visibility is a playback gate, not a metadata-completion gate. Once this
+  // writer has verified a playable block, default to visible unless the
+  // manifest explicitly requests an automation-owned hold.
+  const playable = candidate.assetType === "playable_video";
+  setIfProperty(properties, dataSource, "Playback Verified", { checkbox: playable });
+  // A source-only row is not exposed as a playable website variant, so it is
+  // not a viewing risk. Keep it visible by default for auditability; only an
+  // explicit manifest hold or a concrete playback/structure risk may hide it.
+  // A stale/over-conservative manifest must not turn an ordinary follow-up
+  // issue into a website hide. Keep the explicit request only when it carries
+  // a concrete viewing, structure, Media Assets, or human-hold reason.
+  const hidden = candidate.hideFromWebsite === true
+    && visibilityHideReasonIsConcrete(candidate.visibilityReason);
+  setIfProperty(properties, dataSource, "Hide from Website", { checkbox: hidden });
   setIfProperty(properties, dataSource, "Original File Name", { rich_text: richText(candidate.originalFileName) });
   setIfProperty(properties, dataSource, "Asset URL", candidate.assetUrl ? { url: candidate.assetUrl } : undefined);
   setIfProperty(properties, dataSource, "Source Page ID", { rich_text: richText(candidate.sourcePageId) });
@@ -884,6 +895,7 @@ function normalizeManifest(manifest, options) {
       allowedAssetTypes: arrayify(item.allowedAssetTypes ?? defaults.allowedAssetTypes).filter(Boolean),
       mediaAvailability: item.mediaAvailability ?? defaults.mediaAvailability,
       hideFromWebsite: item.hideFromWebsite ?? defaults.hideFromWebsite,
+      visibilityReason: item.visibilityReason ?? defaults.visibilityReason,
       developerMemo: item.developerMemo ?? defaults.developerMemo,
       includeDefaultEdition: item.includeDefaultEdition ?? defaults.includeDefaultEdition ?? false,
       replaceExistingFields: item.replaceExistingFields ?? defaults.replaceExistingFields,
@@ -910,6 +922,7 @@ function applyManifestOverrides(candidate, item = {}) {
   return {
     ...candidate,
     hideFromWebsite: item.hideFromWebsite,
+    visibilityReason: item.visibilityReason,
     developerMemo: item.developerMemo,
     includeDefaultEdition: item.includeDefaultEdition,
     replaceExistingFields: item.replaceExistingFields,

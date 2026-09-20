@@ -36,14 +36,26 @@ export function classify(row, indexedId) {
 }
 async function main() {
   const args = process.argv.slice(2);
-  if (args.includes('--help')) { console.log('node tools/notion-douban-identity-audit.mjs --scan [--state-dir PATH] [--index JSON]\nRead-only, resumable property scan. Existing completed snapshot is reused. No block traversal or writes to Notion.'); return; }
-  const allowed = new Set(['--scan', '--state-dir', '--index', '--repairs']);
-  for (let i=0;i<args.length;i++) { if (!allowed.has(args[i])) throw Error('Unknown argument '+args[i]); if (args[i] !== '--scan') i++; }
+  if (args.includes('--help')) { console.log('node tools/notion-douban-identity-audit.mjs --scan [--refresh] [--state-dir PATH] [--index JSON]\nRead-only, resumable property scan. Existing completed snapshot is reused unless --refresh is supplied. Refresh preserves the prior snapshot as snapshot.<timestamp>.bak. No block traversal or writes to Notion.'); return; }
+  const allowed = new Set(['--scan', '--refresh', '--state-dir', '--index', '--repairs']);
+  const valueFlags = new Set(['--state-dir', '--index', '--repairs']);
+  for (let i=0;i<args.length;i++) {
+    if (!allowed.has(args[i])) throw Error('Unknown argument '+args[i]);
+    if (valueFlags.has(args[i])) {
+      if (!args[i + 1] || args[i + 1].startsWith('--')) throw Error(`${args[i]} requires a value`);
+      i++;
+    }
+  }
   const get = key => args.includes(key) ? args[args.indexOf(key)+1] : undefined;
   const dir = path.resolve(get('--state-dir') ?? '.local-data/douban-identity-audit');
   fs.mkdirSync(dir, { recursive: true });
   const stateFile = path.join(dir, 'snapshot.json');
-  const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : { pages: [], cursor: undefined, complete: false };
+  let state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : { pages: [], cursor: undefined, complete: false };
+  if (args.includes('--refresh') && fs.existsSync(stateFile)) {
+    const backupPath = path.join(dir, `snapshot.${new Date().toISOString().replaceAll(':', '-')}.bak`);
+    fs.copyFileSync(stateFile, backupPath);
+    state = { pages: [], cursor: undefined, complete: false, refreshedFrom: backupPath };
+  }
   const save = () => fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
   const ip = process.env.NOTION_API_RESOLVE_IP;
   const agent = ip ? new https.Agent({lookup:(host,options,cb)=>options.all ? cb(null,[{address:ip,family:4}]) : cb(null,ip,4)}) : undefined;
@@ -68,7 +80,12 @@ async function main() {
     }
   }
   const indexFile = get('--index');
-  const index = indexFile ? JSON.parse(fs.readFileSync(indexFile, 'utf8')) : [];
+  const indexPayload = indexFile ? JSON.parse(fs.readFileSync(indexFile, 'utf8')) : [];
+  // Local search indexes evolved from a flat array to { entries: { ... } }.
+  // Audit identity against either shape without forcing a full index rebuild.
+  const index = Array.isArray(indexPayload)
+    ? indexPayload
+    : Object.values(indexPayload?.entries ?? {});
   const byPage = new Map(index.map(e=>[String(e.sourcePageId??e.result?.sourcePageId??'').replaceAll('-',''),e.result?.metadata?.externalIds?.douban]));
   const repairFile = get('--repairs');
   const repairs = repairFile ? JSON.parse(fs.readFileSync(repairFile,'utf8')).rows.filter(row=>row.status==='applied') : [];

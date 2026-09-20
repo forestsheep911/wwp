@@ -107,6 +107,20 @@ test("rejects a Douban hit that cannot prove the trusted IMDb identity", () => {
   assert.equal(doubanIdentityUnverified(properties, { imdbId: "tt31514146" }), false);
 });
 
+test("allows a season Douban page whose IMDb field points to an episode", () => {
+  const properties = pageWithProperties({
+    "IMDb ID": filledRichText("tt4786824")
+  }).properties;
+  assert.equal(
+    doubanIdentityUnverified(
+      properties,
+      { imdbId: "tt7871786" },
+      { title: "王冠 第三季 The Crown Season 3 (2019)" }
+    ),
+    false
+  );
+});
+
 function emptyProperty(type) {
   if (type === "number") return { type, number: null };
   if (type === "date") return { type, date: null };

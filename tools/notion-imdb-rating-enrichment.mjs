@@ -14,6 +14,7 @@ const DEFAULT_REPORT_PATH = ".local-data/notion-imdb-rating-enrichment-report.js
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     apply: false,
+    force: false,
     timeoutMs: 30000,
     reportPath: DEFAULT_REPORT_PATH
   };
@@ -26,6 +27,10 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (arg === "--apply") {
       options.apply = true;
+      continue;
+    }
+    if (arg === "--force") {
+      options.force = true;
       continue;
     }
     if (arg === "--no-dataset") {
@@ -57,10 +62,11 @@ function parseArgs(argv = process.argv.slice(2)) {
 function usage() {
   return `Usage:
   node tools/notion-imdb-rating-enrichment.mjs --page-id <page-id>
-  node tools/notion-imdb-rating-enrichment.mjs --page-id <page-id> --imdb-id <ttid>
+  node tools/notion-imdb-rating-enrichment.mjs --page-id <page-id> --imdb-id <ttid> [--force]
 
 Default mode is dry-run. The tool only fills an empty Notion IMDB评分 field
-from the plugin IMDb fallback inspector. Use --apply to write updates.
+from the plugin IMDb fallback inspector. Use --force only for an exact,
+evidence-backed identity correction, and --apply to write updates.
 `;
 }
 
@@ -186,7 +192,8 @@ export function planImdbRatingUpdates(page, ratingResult = {}, options = {}) {
   const updates = {};
   const rating = ratingNumber(ratingResult.averageRating);
 
-  if (rating === undefined || !propertyExists(properties, "IMDB评分") || hasValue(properties, "IMDB评分")) {
+  if (rating === undefined || !propertyExists(properties, "IMDB评分")
+    || (hasValue(properties, "IMDB评分") && options.force !== true)) {
     return {
       pageId: page.id,
       title: pageTitle(page),
@@ -253,7 +260,7 @@ async function main() {
     ratingsTsv: options.ratingsTsv,
     timeoutMs: options.timeoutMs
   });
-  const plan = planImdbRatingUpdates(page, ratingResult);
+  const plan = planImdbRatingUpdates(page, ratingResult, { force: options.force });
   const payload = {
     mode: options.apply ? "apply" : "dry-run",
     pageId: page.id,

@@ -287,10 +287,12 @@ async function main() {
   put(properties, library.dataSource, "影别", options.type === "series" ? "TV Series" : "Movie", "select", value => ({ select: { name: value } }));
   put(properties, library.dataSource, "Douban Subject ID", options.doubanId, "rich_text", value => ({ rich_text: richText(value) }));
   put(properties, library.dataSource, "IMDb ID", options.imdbId, "rich_text", value => ({ rich_text: richText(value) }));
-  put(properties, library.dataSource, "Hide from Website", true, "checkbox", value => ({ checkbox: value }));
+  // A work page is also a catalog entry. Keep it visible while metadata or
+  // the first playable spec is being prepared; hide unsafe child media instead.
+  put(properties, library.dataSource, "Hide from Website", false, "checkbox", value => ({ checkbox: value }));
   put(properties, library.dataSource, "Needs Review", true, "checkbox", value => ({ checkbox: value }));
   put(properties, library.dataSource, "Media Availability", "needs_processing", "select", value => ({ select: { name: value } }));
-  put(properties, library.dataSource, "Developer Memo", "Metadata-first page created before playable production. Keep hidden only until a playable Media Assets path, structure, QC, and playback readback pass. Metadata and review gaps remain follow-up work and do not keep a playable work hidden.", "rich_text", value => ({ rich_text: richText(value) }));
+  put(properties, library.dataSource, "Developer Memo", "Metadata-first page created before playable production. Keep the catalog entry visible; hide only an unsafe child spec/asset or the whole work for a concrete playback risk or explicit human hold.", "rich_text", value => ({ rich_text: richText(value) }));
 
   if (!options.apply) {
     console.log(JSON.stringify({ status: "would_create", title: options.title, type: options.type, properties }, null, 2));
