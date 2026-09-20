@@ -124,22 +124,102 @@ test("playable visibility is independent from metadata completion", () => {
   const publisher = read("skills/wwp-notion-publisher/SKILL.md");
   const cycle = read("references/workflow-cycle.md");
   const media = read("references/notion-media-assets.md");
+  const metadata = read("references/metadata-sources.md");
 
   assert.match(publisher, /`posterPresent` and `coreMetadataPresent` are final-completion evidence, not visibility blockers/u);
-  assert.match(cycle, /Once that playable gate passes, release the\s+automation-owned work visibility/u);
+  assert.match(cycle, /Once that playable gate passes, (?:the same publication\s+run must release\s+the|release the)\s+automation-owned work visibility/u);
   assert.match(media, /only a missing\/inconsistent playable path or explicit visibility hold keeps publication pending/u);
   assert.match(media, /one verified playable asset is sufficient for work-level visibility/u);
   assert.match(publisher, /release the work if at least one exact playable asset passes/u);
+  assert.match(publisher, /Keep the work page visible by default, including metadata-only or not-yet-playable catalog entries/u);
+  assert.match(metadata, /Keep work pages visible by default even when they have no playable verified media yet/u);
 });
 
 test("visibility-first rule keeps metadata follow-up from rehiding a playable work", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const cycle = read("references/workflow-cycle.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const decisions = read("references/decision-rules.md");
 
   assert.match(producer, /`Hide from Website` is not the metadata or review master switch/u);
   assert.match(producer, /A work may therefore remain `AI 处理中` or `待人工确认` while already visible/u);
-  assert.match(cycle, /metadata incompleteness, a missing poster, `Needs Review`, or an AI\/human\s+follow-up issue must not re-check `Hide from Website`/u);
-  assert.match(cycle, /Only a missing\/invalid playable path, an unsafe page\/media structure/u);
+  assert.match(cycle, /metadata incompleteness, a missing poster or rating, missing People\/AI\s+enrichment, `Needs Review`, an AI\/human follow-up issue, or open optional spec\s+expansion must not re-check `Hide from Website`/u);
+  assert.match(cycle, /Only an unsafe page\/media structure, an unresolved Media Assets\/readback/u);
+  assert.match(cycle, /A missing\s+playable path alone does \*\*not\*\* hide the catalog entry/u);
+  assert.match(producer, /Never re-hide a technically playable work merely because metadata, poster, people, ratings/u);
+  assert.match(cycle, /must not re-check `Hide from Website`/u);
+  assert.match(publisher, /Mandatory visibility action.*same bounded publication run/u);
+  assert.match(decisions, /Website visibility is a playback gate, not a metadata perfection gate/u);
+  assert.match(decisions, /first ask whether a normal user can play at least\s+one exact published spec\/episode/u);
+  assert.match(cycle, /If the answer is yes, publish it unless the playback\s+path itself is unsafe/u);
+  assert.match(decisions, /Missing posters, ratings,\s+People, AI advice, `Needs Review`, `Human Issue`, `AI Issue`/u);
+  assert.match(decisions, /A metadata-only work, a work waiting\s+for subtitles, and a work waiting for its first encode remain visible/u);
+  assert.match(decisions, /Visibility is monotonic by default/u);
+  assert.match(decisions, /Default to visible after usable publication/u);
+  assert.match(cycle, /visible-after-usable-publication/u);
+  assert.match(producer, /Use the visible-after-usable-publication default/u);
+});
+
+test("workflow blockers are not website blockers unless playback is affected", () => {
+  const cycle = read("references/workflow-cycle.md");
+  const decisions = read("references/decision-rules.md");
+  assert.match(cycle, /must never turn a non-playback blocker into a website blocker/u);
+  assert.match(cycle, /Only a concrete failure of the exposed playback\/structure\/Media Assets path/u);
+  assert.match(decisions, /Do not use the word `blocked` as a shortcut for `Hide from Website=true`/u);
+  assert.match(decisions, /A follow-up or\s+completion blocker must leave the title visible/u);
+});
+
+test("watchable titles are released despite repairable imperfections", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const decisions = read("references/decision-rules.md");
+  assert.match(producer, /If a normal user can watch the published title, release it even when it is not perfect/u);
+  assert.match(decisions, /if a normal user can watch the published title,\s+release it even when it is not perfect/u);
+  assert.match(decisions, /small repairable quality issue belongs in the\s+follow-up record, not in the\s+work-level visibility gate/u);
+});
+
+test("metadata identity conflicts do not become work-level visibility blocks by themselves", () => {
+  const metadata = read("skills/wwp-metadata-backfiller/SKILL.md");
+  const handoff = read("references/workflow-handoff.md");
+  const decisions = read("references/decision-rules.md");
+
+  assert.match(metadata, /must not newly set `Hide from Website=true` unless the conflict also proves that an exposed media path is mapped to the wrong work/u);
+  assert.match(handoff, /metadata and issue checks are named `workCompletionBlockers`; they are never website-visibility blockers/u);
+  assert.match(decisions, /The second and third rows are not reasons to set `Hide from Website=true`/u);
+});
+
+test("series catalog pages stay visible unless every exposed path is unsafe", () => {
+  const series = read("skills/wwp-series-producer/SKILL.md");
+  const handoff = read("references/workflow-handoff.md");
+  assert.match(series, /The work page is a visible catalog entry by default/u);
+  assert.match(series, /hide only the exact empty or unsafe child path/u);
+  assert.match(series, /Metadata\/review follow-up alone must never keep a playable series hidden/u);
+  assert.match(handoff, /先放后修（默认动作）/u);
+});
+
+test("minimal visibility blockers keep non-playback defects from hiding a usable title", () => {
+  const decisions = read("references/decision-rules.md");
+  const cycle = read("references/workflow-cycle.md");
+  const handoff = read("references/workflow-handoff.md");
+  const scripts = read("references/script-map.md");
+
+  assert.match(decisions, /Minimal Visibility Blockers/u);
+  assert.match(decisions, /only for a concrete reason that can stop or materially corrupt normal viewing/u);
+  assert.match(decisions, /release the work-level page and isolate unfinished siblings/u);
+  assert.match(cycle, /Minimal-blocker publication rule/u);
+  assert.match(cycle, /keep the catalog entry visible, publish the verified usable path when present, and record a follow-up/u);
+  assert.match(handoff, /release the work-level page and isolate unfinished siblings/u);
+  assert.match(handoff, /`暂缓` is a production-recovery state, not a website-hide command/u);
+  assert.match(scripts, /visible catalog entry with `Needs Review=true`/u);
+  assert.match(handoff, /先放后修（默认动作）.*不会影响正常观看时，本轮必须优先清除/u);
+  assert.match(handoff, /无法证明会影响观看，按“可观看”处理/u);
+});
+
+test("Media Assets backfill does not use hidden as a conservative default", () => {
+  const media = read("skills/wwp-media-assets-backfiller/SKILL.md");
+  assert.match(media, /A newly created row is visible by default/u);
+  assert.match(media, /do not use `Hide from Website=true` as a conservative placeholder/u);
+  assert.match(media, /concrete playback\/structure\/Media Assets risk or the user explicitly asks for a hold/u);
+  assert.match(media, /separate final metadata gate/u);
 });
 
 test("release-first coverage is separate from source expansion", () => {
@@ -154,7 +234,7 @@ test("release-first coverage is separate from source expansion", () => {
   assert.match(selector, /Do not build a Cartesian product/u);
   assert.match(encoder, /Default to a compact first release/u);
   assert.match(encoder, /upload the high tier while deriving compact/iu);
-  assert.match(publisher, /without waiting for optional supplemental variants/u);
+  assert.match(publisher, /Mandatory visibility action|without waiting for optional supplemental variants/u);
   assert.match(cycle, /production queue is also the durable expansion query/u);
   assert.match(archive, /`Workflow Status=已完成` means the current release is live/u);
 });
@@ -338,7 +418,7 @@ test("new series intake persists probe evidence and prepares size-neutral destin
   const series = read("skills/wwp-series-producer/SKILL.md");
 
   assert.match(cycle, /persist the representative probe path plus quality, subtitle, audio, color, and episode-coverage evidence/u);
-  assert.match(cycle, /create the hidden work page and its complete destination tree immediately/u);
+  assert.match(cycle, /create the \*\*visible catalog work page\*\* and its complete destination tree immediately/u);
   assert.match(cycle, /provisional prepared spec title may omit its size/u);
   assert.match(cycle, /inherited proxy `ECONNRESET`\/TLS failure is transport evidence, not a page-permission verdict/u);
   assert.match(cycle, /does not waive the separate upload route proof/u);

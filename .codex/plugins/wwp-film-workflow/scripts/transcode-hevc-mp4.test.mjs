@@ -65,9 +65,28 @@ test("full source encodes do not stop at the shortest mapped stream", () => {
 });
 
 test("bounded smoke samples fail closed on decoder errors", () => {
-  assert.match(script, /function smokeFailureArgs\(duration\)/u);
-  assert.match(script, /duration == null \? \[\] : \["-xerror"\]/u);
-  assert.match(script, /\.\.\.smokeFailureArgs\(options\.duration\)/gu);
+  assert.match(script, /function smokeFailureArgs\(duration(?:, allowDecoderRecovery = false)?\)/u);
+  assert.match(script, /duration == null \|\| allowDecoderRecovery \? \[\] : \["-xerror"\]/u);
+  assert.match(script, /\.\.\.smokeFailureArgs\(options\.duration, options\.allowDecoderRecovery\)/gu);
   assert.match(script, /Could not find ref with POC/u);
   assert.match(script, /strict smoke failed on decoder error/u);
+});
+
+test("full encodes rebuild non-monotonic source timestamps for MP4 delivery", () => {
+  assert.match(script, /"-fps_mode", "cfr"/u);
+  assert.match(script, /non-monotonic.*PTS|duplicate DTS|monotonic.*timeline/iu);
+  assert.match(script, /setpts=N\/\(24000\/1001\*TB\)/u);
+});
+
+test("encoding can explicitly fall back from NVENC to CPU libx265", () => {
+  assert.match(script, /--video-encoder <hevc_nvenc\|libx265>/u);
+  assert.match(script, /options\.videoEncoder === "libx265"/u);
+  assert.match(script, /\["-c:v", "libx265", "-preset", "medium"\]/u);
+  assert.match(script, /options\.videoEncoder === "hevc_nvenc"/u);
+});
+
+test("decoder recovery is explicit and does not weaken the default smoke gate", () => {
+  assert.match(script, /--allow-decoder-recovery/u);
+  assert.match(script, /duration == null \|\| allowDecoderRecovery \? \[\] : \["-xerror"\]/u);
+  assert.match(script, /\["-err_detect", "ignore_err"\]/u);
 });

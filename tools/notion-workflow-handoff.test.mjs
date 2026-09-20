@@ -5,6 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertExpectedPageTitle } from "./notion-workflow-handoff.mjs";
+import {
+  shouldAutoReleaseWorkVisibility,
+  visibilityHideReasonIsConcrete,
+  workVisibilityHideReasonIsConcrete
+} from "./lib/notion-workflow-handoff.mjs";
 
 const scriptPath = path.resolve("tools/notion-workflow-handoff.mjs");
 
@@ -83,4 +88,36 @@ test("workflow visibility has a separate release gate from completion", () => {
   assert.match(source, /Clearing Hide from Website requires --release-work or --release-visibility/u);
   assert.match(source, /set requires --page-id, --expected-title, and --status \(unless --release-visibility is used\)/u);
   assert.match(source, /visibilityRequested[\s\S]*Hide from Website[\s\S]*checkbox: options\.hide_from_website/u);
+});
+
+test("work-level hiding requires a concrete viewing or explicit human-hold reason", () => {
+  const source = fs.readFileSync(path.resolve("tools/lib/notion-workflow-handoff.mjs"), "utf8");
+  const cli = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /visibilityHideReasonIsConcrete/u);
+  assert.match(cli, /Keeping Hide from Website=true requires --note with a concrete viewing/u);
+  assert.match(cli, /uncertainty and metadata follow-up are not hiding reasons/u);
+  assert.equal(visibilityHideReasonIsConcrete("资料还没补齐，Needs Review=true"), false);
+  assert.equal(visibilityHideReasonIsConcrete("Edge 播放无声音，暂不发布"), true);
+});
+
+test("ordinary handoff writes include stale-visibility cleanup", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /shouldAutoReleaseWorkVisibility\(page\)/u);
+  assert.match(source, /Hide from Website.*checkbox: false/u);
+});
+
+test("visibility fails open for uncertain or child-scoped follow-up", () => {
+  const hiddenPage = (note) => ({
+    properties: {
+      "Hide from Website": { type: "checkbox", checkbox: true },
+      "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+    }
+  });
+
+  assert.equal(workVisibilityHideReasonIsConcrete("资料未补齐，海报待修，Needs Review=true"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("第 3 集播放无声音，其他规格正常"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("全片无法解码，唯一可播放版本不可用"), true);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("资料未补齐，后续补齐即可")), true);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("第 3 集播放无声音，先隔离这一集")), true);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("全片无法播放，暂不发布")), false);
 });

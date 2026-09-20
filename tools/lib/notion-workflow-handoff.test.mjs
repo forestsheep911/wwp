@@ -7,7 +7,12 @@ import {
   pendingHumanWorkflowNote,
   richTextPayload,
   workVisibilityBlockers,
-  workReleaseBlockers
+  workCompletionBlockers,
+  workReleaseBlockers,
+  shouldAutoReleaseWorkVisibility,
+  latestWorkflowNoteSegment,
+  workVisibilityHideReasonIsConcrete,
+  visibilityHideReasonIsConcrete
 } from "./notion-workflow-handoff.mjs";
 
 function page(status = "已上传待 AI 收尾", note = "已有说明") {
@@ -132,6 +137,7 @@ test("rich text payload chunks long notes for the Notion API", () => {
 
 test("work release gate accepts a verified page without pending issues", () => {
   assert.deepEqual(workReleaseBlockers(releasablePage()), []);
+  assert.deepEqual(workCompletionBlockers(releasablePage()), []);
 });
 
 test("work visibility release is not blocked by metadata or follow-up issues", () => {
@@ -148,6 +154,44 @@ test("work visibility release is not blocked by metadata or follow-up issues", (
   assert.deepEqual(workVisibilityBlockers(candidate), []);
 });
 
+test("unconfirmed playback suspicion stays visible until failure is evidenced", () => {
+  const candidate = releasablePage({
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "可能无法播放，待确认；资料和海报也未补齐" }] }
+  });
+  assert.equal(shouldAutoReleaseWorkVisibility(candidate), true);
+  assert.deepEqual(workVisibilityBlockers(candidate), []);
+
+  const confirmed = releasablePage({
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "实际播放失败：无声音" }] }
+  });
+  assert.equal(shouldAutoReleaseWorkVisibility(confirmed), false);
+  assert.deepEqual(workVisibilityBlockers(confirmed), ["concrete_visibility_risk"]);
+});
+
+test("visibility remains releasable for the common non-playback follow-up bundle", () => {
+  const candidate = releasablePage({
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Human Issue": { type: "rich_text", rich_text: [{ plain_text: "人物和海报待补" }] },
+    "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "评分来源待补" }] },
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-09-18T00:00:00.000Z】 已发布可播放版本；资料补全和规格扩展继续排队。" }]
+    }
+  });
+  assert.deepEqual(workVisibilityBlockers(candidate), []);
+});
+
+test("AI processing status does not hide an already playable work", () => {
+  const candidate = releasablePage({
+    "Workflow Status": { type: "select", select: { name: "AI 处理中" } },
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "人物资料待补" }] }
+  });
+  assert.deepEqual(workVisibilityBlockers(candidate), []);
+});
+
 test("an explicit human visibility hold still blocks release", () => {
   const candidate = releasablePage({
     "Workflow Note": {
@@ -156,6 +200,141 @@ test("an explicit human visibility hold still blocks release", () => {
     }
   });
   assert.deepEqual(workVisibilityBlockers(candidate), ["visibility_hold"]);
+});
+
+test("a stale work-level hide is auto-released when no viewing risk is recorded", () => {
+  assert.equal(shouldAutoReleaseWorkVisibility(releasablePage({
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-09-19T00:00:00.000Z】 资料和海报待补。" }]
+    }
+  })), true);
+});
+
+test("production deferral and subtitle follow-up do not preserve a work-level hide", () => {
+  for (const note of [
+    "【AI(^_^) 2026-09-19T00:00:00.000Z】 资料已建档，中文字幕待补，制作暂缓。",
+    "【AI(^_^) 2026-09-19T00:00:00.000Z】 规格扩展尚未完成，已有版本可以观看。",
+    "【AI(^_^) 2026-09-19T00:00:00.000Z】 AI处理中，海报和人物资料后续补齐。"
+  ]) {
+    const candidate = releasablePage({
+      "Hide from Website": { type: "checkbox", checkbox: true },
+      "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+    });
+    assert.equal(shouldAutoReleaseWorkVisibility(candidate), true, note);
+    assert.deepEqual(workVisibilityBlockers(candidate), [], note);
+  }
+});
+
+test("a concrete playback risk keeps work-level hide intact", () => {
+  const candidate = releasablePage({
+    "Workflow Note": {
+      type: "rich_text",
+      rich_text: [{ plain_text: "【AI(^_^) 2026-09-19T00:00:00.000Z】 Edge 播放无声音，暂不发布。" }]
+    }
+  });
+  assert.equal(shouldAutoReleaseWorkVisibility(candidate), false);
+  assert.deepEqual(workVisibilityBlockers(candidate), ["concrete_visibility_risk"]);
+});
+
+test("minor follow-up defects do not count as visibility blockers", () => {
+  for (const note of [
+    "资料不全，后续补人物和海报。",
+    "中文字幕待补，规格扩展继续。",
+    "规格页面名称待整理，Needs Review=true。",
+    "有一个空的可选规格页，后续清理。",
+    "AI处理中，评分和简介尚未补齐。",
+    "画面有轻微问题，但不影响正常观看，后续修复。",
+    "高码率版本尚未制作，先发布现有版本。",
+    "上传速度慢，稍后继续上传。",
+    "资料补全阻塞，但已有版本可以正常播放。"
+  ]) {
+    assert.equal(visibilityHideReasonIsConcrete(note), false, note);
+  }
+});
+
+test("only material viewing failures count as automatic hide reasons", () => {
+  for (const note of [
+    "Edge 播放无声音，暂不发布。",
+    "该媒体块缺失，页面会出现无法播放的条目。",
+    "当前视频无法解码，等待替换版本。",
+    "网站播放严重偏色，保持隐藏。"
+  ]) {
+    assert.equal(visibilityHideReasonIsConcrete(note), true, note);
+  }
+});
+
+test("an unfinished catalog does not become hidden just because it has no playable path yet", () => {
+  for (const note of [
+    "目前没有任何可播放版本，等待压制。",
+    "尚无可播放资源，先补影片资料。",
+    "暂无播放版本，字幕和制作排队中。",
+    "等待首个可播放版本上传。"
+  ]) {
+    assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
+    assert.deepEqual(workVisibilityBlockers({
+      properties: {
+        "Hide from Website": { type: "checkbox", checkbox: true },
+        "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+      }
+    }), []);
+  }
+});
+
+test("a child failure does not hide the whole work when another path can remain visible", () => {
+  for (const note of [
+    "一个规格媒体块缺失，其他规格仍可播放。",
+    "某个子页面播放无声音，保留其他已通过版本。",
+    "单集无法解码，等待替换，作品其他集正常。",
+    "此规格播放无声音，其他版本不受影响。",
+    "第 3 集无法播放，其他集正常。",
+    "画面有轻微瑕疵，但不影响观看。"
+  ]) {
+    assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
+  }
+  assert.equal(workVisibilityHideReasonIsConcrete("当前唯一可播放版本无法解码，暂不发布。"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("整个条目无法播放，暂不发布。"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("整个条目没有任何可播放版本，等待制作。"), false);
+});
+
+test("resolved playback risk in old note history does not keep a work hidden", () => {
+  const note = [
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 Edge 播放无声音，暂不发布。",
+    "【AI(^_^) 2026-09-19T00:00:00.000Z】 已重新压制并通过声音复核，资料补全继续。"
+  ].join("\n");
+  assert.equal(latestWorkflowNoteSegment(note), "【AI(^_^) 2026-09-19T00:00:00.000Z】 已重新压制并通过声音复核，资料补全继续。");
+  assert.equal(shouldAutoReleaseWorkVisibility(releasablePage({
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+  })), true);
+});
+
+test("human publish approval resolves an older visibility risk", () => {
+  for (const note of [
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 Edge 播放无声音，暂不发布。\n我确认可以发布到网站。",
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 当前视频无法解码，等待替换版本。\n质检通过，放出网站。",
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 网站播放严重偏色，保持隐藏。\n已经修好，允许同步。"
+  ]) {
+    assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
+    assert.equal(shouldAutoReleaseWorkVisibility(releasablePage({
+      "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+    })), true, note);
+  }
+});
+
+test("small repairable defects are fail-open when the note says to release first", () => {
+  for (const note of [
+    "有一点瑕疵以后再补，先放出网站。",
+    "小问题后续补，先发布。",
+    "轻微缺陷不影响观看，之后修。"
+  ]) {
+    assert.equal(visibilityHideReasonIsConcrete(note), false, note);
+    assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
+  }
+});
+
+test("publish approval does not erase a newer unresolved playback risk", () => {
+  const note = "【AI(^_^) 2026-09-01T00:00:00.000Z】 播放无声音，暂不发布。\n可以发布到网站。\n复核后仍然无声音。";
+  assert.equal(workVisibilityHideReasonIsConcrete(note), true);
 });
 
 test("work completion still requires metadata and issue gates", () => {
@@ -168,4 +347,5 @@ test("work completion still requires metadata and issue gates", () => {
     }
   });
   assert.deepEqual(workReleaseBlockers(candidate), ["needs_review", "ai_issue", "pending_human_note"]);
+  assert.deepEqual(workCompletionBlockers(candidate), ["needs_review", "ai_issue", "pending_human_note"]);
 });

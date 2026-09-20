@@ -20,8 +20,10 @@ import {
   pendingHumanWorkflowNoteFromPage,
   propertyText,
   workVisibilityBlockers,
-  workReleaseBlockers,
+  workCompletionBlockers,
   workflowNoteFromPage,
+  workVisibilityHideReasonIsConcrete,
+  shouldAutoReleaseWorkVisibility,
   workflowStateFromPage
 } from "./lib/notion-workflow-handoff.mjs";
 
@@ -177,15 +179,22 @@ async function applySet(notion, page, options) {
   if (options.hide_from_website === false && !releaseWork && !releaseVisibility) {
     throw new Error("Clearing Hide from Website requires --release-work or --release-visibility");
   }
+  if (options.hide_from_website === true && !workVisibilityHideReasonIsConcrete(options.note)) {
+    throw new Error("Keeping Hide from Website=true requires --note with a concrete viewing, structure, Media Assets, or explicit human-hold reason; uncertainty and metadata follow-up are not hiding reasons");
+  }
   if (visibilityRequested && page.properties?.["Hide from Website"]?.type !== "checkbox") {
     throw new Error("Hide from Website checkbox is missing");
   }
-  const releaseBlockers = releaseWork ? workReleaseBlockers(page) : [];
+  const releaseBlockers = releaseWork ? workCompletionBlockers(page) : [];
   if (releaseBlockers.length) {
-    throw new Error(`Work release blocked: ${releaseBlockers.join(", ")}`);
+    throw new Error(`Final completion blocked: ${releaseBlockers.join(", ")}. This does not block website visibility; use --release-visibility after exact playable readback.`);
   }
   if (releaseVisibility) {
-    const visibilityBlockers = workVisibilityBlockers(page);
+    // The caller reaches this path only after exact playable evidence has
+    // been verified. A stale or child-scoped playback note must not block the
+    // whole work page; an explicit human work-level hold remains authoritative.
+    const visibilityBlockers = workVisibilityBlockers(page)
+      .filter((blocker) => blocker === "visibility_hold");
     if (visibilityBlockers.length) {
       throw new Error(`Work visibility release blocked: ${visibilityBlockers.join(", ")}`);
     }
@@ -200,6 +209,9 @@ async function applySet(notion, page, options) {
   });
   if (releaseWork) update.properties["Hide from Website"] = { checkbox: false };
   else if (visibilityRequested) update.properties["Hide from Website"] = { checkbox: options.hide_from_website };
+  else if (shouldAutoReleaseWorkVisibility(page)) {
+    update.properties["Hide from Website"] = { checkbox: false };
+  }
   if (!options.apply) return { page, update, applied: false };
   await notion.pages.update({ page_id: page.id, properties: update.properties });
   const readback = await notion.pages.retrieve({ page_id: page.id });

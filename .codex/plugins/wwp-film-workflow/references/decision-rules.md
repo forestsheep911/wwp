@@ -28,6 +28,148 @@ Work-level metadata is a separate high-priority track. If a scanned work is wort
 
 ## Hard Gates
 
+### Minimal Visibility Blockers
+
+`Hide from Website` is the narrowest playback safety gate in this workflow.
+It is not a conservative default: if the evidence does not prove a viewing
+failure, the work remains visible and the uncertainty is recorded as follow-up.
+At work level it is fail-open: a defect in one spec, episode, or asset does not
+hide the whole title while another playable path remains. Hide the work only
+when the only/all playable paths are affected or the user explicitly requests
+a hold; hide a child path independently when that exact path cannot be watched.
+The practical default is: **if a normal user can watch the published title,
+release it even when it is not perfect**. Missing metadata, a missing poster,
+unfinished People enrichment, a pending subtitle/variant, a naming defect, or a
+small repairable quality issue belongs in the follow-up record, not in the
+work-level visibility gate.
+The work page is also a catalog entry, so it may remain visible while metadata
+is being collected or while the first playable spec is being prepared. Use it
+only for a concrete reason that can stop or materially corrupt normal viewing
+of an exposed media path: a broken or misplaced media/page structure, a failed
+Media Assets or website readback, an unresolved codec/audio/color/subtitle
+compatibility risk with evidence of viewing impact, or an explicit human hold.
+Do not use it as a general
+"not finished" flag. Once any one exact specification or episode is usable,
+release the work-level page and isolate unfinished siblings at their own
+specification/episode/asset level. Missing metadata, poster, ratings, People,
+AI advice, review, naming cleanup, issue follow-up, or optional variants are
+repair work and must not prevent an otherwise watchable title from appearing.
+Minor defects and incomplete catalog data are not visibility blockers. When
+impact is uncertain, prefer the verified playable delivery being visible
+and record the uncertainty in `Workflow Note`/`Needs Review`; re-hide only after
+new viewing-affecting evidence or a fresh human hold.
+Words such as “可能无法播放”“疑似解码问题”“待确认播放风险” or “待复核” are
+not viewing evidence by themselves. They must fail open and keep the title
+visible until a real playback/QC/readback failure is recorded. Do not turn a
+precautionary suspicion into `Hide from Website=true`.
+An explicit instruction such as “有一点缺陷以后补”“先放出再修” or “不影响观看”
+is a release decision, not a hide decision: clear the work-level flag and keep
+the defect in the follow-up queue. Do not reinterpret that instruction as a
+human visibility hold just because the old note contains a prior playback risk.
+If the evidence names only one spec, episode, media block, or child page, treat
+that as a child-path issue and keep the work page visible when another path is
+usable. A work-level hide requires evidence that the whole title or its only
+playable path is affected; a small defect that can be repaired later is not
+enough.
+
+#### Three independent gates
+
+Every handoff must classify these gates separately. Never copy a failure from
+one gate into another:
+
+| Gate | Question | Typical blockers | Default action |
+| --- | --- | --- | --- |
+| Website visibility | Can a normal user watch an exposed path? | no audio, decode failure, black/green picture, broken page/media relation, failed Media Assets readback, explicit human hold | Hide only the affected child; hide the parent only when the only/all exposed paths are unsafe |
+| Follow-up/review | Is there something worth repairing or confirming? | poster, score, People, AI advice, naming, missing optional variant, `Needs Review`, issue note, uncertain but currently watchable defect | Keep visible; record the exact follow-up and continue other lanes |
+| Final completion | Can this work be called `已完成`? | metadata not verified, unresolved issue fields, missing poster, open expansion decision | Keep visible if playback is usable; retain `AI 处理中`/`待人工确认` and requeue the missing work |
+
+The second and third rows are not reasons to set `Hide from Website=true`.
+Likewise, an empty or not-yet-encoded child page may be hidden as an isolated
+child path, but its parent catalog entry remains visible by default. If impact
+is uncertain, fail open for the verified usable delivery and write the evidence
+to `Workflow Note`/`Needs Review`; do not turn uncertainty into a parent-level
+visibility block.
+
+- **Visibility decision order:** first ask whether a normal user can play at least
+  one exact published spec/episode. If yes, publish the work unless there is a
+  concrete playback/structure/Media Assets defect or an explicit human hold.
+  Do not turn a metadata, poster, rating, People, review, naming, optional-spec,
+  or other repair task into `Hide from Website=true`. Those are follow-up queues,
+  not viewing failures. If no playable path exists yet, keep the parent catalog
+  entry visible unless an exposed path has a concrete viewing risk; metadata-only
+  entries are valid catalog entries. Keep empty child spec/episode pages
+  hidden until they have usable media, and record the missing playable path as
+  workflow follow-up.
+- **Default to visible after usable publication:** when a work has any verified
+  playable delivery and the known defects do not affect watching, the default
+  action is to clear `Hide from Website` in the same publication pass. Do not
+  choose hidden merely because the work is imperfect, still under AI follow-up,
+  or has a sibling delivery that is unfinished. If uncertain whether a defect
+  affects watching, keep the work visible when the verified delivery itself is
+  usable and put the uncertainty in `Needs Review`/`Workflow Note`; hide only
+  the affected asset or wait for concrete playback evidence.
+- **Do not re-hide during ordinary follow-up:** any writer or backfill must write
+  `Hide from Website=false` by default, including source-only Media Assets rows
+  that are not exposed as playable website variants. It may write `true` only
+  when the manifest carries an explicit visibility hold or the same run records
+  a concrete playback/structure/Media Assets risk. Creating an empty
+  work/spec/episode page before upload may still start hidden; that provisional
+  default must be cleared in the first bounded run that verifies a usable media
+  path.
+- **Release evidence outranks stale notes:** after the exact release manifest
+  independently verifies one usable playable path, `--release-visibility` must
+  not be blocked by an old or child-scoped playback warning in `Workflow Note`.
+  Only an explicit human work-level hold can stop that release; keep the
+  warning attached to the affected child path and continue the repair queue.
+- **Writer-level fail-open rule:** a stale manifest, an inherited checkbox, an
+  unfinished workflow status, or an omitted optional field must never be enough
+  to write `Hide from Website=true`. Any automated hide request must carry a
+  concrete current reason such as playback failure, broken page/media
+  structure, unsafe Media Assets readback, or an explicit human hold. If that
+  reason is absent or only describes metadata/review work, write the asset
+  visible and keep the issue in `Workflow Note`/the relevant issue field.
+- Website visibility is a playback gate, not a metadata perfection gate. Once one
+  exact work/spec/episode path is playable and has passed structure, Media Assets,
+  ffprobe/QC, ledger, and publication readback, release the work-level
+  `Hide from Website` gate in that same publication run. Missing posters, ratings,
+  People, AI advice, `Needs Review`, `Human Issue`, `AI Issue`, or optional
+  specification expansion become follow-up work and must not block viewing.
+- Keep the whole work hidden only when an exposed media path has a concrete
+  playback or structure risk, the Media Assets/readback is unsafe, or the human
+  explicitly requests a visibility hold. A metadata-only work, a work waiting
+  for subtitles, and a work waiting for its first encode remain visible by
+  default; hide only the affected empty or unsafe child spec/episode. A
+  defective sibling specification may remain hidden without hiding the work.
+  The absence of a playable path is not a work-level hide condition. It is a
+  cataloging or production state; keep the work visible and hide only empty
+  child specs/episodes. A work-level hide requires an exposed path that is
+  unsafe or an explicit human visibility hold.
+- Visibility is monotonic by default: after a work has been released, a later
+  metadata, enrichment, naming, review, or optional-spec pass must not re-hide
+  it. Re-hiding requires fresh evidence of a viewing-affecting defect or a new
+  explicit human hold, and the reason must be written to `Workflow Note` before
+  the visibility change.
+- An appended human approval such as `可以发布`、`质检通过` or `允许同步`
+  resolves an older AI visibility warning when that approval line contains no
+  newer playback risk. A later explicit finding that playback is still broken
+  takes precedence and keeps the affected path hidden.
+- `Workflow Status=AI 处理中` or `待人工确认` may coexist with a visible work:
+  those states describe unfinished follow-up, not a reason to remove an already
+  playable title from the website. `Workflow Status=已完成` remains the stricter
+  metadata-and-issue completion state.
+
+### Fail-open blocker rule
+
+Do not use the word `blocked` as a shortcut for `Hide from Website=true`.
+Every blocker must first be classified as one of: viewing blocker, follow-up
+blocker, or completion blocker. Only the first class can hide the work, and
+only when it applies to the only/all exposed playable paths. A follow-up or
+completion blocker must leave the title visible when a normal user can watch
+it, while recording the exact missing evidence and next action. This applies
+equally to old pages, newly created pages, metadata-only pages, and pages in
+`AI 处理中` or `暂缓`; the status can stay blocked without blocking website
+visibility.
+
 - Chinese subtitles are a hard requirement only for subtitle-dependent versions unless the user explicitly overrides. A verified Mandarin-dubbed (`国配`) branch is Chinese-language playable and is not subtitle-dependent merely because the picture originated in another language.
 - Subtitle evidence may come from internal subtitle tracks, sidecar subtitle files, or visually confirmed source hard subtitles. If a probe has no subtitle stream, do not declare the source subtitle-free from ffprobe alone: capture multiple content-bearing timestamps distributed across the runtime, at minimum early, middle, and late dialogue. If all representative screenshots clearly show complete burned-in Chinese dialogue, record the timestamped evidence as `bakedChinese=true` and allow the normal production path; if samples are inconclusive, keep the evidence unknown and defer rather than guessing.
 - An unlabelled bitmap/PGS subtitle stream is not Chinese-subtitle evidence by itself. Inspect that specific stream with a real timestamped sample; if the language still cannot be identified reliably, keep playable production deferred and continue the metadata-only track.
