@@ -562,6 +562,11 @@ video {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  /* Loading needs a persistent activity cue even when decorative motion is reduced. */
+  .relationship-loading-spinner {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 @keyframes playback-opening {
   0% {

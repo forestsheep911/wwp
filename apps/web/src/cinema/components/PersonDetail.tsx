@@ -1,3 +1,4 @@
+import { RelationshipExplorer } from "./RelationshipExplorer";
 import { ArrowLeft, ExternalLink, Film, Loader2, UserRound } from "lucide-react";
 import { selectPersonBiographyTexts, type PublicPersonDetail, type SearchResult } from "@wwpdw/shared";
 
@@ -100,6 +101,7 @@ export function PersonDetail({
         </div>
       </header>
 
+      <RelationshipExplorer key={person.personId} seed={{ person }} />
       <section className="grid gap-3" aria-label="WWP 收录作品">
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-800 pb-2">
           <h2 className="text-sm font-semibold tracking-wide text-slate-200">WWP 收录作品</h2>

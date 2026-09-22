@@ -69,7 +69,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly statusCode: number,
-    readonly requestId: string
+    readonly requestId: string,
+    readonly retryAfterMs = 0
   ) {
     super(message);
     this.name = "ApiError";
@@ -128,10 +129,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
+      const retryAfter = response.headers.get("Retry-After");
+      const retryAfterMs = retryAfter
+        ? (/^\d+(\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now()))
+        : 0;
       throw new ApiError(
         payload.error ?? `Request failed with ${response.status}`,
         response.status,
-        responseRequestId
+        responseRequestId,
+        Number.isFinite(retryAfterMs) ? retryAfterMs : 0
       );
     }
 
@@ -271,7 +277,7 @@ export function searchAssets(query: string, line?: PlaybackLine) {
 export function browseAssets(
   limit = 60,
   offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string; revision?: string } = {}
+  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string; revision?: string; signal?: AbortSignal } = {}
 ) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (options.mode) {
@@ -292,7 +298,7 @@ export function browseAssets(
   if (options.revision) {
     params.set("revision", options.revision);
   }
-  return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`));
+  return request<SearchResponse>(apiUrl(`/api/browse-assets?${params.toString()}`), { signal: options.signal });
 }
 
 export function getSiteStatistics(refresh = false) {
@@ -304,8 +310,8 @@ export function searchPeople(query: string, limit = 20, offset = 0) {
   return request<PublicPersonListResponse>(apiUrl(`/api/people?${params.toString()}`));
 }
 
-export function getPerson(personId: string) {
-  return request<PublicPersonDetail>(apiUrl(`/api/people/${encodeURIComponent(personId)}`));
+export function getPerson(personId: string, signal?: AbortSignal) {
+  return request<PublicPersonDetail>(apiUrl(`/api/people/${encodeURIComponent(personId)}`), { signal });
 }
 
 export function getNowPlaying(options: { refresh?: boolean } = {}) {

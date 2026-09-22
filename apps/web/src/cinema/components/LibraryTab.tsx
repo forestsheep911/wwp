@@ -1,3 +1,4 @@
+import { RelationshipExplorer } from "./RelationshipExplorer";
 import { Play } from "lucide-react";
 import { explicitBrowseKind } from "../browse-channel";
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
@@ -3237,6 +3238,7 @@ function MovieDetailView({
           />
         </div>
 
+          <RelationshipExplorer key={result.assetKey} seed={{ work: result }} />
           <LinkedCredits result={result} onOpenPerson={onOpenPerson} />
 
           {ratings.length ? (
