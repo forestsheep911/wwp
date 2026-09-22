@@ -33,6 +33,7 @@ import {
   browseTspdtCatalogLimit
 } from "../browse-load-policy";
 import { calculateCompositeRatingForResult } from "../composite-rating";
+import { RatingRadar } from "./RatingRadar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -3280,6 +3281,7 @@ function MovieDetailView({
             </div>
           ) : null}
 
+          <RatingRadar ratings={ratings} />
           <AgeRecommendationPanel result={result} />
 
           <div className="grid gap-3 border-t border-slate-800/60 pt-5">
