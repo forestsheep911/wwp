@@ -151,7 +151,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
   }
 
   function reconcileIncompleteSourceIntake(source) {
-    if (!source || source.work_id != null || source.source_kind === "duplicate_source") return null;
+    if (!source || source.work_id != null || ["duplicate_source", "companion_evidence", "subtitle_bundle", "archive_bundle", "non_film_source"].includes(source.source_kind)) return null;
     const taskKey = `intake:source:${source.id}`;
     const task = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(taskKey);
     if (!task || task.status === "done") return task ?? null;
@@ -171,7 +171,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       const sourceId = Number(disposition?.sourceId);
       if (!Number.isInteger(sourceId) || sourceId < 1) continue;
       const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
-      if (!source || source.work_id != null || source.source_kind === "duplicate_source") continue;
+      if (!source || source.work_id != null || ["duplicate_source", "companion_evidence", "subtitle_bundle", "archive_bundle", "non_film_source"].includes(source.source_kind)) continue;
       const task = db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`intake:source:${sourceId}`);
       if (!task || task.status === "done") continue;
       if (disposition.disposition === "source_missing") {
@@ -352,7 +352,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       .get(input.inputRootId, input.fingerprint);
     if (fingerprintMatch) {
       const current = db.prepare("SELECT * FROM sources WHERE id=?").get(fingerprintMatch.id);
-      db.prepare(`UPDATE sources SET work_id=COALESCE(?, work_id), relative_path=?, absolute_path=?, source_kind=CASE WHEN source_kind='duplicate_source' THEN source_kind ELSE ? END,
+      db.prepare(`UPDATE sources SET work_id=COALESCE(?, work_id), relative_path=?, absolute_path=?, source_kind=CASE WHEN source_kind IN ('duplicate_source', 'companion_evidence', 'subtitle_bundle', 'archive_bundle', 'non_film_source') THEN source_kind ELSE ? END,
         probe_path=COALESCE(?, probe_path), quality_state=CASE WHEN ? = 'unknown' THEN quality_state ELSE ? END,
         subtitle_evidence=?, audio_evidence=COALESCE(?, audio_evidence),
         color_risk=CASE WHEN ? = 'unknown' THEN color_risk ELSE ? END, missing=?, updated_at=? WHERE id=?`)
@@ -366,7 +366,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
         ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
           priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
-      } else if (source.source_kind === "duplicate_source") {
+      } else if (["duplicate_source", "companion_evidence", "subtitle_bundle", "archive_bundle", "non_film_source"].includes(source.source_kind)) {
         completeWorkflowTaskByKey(`intake:source:${source.id}`, {
           sourceId: source.id,
           reason: "Source is an explicitly marked duplicate and is excluded from identity and production queues"
@@ -397,7 +397,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(input_root_id, relative_path) DO UPDATE SET
         work_id=COALESCE(excluded.work_id, sources.work_id), absolute_path=excluded.absolute_path,
-        fingerprint=excluded.fingerprint, source_kind=CASE WHEN sources.source_kind='duplicate_source' THEN sources.source_kind ELSE excluded.source_kind END,
+        fingerprint=excluded.fingerprint, source_kind=CASE WHEN sources.source_kind IN ('duplicate_source', 'companion_evidence', 'subtitle_bundle', 'archive_bundle', 'non_film_source') THEN sources.source_kind ELSE excluded.source_kind END,
         probe_path=COALESCE(excluded.probe_path, sources.probe_path),
         quality_state=CASE WHEN excluded.quality_state='unknown' THEN sources.quality_state ELSE excluded.quality_state END,
         subtitle_evidence=CASE WHEN json_extract(excluded.subtitle_evidence, '$.internalProbeState')='not_run'
@@ -415,7 +415,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       completeWorkflowTaskByKey(`intake:source:${source.id}`, { sourceId: source.id, workId: source.work_id, reason: "Source is bound to a verified work identity" });
       ensureWorkflowTask({ taskKey: `metadata:work:${source.work_id}`, taskType: "metadata_backfill", workId: source.work_id,
         priorityScore: db.prepare("SELECT priority_score FROM works WHERE id=?").get(source.work_id)?.priority_score ?? 0 });
-    } else if (["duplicate_source", "companion_evidence", "subtitle_bundle"].includes(source.source_kind)) {
+    } else if (["duplicate_source", "companion_evidence", "subtitle_bundle", "archive_bundle", "non_film_source"].includes(source.source_kind)) {
       ensureWorkflowTask({ taskKey: `intake:source:${source.id}`, taskType: "intake", sourceId: source.id,
         status: "done", reason: "Source contains companion evidence only and is excluded from identity and production queues" });
       // companion task is inserted as terminal so a new evidence-only source
@@ -424,6 +424,8 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         sourceId: source.id,
         reason: source.source_kind === "duplicate_source"
           ? "Source is an explicitly marked duplicate and is excluded from identity and production queues"
+          : source.source_kind === "non_film_source"
+            ? "Source is explicitly marked as non-film media and is excluded from identity and production queues"
           : "Source contains companion evidence only and is excluded from identity and production queues"
       });
     } else {
@@ -521,6 +523,26 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         sourceId,
         workId: source.work_id,
         reason: details.reason ?? "Companion evidence; no independent production payload"
+      });
+      return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+    });
+    if (result?.input_root_id != null) reconcileDeferredCollectionParents(result.input_root_id);
+    return result;
+  }
+
+  function markNonFilmSource(sourceId, details = {}) {
+    const result = withTransaction(db, () => {
+      const source = db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw new Error(`source not found: ${sourceId}`);
+      if (source.work_id != null) throw new Error(`source ${sourceId} is already bound to work ${source.work_id}`);
+      const at = timestamp();
+      db.prepare("UPDATE sources SET source_kind='non_film_source', updated_at=? WHERE id=?").run(at, sourceId);
+      insertEvent.run("source", sourceId, "source_marked_non_film", stableJson({
+        reason: details.reason ?? "Marked as non-film media; not an independent catalog source"
+      }), at);
+      completeWorkflowTaskByKey(`intake:source:${sourceId}`, {
+        sourceId,
+        reason: details.reason ?? "Non-film media; excluded from identity and production queues"
       });
       return db.prepare("SELECT * FROM sources WHERE id=?").get(sourceId);
     });
@@ -1435,7 +1457,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
     });
   }
 
-  return { upsertInputRoot, setInputRootEnabled, setWorkScopeState, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, markCompanionSource, updateSourceEvidence, splitSourceCollection, reconcileCollectionIntake: reconcileDeferredCollectionParents, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
+  return { upsertInputRoot, setInputRootEnabled, setWorkScopeState, upsertDiscoveredSource, bindSourceToWork, correctSourceWork, markDuplicateSource, markCompanionSource, markNonFilmSource, updateSourceEvidence, splitSourceCollection, reconcileCollectionIntake: reconcileDeferredCollectionParents, ensureWork, fillMissingWorkYear, renameWork, ensureVariant, attachVariantSource, correctVariantSource, transitionProduction, reopenRejectedVariant,
     refreshProductionEvidence,
     transitionPublication, registerNotionTarget, resetNotionTargetEvidence, listProductionCandidates, listProductionSourceCandidates, listProductionQueue, listSeriesCoverageGaps, listPublicationCandidates, listManualUploadHandoffs,
     getStatusSummary, getEvents, listSourcesForRoot, markSourceMissing, closeQuarantinedSourceIntakeTasks, listDueNotionTargets,

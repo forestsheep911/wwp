@@ -322,6 +322,11 @@ async function main() {
       const reason = requireOption(options, "failure_detail", "--failure-detail");
       const source = repo.markCompanionSource(sourceId, { reason });
       output(source, options.json, `marked source ${sourceId} as companion evidence`);
+    } else if (command === "mark-non-film-source") {
+      const sourceId = asId(requireOption(options, "source_id", "--source-id"), "--source-id");
+      const reason = requireOption(options, "failure_detail", "--failure-detail");
+      const source = repo.markNonFilmSource(sourceId, { reason });
+      output(source, options.json, `marked source ${sourceId} as non-film media`);
     } else if (command === "rename-work") {
       const workId = asId(requireOption(options, "work_id", "--work-id"), "--work-id");
       const canonicalTitle = requireOption(options, "canonical_title", "--canonical-title");

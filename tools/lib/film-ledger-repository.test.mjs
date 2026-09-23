@@ -557,6 +557,55 @@ test("companion evidence marking closes intake without entering production", () 
   } finally { f.close(); }
 });
 
+test("a terminal companion classification survives a later directory rescan", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Extras",
+      absolutePath: "X:\\queue\\Extras",
+      fingerprint: "extras",
+      sourceKind: "series_folder"
+    });
+    f.repo.markCompanionSource(source.id, { reason: "Extras-only source" });
+    const rescanned = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Extras",
+      absolutePath: "X:\\queue\\Extras",
+      fingerprint: "extras",
+      sourceKind: "series_folder"
+    });
+    assert.equal(rescanned.source_kind, "companion_evidence");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+  } finally { f.close(); }
+});
+
+test("an explicit non-film source is terminal and survives rescans", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\in");
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "junk",
+      absolutePath: "X:\\in\\junk",
+      fingerprint: "junk",
+      sourceKind: "folder"
+    });
+    const marked = f.repo.markNonFilmSource(source.id, { reason: "直播站推广视频，不是影视作品" });
+    assert.equal(marked.source_kind, "non_film_source");
+    const rescanned = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "junk",
+      absolutePath: "X:\\in\\junk",
+      fingerprint: "junk",
+      sourceKind: "folder"
+    });
+    assert.equal(rescanned.source_kind, "non_film_source");
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE task_key=?").get(`intake:source:${source.id}`).status, "done");
+  } finally { f.close(); }
+});
+
 test("source reconciliation lists one root and can mark missing then reopen", () => {
   const f = fixture();
   try {

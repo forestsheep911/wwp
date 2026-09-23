@@ -138,6 +138,10 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
       : source.source_kind === "archive_bundle"
         ? "先确认归档内容；如确有视频，解包后重新扫描，否则标记为非影视输入"
         : "将海报、扫描图或 NFO 作为对应作品的伴随证据使用；不单独识别、压制或上传";
+  } else if (source.source_kind === "non_film_source") {
+    disposition = "non_film_source";
+    reasons.push("source_explicitly_marked_non_film");
+    nextTrigger = "不进入作品识别、豆瓣建档、压制或上传队列；如无需保留可由人工清理";
   } else if (!pathExists) {
     disposition = "source_missing";
     reasons.push("source_path_missing");
