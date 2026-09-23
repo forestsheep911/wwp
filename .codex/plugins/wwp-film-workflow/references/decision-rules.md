@@ -30,6 +30,12 @@ Work-level metadata is a separate high-priority track. If a scanned work is wort
 
 ### Minimal Visibility Blockers
 
+**默认不勾选 `Hide from Website`。** 这是“网站现在是否应该隐藏”开关，不是
+“这条工作是否还有待办”的开关。只要已经存在的公开路径不影响正常观看，或者
+目前只是资料/规格尚未补齐，就应保持可见；后续修复不需要先下架。`AI 处理中`、
+`待人工确认`、`暂缓`、`Needs Review`、缺海报、缺人物、评分待补、标题待整理、
+可选规格未做，均只能生成 follow-up，不能自动把工作条目设为隐藏。
+
 `Hide from Website` is the narrowest playback safety gate in this workflow.
 It is not a conservative default: if the evidence does not prove a viewing
 failure, the work remains visible and the uncertainty is recorded as follow-up.

@@ -78,7 +78,13 @@ export function humanIssueFromPage(page) {
 
 export function explicitVisibilityHoldFromPage(page) {
   const note = pendingHumanWorkflowNoteFromPage(page);
-  return /(?:不要|暂不|先不|禁止|勿).{0,8}(?:发布|放出|同步)|(?:保持|继续).{0,8}(?:隐藏|下线)/u.test(note);
+  // A release-first instruction must override an older or poorly worded
+  // warning. Only an unambiguous hold is allowed to keep the whole work
+  // hidden; metadata and repair notes are not human visibility holds.
+  if (/(?:不影响(?:正常)?(?:观看|播放)|尽量(?:先)?放出|先放(?:出|着)|以后(?:再)?补|后续(?:再)?修|不要(?:轻易|因为[^。\n]{0,24}而)?(?:隐藏|下线|不公开)|不应(?:轻易)?(?:隐藏|下线|不公开))/u.test(note)) {
+    return false;
+  }
+  return /(?:暂不|先不|禁止|勿|不要(?:立即|现在|先)?).{0,5}(?:发布|放出|上线|同步)|(?:保持|继续|保留).{0,8}(?:隐藏|下线|不公开)/u.test(note);
 }
 
 const DIRECT_VIEWING_RISK = /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色|媒体块缺失|媒体块错误|Media Assets(?:缺失|错误|读回失败)|媒体资产(?:缺失|错误|读回失败)|页面关系错误|规格页面错误|集数页面错误|播放结构错误)/iu;

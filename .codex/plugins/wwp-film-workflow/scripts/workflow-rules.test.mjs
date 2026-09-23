@@ -160,6 +160,21 @@ test("visibility-first rule keeps metadata follow-up from rehiding a playable wo
   assert.match(producer, /Use the visible-after-usable-publication default/u);
 });
 
+test("metadata-only catalog entries remain visible while playable work is pending", () => {
+  const media = read("references/notion-media-assets.md");
+  const decisions = read("references/decision-rules.md");
+  assert.match(media, /metadata-only or waiting-for-production work remains visible by default/u);
+  assert.match(media, /does not hide the work-level catalog entry/u);
+  assert.match(decisions, /metadata-only\s+entries are valid catalog entries/u);
+});
+
+test("user visibility decision favors release before repair", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  assert.match(producer, /只要影视条目现有播放路径不影响正常观看，就尽量先放出/u);
+  assert.match(producer, /以后补修不需要先下架/u);
+  assert.match(producer, /只有实际影响观看，或用户明确要求暂不发布，才保持隐藏/u);
+});
+
 test("workflow blockers are not website blockers unless playback is affected", () => {
   const cycle = read("references/workflow-cycle.md");
   const decisions = read("references/decision-rules.md");

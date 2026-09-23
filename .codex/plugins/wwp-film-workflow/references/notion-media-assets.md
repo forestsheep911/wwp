@@ -71,7 +71,7 @@ Title QA is bounded: after a current production, rename, structure-preparation, 
 ## Metadata Track
 
 - Work-level metadata is independent from playable Media Assets. If scanning finds a film or series worth cataloging and no work page exists, create/reuse the work page and run metadata enrichment even when playable production is blocked, deferred, or skipped.
-- Lack of playback resources should keep visibility/review gates conservative, but it should not prevent Douban, OMDb, TMDb, poster, basic info, or AI advisory fields from being filled.
+- Lack of playback resources keeps only the affected child asset/spec/episode conservative; it does not hide the work-level catalog entry. A metadata-only or waiting-for-production work remains visible by default, while Douban, OMDb, TMDb, poster, basic info, and AI advisory fields continue independently.
 - Media Assets remain media-specific. Do not create playable rows without real uploaded/probed media evidence just because the work-level metadata is complete.
 
 ## Visibility and Review Gates

@@ -11,6 +11,7 @@ import {
   workReleaseBlockers,
   shouldAutoReleaseWorkVisibility,
   latestWorkflowNoteSegment,
+  explicitVisibilityHoldFromPage,
   workVisibilityHideReasonIsConcrete,
   visibilityHideReasonIsConcrete
 } from "./notion-workflow-handoff.mjs";
@@ -226,6 +227,20 @@ test("production deferral and subtitle follow-up do not preserve a work-level hi
   }
 });
 
+test("follow-up states never become a work-level hide by themselves", () => {
+  for (const status of ["AI 处理中", "待人工确认", "暂缓"]) {
+    const candidate = releasablePage({
+      "Workflow Status": { type: "select", select: { name: status } },
+      "Metadata Status": { type: "select", select: { name: "partial" } },
+      "Needs Review": { type: "checkbox", checkbox: true },
+      "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "海报和人物资料待补" }] },
+      "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "规格还有小问题，后续补齐。" }] }
+    });
+    assert.equal(shouldAutoReleaseWorkVisibility(candidate), true, status);
+    assert.deepEqual(workVisibilityBlockers(candidate), [], status);
+  }
+});
+
 test("a concrete playback risk keeps work-level hide intact", () => {
   const candidate = releasablePage({
     "Workflow Note": {
@@ -329,6 +344,20 @@ test("small repairable defects are fail-open when the note says to release first
   ]) {
     assert.equal(visibilityHideReasonIsConcrete(note), false, note);
     assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
+  }
+});
+
+test("release-first human guidance is not mistaken for a visibility hold", () => {
+  for (const note of [
+    "资料还有缺失，但不影响正常观看，先放出，后续再补。",
+    "不要因为资料不全而隐藏，先让用户观看，后续补齐。",
+    "不要轻易勾选 Hide from Website。"
+  ]) {
+    const page = releasablePage({
+      "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: note }] }
+    });
+    assert.equal(explicitVisibilityHoldFromPage(page), false, note);
+    assert.deepEqual(workVisibilityBlockers(page), [], note);
   }
 });
 
