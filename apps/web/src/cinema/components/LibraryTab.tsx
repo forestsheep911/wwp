@@ -1,3 +1,8 @@
+import { routeFromLocation } from "../routing";
+import { entityPath } from "../public-identities";
+import { followInternalLink } from "../internal-link";
+import { navigatePage, commitNavigation, useLocationRoute, historyEntryKey } from "../navigation";
+import { readSession, writeSession } from "../session-state";
 import { RelationshipExplorer } from "./RelationshipExplorer";
 import { Play } from "lucide-react";
 import { explicitBrowseKind } from "../browse-channel";
@@ -122,6 +127,7 @@ interface LibraryTabProps {
   detailAssetKey?: string;
   detailResult?: ResultWithCache;
   detailLoading?: boolean;
+  detailError?: string;
   getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   onOpenPerson: (personId: string) => void;
@@ -175,6 +181,7 @@ export function LibraryTab({
   detailAssetKey,
   detailResult: routedDetailResult,
   detailLoading = false,
+  detailError,
   getDetailHref,
   onOpenDetail,
   onOpenPerson,
@@ -257,9 +264,7 @@ export function LibraryTab({
     }
 
     const detailCandidate = routedDetailResult ?? [...results, ...browseResults].find((result) => result.assetKey === detailAssetKey);
-    if (detailCandidate) {
-      setDetailResult(detailCandidate);
-    }
+    setDetailResult(detailCandidate);
   }, [browseResults, detailAssetKey, results, routedDetailResult]);
 
   useEffect(() => {
@@ -274,8 +279,8 @@ export function LibraryTab({
     }
   }, [browseResults, focusedAssetKey, onFocusedAssetHandled, results]);
 
-  const displayedDetailResult = detailAssetKey ? detailResult : undefined;
-  const detailVisible = Boolean(displayedDetailResult || (detailAssetKey && detailLoading));
+  const displayedDetailResult = !detailError && detailResult?.assetKey === detailAssetKey ? detailResult : undefined;
+  const detailVisible = Boolean(detailAssetKey);
   const browseHomeVisible = !hasQuery && results.length === 0;
   const renderListSurface = !detailVisible || preserveListDuringDetail;
 
@@ -309,7 +314,7 @@ export function LibraryTab({
         <div className="flex min-h-64 items-center justify-center text-sm text-slate-400">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 正在打开条目
         </div>
-      ) : null}
+      ) : detailAssetKey ? <section className="grid min-h-48 place-content-center gap-4 text-center" role="alert"><h1>暂时无法打开这部作品</h1><p>作品可能已不再公开，或当前连接失败。</p><div className="flex justify-center gap-3"><Button onClick={() => navigatePage(routeFromLocation(), "replace")}>重试</Button><Button variant="outline" onClick={onCloseDetail}>返回片库</Button></div></section> : null}
 
       {renderListSurface ? (
         <div
@@ -946,13 +951,29 @@ function LibraryHome({
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
-  const [browseFilter, setBrowseFilter] = useState<BrowseFilterState>(emptyBrowseFilter);
+  const locationRoute = useLocationRoute();
+  const filterParams = locationRoute.params ?? {};
+  const browseFilter: BrowseFilterState = {
+    kind: ["movie", "tv", "animation"].includes(filterParams.kind) ? filterParams.kind as BrowseFilterState["kind"] : "all",
+    decade: ["2020s", "2010s", "2000s", "1990s", "1980s", "1970s", "1960s", "1950s", "pre1950"].includes(filterParams.decade) ? filterParams.decade as BrowseFilterState["decade"] : "all",
+    rating: ["70", "80", "90"].includes(filterParams.rating) ? filterParams.rating as BrowseFilterState["rating"] : "all",
+    availability: filterParams.availability === "publicPrepared" ? "publicPrepared" : "all", genres: filterParams.genres?.split(",").filter(Boolean) ?? []
+  };
+  function setBrowseFilter(value: BrowseFilterState | ((previous: BrowseFilterState) => BrowseFilterState)) {
+    const next = typeof value === "function" ? value(browseFilter) : value;
+    commitNavigation({ ...locationRoute, params: { ...filterParams, ...Object.fromEntries(Object.entries(next).map(([key, value]) => [key, Array.isArray(value) ? value.join(",") : value === "all" ? "" : value])) } }, "push");
+  }
   const [filterOpen, setFilterOpen] = useState(() => (
     typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
       && !window.matchMedia("(any-pointer: coarse)").matches
   ));
-  const [viewSeed, setViewSeed] = useState(() => randomBrowseSeed());
-  const [visibleItemCount, setVisibleItemCount] = useState(browseInitialVisibleCount);
+  const [fallbackSeed] = useState(() => randomBrowseSeed());
+  const viewSeed = Number(filterParams.seed) || fallbackSeed;
+  useEffect(() => {
+    if (activeView === "lucky" && !filterParams.seed) commitNavigation({ ...locationRoute, params: { ...filterParams, seed: String(fallbackSeed) } }, "replace");
+  }, [activeView, filterParams.seed]);
+  const [visibleItemCount, setVisibleItemCount] = useState(() => readSession(`library-count:${historyEntryKey()}`, browseInitialVisibleCount));
+  useEffect(() => { writeSession(`library-count:${historyEntryKey()}`, visibleItemCount); }, [visibleItemCount]);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const autoLoadRequestRef = useRef("");
   const onRefreshBrowseRef = useRef(onRefreshBrowse);
@@ -1029,12 +1050,7 @@ function LibraryHome({
     const nextViews = viewsForBrowseChannel(browseChannel);
     const nextView = nextViews.some((view) => view.id === browseView) ? browseView : nextViews[0].id;
     setActiveView(nextView);
-    if (nextView !== "lucky") {
-      setViewSeed(randomBrowseSeed());
-    }
-    if (browseChannel !== "recommended") {
-      setBrowseFilter((current) => current.kind === "all" ? current : { ...current, kind: "all" });
-    }
+
   }, [browseChannel, browseView]);
 
   useEffect(() => {
@@ -1042,7 +1058,7 @@ function LibraryHome({
   }, [onRefreshBrowse]);
 
   useEffect(() => {
-    setVisibleItemCount(browseInitialVisibleCount);
+    setVisibleItemCount(readSession(`library-count:${historyEntryKey()}`, browseInitialVisibleCount));
     autoLoadRequestRef.current = "";
   }, [activeSortView, browseChannel]);
 
@@ -3328,9 +3344,9 @@ function LinkedCredits({ result, onOpenPerson }: { result: SearchResult; onOpenP
       </div>
       <div className="flex flex-wrap gap-2">
         {credits.map((credit, index) => credit.personId ? (
-          <button className="min-h-11 max-w-full rounded-md py-2 pr-3 text-left text-sm font-semibold text-emerald-100 transition hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" key={`${credit.personId}-${credit.department}-${credit.job ?? ""}-${index}`} onClick={() => onOpenPerson(credit.personId!)} type="button">
+          <a href={entityPath("person", credit.personId!)} className="min-h-11 max-w-full rounded-md py-2 pr-3 text-left text-sm font-semibold text-emerald-100 transition hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" key={`${credit.personId}-${credit.department}-${credit.job ?? ""}-${index}`} onClick={event => followInternalLink(event, () => onOpenPerson(credit.personId!))}>
             <span className="text-emerald-300/70">{labels[credit.department] ?? credit.job ?? "主创"}</span> {credit.name}
-          </button>
+          </a>
         ) : (
           <span className="max-w-full py-2 pr-3 text-sm text-slate-400" key={`${credit.name}-${credit.department}-${index}`} title="关系已收录，人物资料待补">
             {labels[credit.department] ?? credit.job ?? "主创"} {credit.name} <span className="text-slate-600">· 待建档</span>

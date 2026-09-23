@@ -1,3 +1,5 @@
+import { entityPath } from "../public-identities";
+import { followInternalLink } from "../internal-link";
 import { RelationshipExplorer } from "./RelationshipExplorer";
 import { ArrowLeft, ExternalLink, Film, Loader2, UserRound } from "lucide-react";
 import { selectPersonBiographyTexts, type PublicPersonDetail, type SearchResult } from "@wwpdw/shared";
@@ -111,7 +113,7 @@ export function PersonDetail({
           {filmography.map((work) => {
             const result = resultByWorkId.get(work.workId);
             return (
-              <button className="group overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 text-left transition hover:-translate-y-0.5 hover:border-emerald-300/50 hover:shadow-xl hover:shadow-black/20 disabled:cursor-default disabled:hover:translate-y-0" disabled={!result} key={work.workId} onClick={() => result && onOpenWork(result)} type="button">
+              <a href={result ? entityPath("work", result.assetKey) : undefined} className="group overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 text-left transition hover:-translate-y-0.5 hover:border-emerald-300/50 hover:shadow-xl hover:shadow-black/20 disabled:cursor-default disabled:hover:translate-y-0" aria-disabled={!result} key={work.workId} onClick={event => { if (result) followInternalLink(event, () => onOpenWork(result)); else event.preventDefault(); }}>
                 <div className="aspect-[2/3] bg-slate-950">{result ? <PosterImage alt={result.title} className="h-full w-full object-cover" result={result} /> : <div className="grid h-full place-items-center"><Film className="h-8 w-8 text-slate-700" /></div>}</div>
                 <div className="grid gap-2 p-3">
                   <p className="line-clamp-2 text-sm font-semibold text-slate-100">{work.title ?? work.workId}</p>
@@ -119,7 +121,7 @@ export function PersonDetail({
                     {work.roleLabels.map((label) => <span className="rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2 py-0.5 text-[10px] font-semibold text-emerald-200/75" key={label}>{label}</span>)}
                   </div>
                 </div>
-              </button>
+              </a>
             );
           })}
         </div>

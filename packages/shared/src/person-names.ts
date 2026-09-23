@@ -1,3 +1,4 @@
+import type { PublicNavigationFields } from "./public-route.js";
 import type { MovieCreditDepartment, MovieMetadataSource } from "./index.js";
 
 export interface PersonExternalIds {
@@ -164,7 +165,7 @@ export interface PersonCatalogIssue {
   };
 }
 
-export interface PublicPersonSummary {
+export interface PublicPersonSummary extends PublicNavigationFields {
   personId: string;
   names: PersonDisplayNames;
   departments: MovieCreditDepartment[];
@@ -175,7 +176,7 @@ export interface PublicPersonSummary {
   representativeWorks: string[];
 }
 
-export interface PublicPersonWork {
+export interface PublicPersonWork extends PublicNavigationFields {
   workId: string;
   title?: string;
   department: MovieCreditDepartment;

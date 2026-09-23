@@ -1,3 +1,5 @@
+import { installPublicIdentities } from "./cinema/public-identities";
+import type { PublicIdentity } from "@wwpdw/shared";
 import type {
   AdminCacheJobsResponse,
   AdminLoginAuditResponse,
@@ -155,14 +157,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function checkAccess() {
-  return request<AuthCheckResponse & { csrfToken?: string }>(apiUrl("/api/auth/check")).then((auth) => {
+  return request<AuthCheckResponse & { csrfToken?: string }>(apiUrl("/api/auth/check")).then(async (auth) => {
+    await loadPublicIdentities();
     csrfToken = auth.csrfToken ?? "";
     return auth;
   });
 }
 
 export function login(passcode: string) {
-  return request<AuthenticatedSessionEnvelope>(apiUrl("/api/auth/login"), { method: "POST", body: JSON.stringify({ passcode }) }).then((response) => {
+  return request<AuthenticatedSessionEnvelope>(apiUrl("/api/auth/login"), { method: "POST", body: JSON.stringify({ passcode }) }).then(async (response) => {
+    await loadPublicIdentities();
     csrfToken = response.csrfToken ?? "";
     return unwrapAuthenticatedSession(response);
   });
@@ -187,7 +191,7 @@ export function registerMember(input: RegisterMemberRequest) {
   return request<RegisterMemberResponse>(apiUrl("/api/auth/register"), {
     method: "POST",
     body: JSON.stringify(input)
-  }).then((response) => { csrfToken = (response as RegisterMemberResponse & { csrfToken?: string }).csrfToken ?? ""; return response; });
+  }).then(async (response) => { csrfToken = (response as RegisterMemberResponse & { csrfToken?: string }).csrfToken ?? ""; await loadPublicIdentities(); return response; });
 }
 
 export function changeMemberPasscode(input: ChangeMemberPasscodeRequest) {
@@ -208,7 +212,7 @@ export function resetMemberPasscode(input: ResetMemberPasscodeRequest) {
   return request<ResetMemberPasscodeResponse>(apiUrl("/api/auth/reset-passcode"), {
     method: "POST",
     body: JSON.stringify(input)
-  }).then((response) => { csrfToken = (response as ResetMemberPasscodeResponse & { csrfToken?: string }).csrfToken ?? ""; return response; });
+  }).then(async (response) => { csrfToken = (response as ResetMemberPasscodeResponse & { csrfToken?: string }).csrfToken ?? ""; await loadPublicIdentities(); return response; });
 }
 
 export function listOwnCreditUsage(limit = 50) {
@@ -277,7 +281,7 @@ export function searchAssets(query: string, line?: PlaybackLine) {
 export function browseAssets(
   limit = 60,
   offset = 0,
-  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string; revision?: string; signal?: AbortSignal } = {}
+  options: { mode?: "paged" | "random"; channel?: BrowseChannel; view?: BrowseViewId; line?: PlaybackLine; personId?: string; seed?: string; revision?: string; signal?: AbortSignal } = {}
 ) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (options.mode) {
@@ -295,6 +299,7 @@ export function browseAssets(
   if (options.personId) {
     params.set("person", options.personId);
   }
+  if (options.seed) params.set("seed", options.seed);
   if (options.revision) {
     params.set("revision", options.revision);
   }
@@ -645,4 +650,9 @@ export function undoMemberCollection(id: string, revision: string) {
 }
 export function markMemberCollection(assetKey: string, mark: string, active: boolean, revision: string) {
   return request<import("@wwpdw/shared").CollectionResponse>(apiUrl("/api/member/collection/mark"), { method: "POST", body: JSON.stringify({ assetKey, mark, active, revision }) });
+}
+
+export async function loadPublicIdentities() {
+  const response = await request<{ entries: PublicIdentity[] }>(apiUrl("/api/public-routes"));
+  installPublicIdentities(response.entries);
 }

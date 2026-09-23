@@ -17,6 +17,9 @@ test("static web resolver serves assets and React browser routes safely", async 
 
     const index = await resolveStaticWebFile(root, "/");
     const route = await resolveStaticWebFile(root, "/library/recent");
+    assert.equal((await resolveStaticWebFile(root, "/works/Mr.Smith-w_123/graph"))?.absolutePath, path.join(root, "index.html"));
+    assert.equal(await resolveStaticWebFile(root, "/api/unknown"), undefined);
+    assert.equal(await resolveStaticWebFile(root, "/assets/missing"), undefined);
     const asset = await resolveStaticWebFile(root, "/assets/index-abc.js");
 
     assert.equal(index?.absolutePath, path.join(root, "index.html"));

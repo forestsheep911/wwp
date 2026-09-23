@@ -1,6 +1,13 @@
+import { entityPath, resolveIdentity } from "./public-identities";
 import type { AppTab, BrowseChannel, BrowseViewId } from "./types";
 
 export interface CinemaRoute {
+  page?: "list" | "work" | "person" | "graph" | "search" | "watch" | "thread" | "notFound";
+  graph?: boolean;
+  scope?: string;
+  threadId?: string;
+  section?: string;
+  params?: Record<string, string>;
   tab: AppTab;
   browseChannel: BrowseChannel;
   browseView: BrowseViewId;
@@ -76,120 +83,63 @@ export function routeFromLocation(): CinemaRoute {
 
 export function routeFromUrl(url: URL): CinemaRoute {
   const params = url.searchParams;
-  const pathPersonId = personIdFromPath(url.pathname);
-  const pathDetailAssetKey = detailAssetKeyFromPath(url.pathname);
-  const tab = pathPersonId
-    ? "people"
-    : isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
-  const browseChannel = isBrowseChannel(params.get("channel"))
-    ? params.get("channel") as BrowseChannel
-    : "recommended";
-  const browseView = isBrowseView(params.get("view"))
-    ? params.get("view") as BrowseViewId
-    : defaultBrowseView(browseChannel);
-  return {
-    tab,
-    browseChannel,
-    browseView,
-    query: params.get("q") ?? "",
-    personId: pathPersonId ?? params.get("person") ?? undefined,
-    detailAssetKey: pathDetailAssetKey ?? params.get("detail") ?? undefined,
-    playerAssetKey: params.get("play") ?? undefined
-  };
+  let pathname: string;
+  try { pathname = decodeURIComponent(url.pathname).replace(/\/$/, "") || "/"; } catch { pathname = "/invalid"; }
+  const graph = pathname.endsWith("/graph");
+  const basePath = graph ? pathname.slice(0, -6) : pathname;
+  const work = basePath.match(/^\/works\/(?:.*-)?(w_[a-zA-Z0-9]+)$/);
+  const person = basePath.match(/^\/people\/(?:.*-)?(p_[a-zA-Z0-9]+)$/);
+  const legacyPerson = !person && basePath.match(/^\/people\/([^/]+)$/);
+  const legacyWork = basePath.match(/^\/movie\/(.+)$/);
+  const watch = basePath.match(/^\/watch\/(v_[a-zA-Z0-9]+)$/);
+  const thread = basePath.match(/^\/forum\/([^/]+)$/);
+  const section = basePath.match(/^\/(admin|profile)\/([^/]+)$/);
+  const pathTab = basePath === "/" ? "library" : basePath.slice(1) === "now-playing" ? "nowPlaying" : basePath.slice(1);
+  const tab: AppTab = person || legacyPerson ? "people" : section ? section[1] as AppTab : thread ? "forum" : basePath !== "/" && isAppTab(pathTab) ? pathTab : isAppTab(params.get("tab")) ? params.get("tab") as AppTab : "library";
+  const personKey = person?.[1] ?? (legacyPerson ? legacyPerson[1] : undefined) ?? params.get("person") ?? undefined;
+  const workKey = work?.[1] ?? legacyWork?.[1] ?? params.get("detail") ?? undefined;
+  const videoKey = watch?.[1] ?? params.get("play") ?? undefined;
+  const known = isAppTab(pathTab) || basePath === "/now-playing" || basePath === "/search" || work || person || legacyPerson || legacyWork || watch || thread || section;
+  const invalidSection = section && !(section[1] === "profile" ? ["notices", "requests", "usage"] : ["cached", "jobs", "passes", "invites", "requests", "notices", "security", "oss-poc"]).includes(section[2]);
+  const page = !known || invalidSection ? "notFound" : videoKey ? "watch" : graph ? "graph" : personKey ? "person" : workKey ? "work" : basePath === "/search" || (basePath === "/" && params.has("q")) ? "search" : thread ? "thread" : "list";
+  const browseChannel = isBrowseChannel(params.get("channel")) ? params.get("channel") as BrowseChannel : "recommended";
+  return { tab, page, graph, browseChannel, browseView: isBrowseView(params.get("view")) ? params.get("view") as BrowseViewId : defaultBrowseView(browseChannel),
+    query: params.get("q") ?? "", scope: params.get("scope") ?? "all", threadId: thread?.[1], section: section?.[2],
+    personId: personKey ? resolveIdentity("person", personKey)?.key ?? personKey : undefined,
+    detailAssetKey: workKey ? resolveIdentity("work", workKey)?.key ?? workKey : undefined,
+    playerAssetKey: videoKey ? resolveIdentity("video", videoKey)?.key ?? videoKey : undefined,
+    params: Object.fromEntries([...params.entries()].filter(([key]) => ["kind", "decade", "rating", "genres", "availability", "seed", "depth", "limit", "branches"].includes(key))) };
 }
-
-function personIdFromPath(pathname: string) {
-  const match = pathname.match(/^\/people\/([^/]+)\/?$/);
-  if (!match) return undefined;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return undefined;
-  }
-}
-
-function detailAssetKeyFromPath(pathname: string) {
-  const match = pathname.match(/^\/movie\/([^/]+)\/?$/);
-  if (!match) return undefined;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return undefined;
-  }
-}
-
 export function historyStateRoute(state: unknown): CinemaRoute | undefined {
-  const candidate = state as Partial<CinemaHistoryState> | undefined;
-  const route = candidate?.route as Partial<CinemaRoute> | undefined;
-  if (candidate?.app !== "wwpdw-cinema" || !route || !route.tab) {
-    return undefined;
-  }
-
-  const rawBrowseChannel = route.browseChannel ?? null;
-  const browseChannel: BrowseChannel = isBrowseChannel(rawBrowseChannel)
-    ? rawBrowseChannel
-    : "recommended";
-
-  const tab: AppTab = isAppTab(route.tab) ? route.tab : "library";
-  const rawBrowseView = route.browseView ?? null;
-  const browseView: BrowseViewId = isBrowseView(rawBrowseView)
-    ? rawBrowseView
-    : defaultBrowseView(browseChannel);
-
-  return {
-    tab,
-    browseChannel,
-    browseView,
-    query: route.query ?? "",
-    personId: route.personId,
-    detailAssetKey: route.detailAssetKey,
-    playerAssetKey: route.playerAssetKey
-  };
+  const value = state as Partial<CinemaHistoryState> | undefined;
+  return value?.app === "wwpdw-cinema" && value.route && isAppTab(value.route.tab) ? value.route : undefined;
 }
-
 export function routeUrl(route: CinemaRoute, currentHref = window.location.href) {
-  const url = new URL(currentHref);
-  url.pathname = route.personId
-    ? `/people/${encodeURIComponent(route.personId)}`
-    : route.detailAssetKey
-      ? `/movie/${encodeURIComponent(route.detailAssetKey)}`
-      : "/";
-  url.search = "";
-  url.hash = "";
-  if (!route.personId && route.tab !== "library") {
-    url.searchParams.set("tab", route.tab);
+  const url = new URL(currentHref); url.search = ""; url.hash = "";
+  if (route.page === "notFound") return new URL(currentHref).pathname;
+  url.pathname = route.playerAssetKey ? entityPath("video", route.playerAssetKey) ?? `/watch/${encodeURIComponent(route.playerAssetKey)}`
+    : route.personId ? entityPath("person", route.personId) ?? `/people/${encodeURIComponent(route.personId)}`
+    : route.detailAssetKey ? entityPath("work", route.detailAssetKey) ?? (/^w_[a-zA-Z0-9]+$/.test(route.detailAssetKey) ? `/works/${route.detailAssetKey}` : `/movie/${encodeURIComponent(route.detailAssetKey)}`)
+    : route.page === "search" ? "/search" : route.tab === "library" ? "/" : route.tab === "nowPlaying" ? "/now-playing" : `/${route.tab}`;
+  if (route.graph && (route.personId || route.detailAssetKey)) url.pathname += "/graph";
+  if (route.tab === "forum" && route.threadId) url.pathname += `/${encodeURIComponent(route.threadId)}`;
+  if (["admin", "profile"].includes(route.tab) && route.section) url.pathname += `/${encodeURIComponent(route.section)}`;
+  if (!route.personId && !route.detailAssetKey && !route.playerAssetKey) {
+    if (route.tab === "library" && route.page !== "search") {
+      if (route.browseChannel !== "recommended") url.searchParams.set("channel", route.browseChannel);
+      if (route.browseView !== defaultBrowseView(route.browseChannel)) url.searchParams.set("view", route.browseView);
+    }
+    if (route.query.trim() && (route.page === "search" || route.tab === "people")) url.searchParams.set("q", route.query.trim());
+    if (route.page === "search" && route.scope && route.scope !== "all") url.searchParams.set("scope", route.scope);
   }
-  if (route.tab === "library" && route.browseChannel !== "recommended") {
-    url.searchParams.set("channel", route.browseChannel);
-  }
-  if (route.tab === "library" && route.browseView !== defaultBrowseView(route.browseChannel)) {
-    url.searchParams.set("view", route.browseView);
-  }
-  if (!route.personId && route.tab === "library" && route.query.trim()) {
-    url.searchParams.set("q", route.query.trim());
-  }
-  if (!route.personId && route.playerAssetKey) {
-    url.searchParams.set("play", route.playerAssetKey);
+  if (route.graph || (!route.personId && !route.detailAssetKey && !route.playerAssetKey && route.tab === "library" && route.page !== "search")) {
+    for (const [key, value] of Object.entries(route.params ?? {})) {
+      if ((route.graph ? ["depth", "limit", "branches"] : ["kind", "decade", "rating", "genres", "availability", "seed"]).includes(key) && value) url.searchParams.set(key, value);
+    }
   }
   return `${url.pathname}${url.search}`;
 }
-
 export function sameRoute(left: CinemaRoute | undefined, right: CinemaRoute) {
-  return Boolean(
-    left &&
-      left.tab === right.tab &&
-      left.browseChannel === right.browseChannel &&
-      left.browseView === right.browseView &&
-      left.query === right.query &&
-      left.personId === right.personId &&
-      left.detailAssetKey === right.detailAssetKey &&
-      left.playerAssetKey === right.playerAssetKey
-  );
+  return Boolean(left && JSON.stringify(left) === JSON.stringify(right));
 }
-
-export function cinemaHistoryState(route: CinemaRoute): CinemaHistoryState {
-  return {
-    app: "wwpdw-cinema",
-    route
-  };
-}
+export function cinemaHistoryState(route: CinemaRoute): CinemaHistoryState { return { app: "wwpdw-cinema", route }; }

@@ -9,7 +9,7 @@ const source = readFileSync(
 
 test("desktop search dialog keeps one stable viewport before and after results load", () => {
   assert.match(source, /sm:h-\[min\(86vh,780px\)\]/);
-  assert.match(source, /sm:grid-rows-\[auto_auto_minmax\(0,1fr\)\]/);
+  assert.match(source, /grid-rows-\[auto_auto_auto_minmax\(0,1fr\)\]/);
   assert.match(source, /sm:\[scrollbar-gutter:stable\]/);
 });
 

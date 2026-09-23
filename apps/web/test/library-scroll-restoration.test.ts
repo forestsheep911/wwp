@@ -23,7 +23,7 @@ test("library scroll restoration runs before paint without an initial frame dela
 
 test("opening a detail keeps the existing list surface mounted", () => {
   assert.match(librarySource, /setPreserveListDuringDetail\(true\)/);
-  assert.match(librarySource, /const displayedDetailResult = detailAssetKey \? detailResult : undefined/);
+  assert.match(librarySource, /const displayedDetailResult = !detailError && detailResult\?\.assetKey === detailAssetKey \? detailResult : undefined/);
   assert.match(librarySource, /const renderListSurface = !detailVisible \|\| preserveListDuringDetail/);
   assert.match(librarySource, /className=\{detailVisible \? "hidden" : "contents"\}/);
   assert.match(librarySource, /data-library-list-surface/);

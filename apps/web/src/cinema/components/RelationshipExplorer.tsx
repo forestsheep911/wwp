@@ -1,4 +1,7 @@
-import { lazy, Suspense, useState } from "react";
+import { navigatePage, useLocationRoute } from "../navigation";
+import { routeFromUrl } from "../routing";
+import { resolveIdentity } from "../public-identities";
+import { lazy, Suspense } from "react";
 import type { PublicPersonDetail, SearchResult } from "@wwpdw/shared";
 import { Network } from "lucide-react";
 import { Button } from "../../components/ui/button";
@@ -8,7 +11,15 @@ const RelationshipGraph = lazy(() => import("./RelationshipGraph"));
 export type RelationshipSeed = { work: SearchResult } | { person: PublicPersonDetail };
 
 export function RelationshipExplorer({ seed }: { seed: RelationshipSeed }) {
-  const [open, setOpen] = useState(false);
+  const route = useLocationRoute();
+  const open = route.graph === true;
+  const setOpen = (value: boolean) => {
+    if (value) navigatePage({ ...route, graph: true, page: "graph", params: { depth: "2", limit: "60", branches: "12" } });
+    else {
+      const origin = window.history.state?.graphOrigin as string | undefined;
+      navigatePage(origin ? routeFromUrl(new URL(origin, location.origin)) : { ...route, graph: false, page: "list", params: {} }, "push");
+    }
+  };
   return <>
     <Button variant="outline" className="w-fit" onClick={() => setOpen(true)}><Network className="h-4 w-4" />探索影视关系</Button>
     <Dialog open={open} onOpenChange={setOpen}>
@@ -20,7 +31,13 @@ export function RelationshipExplorer({ seed }: { seed: RelationshipSeed }) {
             <DialogDescription className="sr-only text-xs sm:not-sr-only">点击节点探索 · 拖动画布移动 · 滚轮或双指缩放</DialogDescription>
           </div>
         </header>
-        {open && <Suspense fallback={<p className="grid flex-1 place-items-center text-sm text-slate-400" role="status">正在加载关系图…</p>}><RelationshipGraph seed={seed} onClose={() => setOpen(false)} /></Suspense>}
+        {open && <Suspense fallback={<p className="grid flex-1 place-items-center text-sm text-slate-400" role="status">正在加载关系图…</p>}><RelationshipGraph seed={seed} onClose={() => setOpen(false)} onNavigate={node => {
+          const workKey = node.work?.assetKey ?? (node.workId ? resolveIdentity("work", node.workId)?.key : undefined);
+          if (node.personId && !resolveIdentity("person", node.personId)) return false;
+          if (!node.personId && !workKey) return false;
+          navigatePage({ ...route, tab: node.personId ? "people" : "library", graph: true, page: "graph", personId: node.personId, detailAssetKey: node.personId ? undefined : workKey, playerAssetKey: undefined, query: "" });
+          return true;
+        }} /></Suspense>}
       </DialogContent>
     </Dialog>
   </>;

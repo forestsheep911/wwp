@@ -1,3 +1,7 @@
+import { gzipSync } from "node:zlib";
+import { publicIdentityCandidates } from "./public-identity-candidates.js";
+import { PublicIdentityStore } from "./public-identities.js";
+import type { PublicIdentity } from "@wwpdw/shared";
 import { createCollectionDocumentStore } from "@wwpdw/cache-store";
 import { MemberCollectionService } from "./member-collection.js";
 import { handleMemberCollection } from "./member-collection-http.js";
@@ -252,12 +256,48 @@ interface RequestContext {
   session?: AuthenticatedSession;
 }
 
+const publicIdentityStore = new PublicIdentityStore(path.resolve(process.env.WWPDW_LOCAL_DATA_DIR ?? ".local-data", "public-identities.json"));
+let publicIdentities: PublicIdentity[] = [];
+let publicIdentityJson = "";
+let publicIdentityGzip: Buffer | undefined;
+const publicIdentityLookup = new Map<string, PublicIdentity>();
+let publicIdentityRefresh: Promise<PublicIdentity[]> | undefined;
+let publicIdentityUpdatedAt = 0;
+async function refreshPublicIdentities() {
+  if (Date.now() - publicIdentityUpdatedAt < 60_000) return publicIdentities;
+  if (publicIdentityRefresh) return publicIdentityRefresh;
+  publicIdentityRefresh = (async () => {
+    const [results, people] = await Promise.all([searchIndex.listAllResults(), personCatalog.getState()]);
+    const entries = await publicIdentityStore.sync(publicIdentityCandidates(results, people));
+    publicIdentities = entries; publicIdentityLookup.clear();
+    for (const entry of entries) for (const key of [entry.key, entry.id, ...entry.aliases]) publicIdentityLookup.set(`${entry.kind}:${key}`, entry);
+    publicIdentityJson = JSON.stringify({ entries }); publicIdentityGzip = gzipSync(publicIdentityJson);
+    publicIdentityUpdatedAt = Date.now(); return entries;
+  })().finally(() => { publicIdentityRefresh = undefined; });
+  return publicIdentityRefresh;
+}
+function publicIdentity(kind: PublicIdentity["kind"], key: string) {
+  return publicIdentityLookup.get(`${kind}:${key}`);
+}
+function publicPayload(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(publicPayload);
+  const object = value as Record<string, unknown>;
+  const output = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, publicPayload(item)]));
+  const identity = typeof object.personId === "string" ? publicIdentity("person", object.personId)
+    : typeof object.assetKey === "string" ? publicIdentity("work", object.assetKey)
+    : typeof object.workId === "string" ? publicIdentity("work", object.workId) : undefined;
+  if (identity) { output.publicId = identity.id; output.canonicalPath = identity.path; }
+  if (typeof object.assetKey === "string") { const video = publicIdentity("video", object.assetKey); if (video) output.playbackPath = video.path; }
+  return output;
+}
+
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown, headers: Record<string, string> = {}) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     ...headers
   });
-  response.end(JSON.stringify(payload));
+  response.end(JSON.stringify(publicPayload(payload)));
 }
 
 function headerValue(value: string | string[] | undefined) {
@@ -1869,8 +1909,8 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
     try {
       searchResults = mode === "random"
         ? channel === "recommended"
-          ? sampleSearchResults(filterBrowseResults(await searchIndex.search("", 1_000_000), channel), limit)
-          : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit)
+          ? sampleSearchResults(filterBrowseResults(await searchIndex.search("", 1_000_000), channel), limit, url.searchParams.get("seed")?.slice(0, 64))
+          : sampleSearchResults(filterBrowseResults(await searchIndex.search("", fetchLimit), channel), limit, url.searchParams.get("seed")?.slice(0, 64))
         : (searchIndex.backend === "local"
           ? await searchIndex.search("", fetchLimit)
           : (await browseSourceCache.getOrLoad("index", () => searchIndex.search("", 1_000_000))).slice(0, fetchLimit));
@@ -1886,7 +1926,7 @@ async function handleBrowseAssets(url: URL, response: http.ServerResponse, conte
   if (!sortedResults && searchResults.length === 0) {
     const liveResults = await searchSource.search("");
     const filteredLiveResults = filterBrowseResults(liveResults, channel);
-    searchResults = mode === "random" ? sampleSearchResults(filteredLiveResults, limit) : filteredLiveResults.slice(0, fetchLimit);
+    searchResults = mode === "random" ? sampleSearchResults(filteredLiveResults, limit, url.searchParams.get("seed")?.slice(0, 64)) : filteredLiveResults.slice(0, fetchLimit);
     void writeSearchResultsToIndex(searchResults, "browse_live");
     browseSource = mode === "random" ? "live_random" : "live";
   }
@@ -2086,7 +2126,8 @@ async function serveStaticTspdtBrowse(
   }
 }
 
-function sampleSearchResults(results: SearchResult[], limit: number) {
+function sampleSearchResults(results: SearchResult[], limit: number, seed?: string) {
+  if (seed) return results.map(result => ({ result, rank: createHash("sha256").update(`${seed}:${result.assetKey}`).digest("hex") })).sort((a,b) => a.rank.localeCompare(b.rank)).slice(0, Math.min(Math.max(Math.floor(limit), 1), 200)).map(entry => entry.result);
   const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
   const pool = [...results];
   for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -5367,6 +5408,18 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/public-routes") {
+      await refreshPublicIdentities();
+      const gzip = /\bgzip\b/.test(request.headers["accept-encoding"] ?? "");
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "private, max-age=60", "Vary": "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
+      response.end(gzip ? publicIdentityGzip : publicIdentityJson); return;
+    }
+    if (request.method === "GET" && /^\/api\/(search|browse-assets|people|library-assets|public-resolve)(\/|$)/.test(pathname)) await refreshPublicIdentities();
+    const resolvePublicMatch = pathname.match(/^\/api\/public-resolve\/(work|person|video)\/([^/]+)$/);
+    if (request.method === "GET" && resolvePublicMatch) {
+      const entry = publicIdentity(resolvePublicMatch[1] as PublicIdentity["kind"], decodeURIComponent(resolvePublicMatch[2]));
+      sendJson(response, entry ? 200 : 404, entry ?? { error: "内容不存在或已不再公开。" }); return;
+    }
     if (request.method === "GET" && pathname === "/api/search") {
       await handleSearch(url, response, context);
       return;
@@ -5374,7 +5427,9 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     const libraryAssetMatch = pathname.match(/^\/api\/library-assets\/([^/]+)$/);
     if (request.method === "GET" && libraryAssetMatch) {
-      await handleLibraryAsset(decodeURIComponent(libraryAssetMatch[1]), response, context);
+      const requestedKey = decodeURIComponent(libraryAssetMatch[1]);
+      if (/^w_[a-zA-Z0-9]+$/.test(requestedKey) && !publicIdentity("work", requestedKey)) { sendJson(response, 404, { error: "片目不存在或已不再公开。" }); return; }
+      await handleLibraryAsset(publicIdentity("work", requestedKey)?.key ?? requestedKey, response, context);
       return;
     }
 
@@ -5405,7 +5460,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     const personMatch = pathname.match(/^\/api\/people\/([^/]+)$/);
     if (request.method === "GET" && personMatch) {
       const state = await personCatalog.getState();
-      const person = getPublicPerson(state, decodeURIComponent(personMatch[1]), { visibleWorkIds: await visiblePersonWorkIds() });
+      const person = getPublicPerson(state, publicIdentity("person", decodeURIComponent(personMatch[1]))?.key ?? decodeURIComponent(personMatch[1]), { visibleWorkIds: await visiblePersonWorkIds() });
       if (!person) {
         sendJson(response, 404, { error: "Person was not found." });
         return;

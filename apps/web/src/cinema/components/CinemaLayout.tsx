@@ -1,3 +1,4 @@
+import { followInternalLink } from "../internal-link";
 import { useRef, useState, type ReactNode } from "react";
 import {
   Bell,
@@ -157,10 +158,9 @@ export function CinemaLayout({
       <Tabs value={activeTab} onValueChange={(value) => onActiveTabChange(value as AppTab)}>
         <header className="sticky top-0 z-[100] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 pb-2 pt-[calc(0.5rem+env(safe-area-inset-top))] sm:gap-3 sm:px-4 sm:py-3 xl:px-6">
-            <button
+            <a href="/"
               className="group flex min-h-11 min-w-0 items-center gap-3 rounded-md text-left transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-              type="button"
-              onClick={onOpenHome}
+              onClick={event => followInternalLink(event, onOpenHome)}
               title={copy.layout.homeTitle}
               aria-label="返回首页"
             >
@@ -168,7 +168,7 @@ export function CinemaLayout({
               <span className="hidden min-w-0 sm:block">
                 <h1 className="truncate text-lg font-semibold text-slate-50 sm:text-xl">{copy.app.name}</h1>
               </span>
-            </button>
+            </a>
 
             <div className="order-2 flex min-w-0 items-center justify-end gap-2">
               <div className="flex min-w-0 items-center gap-2 xl:hidden" data-touch-header>
@@ -176,12 +176,12 @@ export function CinemaLayout({
                   <Search className="h-4 w-4" />
                   <span>搜索影片</span>
                 </Button>
-                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" onClick={onOpenFavorites}>
+                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" asChild><a href="/favorites" onClick={event => followInternalLink(event, onOpenFavorites)}>
                   <Library className="h-4 w-4" />片单
-                </Button>
-                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" onClick={onOpenTasks}>
+                </a></Button>
+                <Button className="hidden min-h-11 sm:inline-flex" variant="ghost" asChild><a href="/tasks" onClick={event => followInternalLink(event, onOpenTasks)}>
                   <ListChecks className="h-4 w-4" />准备
-                </Button>
+                </a></Button>
                 <Dialog open={touchMenuOpen} onOpenChange={setTouchMenuOpen}>
                   <DialogTrigger asChild>
                     <Button className="relative min-h-11 rounded-xl px-3" variant="ghost" aria-label="更多功能">
@@ -218,34 +218,34 @@ export function CinemaLayout({
                 </Dialog>
               </div>
               <div className="hidden items-center gap-2 xl:flex" data-desktop-header>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenPeople} title="人物索引">
+              <Button variant="outline" size="icon" asChild title="人物索引"><a href="/people" onClick={event => followInternalLink(event, onOpenPeople)}>
                 <UsersRound className="h-4 w-4" />
                 <span className="sr-only">人物索引</span>
-              </Button>
-              <Button type="button" variant="outline" size="icon" onClick={onOpenStatistics} title="片库统计">
+              </a></Button>
+              <Button variant="outline" size="icon" asChild title="片库统计"><a href="/statistics" onClick={event => followInternalLink(event, onOpenStatistics)}>
                 <ChartNoAxesCombined className="h-4 w-4" />
                 <span className="sr-only">片库统计</span>
-              </Button>
-              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenHelp} title={copy.layout.help}>
+              </a></Button>
+              <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.help}><a href="/help" onClick={event => followInternalLink(event, onOpenHelp)}>
                 <HelpCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.help}</span>
-              </Button>
-              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenForum} title={copy.layout.forum}>
+              </a></Button>
+              <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.forum}><a href="/forum" onClick={event => followInternalLink(event, onOpenForum)}>
                 <MessageCircle className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.forum}</span>
-              </Button>
-              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenFavorites} title={copy.layout.favorites}>
+              </a></Button>
+              <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.favorites}><a href="/favorites" onClick={event => followInternalLink(event, onOpenFavorites)}>
                 <Star className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.favorites}</span>
-              </Button>
-              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenWatchlist} title={copy.layout.watchlist}>
+              </a></Button>
+              <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.watchlist}><a href="/watchlist" onClick={event => followInternalLink(event, onOpenWatchlist)}>
                 <Clapperboard className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.watchlist}</span>
-              </Button>
-              <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenNowPlaying} title={copy.layout.nowPlaying}>
+              </a></Button>
+              <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.nowPlaying}><a href="/now-playing" onClick={event => followInternalLink(event, onOpenNowPlaying)}>
                 <Flame className="h-4 w-4" />
                 <span className="sr-only">{copy.layout.nowPlaying}</span>
-              </Button>
+              </a></Button>
               <Button type="button" variant="outline" size="icon" onClick={onOpenSearch} title={copy.common.search}>
                 <Search className="h-4 w-4" />
                 <span className="sr-only">{copy.common.search}</span>
@@ -255,7 +255,7 @@ export function CinemaLayout({
                 <span className="sr-only">{themeToggleTitle}</span>
               </Button>
               {canChangePasscode ? (
-                <Button className="relative hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenNotices} title="站内信">
+                <Button className="relative hidden sm:inline-flex" variant="outline" size="icon" asChild title="站内信"><a href="/profile/notices" onClick={event => followInternalLink(event, onOpenNotices)}>
                   <Bell className="h-4 w-4" />
                   {noticeUnreadCount > 0 ? (
                     <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">
@@ -263,13 +263,13 @@ export function CinemaLayout({
                     </span>
                   ) : null}
                   <span className="sr-only">站内信</span>
-                </Button>
+                </a></Button>
               ) : null}
               {canChangePasscode ? (
-                <Button className="hidden sm:inline-flex" type="button" variant="outline" size="icon" onClick={onOpenSpending} title={copy.layout.spending}>
+                <Button className="hidden sm:inline-flex" variant="outline" size="icon" asChild title={copy.layout.spending}><a href="/profile/usage" onClick={event => followInternalLink(event, onOpenSpending)}>
                   <ReceiptText className="h-4 w-4" />
                   <span className="sr-only">{copy.layout.spending}</span>
-                </Button>
+                </a></Button>
               ) : null}
               <div className="hidden sm:block">
                 <AccountMenu
@@ -320,15 +320,15 @@ export function CinemaLayout({
         </div>
         <nav className="fixed inset-x-0 bottom-0 z-[90] w-full border-t border-slate-800 bg-slate-950/94 px-2 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 shadow-2xl shadow-black/45 backdrop-blur sm:hidden" aria-label="手机快捷导航">
           <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
-            <MobileNavButton active={activeTab === "library"} icon={<House className="h-5 w-5" />} label="首页" onClick={onOpenHome} />
-            <MobileNavButton active={activeTab === "watchlist"} icon={<Compass className="h-5 w-5" />} label="发现" onClick={onOpenWatchlist} />
-            <MobileNavButton active={activeTab === "favorites"} icon={<Library className="h-5 w-5" />} label="片单" onClick={onOpenFavorites} />
-            <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} label="准备" onClick={onOpenTasks} />
+            <MobileNavButton active={activeTab === "library"} icon={<House className="h-5 w-5" />} href="/" label="首页" onClick={onOpenHome} />
+            <MobileNavButton active={activeTab === "watchlist"} icon={<Compass className="h-5 w-5" />} href="/watchlist" label="发现" onClick={onOpenWatchlist} />
+            <MobileNavButton active={activeTab === "favorites"} icon={<Library className="h-5 w-5" />} href="/favorites" label="片单" onClick={onOpenFavorites} />
+            <MobileNavButton active={activeTab === "tasks"} icon={<ListChecks className="h-5 w-5" />} href="/tasks" label="准备" onClick={onOpenTasks} />
             <MobileNavButton
               active={activeTab === "profile"}
               badge={noticeUnreadCount}
               icon={<CircleUserRound className="h-5 w-5" />}
-              label="我的"
+              href="/profile" label="我的"
               onClick={() => onActiveTabChange("profile")}
             />
           </div>
@@ -339,12 +339,14 @@ export function CinemaLayout({
 }
 
 function MobileNavButton({
+  href,
   active,
   badge,
   icon,
   label,
   onClick
 }: {
+  href: string;
   active: boolean;
   badge?: number;
   icon: ReactNode;
@@ -352,15 +354,14 @@ function MobileNavButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <a href={href}
       className={`grid min-h-12 place-items-center gap-0.5 rounded-xl px-0 text-[10px] font-bold leading-none transition-colors ${
         active
           ? "bg-emerald-300/12 text-emerald-100"
           : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
       }`}
-      type="button"
       aria-current={active ? "page" : undefined}
-      onClick={onClick}
+      onClick={event => followInternalLink(event, onClick)}
     >
       <span className="relative">
         {icon}
@@ -369,7 +370,7 @@ function MobileNavButton({
         ) : null}
       </span>
       <span className="max-w-full whitespace-nowrap">{label}</span>
-    </button>
+    </a>
   );
 }
 

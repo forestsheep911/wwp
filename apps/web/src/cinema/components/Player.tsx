@@ -1,3 +1,4 @@
+import { readSession, writeSession } from "../session-state";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Artplayer from "artplayer";
 import type Hls from "hls.js";
@@ -200,7 +201,13 @@ function ArtPlayerView({
     art.on("video:waiting", renewIfNeeded);
     art.on("video:stalled", renewIfNeeded);
     art.on("video:error", handlePlaybackFailure);
-    art.on("video:ended", () => onPlaybackEndedRef.current());
+    const progressKey = `playback:${playback.assetKey}`;
+    let lastProgressSave = 0;
+    const saveProgress = () => { if (Number.isFinite(art.currentTime)) writeSession(progressKey, art.currentTime); };
+    art.on("video:loadedmetadata", () => { const seconds = readSession(progressKey, 0); if (seconds > 0 && seconds < art.duration - 5) art.currentTime = seconds; });
+    art.on("video:timeupdate", () => { if (Date.now() - lastProgressSave > 2000) { saveProgress(); lastProgressSave = Date.now(); } });
+    window.addEventListener("pagehide", saveProgress);
+    art.on("video:ended", () => { writeSession(progressKey, 0); onPlaybackEndedRef.current(); });
     art.on("document:visibilitychange", renewWhenVisible);
 
     const renewTimer = window.setInterval(() => {
@@ -210,6 +217,7 @@ function ArtPlayerView({
     }, 60_000);
 
     return () => {
+      saveProgress(); window.removeEventListener("pagehide", saveProgress);
       window.clearInterval(renewTimer);
       diagnosticEvents.forEach((eventName) => art.video.removeEventListener(eventName, reportVideoState));
       artRef.current = null;

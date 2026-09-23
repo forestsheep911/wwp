@@ -1,3 +1,4 @@
+import type { PublicNavigationFields } from "./public-route.js";
 export * from "./member-collection.js";
 export * from "./douban-identity.js";
 import type { PersonExternalIds } from "./person-names.js";
@@ -364,7 +365,7 @@ export interface MovieMetadata {
   external?: ExternalMovieMetadata;
 }
 
-export interface SearchResult {
+export interface SearchResult extends PublicNavigationFields {
   assetKey: string;
   title: string;
   source: string;
@@ -392,7 +393,7 @@ export interface MovieSummaryResponse {
   generatedAt: string;
 }
 
-export interface MediaVariant {
+export interface MediaVariant extends PublicNavigationFields {
   assetKey: string;
   label: string;
   sourceUrl: string;
@@ -1294,3 +1295,5 @@ export function errorLogFields(error: unknown): LogFields {
 export function durationMs(startedAt: number) {
   return Math.round(Date.now() - startedAt);
 }
+
+export * from "./public-route.js";

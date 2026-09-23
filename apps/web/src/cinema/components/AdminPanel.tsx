@@ -1,3 +1,4 @@
+import { commitNavigation, useLocationRoute } from "../navigation";
 import { useState, type FormEvent } from "react";
 import {
   Activity,
@@ -165,7 +166,9 @@ export function AdminPanel({
   onViewCreditUsage,
   onRevoke
 }: AdminPanelProps) {
-  const [activeAdminTab, setActiveAdminTab] = useState("cached");
+  const route = useLocationRoute();
+  const activeAdminTab = ["cached", "jobs", "passes", "invites", "requests", "notices", "security", "oss-poc"].includes(route.section ?? "") ? route.section! : "cached";
+  const setActiveAdminTab = (section: string) => commitNavigation({ ...route, section }, "push");
 
   if (!adminUnlocked) {
     return (

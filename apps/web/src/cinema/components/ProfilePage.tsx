@@ -86,20 +86,20 @@ export function ProfilePage({
       </div>
 
       <ProfileSection title="我的片库">
-        <ProfileAction icon={<Library />} label="我的片单" detail="喜欢、想看和已经看过的影片" onClick={onOpenFavorites} />
-        <ProfileAction icon={<Clock3 />} label="播放历史" detail="接着看或重新准备" onClick={onOpenHistory} />
-        <ProfileAction icon={<Database />} label="已准备影片" detail="当前可以直接播放的资源" onClick={onOpenCached} />
+        <ProfileAction icon={<Library />} label="我的片单" detail="喜欢、想看和已经看过的影片" href="/favorites" onClick={onOpenFavorites} />
+        <ProfileAction icon={<Clock3 />} label="播放历史" detail="接着看或重新准备" href="/history" onClick={onOpenHistory} />
+        <ProfileAction icon={<Database />} label="已准备影片" detail="当前可以直接播放的资源" href="/cached" onClick={onOpenCached} />
       </ProfileSection>
 
       <ProfileSection title="观看动态">
-        <ProfileAction icon={<ListChecks />} label="准备任务" detail="查看准备进度和结果" onClick={onOpenTasks} />
-        <ProfileAction icon={<Clapperboard />} label="最近在看" detail="家庭影院近期播放" onClick={onOpenNowPlaying} />
-        <ProfileAction icon={<MessageCircle />} label="家庭讨论" detail="分享片单和观后感" onClick={onOpenForum} />
+        <ProfileAction icon={<ListChecks />} label="准备任务" detail="查看准备进度和结果" href="/tasks" onClick={onOpenTasks} />
+        <ProfileAction icon={<Clapperboard />} label="最近在看" detail="家庭影院近期播放" href="/now-playing" onClick={onOpenNowPlaying} />
+        <ProfileAction icon={<MessageCircle />} label="家庭讨论" detail="分享片单和观后感" href="/forum" onClick={onOpenForum} />
       </ProfileSection>
 
       <ProfileSection title="服务与账号">
         {canRequestMovie ? (
-          <ProfileAction icon={<MessageSquarePlus />} label="请求补片" detail="片库没有时告诉管理员" onClick={onOpenMovieRequest} />
+          <ProfileAction icon={<MessageSquarePlus />} label="请求补片" detail="片库没有时告诉管理员" href="/profile/requests" onClick={onOpenMovieRequest} />
         ) : null}
         {canChangePasscode ? (
           <>
@@ -108,16 +108,16 @@ export function ProfilePage({
               icon={<Bell />}
               label="站内信"
               detail="查看管理员通知"
-              onClick={onOpenNotices}
+              href="/profile/notices" onClick={onOpenNotices}
             />
-            <ProfileAction icon={<ReceiptText />} label="代币记录" detail="查看准备和播放消耗" onClick={onOpenSpending} />
+            <ProfileAction icon={<ReceiptText />} label="代币记录" detail="查看准备和播放消耗" href="/profile/usage" onClick={onOpenSpending} />
             <ProfileAction icon={<Settings2 />} label="账号与设备" detail="姓名、通行码和登录设备" onClick={onOpenProfile} />
           </>
         ) : null}
         {showAdmin ? (
-          <ProfileAction icon={<ShieldCheck />} label="管理后台" detail="成员、资源和系统管理" onClick={onOpenAdmin} />
+          <ProfileAction icon={<ShieldCheck />} label="管理后台" detail="成员、资源和系统管理" href="/admin" onClick={onOpenAdmin} />
         ) : null}
-        <ProfileAction icon={<BookOpen />} label="使用说明" detail="播放、准备和代币说明" onClick={onOpenHelp} />
+        <ProfileAction icon={<BookOpen />} label="使用说明" detail="播放、准备和代币说明" href="/help" onClick={onOpenHelp} />
         <ProfileAction
           icon={theme === "dark" ? <Sun /> : <Moon />}
           label={theme === "dark" ? "切换浅色外观" : "切换深色外观"}
@@ -150,23 +150,26 @@ function ProfileSection({ title, children }: { title: string; children: ReactNod
 }
 
 function ProfileAction({
+  href,
   badge,
   detail,
   icon,
   label,
   onClick
 }: {
+  href?: string;
   badge?: string;
   detail: string;
   icon: ReactNode;
   label: string;
   onClick: () => void;
 }) {
+  const Element = href ? "a" : "button";
   return (
-    <button
+    <Element href={href}
       className="group flex min-h-[4.5rem] w-full items-center gap-3 border-b border-slate-800/85 px-4 text-left transition last:border-b-0 active:bg-slate-800/80"
-      type="button"
-      onClick={onClick}
+      type={href ? undefined : "button"}
+      onClick={event => { if (href && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0)) return; event.preventDefault(); onClick(); }}
     >
       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-800 text-emerald-300 [&>svg]:h-[1.15rem] [&>svg]:w-[1.15rem]">
         {icon}
@@ -183,6 +186,6 @@ function ProfileAction({
         <span className="mt-0.5 block truncate text-xs text-slate-500">{detail}</span>
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 text-slate-600 transition-transform group-active:translate-x-0.5" />
-    </button>
+    </Element>
   );
 }

@@ -1,3 +1,5 @@
+import { commitNavigation, useLocationRoute, historyEntryKey } from "../navigation";
+import { readSession, writeSession } from "../session-state";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Graph, NodeEvent, type IEvent, type NodeData } from "@antv/g6";
 import { ArrowLeft, Focus, List, Loader2, Minus, Plus, RotateCcw } from "lucide-react";
@@ -17,7 +19,12 @@ async function fitGraph(instance: Graph) {
   if (!instance.destroyed && instance.getZoom() > 1) await instance.zoomTo(1, false);
 }
 
-export default function RelationshipGraph({ seed, onClose }: { seed: RelationshipSeed; onClose: () => void }) {
+export default function RelationshipGraph({ seed, onClose, onNavigate }: { seed: RelationshipSeed; onClose: () => void; onNavigate?: (node: RelationshipNode) => boolean }) {
+  const route = useLocationRoute();
+  const routeRef = useRef(route); routeRef.current = route;
+  const entryKey = historyEntryKey();
+  const savedView = readSession<{ query: string; listOpen: boolean }>(`graph-ui:${entryKey}`, { query: "", listOpen: false });
+  const updateParameter = (key: string, value: number) => commitNavigation({ ...routeRef.current, params: { ...routeRef.current.params, [key]: String(value) } }, "push");
   const container = useRef<HTMLDivElement>(null);
   const graph = useRef<Graph | null>(null);
   const loader = useRef<ReturnType<typeof createRelationshipLoader> | null>(null);
@@ -31,7 +38,8 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
   const navigate = useRef<(node: RelationshipNode) => void>(() => {});
   const [view, setView] = useState<RelationshipView>();
   const [history, setHistory] = useState<RelationshipView[]>([]);
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
+  const limit = Math.min(600, Math.max(INITIAL_LIMIT, Number(route.params?.limit) || INITIAL_LIMIT));
+  const setLimit = (value: number) => updateParameter("limit", value);
   const [loading, setLoading] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("");
@@ -40,10 +48,12 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
   const [unavailable, setUnavailable] = useState<RelationshipNode>();
   const [retry, setRetry] = useState(0);
   const [hovered, setHovered] = useState<RelationshipNetworkNode>();
-  const [listOpen, setListOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [depth, setDepth] = useState<1 | 2>(2);
-  const [branchLimit, setBranchLimit] = useState(BRANCH_BATCH);
+  const [listOpen, setListOpen] = useState(savedView.listOpen);
+  const [query, setQuery] = useState(savedView.query);
+  const depth: 1 | 2 = route.params?.depth === "1" ? 1 : 2;
+  const setDepth = (value: number) => updateParameter("depth", value);
+  const branchLimit = Math.min(120, Math.max(BRANCH_BATCH, Number(route.params?.branches) || BRANCH_BATCH));
+  const setBranchLimit = (value: number | ((previous: number) => number)) => updateParameter("branches", typeof value === "function" ? value(branchLimit) : value);
   const [expansionRetry, setExpansionRetry] = useState(0);
   const [expanding, setExpanding] = useState(false);
   const [expansion, setExpansion] = useState<{ rootId: string; branches: RelationshipView[]; error: string }>({ rootId: "", branches: [], error: "" });
@@ -64,10 +74,9 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
       failedNode.current = undefined;
       if (!initial && view) setHistory(previous => [...previous, view]);
       setView(next);
-      setLimit(INITIAL_LIMIT);
-      setBranchLimit(BRANCH_BATCH);
+
       setHovered(undefined);
-      setQuery("");
+
     } catch (cause) {
       if (token === generation.current) {
         failedNode.current = node;
@@ -79,7 +88,10 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
   }
   navigate.current = node => {
     if (!canExploreRelationship(node)) { setUnavailable(node); return; }
-    if (!navigating.current && !drawing && node.id !== view?.center.id) void open(node);
+    if (!navigating.current && !drawing && node.id !== view?.center.id) {
+      if (onNavigate) { if (!onNavigate(node)) setUnavailable(node); }
+      else void open(node);
+    }
   };
 
   useEffect(() => {
@@ -230,7 +242,9 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
     const rendering = instance.render().then(async () => {
       settled = true;
       if (!active) return;
-      await fitGraph(instance);
+      const viewport = readSession<{ zoom: number; position: [number, number] } | undefined>(`graph-view:${entryKey}`, undefined);
+      if (viewport) { await instance.zoomTo(viewport.zoom, false); await instance.translateTo(viewport.position, false); }
+      else await fitGraph(instance);
       if (active) setDrawing(false);
     }).catch(reportRenderError);
     const observer = new ResizeObserver(() => {
@@ -239,7 +253,10 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
       if (settled) void fitGraph(instance).catch(reportRenderError);
     });
     observer.observe(host);
+    const saveViewport = () => { if (settled && !instance.destroyed) writeSession(`graph-view:${entryKey}`, { zoom: instance.getZoom(), position: instance.getPosition() }); };
+    window.addEventListener("pagehide", saveViewport);
     return () => {
+      saveViewport(); window.removeEventListener("pagehide", saveViewport);
       active = false;
       unbindTouch();
       observer.disconnect();
@@ -266,12 +283,14 @@ export default function RelationshipGraph({ seed, onClose }: { seed: Relationshi
     setView(history[index]); setHistory(history.slice(0, index));
     setLimit(INITIAL_LIMIT); setBranchLimit(BRANCH_BATCH); setQuery(""); setListOpen(false);
   };
-  const backLabel = loading && view ? "取消切换" : history.length ? "返回上个中心" : "返回详情";
+  useEffect(() => { writeSession(`graph-ui:${entryKey}`, { query, listOpen }); }, [query, listOpen, entryKey]);
+  const backLabel = onNavigate && window.history.state?.from ? "返回上个中心" : loading && view ? "取消切换" : history.length ? "返回上个中心" : "返回详情";
 
   return <div className="relative flex min-h-0 flex-1 flex-col">
     <nav aria-label="探索导航" className="grid shrink-0 grid-cols-2 items-center gap-x-3 border-b border-white/5 px-3 py-2 sm:grid-cols-[1fr_minmax(0,2fr)_1fr] sm:px-6">
       <Button variant="ghost" className="justify-self-start" title={loading && view ? "停止本次切换，保留当前中心" : history.length ? `返回：${history[history.length - 1].center.label}` : "关闭关系图，返回详情"} onClick={() => {
-        if (loading && view) cancelNavigation();
+        if (onNavigate) { if (window.history.state?.from) window.history.back(); else onClose(); }
+        else if (loading && view) cancelNavigation();
         else if (history.length) restore(history.length - 1);
         else onClose();
       }}><ArrowLeft className="h-4 w-4" />{backLabel}</Button>

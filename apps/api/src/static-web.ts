@@ -133,6 +133,7 @@ export async function resolveStaticWebFile(
     return fileMetadata(root, "index.html");
   }
 
+  if (/^(api(?:\/|$)|health$)/.test(relativePath)) return undefined;
   const exact = await fileMetadata(root, relativePath);
   if (exact) {
     return exact;
@@ -140,7 +141,8 @@ export async function resolveStaticWebFile(
 
   // Browser routes belong to the React application. Missing requests that look
   // like real files stay missing instead of receiving HTML.
-  return path.extname(relativePath) ? undefined : fileMetadata(root, "index.html");
+  if (/^(works|people|watch|forum|profile|admin)(\/|$)/.test(relativePath)) return fileMetadata(root, "index.html");
+  return path.extname(relativePath) || relativePath.startsWith("assets/") ? undefined : fileMetadata(root, "index.html");
 }
 
 export async function serveStaticWeb(

@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { PublicIdentityStore } from "./public-identities.js";
+test("durable IDs survive rename, restart, merge, empty index and concurrent sync", async () => {
+ const dir = await mkdtemp(path.join(os.tmpdir(), "wwp-identity-")); const filename = path.join(dir,"ids.json");
+ const store = new PublicIdentityStore(filename);
+ const first = await store.sync([{kind:"work",key:"source-a",title:"同名"},{kind:"work",key:"source-b",title:"同名"}]);
+ assert.notEqual(first[0].id,first[1].id);
+ const next = await new PublicIdentityStore(filename).sync([{kind:"work",key:"source-new",aliases:["source-a"],title:"新名称 / ?"}]);
+ assert.equal(next[0].id,first[0].id); assert.ok(next[0].path.includes(first[0].id));
+ const merged = await new PublicIdentityStore(filename).sync([{kind:"work",key:"source-new",aliases:["source-a","source-b"],title:"合并"}]);
+ assert.ok([merged[0].id,...merged[0].aliases].includes(first[0].id)); assert.ok([merged[0].id,...merged[0].aliases].includes(first[1].id));
+ const reloaded = new PublicIdentityStore(filename); await reloaded.sync([]);
+ const again=await reloaded.sync([{kind:"work",key:"source-new",title:"合并"}]); assert.equal(again[0].id,merged[0].id);
+ await Promise.all([reloaded.sync([{kind:"person",key:"a",title:"人物"}]),reloaded.sync([{kind:"video",key:"v",title:"视频"}])]);
+ const saved=JSON.parse(await readFile(filename,"utf8")); assert.equal(saved.entries.length,3); assert.ok(await readFile(`${filename}.bak`,"utf8"));
+});

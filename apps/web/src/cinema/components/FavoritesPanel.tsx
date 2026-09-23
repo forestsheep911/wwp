@@ -1,3 +1,5 @@
+import { readSession, writeSession } from "../session-state";
+import { historyEntryKey } from "../navigation";
 import { useState } from "react";
 import { CalendarDays, CheckCircle2, Eye, Film, Play, Star } from "lucide-react";
 import type { CacheAsset, CreditPolicyResponse, MediaVariant } from "@wwpdw/shared";
@@ -147,7 +149,8 @@ function FavoriteSection({
   onRemove: (assetKey: string, mark: CollectionMark) => void;
   onSelect: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
-  const [limit, setLimit] = useState(50);
+  const [limit, updateLimit] = useState(() => readSession(`favorites-count:${historyEntryKey()}`, 50));
+  const setLimit = (update: (value: number) => number) => updateLimit(value => { const next = update(value); writeSession(`favorites-count:${historyEntryKey()}`, next); return next; });
   return (
     <div className="min-w-0">
       {section.candidates.length ? (

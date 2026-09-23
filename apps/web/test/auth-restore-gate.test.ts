@@ -7,7 +7,7 @@ test("CinemaApp shows an authentication restore quiz before the login form", () 
   const dialogSource = readFileSync(new URL("../src/cinema/components/ServiceWakeDialog.tsx", import.meta.url), "utf8");
   const renderStart = appSource.indexOf("const serviceWakeDialog = (");
   const restoringGate = appSource.indexOf("if (authRestoring)", renderStart);
-  const loginGate = appSource.indexOf("if (!unlocked)", renderStart);
+  const loginGate = appSource.indexOf("\n  if (!unlocked)", renderStart);
 
   assert.notEqual(renderStart, -1);
   assert.notEqual(restoringGate, -1);

@@ -1,3 +1,4 @@
+import { followInternalLink } from "../internal-link";
 import { type FormEvent } from "react";
 import {
   CornerDownLeft,
@@ -157,13 +158,12 @@ export function ForumPanel({
                 {threads.map((thread) => {
                   const active = selectedThread?.id === thread.id;
                   return (
-                    <button
+                    <a href={`/forum/${encodeURIComponent(thread.id)}`}
                       key={thread.id}
                       className={`grid min-h-20 gap-2 px-4 py-3 text-left transition-colors ${
                         active ? "bg-emerald-400/10" : "bg-transparent hover:bg-slate-900/80"
                       }`}
-                      type="button"
-                      onClick={() => onSelectThread(thread.id)}
+                      onClick={event => followInternalLink(event, () => onSelectThread(thread.id))}
                     >
                       <div className="flex min-w-0 items-start justify-between gap-3">
                         <p className="line-clamp-2 text-sm font-semibold text-slate-100">{thread.title}</p>
@@ -176,7 +176,7 @@ export function ForumPanel({
                         <span>{authorLabel(thread)}</span>
                         <span>{activityLabel(thread)}</span>
                       </div>
-                    </button>
+                    </a>
                   );
                 })}
               </div>

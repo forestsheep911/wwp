@@ -1,3 +1,5 @@
+import { entityPath } from "../public-identities";
+import { followInternalLink } from "../internal-link";
 import { ArrowUpRight, BookOpenText, RefreshCw, Search, UsersRound } from "lucide-react";
 import type { PublicPersonSummary } from "@wwpdw/shared";
 
@@ -97,7 +99,7 @@ function PersonCard({ person, onOpen }: { person: PublicPersonSummary; onOpen: (
     person.biographyLanguages.some((language) => language.startsWith("en")) ? "EN" : undefined
   ].filter(Boolean);
   return (
-    <button className="group grid min-h-44 grid-cols-[88px_minmax(0,1fr)] gap-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/72 p-3 text-left transition duration-300 hover:-translate-y-0.5 hover:border-amber-300/35 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60" onClick={onOpen} type="button">
+    <a href={entityPath("person", person.personId)} className="group grid min-h-44 grid-cols-[88px_minmax(0,1fr)] gap-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/72 p-3 text-left transition duration-300 hover:-translate-y-0.5 hover:border-amber-300/35 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60" onClick={event => followInternalLink(event, onOpen)}>
       <div className="relative h-full min-h-36 overflow-hidden rounded-lg border border-slate-800 bg-[linear-gradient(145deg,#172033,#090d16)]">
         {person.profileUrl ? <img className="h-full w-full object-cover grayscale-[15%] transition duration-500 group-hover:scale-[1.04] group-hover:grayscale-0" src={person.profileUrl} alt="" /> : <div className="grid h-full place-items-center text-3xl font-black text-slate-600">{person.names.primary?.slice(0, 1) ?? "?"}</div>}
         <span className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950 to-transparent" />
@@ -114,7 +116,7 @@ function PersonCard({ person, onOpen }: { person: PublicPersonSummary; onOpen: (
           <span className="text-slate-600">WWP 收录 {person.workCount} 部</span>
         </div>
       </div>
-    </button>
+    </a>
   );
 }
 
