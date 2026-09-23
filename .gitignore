@@ -39,3 +39,9 @@ Thumbs.db
 /r[0-9]*.json
 /release[0-9]*.json
 /x.json
+
+# Accidental root-level outputs from ad-hoc probes or a missing report path.
+# Keep these exact so legitimate reports and media directories remain visible.
+/probe-time.json
+/--help
+/--page-id
