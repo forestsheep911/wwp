@@ -237,7 +237,7 @@ function emptyState(): PersonCatalogState {
     generatedAt: new Date(0).toISOString(),
     people: {},
     redirects: {},
-    externalIdIndex: { tmdb: {}, imdb: {}, wikidata: {} },
+    externalIdIndex: { tmdb: {}, imdb: {}, douban: {}, wikidata: {} },
     aliasIndex: {},
     creditsByWorkId: {},
     creditsByPersonId: {},

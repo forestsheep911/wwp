@@ -22,3 +22,26 @@ test("people readback retries eventual index visibility", async () => {
   assert.equal(check.verified, true);
   assert.equal(check.attempts, 2);
 });
+
+test("people readback requires the new person profile and reviewed external IDs", async () => {
+  let reads = 0;
+  const check = await verifyPeopleCatalogReadback({
+    personStore: {
+      getState: async () => ({
+        people: reads++ === 0 ? {} : {
+          "person-a": { profile: { externalIds: { douban: "27214547", imdb: "nm0023719" } } }
+        }
+      })
+    },
+    expectedProfiles: [{
+      personId: "person-a",
+      externalIds: { douban: "27214547", imdb: "nm0023719" }
+    }],
+    searchStore: { getResult: async () => result("person-a") },
+    expectedResults: [result("person-a")],
+    attempts: 2,
+    delayMs: 0
+  });
+  assert.equal(check.verified, true);
+  assert.equal(check.attempts, 2);
+});

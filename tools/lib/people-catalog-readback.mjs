@@ -18,10 +18,35 @@ export function missingLinkedCreditKeys(expectedResult, actualResult) {
   return [...expected].filter((key) => !actual.has(key));
 }
 
-export async function verifyPeopleCatalogReadback({ searchStore, expectedResults, attempts = 3, delayMs = 1500 }) {
+export async function verifyPeopleCatalogReadback({
+  searchStore,
+  personStore,
+  expectedProfiles = [],
+  expectedResults,
+  attempts = 3,
+  delayMs = 1500
+}) {
   const failures = [];
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     failures.length = 0;
+    if (personStore && expectedProfiles.length > 0) {
+      const catalog = await personStore.getState();
+      for (const expected of expectedProfiles) {
+        const actual = catalog.people?.[expected.personId];
+        const missingExternalIds = Object.entries(expected.externalIds ?? {})
+          .filter(([namespace, value]) => value && actual?.profile?.externalIds?.[namespace] !== value)
+          .map(([namespace, value]) => `${namespace}:${value}`);
+        if (!actual || missingExternalIds.length > 0) {
+          failures.push({
+            personId: expected.personId,
+            missing: [
+              ...(!actual ? ["person_profile"] : []),
+              ...missingExternalIds.map((value) => `external_id:${value}`)
+            ]
+          });
+        }
+      }
+    }
     for (const expected of expectedResults) {
       const actual = await searchStore.getResult(expected.assetKey);
       const missing = missingLinkedCreditKeys(expected, actual);

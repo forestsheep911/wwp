@@ -2,6 +2,29 @@
 
 `开始制作影视库` starts a bounded workflow cycle. It is not a Notion media-block watcher and it must not stop when publication has no immediately visible upload.
 
+## Visibility Priority
+
+**Required action order in every cycle:** (1) inspect already-uploaded playable
+paths first; (2) when one is mapped to the correct work/spec/episode and there
+is no concrete viewing failure, clear the work-level hide and start website
+sync immediately; (3) continue metadata, Media Assets, QC, remaining specs, and
+other follow-up without making those tasks prerequisites. Do not stop the cycle
+because any of those parallel lanes is blocked. If impact is unknown, publish
+the usable path and record what to verify later.
+
+At the beginning and end of every cycle, independently classify **playback
+visibility**, **production/follow-up**, and **final completion**. A blocker in
+one lane pauses only that lane. If a media block is correctly mapped and there
+is no current evidence it prevents normal viewing, keep/release the work page
+visible now; do not wait for complete metadata, QC perfection, Media Assets,
+`sync_ready`, website readback, all episodes/specs, or `Workflow Status=已完成`.
+Record repairable defects and continue them separately. `Hide from Website`
+may remain checked only for an explicit current human hold or evidence that
+every available playable path prevents normal viewing; isolate a single bad
+child path instead of hiding its playable siblings. Unknown impact defaults to
+visible. Never treat `AI 处理中`, `待人工确认`, `暂缓`, or the word “blocked”
+as a visibility decision.
+
 ## Stable Contract (0.1.119)
 
 This revision records the currently accepted operating model. The workflow is
@@ -78,11 +101,20 @@ media evidence pass; do not infer a completed upload from the timestamp alone.
 No item exits the workflow merely because encoding, upload, or a Media Assets
 write succeeded. A playable variant reaches playable completion only after
 structure, media block, ffprobe-backed Media Assets, ledger `sync_ready`, and
-playable readback pass. Once that playable gate passes, the same publication
-run must release the automation-owned work visibility and perform playable
-website readback even if
-metadata, poster, `Needs Review`, or issue follow-up remains open. Release
-completion is stricter: the exact work page must additionally read back as
+playable readback pass. Visibility release is deliberately earlier in that
+sequence: once the uploaded media block is verified on the exact intended
+spec/episode page, its work mapping is unambiguous, and there is no concrete
+current playback failure, clear the automation-owned work hide and trigger
+website sync in the same publication run. Do not make ffprobe completion,
+Media Assets completeness, `sync_ready`, or live-site readback prerequisites
+for clearing the hide; collect and reconcile those as parallel/follow-up
+publication evidence. If the site cannot expose/open the video without a
+specific Media Assets field or row, record that exact observed dependency and
+complete only the minimum needed to expose it. A sync/readback failure remains
+an explicit publication follow-up; it does not turn metadata or minor repair
+work into a playback blocker. Complete the remaining playable ledger/readback
+checks even if metadata, poster, `Needs Review`, or issue follow-up remains open.
+Release completion is stricter: the exact work page must additionally read back as
 `Metadata Status=verified`, have empty issue fields and a usable maintained
 poster, then pass parent release, targeted website sync, and live readback of
 both the playable assets and core work metadata. Only then may
@@ -103,17 +135,33 @@ repair queue. When the impact is uncertain, do not hide the whole work on
 suspicion; keep the usable delivery visible and record the uncertainty for
 review, hiding only the affected delivery when evidence points to a viewing
 problem.
+**总裁决：可观看就先放出，不因可修复缺陷或流程未收尾而阻拦。** 只要没有
+具体证据证明当前可用播放路径影响普通用户观看，就保持/恢复作品可见；怀疑但未证实的
+风险记录为后续复核。资料缺失、规格未补、抽检未完、`Needs Review`、问题字段或
+`Workflow Status` 未到 `已完成`，均不得成为工作级隐藏或发布阻塞理由。局部播放故障只
+隔离对应规格/集；只有所有可用路径均被证实不可正常观看，或用户明确要求整条暂缓公开，
+才隐藏作品。发布和缺陷修复、严格完成收尾是相互独立的工作，不要互相等待。
+
 metadata incompleteness, a missing poster or rating, missing People/AI
 enrichment, `Needs Review`, an AI/human follow-up issue, or open optional spec
 expansion must not re-check `Hide from Website` after a verified playable path
 is live. Those defects stay in their own queues while the work remains visible.
-Only an unsafe page/media structure, an unresolved Media Assets/readback
-defect that would expose misleading playback, a concrete playback risk, or an
-explicit human visibility hold may keep the whole work hidden. A missing
-playable path alone does **not** hide the catalog entry: keep the work visible
-and hide only empty child specs/episodes until they have media. Unfinished
-supplemental specs remain hidden individually and do not hide a work whose first
-useful spec is already playable.
+Only a verified page/media mapping error that makes the site open the wrong
+video or fail to open the intended video, a reproduced failure that prevents
+normal playback on every available path, or an explicit human visibility hold
+may keep the whole work hidden. A warning, suspicion, incomplete Media Assets
+row, failed API/index readback, or other bookkeeping defect is not enough unless
+it is verified to prevent normal users from opening or watching the intended
+video. A missing playable path alone does **not** hide the catalog entry: keep
+the work visible and hide only empty child specs/episodes until they have media.
+Unfinished supplemental specs remain hidden individually and do not hide a work
+whose first useful spec is already playable.
+
+This rule is deliberately permissive: defects that do not affect watching are
+released first and repaired later. Do not turn a production/review blocker into
+a release blocker; classify it as follow-up, isolate it to the affected child
+path when applicable, and continue unrelated work. If viewing impact is unknown,
+default to visible rather than checking `Hide from Website`.
 
 The 0.1.29 production policy is release-first coverage. For a newly arrived
 batch, start one releaseable spec for every eligible work before using the
@@ -205,7 +253,7 @@ Legacy flat-source guard: when a synthetic or root-flat ledger row no longer has
 Upload registration guard: before any automatic or manual upload, register the exact ledger target with work/spec/episode page IDs and expected filename. An upload tool is not ledger-aware merely because it appended a Notion block. If an upload happened before registration, register it immediately, reconcile the exact page, and keep the variant in `assets_pending` until Media Assets creation and readback succeed.
 
 5. **Publication**: reconcile only bounded exact targets for upload, page structure, Media Assets, and website-sync readiness. Before creating a destination spec page, scan the work's existing child spec pages and Media Assets rows and compare a normalized variant signature (cut/edition, resolution, codec/container, audio and subtitle treatment, and actual or rounded per-file size); a materially equivalent playable asset occupies the target even if its title or filename wording differs. Adopt/backfill it or stop the duplicate route. Prepare exact destination pages first. If later source validation cancels production, archive that prepared page only when exact parent/title readback proves it still contains zero child blocks; preserve any uploaded or human-edited page for review. For bounded metadata or structure API calls, an inherited proxy `ECONNRESET`/TLS failure is transport evidence, not a page-permission verdict: retry the exact target once through explicit proxy bypass, then use the configured Notion hostname DNS override bound to the physical LAN address when available. This API-only recovery does not waive the separate upload route proof and must not trigger a broad rescan. Probe final files and enforce browser-compatible stream tags before Notion access, prefer resumable automatic upload after a route probe, retry only the same failed part with bounded backoff, and use manual upload only as a recorded fallback. A root-level or unverified media block remains a publication issue, not an intake or metadata issue. Each variant has one encode/remux owner at a time: before starting or resuming either phase, check the exact output/work path and process command line, terminate duplicate owners, and preserve the completed work file for one controlled retry. On Windows, prefer a tracked foreground `exec_command` session for long encodes; before recording `encoding`, resolve and test the exact source path, launch one correctly quoted command line, then verify the live owner command line and output growth. If launch fails, immediately return the variant to `selected` and record the concrete path or argument error. Never let two remux processes write the same `.part.mp4`. When checking website coverage, compare the full detail-page/index variant count and exact asset keys; the library card may intentionally preview only three variants and must not be treated as a sync-loss signal.
-   **Minimal-blocker publication rule:** the work page is a catalog entry and is visible by default, even before its first playable asset exists. After one exact playable specification or episode passes upload, destination structure, Media Assets, ffprobe/QC, ledger, and website readback, release the work-level page in the same bounded run as a formal readback. Do not keep the whole work hidden because metadata, poster, ratings, People, AI advice, `Needs Review`, `Human Issue`, `AI Issue`, naming cleanup, optional variants, missing subtitles for a not-yet-built branch, or a sibling episode/specification is unfinished. Keep only the affected empty or unsafe sibling hidden. If the impact is uncertain, keep the catalog entry visible, publish the verified usable path when present, and record a follow-up instead of converting uncertainty into a work-level block; re-hide requires fresh viewing-affecting evidence or an explicit human hold.
+   **Minimal-blocker publication rule:** the work page is a catalog entry and is visible by default, even before its first playable asset exists. Once one exact media path has a correctly mapped destination page and an uploaded video block, with no concrete playback failure, clear the automation-owned work hide before website sync. This is standing authorization to release watchable entries; do not ask the user for routine approval because a repairable defect remains. Capture ffprobe/Media Assets metadata in parallel; missing or incomplete fields block visibility only when the website actually needs them to expose/open that video. `sync_ready` and live readback close the publication loop; neither is a prerequisite for clearing the hide. A failed sync/readback must be reported and retried as publication work, not converted into a viewing-risk hide. Do not keep the whole work hidden because metadata, poster, ratings, People, AI advice, `Needs Review`, `Human Issue`, `AI Issue`, naming cleanup, optional variants, missing subtitles for a not-yet-built branch, or a sibling episode/specification is unfinished. Keep only the affected empty or unsafe sibling hidden. If the impact is uncertain, keep the catalog entry visible, publish the verified usable path when present, and record a follow-up instead of converting uncertainty into a work-level block; re-hide requires fresh viewing-affecting evidence or an explicit human hold. A blocker in encoding, metadata, review, or final completion pauses only that task and must not block other usable paths or unrelated production work.
  6. **Source/archive maintenance**: keep source-only/original-disc records, manual-upload handoffs, retention decisions, and safe deletion candidates aligned with the ledger and verified Notion state. Do not delete merely because a file is old.
     Website coverage incident rule: when a user reports that Notion has more specifications than the website, refresh and audit that exact work page first. Compare the full detail/index result by exact asset keys; the library card intentionally previews at most three variants. Do not recreate or hide variants based on the card alone. If the full result is short, classify it as a real publication/index defect and repair the exact missing target; if it is complete, record the report as a preview misunderstanding and leave Notion unchanged.
 7. **Local cleanup**: inspect both completed playable outputs and their bound source inputs every cycle. Notion status alone never makes the workflow idle: enabled input roots with unselected/unfinished sources remain a continuation condition. A playable output is cleanup-eligible either after its exact ledger path, recorded byte size, and `sync_ready` state agree, or after a successful upload release manifest identifies the exact local file and accepted Notion media block; it does not wait for the parent work's metadata or `Workflow Status=已完成` gate. A source is cleanup-eligible only when its expansion decision is closed, every linked variant is `sync_ready` or terminally cancelled, no variant is selected/deferred/encoding/QC/publication-pending, and the source still exists. Report candidates first, then move approved files or directories to the same-volume `待人工删除` directory; never final-delete as part of a normal cycle.
@@ -548,4 +596,4 @@ scoped run, the next whole-workflow trigger is a normal bounded film cycle.
 
 Final playable completion still requires the exact Notion structure, completed file upload and destination media block, ffprobe-backed Media Assets, and local-ledger `sync_ready`. Once one useful playable path passes those playback gates, release its work-level visibility and perform incremental website sync even if metadata, poster, `Needs Review`, or issue follow-up remains open; those defects are recorded for later repair and do not by themselves justify `Hide from Website=true`. Final workflow completion is a separate, stricter gate: it additionally requires exact work-page `Metadata Status=verified`, empty issue fields, a usable poster, and live API readback of both playable assets and core metadata. An accepted multipart part, a completed local encode, `sync_ready` alone, or an on-disk search index is not final release proof. Release visibility does not close concrete supplemental variants or authorize source cleanup.
 
-The cycle must never turn a non-playback blocker into a website blocker. `blocked`, `deferred`, `待人工确认`, `暂缓`, incomplete metadata, missing People, missing poster/rating, optional subtitle or bitrate expansion, and unresolved but currently watchable defects remain workflow follow-up states. They must be reported with an exact next action while the work page stays visible whenever the exposed path is watchable. Only a concrete failure of the exposed playback/structure/Media Assets path, or an explicit human visibility hold, may keep the work-level checkbox enabled. If impact is uncertain, fail open for the usable delivery and isolate the uncertainty on the affected child path.
+The cycle must never turn a non-playback blocker into a website blocker. **Default to publishing a watchable title; do not wait for routine user approval.** `blocked`, `deferred`, `待人工确认`, `暂缓`, incomplete metadata, missing People, missing poster/rating, optional subtitle or bitrate expansion, and unresolved but currently watchable defects remain workflow follow-up states. They must be reported with an exact next action while the work page stays visible whenever the exposed path is watchable. Only a concrete, current failure of the exposed playback/structure/Media Assets path, or an explicit human visibility hold, may keep the work-level checkbox enabled. A defect that can be repaired after release is not a reason to delay release. If impact is uncertain, fail open for the usable delivery and isolate the uncertainty on the affected child path.

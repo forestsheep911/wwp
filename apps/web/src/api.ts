@@ -653,6 +653,12 @@ export function markMemberCollection(assetKey: string, mark: string, active: boo
 }
 
 export async function loadPublicIdentities() {
-  const response = await request<{ entries: PublicIdentity[] }>(apiUrl("/api/public-routes"));
-  installPublicIdentities(response.entries);
+  try {
+    const response = await request<{ entries: PublicIdentity[] }>(apiUrl("/api/public-routes"));
+    installPublicIdentities(response.entries);
+  } catch (error) {
+    // Older API revisions do not expose public routes; they are optional for authentication.
+    if (!(error instanceof ApiError && error.statusCode === 404)) throw error;
+    installPublicIdentities([]);
+  }
 }

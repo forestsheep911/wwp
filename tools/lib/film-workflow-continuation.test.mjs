@@ -123,6 +123,75 @@ test("source followup remains routable when no explicit ledger lane is populated
   assert.equal(result.nextAction.trigger, "完成身份去重绑定");
 });
 
+test("deferred production variants do not occupy the next-action route", () => {
+  const result = buildWorkflowContinuation({
+    cycle: {
+      lanes: {
+        production: [{
+          id: 2204,
+          source_id: 815,
+          work_id: 277,
+          canonical_title: "尚气与十环传奇",
+          production_state: "deferred",
+          failure_code: "missing_chinese_subtitle"
+        }],
+        sourceFollowup: [{
+          actionableNow: true,
+          sourceId: 1102,
+          workId: 403,
+          title: "男孩遇见女孩",
+          disposition: "expansion_decision_missing",
+          nextTrigger: "AI 明确记录规格扩展 OPEN 或 CLOSED"
+        }]
+      },
+      sourceDisposition: { actionableNow: 1, residualSourceCount: 1 }
+    }
+  });
+
+  assert.equal(result.laneCounts.production, 0);
+  assert.equal(result.nextAction.lane, "sourceFollowup");
+  assert.equal(result.nextAction.sourceId, 1102);
+  assert.equal(result.nextAction.trigger, "AI 明确记录规格扩展 OPEN 或 CLOSED");
+});
+
+test("failed source cleanup waits for recovery without blocking other source work", () => {
+  const result = buildWorkflowContinuation({
+    cycle: {
+      lanes: {
+        cleanup: [{ candidate_type: "source_input", sourceId: 1102, eligible: true }],
+        sourceFollowup: [
+          {
+            sourceId: 1102,
+            title: "被占用源",
+            disposition: "cleanup_move_failed",
+            actionableNow: false,
+            nextTrigger: "解除文件占用后重试"
+          },
+          {
+            sourceId: 1103,
+            title: "其他可处理源",
+            disposition: "expansion_decision_missing",
+            actionableNow: true,
+            nextTrigger: "完成规格扩展评估"
+          }
+        ]
+      },
+      sourceDisposition: {
+        actionableNow: 1,
+        cleanupMoveFailed: 1,
+        residualSourceCount: 2
+      }
+    }
+  });
+
+  assert.equal(result.laneCounts.cleanup, 0);
+  assert.equal(result.executableNow, 1);
+  assert.equal(result.nextAction.lane, "sourceFollowup");
+  assert.equal(result.nextAction.sourceId, 1103);
+  assert.equal(result.localBlockers, 1);
+  assert.equal(result.localBlockerStopsOtherWork, false);
+});
+
 test("enrichment is selected when all film lanes are empty", () => {
   const result = buildWorkflowContinuation({
     enrichmentCampaign: {

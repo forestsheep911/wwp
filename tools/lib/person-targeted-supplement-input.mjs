@@ -1,4 +1,4 @@
-const STABLE_SOURCES = ["tmdb", "imdb", "wikidata"];
+const STABLE_SOURCES = ["tmdb", "imdb", "douban", "wikidata"];
 
 export function validateTargetedSupplementInput(value) {
   if (!value?.work?.workId || !value.work.title || !value.work.sourceWorkExternalIds) {
@@ -14,10 +14,41 @@ export function validateTargetedSupplementInput(value) {
 export function reviewedEvidenceForCredit(credit, observedAt = new Date().toISOString()) {
   if (credit.externalIds.wikidata) return undefined;
   const evidence = structuredClone(credit.reviewedEvidence);
+  const externalIds = { ...(evidence.externalIds ?? {}) };
+  const sourceRefs = [...evidence.sourceRefs];
+  for (const [source, id] of Object.entries(credit.externalIds ?? {})) {
+    if (externalIds[source] && externalIds[source] !== id) {
+      throw new Error(`credit ${credit.name} ${source} ID conflicts with reviewed evidence`);
+    }
+    externalIds[source] = id;
+    const ref = credit.identityRefs?.find((item) => item.source === source && item.id === id);
+    if (ref && !sourceRefs.some((item) => item.source === source && item.id === id)) {
+      sourceRefs.push({ ...ref, observedAt });
+    }
+  }
+  evidence.externalIds = externalIds;
+  evidence.sourceRefs = sourceRefs;
   evidence.observedAt ??= observedAt;
   for (const name of evidence.names) name.observedAt ??= evidence.observedAt;
   for (const sourceRef of evidence.sourceRefs) sourceRef.observedAt ??= evidence.observedAt;
   return evidence;
+}
+
+export function mergeCreditIdentityEvidence(evidence, credit) {
+  if (!evidence) return evidence;
+  const externalIds = { ...(evidence.externalIds ?? {}) };
+  const sourceRefs = [...(evidence.sourceRefs ?? [])];
+  for (const [source, id] of Object.entries(credit.externalIds ?? {})) {
+    if (externalIds[source] && externalIds[source] !== id) {
+      throw new Error(`credit ${credit.name} ${source} ID conflicts with Wikidata evidence`);
+    }
+    externalIds[source] = id;
+    const ref = credit.identityRefs?.find((item) => item.source === source && item.id === id);
+    if (ref && !sourceRefs.some((item) => item.source === source && item.id === id)) {
+      sourceRefs.push({ ...ref, observedAt: evidence.observedAt });
+    }
+  }
+  return { ...evidence, externalIds, sourceRefs };
 }
 
 function validateCredit(work, credit) {
@@ -32,15 +63,29 @@ function validateCredit(work, credit) {
   }
   const ids = normalizedIds(credit.externalIds);
   if (!STABLE_SOURCES.some((source) => ids[source])) {
-    throw new Error(`credit ${credit.name} requires a stable Wikidata, TMDB, or IMDb ID`);
+    throw new Error(`credit ${credit.name} requires a stable Wikidata, TMDB, IMDb, or Douban person ID`);
   }
   credit.externalIds = ids;
+  if (credit.identityRefs !== undefined) {
+    if (!Array.isArray(credit.identityRefs) || credit.identityRefs.some((ref) => (
+      !STABLE_SOURCES.includes(ref?.source)
+      || !ref.id
+      || ref.id !== ids[ref.source]
+      || typeof ref.url !== "string"
+      || !/^https:\/\//i.test(ref.url)
+    ))) {
+      throw new Error(`credit ${credit.name} identityRefs must cite matching stable IDs with HTTPS URLs`);
+    }
+  }
   if (ids.wikidata && !/^Q\d+$/i.test(ids.wikidata)) {
     throw new Error(`credit ${credit.name} has an invalid Wikidata QID`);
   }
+  if (ids.douban && !/^\d{4,12}$/.test(ids.douban)) {
+    throw new Error(`credit ${credit.name} has an invalid Douban person ID`);
+  }
   if (ids.wikidata) return;
 
-  const source = ids.imdb ? "imdb" : "tmdb";
+  const source = ids.imdb ? "imdb" : ids.tmdb ? "tmdb" : "douban";
   const evidence = credit.reviewedEvidence;
   if (!evidence || !Array.isArray(evidence.names) || evidence.names.length < 1) {
     throw new Error(`credit ${credit.name} requires reviewedEvidence.names without Wikidata`);

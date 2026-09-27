@@ -12,6 +12,7 @@ import { ProviderRateLimiter } from "../apps/api/src/person-sources/provider-htt
 import { assertWikidataPersonRole, WikidataPersonSource } from "../apps/api/src/person-sources/wikidata.ts";
 import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 import {
+  mergeCreditIdentityEvidence,
   reviewedEvidenceForCredit,
   validateTargetedSupplementInput
 } from "./lib/person-targeted-supplement-input.mjs";
@@ -45,7 +46,7 @@ try {
       await cache.put("wikidata", "person", wikidataId, "multilingual-human-v3-simplified-valid-dates", person);
     }
     assertWikidataPersonRole(wikidataId, person, [credit.department]);
-    evidence.push(withLegacyAliases(person, credit));
+    evidence.push(withLegacyAliases(mergeCreditIdentityEvidence(person, credit), credit));
   }
 
   const catalog = await createPersonCatalogStore(args.backend).getState();
@@ -115,7 +116,7 @@ function parseArgs(values) {
 }
 
 function allocatePersonId(checkpoint, ids) {
-  const key = ids.tmdb ? `tmdb:${ids.tmdb}` : ids.imdb ? `imdb:${ids.imdb}` : `wikidata:${ids.wikidata}`;
+  const key = ids.tmdb ? `tmdb:${ids.tmdb}` : ids.imdb ? `imdb:${ids.imdb}` : ids.wikidata ? `wikidata:${ids.wikidata}` : `douban:${ids.douban}`;
   return checkpoint.assignedPersonIds[key] ??= `person_${randomUUID()}`;
 }
 
@@ -132,7 +133,7 @@ function positiveInteger(value, option) {
 
 function withLegacyAliases(evidence, credit) {
   if (!evidence || !credit.legacyAliases?.length) return evidence;
-  const source = credit.externalIds.wikidata ? "wikidata" : "imdb";
+  const source = credit.externalIds.wikidata ? "wikidata" : credit.externalIds.imdb ? "imdb" : "douban";
   return {
     ...evidence,
     names: [

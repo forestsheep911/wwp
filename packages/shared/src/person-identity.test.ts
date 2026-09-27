@@ -7,12 +7,13 @@ import {
 } from "./person-identity.js";
 
 test("normalizes stable person identifiers without accepting title IDs", () => {
-  assert.deepEqual(normalizePersonExternalIds({ tmdb: "00123", imdb: " NM0000197 ", wikidata: " q123 " }), {
+  assert.deepEqual(normalizePersonExternalIds({ tmdb: "00123", imdb: " NM0000197 ", douban: " 35522239 ", wikidata: " q123 " }), {
     tmdb: "123",
     imdb: "nm0000197",
+    douban: "35522239",
     wikidata: "Q123"
   });
-  assert.deepEqual(normalizePersonExternalIds({ imdb: "tt0000197", wikidata: "person-1" }), {});
+  assert.deepEqual(normalizePersonExternalIds({ imdb: "tt0000197", douban: "abc", wikidata: "person-1" }), {});
 });
 
 test("matches one person through a shared stable id and extends a crosswalk", () => {
@@ -64,5 +65,12 @@ test("permits creation only when a stable id has no indexed match", () => {
   assert.deepEqual(decidePersonIdentity({ tmdb: "42" }, []), {
     action: "new",
     externalIds: { tmdb: "42" }
+  });
+});
+
+test("matches Douban-only person identities", () => {
+  assert.deepEqual(decidePersonIdentity({ douban: "35522239" }, []), {
+    action: "new",
+    externalIds: { douban: "35522239" }
   });
 });

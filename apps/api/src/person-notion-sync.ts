@@ -355,7 +355,7 @@ function uniqueNames(values: PersonNameEntry[]) {
 function externalIdConflict(profile: PersonProfile, row: NotionPeopleSnapshot) {
   const existing = normalizePersonExternalIds(profile.externalIds);
   const incoming = normalizePersonExternalIds(row.externalIds);
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     if ((existing[source] ?? "") !== (incoming[source] ?? "")) {
       return { source, incoming: incoming[source] };
     }

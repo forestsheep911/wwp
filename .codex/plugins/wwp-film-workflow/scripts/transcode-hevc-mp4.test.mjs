@@ -25,6 +25,10 @@ test("scaled HDR tone mapping uses CUDA pre-scaling without changing SDR default
   assert.match(script, /options\.toneMapSdr && !options\.toneMapLibplacebo && !options\.cpuToneMap/u);
 });
 
+test("CPU tone-map mode also enables the HDR-to-SDR filter", () => {
+  assert.match(script, /arg === "--cpu-tone-map"\) \{\s*options\.cpuToneMap = true;\s*options\.toneMapSdr = true;/u);
+});
+
 test("full encodes can place intermediate files on a separate temp volume", () => {
   assert.match(script, /--temp-dir/u);
   assert.match(script, /const tempDir = options\.tempDir/u);
@@ -76,6 +80,7 @@ test("full encodes rebuild non-monotonic source timestamps for MP4 delivery", ()
   assert.match(script, /"-fps_mode", "cfr"/u);
   assert.match(script, /non-monotonic.*PTS|duplicate DTS|monotonic.*timeline/iu);
   assert.match(script, /setpts=N\/\(24000\/1001\*TB\)/u);
+  assert.match(script, /\[0:s:\$\{options\.subtitleStream\}\]scale=/u);
 });
 
 test("encoding can explicitly fall back from NVENC to CPU libx265", () => {

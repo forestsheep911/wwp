@@ -154,11 +154,11 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     disposition = "source_expansion_closed";
     reasons.push("work_scope_closed_without_source_variant");
     nextTrigger = "作品扩展已关闭；除非用户重新指定，不制作此源";
-  } else if (quarantineFailure && cleanupCandidate?.eligible) {
+  } else if (quarantineFailure) {
     disposition = "cleanup_move_failed";
     reasons.push(quarantineFailure.payload_json ? "previous_quarantine_move_failed" : "quarantine_move_failed");
-    actionableNow = true;
-    needsHumanConfirmation = true;
+    actionableNow = false;
+    needsHumanConfirmation = false;
     nextTrigger = "解除文件占用或权限问题后重试移动";
     evidence.push({ type: "quarantine_failure", value: quarantineFailure.payload_json || quarantineFailure.event_type });
   } else if (cleanupCandidate?.eligible) {

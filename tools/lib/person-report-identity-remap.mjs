@@ -30,7 +30,9 @@ export function remapReportToExistingPeople(report, conflictArtifact) {
     }
     for (const provider of Object.keys(incomingExternalIds)) {
       if (!(provider in existingExternalIds)) continue;
-      if (normalizeExternalId(incomingExternalIds[provider]) !== normalizeExternalId(existingExternalIds[provider])) {
+      const incomingId = normalizeExternalId(incomingExternalIds[provider]);
+      const existingId = normalizeExternalId(existingExternalIds[provider]);
+      if (incomingId && existingId && incomingId !== existingId) {
         throw new Error(`Cannot safely remap ${incomingPersonId}: contrary ${provider} IDs were found.`);
       }
     }

@@ -60,7 +60,9 @@ const productionTransitions = Object.freeze({
   // full encode begins. Preserve that decision as deferred instead of falsely
   // leaving the variant in an active encoding state or recording a QC defect.
   encoding: ["qc_failed", "qc_passed", "deferred"],
-  qc_failed: ["selected", "deferred", "rejected"],
+  // A fresh QC audit may overturn a false-positive failure without claiming
+  // that the media was encoded again.
+  qc_failed: ["selected", "qc_passed", "deferred", "rejected"],
   deferred: ["evaluated", "selected", "rejected"],
   // A QC-passed output may still be intentionally retired before upload.
   qc_passed: ["rejected"],

@@ -16,6 +16,6 @@
       "skills",
       "scripts"
     ],
-    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow with release-first batch coverage. After the bounded film checkpoint, continue the saved enrichment campaign serially through base metadata, People, honors, and highlights. Apply guarded cleanup moves for eligible items, report every residual source and enrichment blocker, and never stop at a routing plan while due work remains."
+    "defaultPrompt": "When the user says 开始制作影视库, run the complete WWP workflow with release-first batch coverage. Visibility is a playback gate, not a perfection gate: keep a title visible and release any correctly mapped uploaded path with no concrete viewing failure; minor defects, incomplete metadata/specs, Needs Review, and routine human confirmation are follow-up work, not publication blockers. Hide only the affected path for an evidenced viewing failure, and hide the whole work only when every usable path is affected or the user explicitly requests a hold. After the bounded film checkpoint, continue the saved enrichment campaign serially through base metadata, People, honors, and highlights. Apply guarded cleanup moves for eligible items, report every residual source and enrichment blocker, and never stop at a routing plan while due work remains."
   }
 }

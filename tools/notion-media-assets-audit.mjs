@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
+import https from "node:https";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 
 const DEFAULT_QUERIES = [
   "泰坦尼克",
@@ -26,6 +28,7 @@ function parseArgs() {
     limitPerQuery: 2,
     maxSpecsPerPage: 80,
     resolveIp: "",
+    localAddress: "",
     noProxy: false
   };
 
@@ -39,6 +42,7 @@ function parseArgs() {
     else if (name === "--limit-per-query") options.limitPerQuery = Number(value());
     else if (name === "--max-specs-per-page") options.maxSpecsPerPage = Number(value());
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
     else if (arg === "--no-proxy") options.noProxy = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -46,6 +50,10 @@ function parseArgs() {
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+
+  if (Boolean(options.resolveIp) !== Boolean(options.localAddress)) {
+    throw new Error("--resolve-ip and --local-address must be used together.");
   }
 
   if (options.queries.length === 0) {
@@ -62,7 +70,7 @@ This is read-only. It inspects representative Notion work pages and proposes
 candidate Media Assets rows for playable specs and source/original-disc pages.
 
 Network workaround:
-  node tools/notion-media-assets-audit.mjs --resolve-ip 208.103.161.1 --no-proxy
+  node tools/notion-media-assets-audit.mjs --resolve-ip <api-ip> --local-address <lan-ip> --no-proxy
 `);
 }
 
@@ -93,11 +101,14 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, noProxy = false) {
+function createNotionClient(token, noProxy = false, localAddress = "") {
   const proxyUrl = noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
-  if (proxyUrl) {
-    options.fetch = nodeFetch;
+  if (localAddress) {
+    options.fetch = createPacedFetch(nodeFetch, { minIntervalMs: 1000 });
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+  } else if (proxyUrl) {
+    options.fetch = createPacedFetch(nodeFetch, { minIntervalMs: 1000 });
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
   }
@@ -475,7 +486,7 @@ async function main() {
   const token = dotenv("NOTION_READ_ONLY_TOKEN") || dotenv("NOTION_TOKEN") || dotenv("NOTION_WRITE_TOKEN");
   if (!token) throw new Error("Set NOTION_READ_ONLY_TOKEN, NOTION_TOKEN, or NOTION_WRITE_TOKEN.");
 
-  const notion = createNotionClient(token, options.noProxy);
+  const notion = createNotionClient(token, options.noProxy, options.localAddress);
   const dataSource = await loadMainDataSource(notion);
   const seen = new Set();
   const pages = [];

@@ -87,11 +87,12 @@ export function explicitVisibilityHoldFromPage(page) {
   return /(?:暂不|先不|禁止|勿|不要(?:立即|现在|先)?).{0,5}(?:发布|放出|上线|同步)|(?:保持|继续|保留).{0,8}(?:隐藏|下线|不公开)/u.test(note);
 }
 
-const DIRECT_VIEWING_RISK = /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色|媒体块缺失|媒体块错误|Media Assets(?:缺失|错误|读回失败)|媒体资产(?:缺失|错误|读回失败)|页面关系错误|规格页面错误|集数页面错误|播放结构错误)/iu;
+const DIRECT_VIEWING_RISK = /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色|媒体块缺失|媒体块错误|错误影片被播放|播放了错误影片|播放结构导致无法打开|页面映射导致无法打开|网站无法(?:呈现|打开)视频)/iu;
 // A suspected or unconfirmed risk is follow-up work, not proof that the
 // public path is unsafe. Keep the catalog visible until a later note records
 // an observed failure or an explicit human visibility hold.
 const UNCERTAIN_VIEWING_RISK = /(?:可能|或许|疑似|疑虑|不确定|尚未确认|待确认|需要确认|无法判断|未知|风险|待复核|待检查)/iu;
+const OBSERVED_VIEWING_EVIDENCE = /(?:实测|复测|测试(?:播放|解码|声音|画面)|实际(?:播放|测试|验证)|确认(?:无法播放|不能播放|播放失败|播放无声|播放没声音|无法解码|解码失败|严重偏色)|检查发现(?:播放|解码|声音|画面))/iu;
 const POSITIVE_VISIBILITY_REVIEW = /(?:已修复|已恢复|播放正常|声音正常|解码正常|通过[^。\n]{0,24}(?:复核|质检)|(?:可以|能够|允许|同意|确认|通过|放行).{0,8}(?:发布|放出|网站|同步)|(?:发布|放出|上线)(?:到|至)?(?:网站|站点)?|(?:小|一点|轻微).{0,8}(?:缺陷|瑕疵|问题).{0,12}(?:以后|后续|之后).{0,8}(?:补|修)|先(?:发布|放出|上线).{0,12}(?:以后|后续|再).{0,8}(?:补|修))/gu;
 
 // Workflow Note is append-only. A later human approval may resolve an older
@@ -114,12 +115,13 @@ export function visibilityHideReasonIsConcrete(note) {
   if (!value) return false;
   if (/(?:不影响(?:正常)?(?:观看|播放)|不影响用户观看|仍可正常(?:观看|播放)|可以正常(?:观看|播放)|(?:小|一点|轻微).{0,8}(?:缺陷|瑕疵|问题).{0,12}(?:以后|后续|之后).{0,8}(?:补|修)|先(?:发布|放出|上线).{0,12}(?:以后|后续|再).{0,8}(?:补|修))/iu.test(value)) return false;
   if (UNCERTAIN_VIEWING_RISK.test(value)) return false;
+  if (!OBSERVED_VIEWING_EVIDENCE.test(value)) return false;
 
   // Visibility is a playback-safety gate, not a generic quality/review gate.
   // Keep this allowlist deliberately narrow: "字幕待补", "资料不全", a
   // naming issue, an empty optional sibling, or a page still being整理 are
   // follow-up work and must not hide an otherwise usable catalog entry.
-  return /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色|媒体块缺失|媒体块错误|Media Assets(?:缺失|错误|读回失败)|媒体资产(?:缺失|错误|读回失败)|页面关系错误|规格页面错误|集数页面错误|播放结构错误|明确(?:暂不发布|暂不公开|保持隐藏|人工保留隐藏))/iu.test(value);
+  return /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色|媒体块缺失|媒体块错误|错误影片被播放|播放了错误影片|播放结构导致无法打开|页面映射导致无法打开|网站无法(?:呈现|打开)视频|明确(?:暂不发布|暂不公开|保持隐藏|人工保留隐藏))/iu.test(value);
 }
 
 // Work-level visibility is narrower than child asset/spec visibility. A bad
@@ -133,10 +135,13 @@ export function workVisibilityHideReasonIsConcrete(note) {
   if (/(?:没有(?:任何|可用的)?(?:可播放|播放)|尚无(?:任何|可用的)?可播放|暂无(?:可播放|播放)|等待(?:首个|第一个)(?:可播放|压制|上传)|还没有(?:可播放|播放))/iu.test(value)) {
     return false;
   }
-  if (/(?:明确(?:暂不发布|暂不公开|保持隐藏|人工保留隐藏)|整个(?:条目|作品)|全片|全部(?:规格|版本|集)|唯一(?:可播放|已上传))/iu.test(value)) {
-    return true;
-  }
+  if (/(?:明确(?:暂不发布|暂不公开|保持隐藏|人工保留隐藏))/iu.test(value)) return true;
   if (UNCERTAIN_VIEWING_RISK.test(value)) return false;
+  // A playback symptom alone is not enough to hide a catalog entry. Require
+  // current observed evidence; speculation, inherited warnings, and untested
+  // reports stay visible until reproduced.
+  if (!OBSERVED_VIEWING_EVIDENCE.test(value)) return false;
+  if (/(?:整个(?:条目|作品)|全片|全部(?:规格|版本|集)|唯一(?:可播放|已上传))/iu.test(value)) return true;
   if (/(?:不影响(?:正常)?(?:观看|播放)|不影响用户观看|仍可正常(?:观看|播放)|可以正常(?:观看|播放)|(?:小|一点|轻微).{0,8}(?:缺陷|瑕疵|问题).{0,12}(?:以后|后续|之后).{0,8}(?:补|修)|先(?:发布|放出|上线).{0,12}(?:以后|后续|再).{0,8}(?:补|修))/iu.test(value)) return false;
   // A work-level flag must not be triggered by a defect that is explicitly
   // scoped to one child path.  The child page/asset can remain hidden while
@@ -144,8 +149,10 @@ export function workVisibilityHideReasonIsConcrete(note) {
   if (/(?:一个|某个|某条|此(?:规格|版本|集)|该(?:规格|版本|集)|这(?:个|条)(?:规格|版本|集)|单集|子页面|第\s*\d+\s*集|\d+\s*集|某(?:规格|版本|集)|其中)/iu.test(value)) {
     return false;
   }
-  return /(?:无法播放|不能播放|播放失败|播放无声|播放没声音|播放卡死|黑屏|无声音|没有声音|静音|无法解码|解码失败|编码不兼容|色彩严重错误|严重偏色)/iu.test(value)
-    && !/(?:个别|这一条)/iu.test(value);
+  // A work-level hide requires explicit scope evidence that every exposed
+  // playable path is affected. A reproduced symptom without that scope is
+  // isolated to its child path and must fail open at work level.
+  return false;
 }
 
 // Workflow Note is an append-only history.  Visibility repair must inspect
@@ -179,6 +186,17 @@ export function workVisibilityBlockers(page) {
     && workVisibilityHideReasonIsConcrete(latestWorkflowNoteSegment(workflowNoteFromPage(page)))) {
     blockers.push("concrete_visibility_risk");
   }
+  return blockers;
+}
+
+export function workVisibilityReleaseBlockers(page) {
+  const properties = page?.properties ?? {};
+  const blockers = [];
+  if (properties["Hide from Website"]?.type !== "checkbox") blockers.push("hide_property_missing");
+  // The caller must verify an exact usable media path before an explicit
+  // release. Historical/work-level playback notes cannot override that proof;
+  // only a current human hold can veto the release.
+  if (explicitVisibilityHoldFromPage(page)) blockers.push("visibility_hold");
   return blockers;
 }
 

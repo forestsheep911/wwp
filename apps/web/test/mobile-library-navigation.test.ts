@@ -21,7 +21,7 @@ test("phone and portrait tablet navigation presents library and ranking presets 
     source.indexOf("function DesktopBrowseFilter")
   );
   assert.match(mobileNavigation, /aria-label="影片快捷筛选"/);
-  assert.match(mobileNavigation, /onBrowsePresetChange\(channel\.id, "newGood"\)/);
+  assert.match(mobileNavigation, /onBrowsePresetChange\(channel\.id, channelSortView\)/);
   assert.match(mobileNavigation, /onBrowsePresetChange\("movie", view\.id\)/);
   assert.match(mobileNavigation, /overflow-x-auto/);
   assert.match(mobileNavigation, /lg:hidden/);
@@ -36,11 +36,19 @@ test("phone and portrait tablet navigation presents library and ranking presets 
 
 test("portrait tablets use the poster gallery instead of detailed mobile cards", () => {
   assert.match(source, /focus-visible:ring-emerald-400 md:grid/);
-  assert.match(source, /sm:rounded-lg sm:p-4 md:hidden/);
+  assert.match(source, /sm:grid-cols-\[132px_minmax\(0,1fr\)\][^\n]*md:hidden/);
   assert.match(
     stylesSource,
     /@media \(min-width: 768px\) and \(max-width: 1023px\)[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/
   );
+});
+
+test("phone cards lead with the poster and open details from the whole card", () => {
+  const mobileCard = source.slice(source.indexOf("function MovieCard"), source.indexOf("function SummaryText"));
+  assert.match(mobileCard, /grid-cols-\[112px_minmax\(0,1fr\)\]/);
+  assert.match(mobileCard, /className="absolute inset-0 z-10[^\n]*"\s+href=\{getDetailHref\(result\)\}/);
+  assert.match(mobileCard, /data-movie-actions/);
+  assert.doesNotMatch(mobileCard, /^\s*查看详情\s*$/m);
 });
 
 test("the shared library filter is available on mobile and starts collapsed", () => {

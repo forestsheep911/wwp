@@ -212,7 +212,7 @@ test("an explicit series visibility hold remains honored", () => {
     sourcePageId: "episode-page",
     mediaBlockId: "media-block",
     hideFromWebsite: true,
-    visibilityReason: "播放无声，等待替换音轨",
+    visibilityReason: "实测播放无声，等待替换音轨",
     metadata: { episodeNumber: 2, resolution: "1080p", videoCodec: "hevc", container: "mp4" }
   });
 

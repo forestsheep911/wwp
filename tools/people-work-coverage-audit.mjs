@@ -15,7 +15,9 @@ try {
   const store = backend === "azure"
     ? new AzureSearchIndexStore()
     : new LocalSearchIndexStore(path.resolve(process.env.WWPDW_LOCAL_DATA_DIR ?? ".local-data", "search-index.json"));
-  const results = await store.search("", 1_000_000);
+  const results = options.assetKeys.length > 0
+    ? await readExactAssets(store, options.assetKeys)
+    : await store.search("", 1_000_000);
   const coverage = auditPeopleWorkCoverage(results, options.candidateLimit);
   const report = {
     schemaVersion: 1,
@@ -46,16 +48,31 @@ try {
 }
 
 function parseArgs(values) {
-  const options = { backend: undefined, output: undefined, candidateLimit: 100, workIds: [] };
+  const options = { backend: undefined, output: undefined, candidateLimit: 100, workIds: [], assetKeys: [] };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--backend") options.backend = required(values[++index], value);
     else if (value === "--output") options.output = required(values[++index], value);
     else if (value === "--candidate-limit") options.candidateLimit = positiveInteger(values[++index], value);
     else if (value === "--work-id") options.workIds.push(required(values[++index], value));
+    else if (value === "--asset-key") options.assetKeys.push(required(values[++index], value));
     else throw new Error(`Unknown argument: ${value}`);
   }
+  if (options.assetKeys.length > 1) throw new Error("Use --asset-key once per exact coverage audit.");
+  if (options.assetKeys.length > 0 && options.workIds.length > 0) {
+    throw new Error("Use either --asset-key or --work-id, not both.");
+  }
   return options;
+}
+
+async function readExactAssets(store, assetKeys) {
+  const results = [];
+  for (const assetKey of assetKeys) {
+    const result = await store.getResult(assetKey);
+    if (!result) throw new Error(`Search index asset not found: ${assetKey}`);
+    results.push(result);
+  }
+  return results;
 }
 
 function required(value, option) {

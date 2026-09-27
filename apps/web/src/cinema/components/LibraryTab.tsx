@@ -487,6 +487,8 @@ const movieBrowseViews: Array<{
   icon: typeof CalendarDays;
 }> = [
   { id: "newGood", label: copy.library.browseViews.newGood.label, detail: copy.library.browseViews.newGood.detail, icon: Sparkles },
+  { id: "recent", label: copy.library.browseViews.recent.label, detail: copy.library.browseViews.recent.detail, icon: CalendarDays },
+  { id: "topRated", label: copy.library.browseViews.topRated.label, detail: copy.library.browseViews.topRated.detail, icon: Star },
   { id: "popular", label: copy.library.browseViews.popular.label, detail: copy.library.browseViews.popular.detail, icon: Eye },
   { id: "doubanRank", label: copy.library.browseViews.doubanRank.label, detail: copy.library.browseViews.doubanRank.detail, icon: Trophy },
   { id: "imdbRank", label: copy.library.browseViews.imdbRank.label, detail: copy.library.browseViews.imdbRank.detail, icon: Star },
@@ -526,6 +528,7 @@ function DesktopBrowseSidebar({
   onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
 }) {
   const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
+  const channelSortView = activeView === "recent" || activeView === "topRated" ? activeView : "newGood";
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -606,7 +609,7 @@ function DesktopBrowseSidebar({
               {browseChannels.map((channel) => (
                 renderPresetButton(
                   channel.id,
-                  "newGood",
+                  channelSortView,
                   channel.label,
                   channel.label,
                   channel.icon,
@@ -645,6 +648,7 @@ function MobileBrowseNavigation({
   onBrowsePresetChange: (channel: BrowseChannel, view: BrowseViewId, options?: { refresh?: boolean }) => void;
 }) {
   const hasActiveRanking = rankingViews.some((view) => view.id === activeView);
+  const channelSortView = activeView === "recent" || activeView === "topRated" ? activeView : "newGood";
 
   return (
     <nav
@@ -664,7 +668,7 @@ function MobileBrowseNavigation({
             }`}
             key={channel.id}
             type="button"
-            onClick={() => onBrowsePresetChange(channel.id, "newGood")}
+            onClick={() => onBrowsePresetChange(channel.id, channelSortView)}
           >
             <Icon className="h-3.5 w-3.5" />
             {channel.label}
@@ -951,6 +955,7 @@ function LibraryHome({
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
 }) {
   const [activeView, setActiveView] = useState<BrowseViewId>(browseView);
+  const sortId = useId();
   const locationRoute = useLocationRoute();
   const filterParams = locationRoute.params ?? {};
   const browseFilter: BrowseFilterState = {
@@ -1006,6 +1011,7 @@ function LibraryHome({
     [tspdtItems]
   );
   const showingTspdtRank = activeSortView === "tspdtRank";
+  const showingSortControls = activeSortView === "newGood" || activeSortView === "recent" || activeSortView === "topRated";
   const filterIsActive = browseFilterActive(browseFilter);
   const needsFullBrowseResults = filterOpen || filterIsActive || showingTspdtRank || activeSortView === "popular" || activeSortView === "mostWatched";
   const browseDisplayItemLimit = showingTspdtRank ? tspdtTop1000.length : browseViewItemLimit;
@@ -1128,6 +1134,27 @@ function LibraryHome({
           onChange={setBrowseFilter}
         />
 
+        {showingSortControls ? (
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 px-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <label className="shrink-0 text-xs font-semibold text-slate-400" htmlFor={sortId}>排序</label>
+              <select
+                className="min-h-11 min-w-0 max-w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm font-semibold text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-9"
+                id={sortId}
+                value={activeSortView}
+                onChange={(event) => onBrowseViewChange(event.target.value as BrowseViewId)}
+              >
+                <option value="newGood">上映时间 · 新到旧</option>
+                <option value="recent">片库更新 · 新到旧</option>
+                <option value="topRated">综合评分 · 高到低</option>
+              </select>
+            </div>
+            {activeSortView === "recent" ? (
+              <p className="text-[11px] leading-4 text-slate-500">依据 Notion 影片页最后编辑时间</p>
+            ) : null}
+          </div>
+        ) : null}
+
       <div className="grid min-w-0 gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 sm:rounded-lg sm:p-4">
         {showingTspdtRank ? (
           <>
@@ -1168,6 +1195,7 @@ function LibraryHome({
                     creditPolicy={creditPolicy}
                     key={result.assetKey}
                     priority={position < 12}
+                    showUpdatedAt={activeSortView === "recent"}
                     result={result}
                     pendingAssetKeys={pendingAssetKeys}
                     pendingDownloadAssetKeys={pendingDownloadAssetKeys}
@@ -2103,7 +2131,7 @@ function CompactRatingBadges({ result }: { result: SearchResult }) {
         rating.href ? (
           <a
             key={`${rating.source}-${rating.value}`}
-            className={`inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${rating.className}`}
+            className={`pointer-events-auto inline-flex min-w-10 items-center justify-center rounded-full border px-2 py-1 text-xs font-bold leading-none transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${rating.className}`}
             href={rating.href}
             target="_blank"
             rel="noreferrer"
@@ -2553,12 +2581,14 @@ function DesktopMovieCard({
   result,
   getDetailHref,
   onOpenDetail,
-  priority
+  priority,
+  showUpdatedAt
 }: {
   result: ResultWithCache;
   getDetailHref: (result: ResultWithCache) => string;
   onOpenDetail: (result: ResultWithCache) => void;
   priority: boolean;
+  showUpdatedAt: boolean;
 }) {
   const tags = genreTags(result);
   const posterTags = tags.slice(0, 2);
@@ -2656,6 +2686,11 @@ function DesktopMovieCard({
           <h2 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 text-slate-100 transition-colors group-hover:text-emerald-100">
             {result.title}
           </h2>
+          {showUpdatedAt ? (
+            <span className="text-[11px] font-medium text-slate-400" title={formatDateTime(result.updatedAt)}>
+              片库更新 {formatLongDate(result.updatedAt)}
+            </span>
+          ) : null}
           {posterTags.length ? (
             <div className="flex min-w-0 flex-wrap gap-1.5">
               {posterTags.map((tag) => (
@@ -2761,7 +2796,8 @@ function MovieCard({
   onSelect,
   onDownload,
   variantLimit,
-  priority = false
+  priority = false,
+  showUpdatedAt = false
 }: {
   creditPolicy: CreditPolicyResponse;
   result: ResultWithCache;
@@ -2777,6 +2813,7 @@ function MovieCard({
   onDownload: (result: ResultWithCache, variant: MediaVariant) => void;
   variantLimit?: number;
   priority?: boolean;
+  showUpdatedAt?: boolean;
 }) {
   const tags = cardTags(result);
   const summary = bestSummary(result);
@@ -2784,38 +2821,54 @@ function MovieCard({
 
   return (
     <>
-      <DesktopMovieCard getDetailHref={getDetailHref} priority={priority} result={result} onOpenDetail={onOpenDetail} />
-      <article className="movie-card grid h-full grid-cols-[96px_minmax(0,1fr)] content-start gap-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3 shadow-2xl shadow-black/20 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:rounded-lg sm:p-4 md:hidden">
-      <div className="group relative">
+      <DesktopMovieCard getDetailHref={getDetailHref} priority={priority} result={result} showUpdatedAt={showUpdatedAt} onOpenDetail={onOpenDetail} />
+      <article className="movie-card group relative grid h-full grid-cols-[112px_minmax(0,1fr)] content-start gap-3 rounded-xl bg-slate-950/40 p-2.5 transition-colors active:bg-slate-900/70 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4 sm:p-4 md:hidden">
         <a
-          className="block min-h-12 w-full overflow-hidden rounded-lg text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0 sm:rounded-md"
+          className="absolute inset-0 z-10 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400"
           href={getDetailHref(result)}
           onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
-          title={copy.library.viewDetails}
-        >
-          <MoviePoster priority={priority} result={result} />
-        </a>
-        <PosterActions
-          favorite={favoriteAssetKeys.has(result.assetKey)}
-          onSummarize={() => onSummarize(result)}
-          onToggleFavorite={() => onToggleFavorite(result)}
+          aria-label={`${result.title}，查看详情`}
         />
-      </div>
-      <div className="grid min-w-0 content-start gap-3">
-        <a
-          className="min-h-12 min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 sm:min-h-0"
-          href={getDetailHref(result)}
-          onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
-          title={copy.library.viewDetails}
-        >
-          <h2 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 transition-colors hover:text-emerald-100 sm:line-clamp-3 sm:text-lg">
+        <div className="pointer-events-none relative overflow-hidden rounded-md shadow-lg shadow-black/25">
+          <MoviePoster priority={priority} result={result} />
+        </div>
+        <div className="pointer-events-none grid min-w-0 content-start gap-2">
+          <h2 className="line-clamp-2 text-base font-semibold leading-tight text-slate-50 transition-colors group-hover:text-emerald-100 sm:line-clamp-3 sm:text-lg">
             {result.title}
           </h2>
-        </a>
 
-        <CompactRatingBadges result={result} />
-        {info ? <p className="line-clamp-2 text-xs leading-5 text-slate-500">{info}</p> : null}
+        <div className="pointer-events-none relative z-20">
+          <CompactRatingBadges result={result} />
+        </div>
+        {showUpdatedAt ? (
+          <p className="text-xs font-medium text-slate-400" title={formatDateTime(result.updatedAt)}>
+            片库更新 {formatLongDate(result.updatedAt)}
+          </p>
+        ) : null}
+        {info ? <p className="line-clamp-1 text-xs leading-5 text-slate-500 sm:line-clamp-2">{info}</p> : null}
         <AgeRecommendationBadge result={result} />
+
+        <div className="pointer-events-none relative z-20 flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5" data-movie-actions>
+          <button
+            className="pointer-events-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-slate-400 transition-colors hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            type="button"
+            onClick={() => onSummarize(result)}
+          >
+            <Sparkles className="h-4 w-4" />
+            AI 简介
+          </button>
+          <button
+            className={`pointer-events-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+              favoriteAssetKeys.has(result.assetKey) ? "text-amber-200" : "text-slate-400 hover:text-amber-200"
+            }`}
+            type="button"
+            aria-pressed={favoriteAssetKeys.has(result.assetKey)}
+            onClick={() => onToggleFavorite(result)}
+          >
+            <Star className={`h-4 w-4 ${favoriteAssetKeys.has(result.assetKey) ? "fill-amber-300 text-amber-300" : ""}`} />
+            {favoriteAssetKeys.has(result.assetKey) ? "已想看" : "想看"}
+          </button>
+        </div>
 
         {tags.length ? (
           <div className="hidden flex-wrap gap-2 sm:flex">
@@ -2826,36 +2879,7 @@ function MovieCard({
         ) : null}
       </div>
 
-      <div className="col-span-2 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:hidden" data-movie-actions>
-        <Button asChild className="min-h-11 gap-1 rounded-lg px-3 text-sm">
-          <a href={getDetailHref(result)} onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}>
-            查看详情
-            <ChevronRight className="h-3.5 w-3.5" />
-          </a>
-        </Button>
-        <Button className="min-h-11 gap-1 rounded-lg px-2 text-xs" type="button" variant="ghost" onClick={() => onSummarize(result)}>
-          <Sparkles className="h-3.5 w-3.5" />
-          AI简介
-        </Button>
-        <Button
-          className={`min-h-11 gap-1 rounded-lg px-2 text-xs ${
-            favoriteAssetKeys.has(result.assetKey)
-              ? "border-amber-300/40 bg-amber-300/10 text-amber-200"
-              : ""
-          }`}
-          type="button"
-          aria-pressed={favoriteAssetKeys.has(result.assetKey)}
-          variant="outline"
-          onClick={() => onToggleFavorite(result)}
-        >
-          <Star className={`h-3.5 w-3.5 ${
-            favoriteAssetKeys.has(result.assetKey) ? "fill-amber-300 text-amber-300" : ""
-          }`} />
-          {favoriteAssetKeys.has(result.assetKey) ? "已想看" : "想看"}
-        </Button>
-      </div>
-
-      <div className="col-span-2 hidden min-w-0 gap-3 sm:grid">
+      <div className="relative z-20 col-span-2 hidden min-w-0 gap-3 sm:grid">
         <SummaryText summary={summary} />
         <VariantButtons
           creditPolicy={creditPolicy}

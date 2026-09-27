@@ -180,7 +180,7 @@ function externalIdentityKey(ids: PersonExternalIds) {
 }
 
 function externalIdentityKeys(ids: PersonExternalIds) {
-  return (["tmdb", "imdb", "wikidata"] as const)
+  return (["tmdb", "imdb", "douban", "wikidata"] as const)
     .flatMap((source) => ids[source] ? [`${source}:${ids[source]}`] : []);
 }
 

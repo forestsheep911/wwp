@@ -10,6 +10,13 @@ function read(relativePath) {
   return fs.readFileSync(path.join(pluginRoot, relativePath), "utf8");
 }
 
+test("an active People pause forces film-only cycle mode", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  assert.match(producer, /When the active user instruction or goal pauses People\/person enrichment, use `--mode film-only`/u);
+  assert.match(producer, /do not enqueue or run People work/u);
+  assert.match(producer, /Film-only still scans enabled inputs and processes film, publication, cleanup, and bounded base-metadata lanes/u);
+});
+
 test("verified Mandarin-dubbed playback is not blocked by missing Chinese subtitles", () => {
   const decisionRules = read("references/decision-rules.md");
   const producer = read("skills/wwp-film-producer/SKILL.md");
@@ -96,6 +103,8 @@ test("plugin revision records the updated subtitle gate contract", () => {
 
   assert.match(manifest.version, /^0\.1\.\d+$/u);
   assert.match(cycle, new RegExp(`Stable Contract \\(${manifest.version.replaceAll(".", "\\.")}\\)`, "u"));
+  assert.match(manifest.interface.defaultPrompt, /Visibility is a playback gate, not a perfection gate/u);
+  assert.match(manifest.interface.defaultPrompt, /routine human confirmation are follow-up work, not publication blockers/u);
 });
 
 test("evidence-only people fallbacks require a formal publishable report", () => {
@@ -125,14 +134,22 @@ test("playable visibility is independent from metadata completion", () => {
   const cycle = read("references/workflow-cycle.md");
   const media = read("references/notion-media-assets.md");
   const metadata = read("references/metadata-sources.md");
+  const handoff = read("references/workflow-handoff.md");
 
   assert.match(publisher, /`posterPresent` and `coreMetadataPresent` are final-completion evidence, not visibility blockers/u);
-  assert.match(cycle, /Once that playable gate passes, (?:the same publication\s+run must release\s+the|release the)\s+automation-owned work visibility/u);
-  assert.match(media, /only a missing\/inconsistent playable path or explicit visibility hold keeps publication pending/u);
+  assert.match(cycle, /Visibility release is deliberately earlier in that\s+sequence/u);
+  assert.match(cycle, /Required action order in every cycle:[\s\S]*inspect already-uploaded playable\s+paths first[\s\S]*clear the work-level hide and start website\s+sync immediately[\s\S]*without making those tasks prerequisites/u);
+  assert.match(cycle, /Do not stop the cycle\s+because any of those parallel lanes is blocked/u);
+  assert.match(cycle, /clear the automation-owned work hide before website sync/u);
+  assert.match(cycle, /missing or incomplete fields block visibility only when the website actually needs them/u);
+  assert.match(publisher, /clear the automation-owned work `Hide from Website` before website sync/u);
+  assert.match(media, /only a demonstrated inability to expose\/open the intended video, an observed playback failure affecting all usable paths, or an explicit visibility hold/u);
   assert.match(media, /one verified playable asset is sufficient for work-level visibility/u);
   assert.match(publisher, /release the work if at least one exact playable asset passes/u);
   assert.match(publisher, /Keep the work page visible by default, including metadata-only or not-yet-playable catalog entries/u);
   assert.match(metadata, /Keep work pages visible by default even when they have no playable verified media yet/u);
+  assert.match(handoff, /For visibility release, require only that the uploaded block is mapped to the exact work\/spec\/episode and there is no concrete evidence it prevents normal viewing; do not wait for full QC, ffprobe\/Media Assets completion/u);
+  assert.doesNotMatch(handoff, /exact media, structure, QC, Media Assets, and playback gates must pass first/u);
 });
 
 test("visibility-first rule keeps metadata follow-up from rehiding a playable work", () => {
@@ -144,7 +161,10 @@ test("visibility-first rule keeps metadata follow-up from rehiding a playable wo
   assert.match(producer, /`Hide from Website` is not the metadata or review master switch/u);
   assert.match(producer, /A work may therefore remain `AI 处理中` or `待人工确认` while already visible/u);
   assert.match(cycle, /metadata incompleteness, a missing poster or rating, missing People\/AI\s+enrichment, `Needs Review`, an AI\/human follow-up issue, or open optional spec\s+expansion must not re-check `Hide from Website`/u);
-  assert.match(cycle, /Only an unsafe page\/media structure, an unresolved Media Assets\/readback/u);
+  assert.match(cycle, /Only a verified page\/media mapping error that makes the site open the wrong\s+video or fail to open the intended video/u);
+  assert.match(cycle, /a reproduced failure that prevents\s+normal playback on every available path/u);
+  assert.match(cycle, /defects that do not affect watching are\s+released first and repaired later/u);
+  assert.match(cycle, /If viewing impact is unknown,\s+default to visible rather than checking `Hide from Website`/u);
   assert.match(cycle, /A missing\s+playable path alone does \*\*not\*\* hide the catalog entry/u);
   assert.match(producer, /Never re-hide a technically playable work merely because metadata, poster, people, ratings/u);
   assert.match(cycle, /must not re-check `Hide from Website`/u);
@@ -157,7 +177,22 @@ test("visibility-first rule keeps metadata follow-up from rehiding a playable wo
   assert.match(decisions, /Visibility is monotonic by default/u);
   assert.match(decisions, /Default to visible after usable publication/u);
   assert.match(cycle, /visible-after-usable-publication/u);
+  assert.match(cycle, /once the uploaded media block is verified on the exact intended\s+spec\/episode page/u);
+  assert.match(cycle, /Do not make ffprobe completion,\s+Media Assets completeness, `sync_ready`, or live-site readback prerequisites\s+for clearing the hide/u);
   assert.match(producer, /Use the visible-after-usable-publication default/u);
+});
+
+test("visibility is an independent lane and workflow blockers cannot hide watchable titles", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const cycle = read("references/workflow-cycle.md");
+  const producerText = producer.replace(/\s+/gu, " ");
+  const cycleText = cycle.replace(/\s+/gu, " ");
+  assert.match(producerText, /Visibility Is Not a Workflow Blocker/u);
+  assert.match(producerText, /must not be used to express that production, QC, metadata, Media Assets, review, or human confirmation is unfinished/u);
+  assert.match(producerText, /only for an explicit current human hold or current evidence that \*\*every\*\* available playable path prevents normal viewing/u);
+  assert.match(cycleText, /independently classify \*\*playback visibility\*\*, \*\*production\/follow-up\*\*, and \*\*final completion\*\*/u);
+  assert.match(cycleText, /Unknown impact defaults to visible/u);
+  assert.match(cycleText, /Never treat `AI 处理中`, `待人工确认`, `暂缓`, or the word “blocked” as a visibility decision/u);
 });
 
 test("metadata-only catalog entries remain visible while playable work is pending", () => {
@@ -170,26 +205,97 @@ test("metadata-only catalog entries remain visible while playable work is pendin
 
 test("user visibility decision favors release before repair", () => {
   const producer = read("skills/wwp-film-producer/SKILL.md");
-  assert.match(producer, /只要影视条目现有播放路径不影响正常观看，就尽量先放出/u);
+  const handoff = read("references/workflow-handoff.md");
+  const decisions = read("references/decision-rules.md");
+  assert.match(decisions, /Highest-priority visibility rule[\s\S]*先让用户看得到，再继续修/u);
+  assert.match(decisions, /看不出缺陷是否影响观看时，[\s\S]*按“不影响观看”处理/u);
+  assert.match(decisions, /即使暂时还没有播放资源也保持可见/u);
+  assert.match(producer, /只要作品还有一条不影响正常观看的已发布路径，就尽量先放出/u);
   assert.match(producer, /以后补修不需要先下架/u);
-  assert.match(producer, /只有实际影响观看，或用户明确要求暂不发布，才保持隐藏/u);
+  assert.match(producer, /只有全部现有播放路径都实际影响观看，或用户明确要求整条暂不发布，才隐藏整个作品/u);
+  assert.match(producer, /用户最终可见性决策（高于一般流程阻拦）/u);
+  assert.match(producer, /它们不代表网站必须隐藏/u);
+  assert.match(producer, /缺陷容忍默认值.*不影响观看，就应尽量先发布、以后补缺/su);
+  assert.match(producer, /不得把需要人工确认当成默认发布审批/u);
+  assert.match(decisions, /用户的缺陷容忍决策优先执行/u);
+  assert.match(producer, /At the start and end\s+of every production\/publication pass/u);
+  assert.match(producer, /defer or isolate that exact encode.*not a work-level visibility decision/su);
+  assert.match(handoff, /每轮读取到作品级隐藏状态时，都要结合当前可用路径重新判定/u);
+  assert.match(decisions, /must clear any stale automation-owned\s+work-level hide before moving on to metadata/u);
 });
 
 test("workflow blockers are not website blockers unless playback is affected", () => {
   const cycle = read("references/workflow-cycle.md");
   const decisions = read("references/decision-rules.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  assert.match(cycle, /Default to publishing a watchable title; do not wait for routine user approval/u);
+  assert.match(cycle, /A defect that can be repaired after release is not a reason to delay release/u);
   assert.match(cycle, /must never turn a non-playback blocker into a website blocker/u);
-  assert.match(cycle, /Only a concrete failure of the exposed playback\/structure\/Media Assets path/u);
+  assert.match(cycle, /Only a concrete, current failure of the exposed playback\/structure\/Media Assets path/u);
   assert.match(decisions, /Do not use the word `blocked` as a shortcut for `Hide from Website=true`/u);
   assert.match(decisions, /A follow-up or\s+completion blocker must leave the title visible/u);
+  assert.match(decisions, /可见性裁决优先于一般流程阻拦/u);
+  assert.match(decisions, /前三类只暂停对应事项并继续其他可执行工作/u);
+  assert.match(decisions, /Blocker scope is not visibility scope/u);
+  assert.match(decisions, /只要普通用户仍能正常观看，就先公开；任何可后补的缺陷都留在后续任务/u);
+  assert.match(producer, /只要作品还有一条不影响正常观看的已发布路径，就尽量先放出/u);
+});
+
+test("an unexplained hide flag is actively cleared unless current evidence supports it", () => {
+  const decisions = read("references/decision-rules.md");
+  assert.match(decisions, /每次读取到 `Hide from Website=true`，不得直接继承并把它当成\s+“有人决定暂缓”/u);
+  assert.match(decisions, /若两者都没有，就清除该勾选并继续网站同步\/其他待办/u);
+  assert.match(decisions, /隐藏原因不明、旧问题已修好、只有流程或资料阻塞，都不构成保留隐藏的理由/u);
+  assert.match(decisions, /设置或保留隐藏时，\s*必须在同一轮记录具体故障、影响到的路径及复核\/恢复条件/u);
 });
 
 test("watchable titles are released despite repairable imperfections", () => {
+  const cycle = read("references/workflow-cycle.md");
   const producer = read("skills/wwp-film-producer/SKILL.md");
   const decisions = read("references/decision-rules.md");
+  const handoff = read("references/workflow-handoff.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  assert.match(decisions, /用户可见性总优先级（覆盖其他流程 gate）/u);
+  assert.match(decisions, /只要仍有至少一条路径可以正常观看，就应尽量公开该路径并保持作品可见/u);
+  assert.match(decisions, /其他阻塞，只能暂停各自事项，不能\s+连带阻止可观看内容上线/u);
+  assert.match(decisions, /缺陷不影响观看，或影响尚未得到证实时，默认先放出/u);
   assert.match(producer, /If a normal user can watch the published title, release it even when it is not perfect/u);
   assert.match(decisions, /if a normal user can watch the published title,\s+release it even when it is not perfect/u);
   assert.match(decisions, /small repairable quality issue belongs in the\s+follow-up record, not in the\s+work-level visibility gate/u);
+  assert.match(decisions, /最高优先级：先发布可观看版本，缺陷留在后续修/u);
+  assert.match(decisions, /缺陷容忍按“能否观看”判断，不按“是否达到理想成片”判断/u);
+  assert.match(handoff, /发布优先于完美和流程收尾/u);
+  assert.match(handoff, /无需等待完整质检、ffprobe、Media Assets 字段补录、账本 `sync_ready` 或网站读回/u);
+  assert.match(handoff, /映射错误导致打不开视频/u);
+  assert.match(handoff, /`已完成` 仍可等待严格收尾条件，但它不是发布前置状态/u);
+  assert.match(handoff, /Do not wait for ffprobe\/Media Assets completion, ledger `sync_ready`, or website readback/u);
+  assert.match(handoff, /`待人工确认`: use only when a decision genuinely requires human judgment[\s\S]*never a routine website-publication approval state/u);
+  assert.match(handoff, /A watchable work may remain in this status while visible/u);
+  assert.match(publisher, /do not make them a blanket work-level release gate/u);
+  assert.match(publisher, /Do not wait for every episode\/spec, every optional QC task, or final `sync_ready`\/`已完成` bookkeeping/u);
+  assert.match(publisher, /Keep only an empty, mismapped, or concretely unsafe child hidden/u);
+  assert.match(decisions, /最高优先级的可见性快判（先判断是否能看，不等流程全部做完）/u);
+  assert.match(decisions, /证据不确定时\s+默认公开，不得把“保守起见”当作隐藏依据/u);
+  assert.match(decisions, /每次操作 `Hide from Website=true` 前，必须\s+记录故障证据及影响范围或明确的人类暂缓指令/u);
+  assert.match(producer, /总裁决：先发布可观看条目，后续修缺陷/u);
+  assert.match(producer, /发布后继续修复与流程收尾，不要求先达到 `已完成`/u);
+  assert.match(cycle, /总裁决：可观看就先放出，不因可修复缺陷或流程未收尾而阻拦/u);
+  assert.match(cycle, /`Workflow Status` 未到 `已完成`，均不得成为工作级隐藏或发布阻塞理由/u);
+  assert.match(cycle, /defects that do not affect watching are\s+released first and repaired later/u);
+  assert.match(cycle, /If viewing impact is unknown,\s+default to visible rather than checking `Hide from Website`/u);
+  assert.match(cycle, /a reproduced failure that prevents\s+normal playback on every available path/u);
+});
+
+test("watchability does not mean ideal quality and uncertain defects fail open", () => {
+  const decisions = read("references/decision-rules.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const handoff = read("references/workflow-handoff.md");
+
+  assert.match(decisions, /视频能打开，主要画面、声音和内容可辨识，即按可观看处理并尽量公开/u);
+  assert.match(decisions, /轻微瑕疵、尚未复核、兼容性疑虑/u);
+  assert.match(producer, /“watchable” means the video opens and its main picture, sound,/u);
+  assert.match(handoff, /不要把“正常观看”抬高成“理想成片”/u);
+  assert.match(handoff, /只有复现到实际妨碍观看的故障才隐藏对应子路径/u);
 });
 
 test("metadata identity conflicts do not become work-level visibility blocks by themselves", () => {
@@ -199,6 +305,7 @@ test("metadata identity conflicts do not become work-level visibility blocks by 
 
   assert.match(metadata, /must not newly set `Hide from Website=true` unless the conflict also proves that an exposed media path is mapped to the wrong work/u);
   assert.match(handoff, /metadata and issue checks are named `workCompletionBlockers`; they are never website-visibility blockers/u);
+  assert.match(handoff, /Missing Media Assets data\s+or failed readback alone is follow-up work/u);
   assert.match(decisions, /The second and third rows are not reasons to set `Hide from Website=true`/u);
 });
 
@@ -206,7 +313,7 @@ test("series catalog pages stay visible unless every exposed path is unsafe", ()
   const series = read("skills/wwp-series-producer/SKILL.md");
   const handoff = read("references/workflow-handoff.md");
   assert.match(series, /The work page is a visible catalog entry by default/u);
-  assert.match(series, /hide only the exact empty or unsafe child path/u);
+  assert.match(series, /hide only the exact empty or concretely unwatchable child path/u);
   assert.match(series, /Metadata\/review follow-up alone must never keep a playable series hidden/u);
   assert.match(handoff, /先放后修（默认动作）/u);
 });
@@ -216,25 +323,74 @@ test("minimal visibility blockers keep non-playback defects from hiding a usable
   const cycle = read("references/workflow-cycle.md");
   const handoff = read("references/workflow-handoff.md");
   const scripts = read("references/script-map.md");
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const media = read("references/notion-media-assets.md");
 
   assert.match(decisions, /Minimal Visibility Blockers/u);
   assert.match(decisions, /only for a concrete reason that can stop or materially corrupt normal viewing/u);
   assert.match(decisions, /release the work-level page and isolate unfinished siblings/u);
   assert.match(cycle, /Minimal-blocker publication rule/u);
+  assert.match(cycle, /standing authorization to release watchable entries; do not ask the user for routine approval/u);
+  assert.match(cycle, /A blocker in encoding, metadata, review, or final completion pauses only that task/u);
   assert.match(cycle, /keep the catalog entry visible, publish the verified usable path when present, and record a follow-up/u);
   assert.match(handoff, /release the work-level page and isolate unfinished siblings/u);
   assert.match(handoff, /`暂缓` is a production-recovery state, not a website-hide command/u);
   assert.match(scripts, /visible catalog entry with `Needs Review=true`/u);
   assert.match(handoff, /先放后修（默认动作）.*不会影响正常观看时，本轮必须优先清除/u);
   assert.match(handoff, /无法证明会影响观看，按“可观看”处理/u);
+  assert.match(decisions, /Production rejection is not a visibility decision/u);
+  assert.match(decisions, /If any\s+answer is missing, keep the work visible/u);
+  assert.match(decisions, /Production selection only:.*skip a new encode/su);
+  assert.match(decisions, /observed, reproducible failure before hiding/u);
+  assert.match(handoff, /实际故障证据门槛.*本轮确认并记录/u);
+  assert.match(handoff, /缺失或不完整的 ffprobe\/Media Assets 字段作为并行补录任务/u);
+  assert.match(producer, /Missing\/incomplete ffprobe or Media Assets fields are parallel backfill work, not a visibility blocker/u);
+  assert.match(publisher, /missing\/incomplete ffprobe or Media Assets fields are parallel backfill work, not a visibility blocker/iu);
+  assert.match(cycle, /Once one exact media path has a correctly mapped destination page and an uploaded video block, with no concrete playback failure, clear the automation-owned work hide before website sync/u);
+  assert.match(cycle, /Capture ffprobe\/Media Assets metadata in parallel; missing or incomplete fields block visibility only when the website actually needs them/u);
+  assert.match(publisher, /exact destination-page video block and filename match, with no concrete playback fault, are sufficient to release the path/u);
+  assert.match(publisher, /missing\/incomplete ffprobe fields are not a visibility prerequisite unless the website actually needs them/u);
+  assert.match(publisher, /`Needs Review=true` does not block visibility.*keep the review flag and publish that path/u);
+  assert.doesNotMatch(cycle, /matching ffprobe-backed Media Assets row, clear the automation-owned work hide/u);
+});
+
+test("work-level hiding requires evidence covering every playable path", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
+  assert.match(producer, /Scope proof is mandatory for a work-level hide/u);
+  assert.match(producer, /Unless the note explicitly\s+identifies that path as the only playable one or confirms all currently usable\s+paths fail, do not hide the work/u);
+});
+
+test("technical playback incidents isolate the affected variant instead of hiding a usable work", () => {
+  const encoding = read("references/encoding-rules.md");
+  assert.match(encoding, /defer that source\/encode and keep any separate watchable published path visible/u);
+  assert.match(encoding, /Isolate or replace that exact variant; do not hide the parent work if another published path remains usable/u);
+  assert.match(encoding, /mark only the exact affected variant as replacement-pending/u);
+  assert.match(encoding, /never hide the entire matching encode family or parent work while another published path remains usable/u);
 });
 
 test("Media Assets backfill does not use hidden as a conservative default", () => {
   const media = read("skills/wwp-media-assets-backfiller/SKILL.md");
   assert.match(media, /A newly created row is visible by default/u);
   assert.match(media, /do not use `Hide from Website=true` as a conservative placeholder/u);
-  assert.match(media, /concrete playback\/structure\/Media Assets risk or the user explicitly asks for a hold/u);
+  assert.match(media, /prevents normal users from opening or watching that exact asset, or the user explicitly asks for a hold/u);
+  assert.match(media, /Missing Media Assets fields, ffprobe details, or a readback failure are bookkeeping follow-up/u);
   assert.match(media, /separate final metadata gate/u);
+});
+
+test("normal uploaded media does not require human playback before visibility release", () => {
+  const publisher = read("skills/wwp-notion-publisher/SKILL.md");
+  const media = read("references/notion-media-assets.md");
+  assert.match(publisher, /do not hold a usable title for routine manual playback checks/u);
+  assert.match(publisher, /exact destination-page video block and filename match, with no concrete playback fault, are sufficient to release the path/u);
+  assert.match(publisher, /missing\/incomplete ffprobe fields are not a visibility prerequisite unless the website actually needs them/u);
+  assert.match(media, /Do not require a human to play every asset/u);
+  assert.match(media, /hide the work only if no other usable path remains/u);
+  assert.match(media, /Missing or incomplete ffprobe fields, a failed index refresh, or a non-playback\s+metadata mismatch is follow-up work/u);
+  assert.match(media, /only a demonstrated inability to expose\/open the intended video/u);
+  const releaseTool = read("../../../tools/notion-media-assets-release.mjs");
+  assert.doesNotMatch(releaseTool, /actual\.playbackVerified !== true\) failures\.push/u);
+  assert.match(releaseTool, /Playback Verified needs follow-up/u);
 });
 
 test("release-first coverage is separate from source expansion", () => {

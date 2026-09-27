@@ -40,6 +40,7 @@ export interface PeopleManagedValues extends ExistingPeopleValues {
   aliases: string;
   tmdbPersonId?: string;
   imdbNameId?: string;
+  doubanPersonId?: string;
   wikidataQid?: string;
   primaryDepartments: string[];
   birthDate?: string;
@@ -59,7 +60,7 @@ export interface NotionPeopleSnapshot extends ExistingPeopleValues {
   archived: boolean;
   name?: string;
   aliases: string[];
-  externalIds: { tmdb?: string; imdb?: string; wikidata?: string };
+  externalIds: { tmdb?: string; imdb?: string; douban?: string; wikidata?: string };
   primaryDepartments: MovieCreditDepartment[];
   birthDate?: string;
   deathDate?: string;
@@ -136,6 +137,7 @@ export function managedPeopleValues(profile: PersonProfile, existing?: ExistingP
     aliases: names.aliases.join(" / "),
     tmdbPersonId: profile.externalIds?.tmdb,
     imdbNameId: profile.externalIds?.imdb,
+    doubanPersonId: profile.externalIds?.douban,
     wikidataQid: profile.externalIds?.wikidata,
     primaryDepartments: profile.departments ?? [],
     birthDate: profile.biography?.birthDate,
@@ -178,6 +180,7 @@ export function notionPeopleProperties(values: PeopleManagedValues) {
     Aliases: richText(values.aliases),
     "TMDB Person ID": richText(values.tmdbPersonId),
     "IMDb Name ID": richText(values.imdbNameId),
+    "Douban Person ID": richText(values.doubanPersonId),
     "Wikidata QID": richText(values.wikidataQid),
     "Primary Departments": { multi_select: values.primaryDepartments.map((name) => ({ name })) },
     "Birth Date": date(values.birthDate),
@@ -203,7 +206,7 @@ export function notionPeopleProperties(values: PeopleManagedValues) {
 }
 
 export function assertUniqueExternalIds(profiles: PersonProfile[]) {
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     const seen = new Map<string, string>();
     for (const profile of profiles) {
       const id = profile.externalIds?.[source];
@@ -429,6 +432,7 @@ export function readNotionPeopleSnapshot(page: NotionPage): NotionPeopleSnapshot
     externalIds: {
       tmdb: plainText(page.properties["TMDB Person ID"]),
       imdb: plainText(page.properties["IMDb Name ID"]),
+      douban: plainText(page.properties["Douban Person ID"]),
       wikidata: plainText(page.properties["Wikidata QID"])
     },
     primaryDepartments: multiSelectNames(page.properties["Primary Departments"]).filter(isCreditDepartment),

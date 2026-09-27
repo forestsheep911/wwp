@@ -71,6 +71,7 @@ export class WikidataPersonSource {
     const observedAt = this.now().toISOString();
     const tmdb = claimString(entity, "P4985");
     const imdb = claimString(entity, "P345");
+    const douban = claimString(entity, "P12836") ?? claimString(entity, "P5284");
     const image = claimString(entity, "P18");
     const descriptions = localizedBiographyDescriptions(entity.descriptions);
     const description = descriptions[0];
@@ -79,7 +80,7 @@ export class WikidataPersonSource {
       throw new WikidataRoleMismatchError(wikidataId, expectedDepartments, englishDescription);
     }
     return {
-      externalIds: normalizePersonExternalIds({ wikidata: wikidataId, tmdb, imdb }),
+      externalIds: normalizePersonExternalIds({ wikidata: wikidataId, tmdb, imdb, douban }),
       names: wikidataNames(entity, url, observedAt),
       biography: description?.value || claimTime(entity, "P569") || claimTime(entity, "P570") ? {
         birthDate: claimTime(entity, "P569"),

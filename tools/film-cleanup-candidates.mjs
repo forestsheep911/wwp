@@ -378,6 +378,10 @@ export function collectSourceCleanupCandidates(db) {
     SELECT sources.id AS source_id, sources.work_id, sources.absolute_path, sources.relative_path, sources.source_kind,
            input_roots.path AS input_root_path,
            works.canonical_title, works.workflow_status, works.workflow_note,
+           (SELECT events.payload_json FROM events
+             WHERE events.entity_type='source' AND events.entity_id=sources.id
+               AND events.event_type='source_quarantine_failed'
+             ORDER BY events.created_at DESC, events.id DESC LIMIT 1) AS quarantine_failure_json,
            SUM(CASE WHEN variants.id IS NOT NULL
              AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets') THEN 1 ELSE 0 END) AS linked_variant_count,
            SUM(CASE WHEN variants.id IS NOT NULL
@@ -416,11 +420,18 @@ export function collectSourceCleanupCandidates(db) {
       eligible: false,
       reasons: []
     };
+    let quarantineFailure = null;
+    if (row.quarantine_failure_json) {
+      try { quarantineFailure = JSON.parse(row.quarantine_failure_json); }
+      catch { quarantineFailure = { error: row.quarantine_failure_json }; }
+      result.reasons.push("previous_quarantine_move_failed");
+      result.previousMoveFailure = quarantineFailure;
+    }
     const hasWorkColumn = Object.prototype.hasOwnProperty.call(row, "work_id");
     if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() && isEmptyDirectory(filePath)) {
       result.isDirectory = true;
       result.mediaFileCount = 0;
-      result.eligible = true;
+      result.eligible = result.reasons.length === 0;
       result.reasons.push(row.work_id == null ? "empty_unbound_directory" : "empty_source_directory");
       return result;
     }

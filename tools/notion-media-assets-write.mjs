@@ -674,13 +674,15 @@ async function findExistingAsset(notion, dataSource, candidate) {
       && !relationIds(properties.Work).some((id) => normalizeId(id) === normalizeId(candidate.workPageId))) {
       throw new Error(`Explicit Media Asset ${page.id} does not relate to work ${candidate.workPageId}.`);
     }
+    const replaceFields = normalizeReplaceExistingFields(candidate.replaceExistingFields, candidate.name);
     const expectedFacts = [
-      ["Source Page ID", candidate.sourcePageId],
-      ["Media Block ID", candidate.mediaBlockId],
-      ["Original File Name", candidate.originalFileName]
+      ["Source Page ID", candidate.sourcePageId, ""],
+      ["Media Block ID", candidate.mediaBlockId, "Media Block ID"],
+      ["Original File Name", candidate.originalFileName, "Original File Name"]
     ];
-    for (const [name, expected] of expectedFacts) {
+    for (const [name, expected, replaceField] of expectedFacts) {
       if (expected && propertyPlainText(properties[name]) !== expected) {
+        if (replaceField && replaceFields.includes(replaceField)) continue;
         throw new Error(`Explicit Media Asset ${page.id} ${name} does not match the audited candidate.`);
       }
     }

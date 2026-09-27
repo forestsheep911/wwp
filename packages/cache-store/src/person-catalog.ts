@@ -72,7 +72,7 @@ export function emptyPersonCatalogState(generatedAt = new Date().toISOString()):
     generatedAt,
     people: {},
     redirects: {},
-    externalIdIndex: { tmdb: {}, imdb: {}, wikidata: {} },
+    externalIdIndex: { tmdb: {}, imdb: {}, douban: {}, wikidata: {} },
     aliasIndex: {},
     creditsByWorkId: {},
     creditsByPersonId: {},
@@ -281,9 +281,10 @@ function unresolvedCreditIssue(work: MovieWorkProfile, credit: MovieCreditEntry)
 
 function indexExternalIds(state: PersonCatalogState, profile: PersonProfile) {
   const externalIds = normalizePersonExternalIds(profile.externalIds);
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     const id = externalIds[source];
     if (!id) continue;
+    state.externalIdIndex[source] ??= {};
     const existing = state.externalIdIndex[source][id];
     if (existing && existing !== profile.personId) {
       state.issues.push({
@@ -320,7 +321,7 @@ export function rebuildDerivedPersonIndexes(
   for (const [workId, title] of Object.entries(suppliedWorkTitles)) {
     if (title) workTitles.set(workId, title);
   }
-  state.externalIdIndex = { tmdb: {}, imdb: {}, wikidata: {} };
+  state.externalIdIndex = { tmdb: {}, imdb: {}, douban: {}, wikidata: {} };
   state.aliasIndex = {};
   state.creditsByPersonId = {};
   state.issues = state.issues.filter((issue) => issue.kind !== "external_id_conflict");
@@ -349,7 +350,7 @@ export function rebuildDerivedPersonIndexes(
 function assertNoSameNamespaceConflict(left: PersonProfile, right: PersonProfile) {
   const leftIds = normalizePersonExternalIds(left.externalIds);
   const rightIds = normalizePersonExternalIds(right.externalIds);
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     if (leftIds[source] && rightIds[source] && leftIds[source] !== rightIds[source]) {
       throw new Error(`Cannot merge people with conflicting ${source} IDs: ${leftIds[source]} != ${rightIds[source]}`);
     }
@@ -364,7 +365,7 @@ function recordCreditExternalIdConflicts(
 ) {
   const existing = normalizePersonExternalIds(profile.externalIds);
   const incoming = normalizePersonExternalIds(incomingValue);
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     if (!existing[source] || !incoming[source] || existing[source] === incoming[source]) continue;
     state.issues.push({
       kind: "external_id_conflict",

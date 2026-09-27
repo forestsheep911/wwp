@@ -27,6 +27,7 @@ test("production transitions enforce legal adjacency", () => {
   assert.deepEqual(PRODUCTION_STATES, ["discovered", "evaluated", "selected", "encoding", "qc_failed", "deferred", "qc_passed", "rejected"]);
   assert.equal(assertProductionTransition("discovered", "evaluated"), true);
   assert.equal(assertProductionTransition("qc_failed", "selected"), true);
+  assert.equal(assertProductionTransition("qc_failed", "qc_passed"), true);
   assert.equal(assertProductionTransition("encoding", "deferred"), true);
   assert.equal(assertProductionTransition("deferred", "evaluated"), true);
   assert.equal(assertProductionTransition("qc_passed", "rejected"), true);

@@ -152,6 +152,8 @@ try {
     if (plan.updatedResults.length > 0) {
       const readback = await verifyPeopleCatalogReadback({
         searchStore,
+        personStore,
+        expectedProfiles: report.proposedProfiles ?? [],
         expectedResults: plan.updatedResults,
         attempts: 3,
         delayMs: 1500

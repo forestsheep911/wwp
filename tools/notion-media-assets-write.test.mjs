@@ -40,6 +40,7 @@ test("explicit asset page corrections support historical empty titles without cr
   assert.match(source, /Source Page ID.*candidate\.sourcePageId/);
   assert.match(source, /Media Block ID.*candidate\.mediaBlockId/);
   assert.match(source, /Original File Name.*candidate\.originalFileName/);
+  assert.match(source, /if \(replaceField && replaceFields\.includes\(replaceField\)\) continue;/);
 });
 
 test("new source-only rows do not become visibility blockers by default", () => {

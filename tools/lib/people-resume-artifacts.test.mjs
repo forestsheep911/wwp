@@ -118,3 +118,29 @@ test("inventory matches legacy numeric work ids to completed ledger entries", ()
     assert.equal(entries[0].resumable, false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("inventory matches metadata-only artifacts to completed campaign work by exact Notion page id", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wwp-people-resume-"));
+  try {
+    const report = path.join(root, "report.json");
+    writeFileSync(report, JSON.stringify({
+      proposedCredits: [{
+        workId: "wwm_external",
+        title: "Metadata-only work",
+        metadataOnlyWork: { sourcePageId: "3d820ac1-2f0a-8195-ad03-fa27bd887259" }
+      }],
+      identityIssues: [],
+      unresolved: []
+    }));
+    writeFileSync(path.join(root, "preflight.json"), JSON.stringify({ status: "ready_for_authorized_apply", reportPath: report }));
+    const entries = discoverPeopleResumeArtifacts(root, {
+      campaign: { works: [{
+        pageId: "3d820ac1-2f0a-8195-ad03-fa27bd887259",
+        ledgerWorkId: 339,
+        stages: { people: { status: "completed" } }
+      }] }
+    });
+    assert.equal(entries[0].kind, "already_completed");
+    assert.equal(entries[0].resumable, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

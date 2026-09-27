@@ -377,6 +377,25 @@ test("completed due metadata maintenance schedules the next review instead of re
   } finally { f.close(); }
 });
 
+test("completed metadata can schedule its first bounded review explicitly", () => {
+  const f = fixture("2026-07-20T00:00:00.000Z");
+  try {
+    const { work } = seed(f.repo, "RecentMissingRatings");
+    const task = f.db.prepare("SELECT * FROM workflow_tasks WHERE task_key=?").get(`metadata:work:${work.id}`);
+    f.repo.transitionWorkflowTask(task.id, "done", {
+      reason: "Recent release is missing critic ratings",
+      nextRunAt: "2026-08-03T00:00:00.000Z"
+    });
+    assert.equal(
+      f.db.prepare("SELECT next_review_at FROM works WHERE id=?").get(work.id).next_review_at,
+      "2026-08-03T00:00:00.000Z"
+    );
+    const event = f.repo.getEvents({ entityType: "work", entityId: work.id }).at(-1);
+    assert.equal(event.event_type, "metadata_review_scheduled");
+    assert.match(event.payload_json, /missing critic ratings/u);
+  } finally { f.close(); }
+});
+
 test("deferred metadata maintenance stays deferred until its next run time", () => {
   const f = fixture("2026-07-20T00:00:00.000Z");
   try {
@@ -765,6 +784,19 @@ test("candidate queries honor due dates, exclusions, priority, and bounds", () =
   } finally { f.close(); }
 });
 
+test("production queue excludes due variants whose source is missing", () => {
+  const f = fixture();
+  try {
+    const { source, variant } = seed(f.repo, "Missing Source");
+    f.db.prepare("UPDATE variants SET production_state='deferred', next_review_at=? WHERE id=?")
+      .run("2026-07-13T00:00:00.000Z", variant.id);
+    f.db.prepare("UPDATE sources SET missing=1 WHERE id=?").run(source.id);
+
+    assert.deepEqual(f.repo.listProductionCandidates({ limit: 99 }), []);
+    assert.deepEqual(f.repo.listProductionQueue({ limit: 99 }), []);
+  } finally { f.close(); }
+});
+
 test("production queue keeps a bound source visible until a variant is selected", () => {
   const f = fixture();
   try {
@@ -1039,6 +1071,12 @@ test("confirmed subtitle absence creates and later resolves a durable acquisitio
       subtitleEvidence: { internalProbeState: "completed", verifiedChinese: false },
       audioEvidence: { languages: ["English"] }
     });
+    const deferredVariant = f.repo.ensureVariant({
+      workId: work.id, sourceId: source.id, specKey: "english-no-chinese-subtitles",
+      displayTitle: "Needs subtitles English no Chinese subtitles"
+    });
+    f.db.prepare("UPDATE variants SET production_state='deferred', failure_code='missing_chinese_subtitle', publication_state='not_ready' WHERE id=?")
+      .run(deferredVariant.id);
 
     const first = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
     assert.deepEqual(first.candidates.map((row) => row.source_id), [source.id]);

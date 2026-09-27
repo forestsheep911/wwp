@@ -230,6 +230,15 @@ same audited report to `reviewed-output`; that file then enters the normal
 preflight, Notion upsert, catalog apply, and coverage-settlement path. A report
 with either category non-empty is never promoted automatically.
 
+Capture a verified Douban person ID whenever the evidence provides one.
+The Wikidata source prefers property `P12836` (Douban personage ID) and falls
+back to `P5284` (Douban movie celebrity ID) only when `P12836` is absent; this
+preserves existing canonical IDs while covering both official identifier
+families. The ID remains subject to normal cross-source identity-conflict
+checks and must not overwrite a conflicting existing ID. When neither claim
+exists, leave the field empty rather than deriving a person ID from a name
+search or a film's Douban subject ID.
+
 Each row normally uses a verified Wikidata QID; include matching IMDb/TMDB IDs
 when available. If no Wikidata identity exists, a row may instead carry
 reviewed IMDb or TMDB evidence. It must repeat the stable person ID in
@@ -472,6 +481,13 @@ For production, generate the coverage file with
 `people-work-coverage-audit.mjs --backend azure`; settlement rejects local or
 backend-unknown coverage. A local report may be settled only for an explicit
 local test by adding `--allow-local-coverage`.
+
+For one exact production work, pass its verified search-index key with
+`--asset-key notion-page-<page-id>` instead of enumerating the whole Azure
+search index. This performs a direct Azure entity read and produces the same
+coverage shape for the selected work. Use `--work-id` only with the broad audit
+path; never treat a missing exact asset key as zero credits or successful
+coverage.
 
 The command completes People only for a non-empty `fully_linked` canonical
 credit set. Partial, unlinked, or still-missing credit coverage returns the

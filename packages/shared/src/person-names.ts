@@ -4,6 +4,7 @@ import type { MovieCreditDepartment, MovieMetadataSource } from "./index.js";
 export interface PersonExternalIds {
   tmdb?: string;
   imdb?: string;
+  douban?: string;
   wikidata?: string;
 }
 
@@ -207,11 +208,7 @@ export interface PersonCatalogState {
   };
   people: Record<string, PersonCatalogEntry>;
   redirects: Record<string, string>;
-  externalIdIndex: {
-    tmdb: Record<string, string>;
-    imdb: Record<string, string>;
-    wikidata: Record<string, string>;
-  };
+  externalIdIndex: Record<string, Record<string, string>>;
   aliasIndex: Record<string, string[]>;
   creditsByWorkId: Record<string, PersonCreditRef[]>;
   creditsByPersonId: Record<string, PersonWorkCreditRef[]>;

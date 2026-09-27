@@ -201,7 +201,7 @@ export async function runPersonEnrichment(input: {
   now?: () => Date;
   persistCheckpoint?: (checkpoint: EnrichmentCheckpoint) => Promise<void>;
   catalogState?: PersonCatalogState;
-  allocatePersonId?: (externalIds: { tmdb?: string; imdb?: string; wikidata?: string }) => string;
+  allocatePersonId?: (externalIds: { tmdb?: string; imdb?: string; douban?: string; wikidata?: string }) => string;
 }) {
   const now = input.now ?? (() => new Date());
   const candidates = input.candidates.slice(0, input.limit ?? input.candidates.length);
@@ -337,10 +337,10 @@ function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function checkpointPersonId(checkpoint: EnrichmentCheckpoint, externalIds: { tmdb?: string; imdb?: string; wikidata?: string }) {
+function checkpointPersonId(checkpoint: EnrichmentCheckpoint, externalIds: { tmdb?: string; imdb?: string; douban?: string; wikidata?: string }) {
   const stableKey = externalIds.tmdb ? `tmdb:${externalIds.tmdb}`
     : externalIds.imdb ? `imdb:${externalIds.imdb}`
-      : `wikidata:${externalIds.wikidata ?? "unknown"}`;
+      : externalIds.wikidata ? `wikidata:${externalIds.wikidata}` : `douban:${externalIds.douban ?? "unknown"}`;
   return checkpoint.assignedPersonIds[stableKey] ??= `person_${randomUUID()}`;
 }
 

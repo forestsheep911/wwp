@@ -46,10 +46,12 @@ function printHelp() {
   node tools/notion-media-assets-release.mjs --manifest .local-data/release.json --release-work-page <work-page-id> --apply
 
 The manifest must identify every Media Assets page and its expected Work, source
-page, media block, episode, resolution, codec, container, and decimal-GB size.
+page, media block, and episode. Resolution, codec, container, and decimal-GB
+size may be included as follow-up evidence but do not gate visibility release.
 Use an integer expectedEpisodeNumber for series assets and explicit null for movies.
 Dry-run is the default. Apply clears only the asset row's Hide from Website field
-after all evidence matches and verifies the updated row by direct readback.
+after identity and playable-availability evidence matches, then verifies the
+updated row by direct readback.
 
 Network workaround:
   --resolve-ip <api-ip> --local-address <lan-ip>
@@ -174,13 +176,10 @@ export function validateReleaseCandidate(page, item) {
     workPageId: required(item, "expectedWorkPageId"),
     sourcePageId: required(item, "expectedSourcePageId"),
     mediaBlockId: required(item, "expectedMediaBlockId"),
-    episodeNumber: expectedEpisodeNumber(item),
-    resolution: required(item, "expectedResolution"),
-    videoCodec: required(item, "expectedVideoCodec"),
-    container: required(item, "expectedContainer"),
-    approximateSizeGb: Number(required(item, "expectedApproxSizeGb"))
+    episodeNumber: expectedEpisodeNumber(item)
   };
   const failures = [];
+  const followUps = [];
   const workIds = (properties.Work?.relation ?? []).map((relation) => relation.id);
   const actual = {
     assetType: propertyText(properties["Asset Type"]),
@@ -201,19 +200,27 @@ export function validateReleaseCandidate(page, item) {
   if (!workIds.some(id => sameNotionId(id, expected.workPageId))) failures.push("Work relation mismatch");
   if (actual.assetType !== "playable_video") failures.push("Asset Type is not playable_video");
   if (actual.availability !== "playable") failures.push("Media Availability is not playable");
-  if (actual.playbackVerified !== true) failures.push("Playback Verified is not true");
   if (!sameNotionId(actual.sourcePageId, expected.sourcePageId)) failures.push("Source Page ID mismatch");
   if (!sameNotionId(actual.mediaBlockId, expected.mediaBlockId)) failures.push("Media Block ID mismatch");
   if (actual.episodeNumber !== expected.episodeNumber) failures.push("Episode Number mismatch");
-  if (normalized(actual.resolution) !== normalized(expected.resolution)) failures.push("Resolution mismatch");
-  if (normalized(actual.videoCodec) !== normalized(expected.videoCodec)) failures.push("Video Codec mismatch");
-  if (normalized(actual.container) !== normalized(expected.container)) failures.push("Container mismatch");
+  if (actual.playbackVerified !== true) followUps.push("Playback Verified needs follow-up");
+  for (const [field, label, expectedKey] of [
+    ["resolution", "Resolution", "expectedResolution"],
+    ["videoCodec", "Video Codec", "expectedVideoCodec"],
+    ["container", "Container", "expectedContainer"]
+  ]) {
+    const expectedValue = item[expectedKey];
+    if (!actual[field] || (expectedValue && normalized(actual[field]) !== normalized(expectedValue))) {
+      followUps.push(`${label} needs backfill or review`);
+    }
+  }
   // Approx Size GB is a display-scale value. The writer stores one decimal,
   // while release manifests preserve two-decimal source measurements. Permit
   // one one-decimal rounding increment, but still reject a real file-size gap.
+  const expectedSize = Number(item.expectedApproxSizeGb);
   if (!Number.isFinite(actual.approximateSizeGb)
-    || Math.abs(actual.approximateSizeGb - expected.approximateSizeGb) > 0.051) {
-    failures.push("Approx Size GB mismatch");
+    || (Number.isFinite(expectedSize) && Math.abs(actual.approximateSizeGb - expectedSize) > 0.051)) {
+    followUps.push("Approx Size GB needs backfill or review");
   }
   if (typeof actual.hidden !== "boolean") failures.push("Hide from Website is missing");
 
@@ -221,6 +228,7 @@ export function validateReleaseCandidate(page, item) {
     pageId,
     expected,
     actual,
+    followUps,
     ok: failures.length === 0,
     failures,
     action: failures.length > 0 ? "blocked" : actual.hidden ? "release" : "already_released"

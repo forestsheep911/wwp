@@ -5,6 +5,42 @@ description: Use when coordinating WWP film or series production, choosing the n
 
 # WWP Film Producer
 
+## Visibility Is Not a Workflow Blocker
+
+**Default: publish and keep visible; repair afterward.** `Hide from Website`
+answers only whether normal users should be prevented from seeing the title. It
+must not be used to express that production, QC, metadata, Media Assets, review,
+or human confirmation is unfinished. If one correctly mapped playable path is
+not known to prevent normal viewing, release/keep the work visible without
+asking for routine approval. Missing metadata, uncertain or minor defects,
+`Needs Review`, open issues, pending specs/episodes, `AI 处理中`, `待人工确认`,
+`暂缓`, or a failed bookkeeping/site-readback step remain separate follow-up
+work. A catalog entry also stays visible while waiting for its first playable
+asset; keep only its empty destination child hidden. An empty or defective child
+path may be isolated without hiding the work.
+
+For this rule, “watchable” means the video opens and its main picture, sound,
+and content are identifiable; it does not mean ideal bitrate, color, volume,
+subtitle completeness, or metadata. Minor defects, unverified compatibility
+concerns, and pending sync/readback are publish-first follow-ups, not hide
+reasons. Hide only the exact path with a reproduced failure that actually
+prevents ordinary viewing; hide the work only when every usable path fails or
+the user explicitly requests a work-level hold.
+
+Set or retain work-level `Hide from Website=true` only for an explicit current
+human hold or current evidence that **every** available playable path prevents
+normal viewing. A defect affecting only one path may hide only that path. When
+impact is uncertain, default to visible and record the exact follow-up. On every
+pass, re-evaluate an existing hide; clear it when neither an active human hold
+nor current viewing-failure evidence remains. This rule takes precedence over
+workflow status, completion gates, and conservative review habits.
+
+**Scope proof is mandatory for a work-level hide:** a note such as “实测无声” or
+“无法解码” proves a problem only on the tested path. Unless the note explicitly
+identifies that path as the only playable one or confirms all currently usable
+paths fail, do not hide the work; isolate the tested spec/episode and keep other
+paths and the catalog visible. When the scope is missing, default to visible.
+
 ## Stable Production Defaults
 
 The following are the current production defaults. Treat them as the normal
@@ -34,6 +70,15 @@ route unless the user gives a more specific instruction:
   verified useful playable may release the work while concrete supplemental
   variants remain selected or deferred. Those variants, not `Workflow Status`,
   keep expansion queryable and keep the source out of cleanup.
+- **Visibility is release-first, not perfection-first.** At the start and end
+  of every production/publication pass, check the exact work-level
+  `Hide from Website` value. If at least one published path is usable, clear a
+  stale automation-owned hide in this pass and continue repairs with the work
+  visible. Do not wait for metadata, poster, ratings, People, optional specs,
+  `Needs Review`, or final `已完成`; record those as follow-up. If only one
+  spec/episode is suspect, isolate that child. Keep the whole work hidden only
+  for a current, observed viewing/structure failure affecting every usable
+  path, or an explicit human hold. Uncertainty defaults to visible.
 
 These defaults were validated by the recent automatic-upload trial and are the
 baseline for future `开始制作影视库` runs:
@@ -56,6 +101,8 @@ Coordinate WWP film work end to end. Load this first when the user asks to make,
 
 Treat the exact phrase `开始制作影视库` as the end-to-end start command. Do not ask the user to restate the workflow.
 
+**Pause override:** When the active user instruction or goal pauses People/person enrichment, use `--mode film-only` for every production-cycle invocation and do not enqueue or run People work. Film-only still scans enabled inputs and processes film, publication, cleanup, and bounded base-metadata lanes. Resume enrichment only after the user lifts the pause.
+
 1. Read enabled input roots and pending work from `.local-data/wwp-film-workflow.sqlite`. If the ledger has no enabled input root, use a directory explicitly supplied in the same request; ask for one only when neither source exists.
 2. Run `node tools/film-workflow-cycle.mjs --limit 3 --force --mode film-and-current-enrichment --apply-cleanup --json` before reading any lanes when the user explicitly says `开始制作影视库`, reports manual upload completion, changes a Workflow Status/Note, or asks to continue. This explicit handoff read is mandatory even when the filesystem is unchanged. The default single-line production mode finishes the bounded film round first, reaches a stable checkpoint, moves only guarded cleanup-eligible items to their same-volume `待人工删除`, and registers exact current film work IDs in the saved base-metadata → People → honors → highlights campaign. Use `--mode film-only` for a film-only round, `--mode people-only` to resume the narrower saved People campaign, and `--mode enrichment-only` to resume all saved enrichment stages without scanning film inputs. Never launch film and enrichment network stages as separate concurrent tasks. This single entry point performs a fresh bounded scan of every enabled input root in film modes, mirrors only explicit AI-actionable handoffs, and then reads the ledger cycle. It is not a persistent watcher; never report “no new resources” without a fresh scan result from this command. Automatic continuation rounds may omit `--force` and use the one-hour unchanged-scan cooldown. Report these as separate facts: `newlyDiscoveredSources`, `registeredSourcesNeedingProductionReview`, metadata candidates, publication-pending variants, cleanup moves/failures, and enrichment due/blocked/human/deferred counts. `newlyDiscoveredSources=0` only means that this scan found no file-system delta; it does not retract a batch already registered in the ledger. The human-facing summary must say “本轮文件扫描未发现新增或变化” only for the discovery lane and then report the other work lanes; never abbreviate the whole cycle as “无新片”. Do not use Notion parent timestamps or a broad watcher.
 3. Claim a bounded actionable handoff before changing it, following `../../references/workflow-handoff.md`. Continue the other workflow lanes after the handoff batch.
@@ -64,12 +111,15 @@ Treat the exact phrase `开始制作影视库` as the end-to-end start command. 
 6. Record uncertain or deferred decisions and continue with other candidates instead of interrupting the batch. Ask only when a decision blocks every useful next action or requires user-only evidence/action.
 7. Treat `qc_passed` as production complete but publication pending. Treat only `sync_ready` as final playable completion. Before setting `Workflow Status=已完成`, run exact metadata maintenance/readback for the work page, require `Metadata Status=verified`, empty `Human Issue` and `AI Issue`, a usable poster, and targeted live-site readback of the poster and core metadata. If playable publication is complete but this metadata gate is not, keep the work in `AI 处理中`, requeue or defer its metadata task with the exact missing fields, and say explicitly that playback is complete while release completion is pending. **This is not a visibility block:** once the playable release gate passes, release the work-level page even when this stricter completion gate is open. Supplemental variants do not block this first-release state.
 
-   **Visibility-first rule:** `Hide from Website` is not the metadata or review master switch. If a normal user can watch the published title, release it even when it is not perfect; record the imperfection as follow-up work. A work page is a catalog entry and stays visible by default while metadata, subtitles, destination pages, or the first playable asset are still being prepared. Once one exact playable variant has passed the uploaded-block, structure, Media Assets, ffprobe/QC, ledger `sync_ready`, and live-readback gates, clear the work-level hide flag even when `Metadata Status=partial`, `Needs Review=true`, a poster is missing, or `AI Issue`/`Human Issue` records follow-up work. Keep only the defective empty or unsafe asset/spec hidden. Keep the whole work hidden only when an exposed media path has a concrete playback/structure/Media Assets risk or the user has explicitly requested a visibility hold. **Never re-hide a technically playable work merely because metadata, poster, people, ratings, AI advice, review, naming, a small repairable defect, or optional spec expansion is unfinished.** Once released, visibility is monotonic by default: a later repair pass may re-hide the work only after recording fresh viewing-affecting evidence or a new explicit human hold in `Workflow Note`. A work may therefore remain `AI 处理中` or `待人工确认` while already visible on the website; that status means follow-up work remains, not that playback must be withheld.
+   **总裁决：先发布可观看条目，后续修缺陷。** 判断依据是普通用户能否观看，不是条目是否完美或工作流是否全部收尾。只要没有具体证据证明现有可用路径影响观看，就保持/恢复网站可见；尚未确认的疑虑也按可见处理并记为后续复核。元数据、海报、字幕/规格补充、抽检、人物、评分、Needs Review、问题字段或 `Workflow Status` 未完成，都不能阻断发布或成为工作级 `Hide from Website=true` 的理由。若一个子规格/集确实有播放问题，只隔离该子路径；只有所有可用路径都被证实影响观看，或用户明确要求整条暂缓公开，才隐藏整个作品。发布后继续修复与流程收尾，不要求先达到 `已完成`。
+
+   **Visibility-first rule:** `Hide from Website` is not the metadata or review master switch. If a normal user can watch the published title, release it even when it is not perfect; record the imperfection as follow-up work. A work page is a catalog entry and stays visible by default while metadata, subtitles, destination pages, or the first playable asset are still being prepared. Once an uploaded video is clearly mapped to its correct work/spec/episode and there is no evidence that normal users cannot watch it, clear the work-level hide flag first, then sync and read back the website. Missing/incomplete ffprobe or Media Assets fields are parallel backfill work, not a visibility blocker unless they actually prevent the website from exposing/opening that video. Do not make `sync_ready` or live-site readback prerequisites for clearing the hide; they close the publication loop after the release action. A failed sync/readback remains publication follow-up and must not be misreported as a playback defect. This applies even when `Metadata Status=partial`, `Needs Review=true`, a poster is missing, or `AI Issue`/`Human Issue` records follow-up work. Keep only the defective empty or unsafe asset/spec hidden. Keep the whole work hidden only for an observed playback failure, page/media mapping that prevents watching, or explicit user hold. **Never re-hide a technically playable work merely because metadata, poster, people, ratings, AI advice, review, naming, a small repairable defect, or optional spec expansion is unfinished.** Once released, visibility is monotonic by default: a later repair pass may re-hide the work only after recording fresh viewing-affecting evidence or a new explicit human hold in `Workflow Note`. A work may therefore remain `AI 处理中` or `待人工确认` while already visible on the website; that status means follow-up work remains, not that playback must be withheld.
    Use the visible-after-usable-publication default: if a known defect does not affect watching, release the work and queue the defect for later repair. If impact is uncertain, do not hide the whole work on suspicion; keep the verified usable delivery visible and isolate the uncertain sibling or review note.
    Every ordinary AI handoff must also normalize legacy visibility: when a work is hidden but the current Workflow Note has no concrete viewing risk and no explicit human hold, clear the work-level hide in that handoff. Do not let an inherited checkbox override the visible-by-default rule.
-   **用户最终可见性决策**：只要影视条目现有播放路径不影响正常观看，就尽量先放出；轻微缺陷、资料缺失、评分/人物/海报待补、规格扩展未完成，全部作为后续修复，不得因为这些事项勾选工作级 `Hide from Website`。以后补修不需要先下架。只有实际影响观看，或用户明确要求暂不发布，才保持隐藏。
+   **用户最终可见性决策（高于一般流程阻拦）**：每次遇到阻塞，先区分它阻止的是编码、资料补全、人工确认还是普通用户观看；只暂停对应事项，继续其他可执行工作。只要作品还有一条不影响正常观看的已发布路径，就尽量先放出；轻微缺陷、资料缺失、评分/人物/海报待补、规格扩展未完成，不需要再次征求常规发布批准，也不得因此勾选工作级 `Hide from Website`。以后补修不需要先下架。单个规格/集数有实际播放故障，只隔离该路径；只有全部现有播放路径都实际影响观看，或用户明确要求整条暂不发布，才隐藏整个作品。流程状态仍可为 `AI 处理中`、`待人工确认` 或 `暂缓`，它们不代表网站必须隐藏。
+   **缺陷容忍默认值**：用户已明确，影视条目只要不影响观看，就应尽量先发布、以后补缺。对轻微画质/资料瑕疵、尚未确认影响的疑虑，不得因“想等更完美版本”而卡发布或勾选隐藏；直接保持可见，将问题和复查条件记入后续队列。只有本轮可复现的故障证明所有当前可用播放路径都无法正常观看，才可隐藏整个作品；若只有单条路径受影响，只隔离该路径。不得把需要人工确认当成默认发布审批。
 8. Before completing a released work, create exact ledger variants for every source-supported supplemental spec worth revisiting. Keep later variants `selected` or `deferred` with `next_review_at`, and mirror the latest decision in `Workflow Note` as `[规格扩展:OPEN] ...` or `[规格扩展:CLOSED] ...`. Do not create a new Notion property or a generic placeholder task for this marker.
-9. When work-level metadata is complete but no first playable specification can continue, set `Workflow Status=暂缓` with an AI-marked recovery condition. `暂缓` does not imply `Hide from Website=true`: keep the catalog visible unless there is a concrete viewing/structure/Media Assets risk or an explicit human hold. Do not use work-level `暂缓` merely because a released work still has deferred supplemental variants.
+9. When work-level metadata is complete but no first playable specification can continue, set `Workflow Status=暂缓` with an AI-marked recovery condition. `暂缓` does not imply `Hide from Website=true`: keep the catalog visible unless there is a concrete, current playback failure or a mapping defect that prevents normal viewing on every usable path, or an explicit human hold. Missing technical fields and website-index/sync errors are follow-up work. Do not use work-level `暂缓` merely because a released work still has deferred supplemental variants.
 10. Treat `enrichmentCampaign.due` as executable work, not a recommendation.
     For each bounded item, record its stage `in_progress`, load
     `wwp-work-enricher` and the named stage skill, execute that stage, verify its
@@ -307,7 +357,7 @@ toggle, callout, or base-like visual containers.
 5. Select playable candidates by value, source quality, Chinese subtitle availability, Notion state, and production risk. Rank uncovered eligible new works ahead of supplemental variants for already released works. When a worthwhile subtitle-dependent source lacks verified Chinese subtitles, create or continue a bounded `wwp-subtitle-acquirer` task before deferring it; do not let an open browser handoff block metadata or other candidates.
 6. For accepted playable candidates, create or reuse the Notion work page and intended destination pages before long encode/upload work when they are missing. Before creating a spec page, scan all existing child spec pages and the work's Media Assets rows, then compare a normalized variant signature: work identity, cut/edition, resolution, codec/container, audio language/variant, subtitle language/treatment, and actual or approximate per-file size. Treat a materially equivalent existing playable asset as occupied even when its title uses a different year, language wording, filename, or rounded size; adopt/backfill its evidence or stop the duplicate route. Preparation must fail closed when equivalence cannot be resolved. Notion's API cannot move uploaded media blocks between pages in this workflow, so destination preparation is mandatory, not optional. Movie uploads need an empty spec child page. Series uploads need a spec page plus one Episode child page per episode by default. When manual upload is likely, report the target title and page ID before encoding starts so the user can upload the finished file to the correct child page rather than the work-page root.
 7. Produce playable MP4 variants into the user-specified output directory, or `E:\video_made` when none is specified.
-8. Run probe/QC before upload. For HDR/Dolby Vision or any reported color cast, require matched source-reference/final frames at distributed timestamps and record whether the cast was introduced by conversion or already present in the source. Do not let an output-only contact sheet silently pass a suspicious source grade; keep visibility closed and defer for a better source when authoritative comparison cannot resolve the risk.
+8. Run probe/QC before upload. For HDR/Dolby Vision or any reported color cast, require matched source-reference/final frames at distributed timestamps and record whether the cast was introduced by conversion or already present in the source. Do not let an output-only contact sheet silently pass a suspicious source grade: defer or isolate that exact encode until evidence is sufficient. This is a production/QC decision, not a work-level visibility decision; keep any other usable path visible, and keep the work visible by default if impact remains uncertain.
 9. Publish playable output to Notion automatically by default after a successful route probe. Preserve the resumable upload manifest. Fall back to an exact manual-upload handoff only when the route is below the safe-start threshold, bounded retries still fail, or the user explicitly chooses manual upload. Then write Media Assets from `ffprobe` and production manifests.
 10. Revisit remaining metadata tasks and prepare/upload completed outputs while encodes wait; publication is only one queue. A metadata task may be completed only after exact readback yields `Metadata Status=verified`. Leave `partial` work pending when another automatic source or AI pass is available; otherwise defer it with `missingCoreFields`, the attempted sources, and `next_review_at`.
 11. Before release completion, refresh the exact work in the website index and read the live result. Require a non-empty poster resolved from a maintained poster field and require the live metadata projection to contain the core identity/descriptive fields. A Notion `Poster URL` that cannot be fetched/cached is not a usable poster.

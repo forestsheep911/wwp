@@ -7,6 +7,7 @@ import {
   pendingHumanWorkflowNote,
   richTextPayload,
   workVisibilityBlockers,
+  workVisibilityReleaseBlockers,
   workCompletionBlockers,
   workReleaseBlockers,
   shouldAutoReleaseWorkVisibility,
@@ -163,7 +164,7 @@ test("unconfirmed playback suspicion stays visible until failure is evidenced", 
   assert.deepEqual(workVisibilityBlockers(candidate), []);
 
   const confirmed = releasablePage({
-    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "实际播放失败：无声音" }] }
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "实测唯一可播放版本播放失败：无声音" }] }
   });
   assert.equal(shouldAutoReleaseWorkVisibility(confirmed), false);
   assert.deepEqual(workVisibilityBlockers(confirmed), ["concrete_visibility_risk"]);
@@ -243,13 +244,34 @@ test("follow-up states never become a work-level hide by themselves", () => {
 
 test("a concrete playback risk keeps work-level hide intact", () => {
   const candidate = releasablePage({
-    "Workflow Note": {
+      "Workflow Note": {
       type: "rich_text",
-      rich_text: [{ plain_text: "【AI(^_^) 2026-09-19T00:00:00.000Z】 Edge 播放无声音，暂不发布。" }]
+      rich_text: [{ plain_text: "【AI(^_^) 2026-09-19T00:00:00.000Z】 实测 Edge 播放无声音，当前唯一可播放规格受影响，暂不发布。" }]
     }
   });
   assert.equal(shouldAutoReleaseWorkVisibility(candidate), false);
   assert.deepEqual(workVisibilityBlockers(candidate), ["concrete_visibility_risk"]);
+  assert.deepEqual(workVisibilityReleaseBlockers(candidate), []);
+});
+
+test("explicit visibility release ignores playback notes after usable-path verification", () => {
+  const followUp = releasablePage({
+    "Metadata Status": { type: "select", select: { name: "partial" } },
+    "Needs Review": { type: "checkbox", checkbox: true },
+    "AI Issue": { type: "rich_text", rich_text: [{ plain_text: "海报待补" }] },
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "【AI(^_^) 2026-09-25T00:00:00.000Z】 资料和海报稍后补，不影响观看，先发布。" }] }
+  });
+  assert.deepEqual(workVisibilityReleaseBlockers(followUp), []);
+
+  const actualFailure = releasablePage({
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "【AI(^_^) 2026-09-25T00:00:00.000Z】 实测唯一可播放版本无法解码，暂不发布。" }] }
+  });
+  assert.deepEqual(workVisibilityReleaseBlockers(actualFailure), []);
+
+  const explicitHold = releasablePage({
+    "Workflow Note": { type: "rich_text", rich_text: [{ plain_text: "暂不发布，保持隐藏。" }] }
+  });
+  assert.deepEqual(workVisibilityReleaseBlockers(explicitHold), ["visibility_hold"]);
 });
 
 test("minor follow-up defects do not count as visibility blockers", () => {
@@ -260,6 +282,9 @@ test("minor follow-up defects do not count as visibility blockers", () => {
     "有一个空的可选规格页，后续清理。",
     "AI处理中，评分和简介尚未补齐。",
     "画面有轻微问题，但不影响正常观看，后续修复。",
+    "人声比另一音轨略大，但能正常听清，后续再平衡。",
+    "有轻微水印和压缩痕迹，仍可正常观看。",
+    "字幕位置略有偏差但不遮挡内容，之后优化。",
     "高码率版本尚未制作，先发布现有版本。",
     "上传速度慢，稍后继续上传。",
     "资料补全阻塞，但已有版本可以正常播放。"
@@ -275,8 +300,9 @@ test("only material viewing failures count as automatic hide reasons", () => {
     "当前视频无法解码，等待替换版本。",
     "网站播放严重偏色，保持隐藏。"
   ]) {
-    assert.equal(visibilityHideReasonIsConcrete(note), true, note);
+    assert.equal(visibilityHideReasonIsConcrete(note), false, note);
   }
+  assert.equal(visibilityHideReasonIsConcrete("实测 Edge 播放无声音，暂时隐藏该规格。"), true);
 });
 
 test("an unfinished catalog does not become hidden just because it has no playable path yet", () => {
@@ -307,14 +333,17 @@ test("a child failure does not hide the whole work when another path can remain 
   ]) {
     assert.equal(workVisibilityHideReasonIsConcrete(note), false, note);
   }
-  assert.equal(workVisibilityHideReasonIsConcrete("当前唯一可播放版本无法解码，暂不发布。"), true);
-  assert.equal(workVisibilityHideReasonIsConcrete("整个条目无法播放，暂不发布。"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("当前唯一可播放版本无法解码，暂不发布。"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测当前唯一可播放版本无法解码，暂不发布。"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测整个条目无法播放，暂不发布。"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测播放无声音。"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测第 2 集无法解码。"), false);
   assert.equal(workVisibilityHideReasonIsConcrete("整个条目没有任何可播放版本，等待制作。"), false);
 });
 
 test("resolved playback risk in old note history does not keep a work hidden", () => {
   const note = [
-    "【AI(^_^) 2026-09-01T00:00:00.000Z】 Edge 播放无声音，暂不发布。",
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 实测 Edge 播放无声音，当前唯一可播放规格受影响，暂不发布。",
     "【AI(^_^) 2026-09-19T00:00:00.000Z】 已重新压制并通过声音复核，资料补全继续。"
   ].join("\n");
   assert.equal(latestWorkflowNoteSegment(note), "【AI(^_^) 2026-09-19T00:00:00.000Z】 已重新压制并通过声音复核，资料补全继续。");
@@ -325,7 +354,7 @@ test("resolved playback risk in old note history does not keep a work hidden", (
 
 test("human publish approval resolves an older visibility risk", () => {
   for (const note of [
-    "【AI(^_^) 2026-09-01T00:00:00.000Z】 Edge 播放无声音，暂不发布。\n我确认可以发布到网站。",
+    "【AI(^_^) 2026-09-01T00:00:00.000Z】 实测 Edge 播放无声音，当前唯一可播放规格受影响，暂不发布。\n我确认可以发布到网站。",
     "【AI(^_^) 2026-09-01T00:00:00.000Z】 当前视频无法解码，等待替换版本。\n质检通过，放出网站。",
     "【AI(^_^) 2026-09-01T00:00:00.000Z】 网站播放严重偏色，保持隐藏。\n已经修好，允许同步。"
   ]) {
@@ -351,6 +380,7 @@ test("release-first human guidance is not mistaken for a visibility hold", () =>
   for (const note of [
     "资料还有缺失，但不影响正常观看，先放出，后续再补。",
     "不要因为资料不全而隐藏，先让用户观看，后续补齐。",
+    "只要影视条目不影响观看，就应该尽量放出来；有一点缺陷以后补。",
     "不要轻易勾选 Hide from Website。"
   ]) {
     const page = releasablePage({
@@ -362,7 +392,7 @@ test("release-first human guidance is not mistaken for a visibility hold", () =>
 });
 
 test("publish approval does not erase a newer unresolved playback risk", () => {
-  const note = "【AI(^_^) 2026-09-01T00:00:00.000Z】 播放无声音，暂不发布。\n可以发布到网站。\n复核后仍然无声音。";
+  const note = "【AI(^_^) 2026-09-01T00:00:00.000Z】 实测唯一可播放规格播放无声音，暂不发布。\n可以发布到网站。\n复测后唯一可播放规格仍然无声音。";
   assert.equal(workVisibilityHideReasonIsConcrete(note), true);
 });
 

@@ -45,7 +45,10 @@ function parseArgs(argv) {
       options.toneMapSdr = true;
       options.toneMapLibplacebo = true;
     }
-    else if (arg === "--cpu-tone-map") options.cpuToneMap = true;
+    else if (arg === "--cpu-tone-map") {
+      options.cpuToneMap = true;
+      options.toneMapSdr = true;
+    }
     else if (arg === "--allow-decoder-recovery") options.allowDecoderRecovery = true;
     else if (["--input", "--output", "--video-stream", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--video-encoder", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];

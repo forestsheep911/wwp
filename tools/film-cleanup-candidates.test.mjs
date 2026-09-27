@@ -213,6 +213,33 @@ test("source cleanup treats a cancelled planned variant as closed", () => {
   }
 });
 
+test("a recorded quarantine failure blocks automatic source-move retries", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-cleanup-failed-move-"));
+  const sourcePath = path.join(root, "source.mkv");
+  fs.writeFileSync(sourcePath, "source");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 120,
+      absolute_path: sourcePath,
+      relative_path: "source.mkv",
+      source_kind: "file",
+      canonical_title: "Failed move",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] reviewed",
+      linked_variant_count: 1,
+      sync_ready_count: 1,
+      closed_variant_count: 1,
+      active_variant_count: 0,
+      quarantine_failure_json: JSON.stringify({ errorCode: "EBUSY", error: "file is locked" })
+    }]));
+    assert.equal(candidate.eligible, false);
+    assert.deepEqual(candidate.reasons, ["previous_quarantine_move_failed"]);
+    assert.equal(candidate.previousMoveFailure.errorCode, "EBUSY");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("source coverage count ignores sample media files", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-sample-count-"));
   const sourcePath = path.join(root, "source");

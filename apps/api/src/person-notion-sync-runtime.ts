@@ -54,7 +54,10 @@ export async function runPeopleNotionSyncFromEnvironment(options: {
   installNotionDnsOverride();
   const proxyUrl = notionProxyUrl();
   const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl, { keepAlive: false }) : undefined;
-  const clientOptions: ConstructorParameters<typeof Client>[0] = { auth: token };
+  const clientOptions: ConstructorParameters<typeof Client>[0] = {
+    auth: token,
+    timeoutMs: Math.max(1_000, numberOption("NOTION_REQUEST_TIMEOUT_MS", 30_000))
+  };
   if (proxyAgent) clientOptions.agent = proxyAgent;
   const source = new NotionPeopleSource(new Client(clientOptions), dataSourceId, new ProviderRateLimiter(1_000));
   const store = createPersonCatalogStore();

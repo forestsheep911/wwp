@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import https from "node:https";
 import dns from "node:dns";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -20,6 +21,7 @@ function parseArgs() {
     specTitle: "",
     apply: false,
     resolveIp: "",
+    localAddress: "",
     noProxy: false,
     delayMs: 0
   };
@@ -38,6 +40,7 @@ function parseArgs() {
     else if (name === "--state") options.statePath = value();
     else if (name === "--spec-title") options.specTitle = value();
     else if (name === "--resolve-ip") options.resolveIp = value();
+    else if (name === "--local-address") options.localAddress = value();
     else if (name === "--no-proxy") options.noProxy = true;
     else if (name === "--delay-ms") options.delayMs = Number(value());
     else if (arg === "--apply") options.apply = true;
@@ -54,6 +57,9 @@ function parseArgs() {
   }
   if (!Number.isFinite(options.delayMs) || options.delayMs < 0) {
     throw new Error("--delay-ms must be zero or positive.");
+  }
+  if (Boolean(options.resolveIp) !== Boolean(options.localAddress)) {
+    throw new Error("--resolve-ip and --local-address must be used together.");
   }
   if (options.specTitle && options.pageIds.length !== 1) {
     throw new Error("--spec-title requires exactly one --page-id.");
@@ -106,11 +112,15 @@ function installNotionDnsOverride(resolveIp) {
   console.log(`dns override: api.notion.com -> ${notionApiIp}`);
 }
 
-function createNotionClient(token, noProxy = false) {
+function createNotionClient(token, noProxy = false, localAddress = "") {
   const proxyUrl = dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY");
   const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
-  if (noProxy) {
-    options.fetch = nodeFetch;
+  if (localAddress) {
+    options.fetch = createPacedFetch(nodeFetch, { minIntervalMs: 1000 });
+    options.agent = new https.Agent({ keepAlive: true, localAddress });
+    console.log(`direct local address: ${localAddress}`);
+  } else if (noProxy) {
+    options.fetch = createPacedFetch(nodeFetch, { minIntervalMs: 1000 });
     options.agent = new https.Agent({ keepAlive: true });
     console.log("direct: proxy bypass");
   } else if (proxyUrl) {
@@ -663,7 +673,7 @@ async function main() {
 
   const token = dotenv("NOTION_TOKEN") || dotenv("NOTION_READ_ONLY_TOKEN");
   if (!token) throw new Error("Set NOTION_TOKEN or NOTION_READ_ONLY_TOKEN.");
-  const notion = createNotionClient(token, options.noProxy);
+  const notion = createNotionClient(token, options.noProxy, options.localAddress);
   const dataSource = await loadLibraryDataSource(notion);
 
   let pages;

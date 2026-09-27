@@ -17,7 +17,12 @@ function readJson(filePath) {
 
 function reportIdentity(report) {
   const credit = report?.proposedCredits?.[0] ?? {};
-  return { workId: credit.workId ?? report?.workId ?? null, title: credit.title ?? report?.title ?? null };
+  return {
+    workId: credit.workId ?? report?.workId ?? null,
+    pageId: credit.sourcePageId ?? credit.pageId ?? credit.metadataOnlyWork?.sourcePageId
+      ?? report?.metadataOnlyWork?.sourcePageId ?? report?.sourcePageId ?? null,
+    title: credit.title ?? report?.title ?? null
+  };
 }
 
 function hasCompletionEvidence(preflightPath, workId, artifactFiles = null) {
@@ -56,10 +61,16 @@ export function discoverPeopleResumeArtifacts(rootDir, { campaign = null } = {})
   const campaignByWorkId = new Map((campaign?.works ?? [])
     .filter((work) => work.externalWorkId)
     .map((work) => [work.externalWorkId, work]));
+  const campaignByPageId = new Map((campaign?.works ?? [])
+    .filter((work) => work.pageId)
+    .map((work) => [work.pageId.toLowerCase(), work]));
   const completedWorkIds = new Set((campaign?.works ?? [])
     .filter((work) => ["completed", "skipped"].includes(work.stages?.people?.status))
     .flatMap((work) => [work.externalWorkId, work.ledgerWorkId == null ? null : String(work.ledgerWorkId)])
     .filter(Boolean));
+  const completedPageIds = new Set((campaign?.works ?? [])
+    .filter((work) => ["completed", "skipped"].includes(work.stages?.people?.status) && work.pageId)
+    .map((work) => work.pageId.toLowerCase()));
   const entries = [];
   for (const preflightPath of allFiles.filter((file) => /preflight.*\.json$/iu.test(path.basename(file)))) {
     const preflight = readJson(preflightPath);
@@ -73,9 +84,11 @@ export function discoverPeopleResumeArtifacts(rootDir, { campaign = null } = {})
     const clean = Boolean(identity.workId) && preflight.status === "ready_for_authorized_apply" && reportPath && report
       && (report.identityIssues?.length ?? 0) === 0 && (report.unresolved?.length ?? 0) === 0;
     const artifactFiles = filesByDirectory.get(path.dirname(preflightPath)) ?? [];
-    const alreadyCompleted = identity.workId && (completedWorkIds.has(String(identity.workId))
-      || hasCompletionEvidence(preflightPath, identity.workId, artifactFiles));
-    const campaignWork = identity.workId ? campaignByWorkId.get(identity.workId) : null;
+    const alreadyCompleted = (identity.workId && (completedWorkIds.has(String(identity.workId))
+      || hasCompletionEvidence(preflightPath, identity.workId, artifactFiles)))
+      || (identity.pageId && completedPageIds.has(identity.pageId.toLowerCase()));
+    const campaignWork = (identity.workId ? campaignByWorkId.get(identity.workId) : null)
+      ?? (identity.pageId ? campaignByPageId.get(identity.pageId.toLowerCase()) : null);
     const notionCheckpointExists = artifactFiles
       .some((filePath) => /notion-upsert-checkpoint\.json$/iu.test(filePath));
     const catalogReplay = !alreadyCompleted && notionCheckpointExists

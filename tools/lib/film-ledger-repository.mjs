@@ -869,6 +869,10 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
           AND variants.next_review_at IS NOT NULL AND variants.next_review_at <= ?
           AND (works.next_review_at IS NULL OR works.next_review_at <= ?))
       )
+        AND (variants.source_id IS NULL OR EXISTS (
+          SELECT 1 FROM sources
+          WHERE sources.id=variants.source_id AND sources.missing=0
+        ))
       ORDER BY works.priority_score DESC, variants.created_at ASC LIMIT ?`)
       .all(timestamp(), timestamp(), timestamp(), timestamp(), normalizeLimit(limit, 5, 50));
   }
@@ -984,7 +988,12 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         AND COALESCE(works.scope_state, 'candidate') <> 'closed'
         AND sources.relative_path NOT LIKE '@flat/episode %'
         AND sources.quality_state NOT IN ('unacceptable', 'rejected')
-        AND NOT EXISTS (SELECT 1 FROM variants WHERE variants.source_id=sources.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM variants WHERE variants.source_id=sources.id
+            AND NOT (variants.production_state='deferred'
+              AND variants.publication_state='not_ready'
+              AND variants.failure_code IN ('missing_chinese_subtitle','no_verified_chinese_subtitle'))
+        )
         AND NOT EXISTS (
           SELECT 1 FROM sources AS canonical_sources
           WHERE canonical_sources.id <> sources.id
@@ -1240,7 +1249,15 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       details.nextRunAt ?? null, at, taskId);
     if (status === "done" && task.task_type === "metadata_backfill" && task.work_id) {
       const work = db.prepare("SELECT next_review_at FROM works WHERE id=?").get(task.work_id);
-      if (work?.next_review_at && work.next_review_at <= at && details.nextRunAt == null) {
+      const requestedNextReviewAt = details.nextRunAt ?? null;
+      if (requestedNextReviewAt) {
+        db.prepare("UPDATE works SET next_review_at=?, updated_at=? WHERE id=?")
+          .run(requestedNextReviewAt, at, task.work_id);
+        insertEvent.run("work", task.work_id, "metadata_review_scheduled", stableJson({
+          nextReviewAt: requestedNextReviewAt,
+          reason: details.reason ?? "Completed metadata maintenance; schedule the next bounded review"
+        }), at);
+      } else if (work?.next_review_at && work.next_review_at <= at) {
         const nextReviewAt = new Date(new Date(at).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
         db.prepare("UPDATE works SET next_review_at=?, updated_at=? WHERE id=?")
           .run(nextReviewAt, at, task.work_id);

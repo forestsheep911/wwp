@@ -1,5 +1,16 @@
 # WWP Decision Rules
 
+## Highest-priority visibility rule
+
+**先让用户看得到，再继续修；不要把“流程未完成”变成“网站不可见”。**
+只要当前公开的影视条目/播放路径不妨碍普通用户观看，就默认公开；小缺陷、质量仍可提升、
+资料或字幕待补、海报/评分/人物待补、尚未抽检、状态仍处理中，都记为后续事项，不得仅因此
+勾选工作级 `Hide from Website`、暂停发布或要求用户再次批准。看不出缺陷是否影响观看时，
+按“不影响观看”处理并安排复核，不按风险猜测隐藏。只有本轮实测证明唯一/全部可用播放路径
+确实无法正常观看，或用户明确要求暂不公开，才隐藏整个作品；问题只影响一个规格/集时，只隔离
+该子路径。作品条目本身是目录资料，即使暂时还没有播放资源也保持可见。此规则高于一般 QC、
+元数据完整度、Needs Review、流程状态和“谨慎起见”的习惯；发布与后续修复可以并行。
+
 ## Inputs
 
 - The video/source input directory is provided by the user for the current task. Do not treat any historical path as fixed.
@@ -28,13 +39,51 @@ Work-level metadata is a separate high-priority track. If a scanned work is wort
 
 ## Hard Gates
 
+**缺陷容忍按“能否观看”判断，不按“是否达到理想成片”判断。** 只要用户能正常打开并观看，
+音量/画质仍可优化、存在轻微瑕疵或元数据尚未补齐，都先公开，记入后续修复；不要把“有缺点”
+等同于“不能看”。只有实际妨碍打开、解码、声音/画面基本呈现或内容辨识的故障，才隔离对应路径；
+一个规格或单集的问题不得连带隐藏仍正常的其他路径。影响不明时先公开并记下具体复核项，不以等待确认作为发布审批。
+
+**发布默认值：只要普通用户仍能正常观看，就先公开；任何可后补的缺陷都留在后续任务。**
+隐藏不是谨慎默认值，也不是阻止制作/资料流程的按钮。只有当前证据证明会影响普通用户观看，
+或用户明确要求暂不公开，才隐藏受影响的路径；其余情况保持公开并继续补救。
+
+**“不影响观看”的执行口径：** 视频能打开，主要画面、声音和内容可辨识，即按可观看处理并尽量公开；
+不要求达到理想码率、音量平衡、色彩、字幕完整度或资料完整度。轻微瑕疵、尚未复核、兼容性疑虑、
+`Needs Review`、Notion/账本/网站同步待办均不构成隐藏理由。只有已复现的打不开、无主要画面/声音、
+内容错误或其他实际阻止普通用户观看的问题，才隔离对应规格/集；只有全部可用路径都受影响时才隐藏作品。
+
+**可见性裁决优先于一般流程阻拦。** 每次遇到阻塞，先判断它阻止的是编码、资料补全、人工确认，还是
+普通用户观看；前三类只暂停对应事项并继续其他可执行工作，不能顺手勾选工作级 `Hide from Website`。
+只要仍有一条已发布路径可正常观看，就先保持/恢复网站可见，并把缺陷留在 `Workflow Note` 或对应问题字段
+继续修；不要求用户为“不影响观看的小缺陷”重复批准发布。只有证据证明所有现有播放路径都实际影响观看，
+或用户明确要求整条暂不公开，才隐藏整个作品。具体故障只影响某个规格/集数时，只隔离那条路径。
+
+**用户的缺陷容忍决策优先执行：** 只要条目不影响普通用户观看，就尽量先公开，缺陷以后补。
+轻微质量瑕疵、未证实的风险、元数据或规格未完成，都不是发布审批条件；不得因等待人工确认而
+停住一个已可观看的条目。只有本轮可复现证据表明所有可用路径均影响观看，才隐藏整个作品；
+局部故障只隔离对应路径。不确定影响时默认可见，记录问题和复查条件。
+
 ### Minimal Visibility Blockers
+
+**最高优先级：先发布可观看版本，缺陷留在后续修。** 只要现有版本不妨碍普通用户观看，
+就应尽量公开；资料不完整、质量还能提升、尚未抽检完、`Needs Review`、AI/人工问题未清、
+或仍有其他规格/集数待做，都不能把“发布”升级成“全部做完才发布”。最低门槛是确认视频块已上传、
+并对应正确作品及规格/集页面，避免发布错片或空链接；ffprobe、Media Assets 字段补录、账本最终状态
+和网站读回继续并行/后续完成，不能反过来挡住已可观看版本。
+隐藏仅用于本轮有明确证据的实际观看故障，或用户明确要求暂不公开；不确定时保持公开并记录复核。
 
 **默认不勾选 `Hide from Website`。** 这是“网站现在是否应该隐藏”开关，不是
 “这条工作是否还有待办”的开关。只要已经存在的公开路径不影响正常观看，或者
 目前只是资料/规格尚未补齐，就应保持可见；后续修复不需要先下架。`AI 处理中`、
 `待人工确认`、`暂缓`、`Needs Review`、缺海报、缺人物、评分待补、标题待整理、
 可选规格未做，均只能生成 follow-up，不能自动把工作条目设为隐藏。
+
+**执行时的强制复核：** 每次读取到 `Hide from Website=true`，不得直接继承并把它当成
+“有人决定暂缓”。先查当前 `Workflow Note` 是否有明确、仍有效的人工暂缓指令，再查本轮是否有
+可复现且影响普通用户观看的证据；若两者都没有，就清除该勾选并继续网站同步/其他待办。
+隐藏原因不明、旧问题已修好、只有流程或资料阻塞，都不构成保留隐藏的理由。设置或保留隐藏时，
+必须在同一轮记录具体故障、影响到的路径及复核/恢复条件；局部故障只隐藏局部路径。
 
 `Hide from Website` is the narrowest playback safety gate in this workflow.
 It is not a conservative default: if the evidence does not prove a viewing
@@ -51,9 +100,13 @@ work-level visibility gate.
 The work page is also a catalog entry, so it may remain visible while metadata
 is being collected or while the first playable spec is being prepared. Use it
 only for a concrete reason that can stop or materially corrupt normal viewing
-of an exposed media path: a broken or misplaced media/page structure, a failed
-Media Assets or website readback, an unresolved codec/audio/color/subtitle
-compatibility risk with evidence of viewing impact, or an explicit human hold.
+of an exposed media path: a broken or misplaced media/page structure that
+prevents opening the intended video, or an observed playback failure affecting
+all usable paths, or an explicit human hold. A missing/incomplete Media Assets
+row, failed metadata readback, or unverified compatibility concern is not by
+itself a viewing failure; keep it as follow-up. Treat a mapping/structure
+problem as a visibility blocker only when it is verified to make the site open
+the wrong video or fail to open the intended video.
 Do not use it as a general
 "not finished" flag. Once any one exact specification or episode is usable,
 release the work-level page and isolate unfinished siblings at their own
@@ -64,6 +117,12 @@ Minor defects and incomplete catalog data are not visibility blockers. When
 impact is uncertain, prefer the verified playable delivery being visible
 and record the uncertainty in `Workflow Note`/`Needs Review`; re-hide only after
 new viewing-affecting evidence or a fresh human hold.
+This is an execution rule, not merely a preference: a pass that discovers an
+already usable published path must clear any stale automation-owned
+work-level hide before moving on to metadata or quality follow-up. Do not ask
+the user to approve routine release of a watchable item; ask only when there is
+a concrete unresolved risk to every usable path or the user has requested a
+hold.
 Words such as “可能无法播放”“疑似解码问题”“待确认播放风险” or “待复核” are
 not viewing evidence by themselves. They must fail open and keep the title
 visible until a real playback/QC/readback failure is recorded. Do not turn a
@@ -78,14 +137,73 @@ usable. A work-level hide requires evidence that the whole title or its only
 playable path is affected; a small defect that can be repaired later is not
 enough.
 
+**Quality is not the same as watchability.** Do not block or hide a title just
+because its encode is not ideal, metadata is imperfect, or a repair would make
+it better. If the known issue does not stop normal viewing, publish the usable
+path and record the improvement as follow-up. Do not demand certainty that a
+title is flawless before release. Keep the exact affected empty, broken, or
+unsafe child path isolated; a valid sibling path keeps the work visible. This
+rule does not authorize exposing an empty media block, a broken page relation,
+or a path with an observed playback failure.
+
+For website playback, require an observed, reproducible failure before hiding:
+record the exact page/asset, playback entry point and client used, the symptom,
+and whether every currently usable path is affected. A theoretical codec or
+color concern, an unconfirmed report, an issue limited to one non-target client,
+or a minor repairable defect is follow-up, not a work-level release blocker.
+When scope is unclear, keep the work visible and isolate/review only the
+uncertain child path. After upload, page structure, Media Assets readback, and
+the normal publication checks pass, do not turn optional spot-check findings
+into a whole-title release gate unless they demonstrate an actual viewing
+failure across all usable paths.
+
+**Production rejection is not a visibility decision.** “不值得压制”“片源质量
+不适合新压制”“本轮暂缓” only decides whether to create a new encode. It must
+not hide an already published, independently watchable variant. Before setting
+work-level `Hide from Website=true`, answer all three questions in the current
+run: (1) Which exact published spec/episode is affected? (2) What observed fact
+prevents or materially disrupts ordinary viewing? (3) Are all currently usable
+paths affected, or did the user explicitly request a work-level hold? If any
+answer is missing, keep the work visible and record the uncertainty or repair
+as follow-up. When only one child path fails, hide only that child. A minor
+quality difference, non-blocking defect, or preference for a better encode is
+not material viewing impact.
+
+**Observed evidence, not a keyword, controls automatic hiding.** A symptom
+phrase such as “无声音”“无法解码” or “严重偏色” in a note is not by itself
+proof that playback fails. Automated visibility gates require a current
+reproduction/test/confirmation note; an unverified report or inherited warning
+remains follow-up. Work-level hiding additionally requires evidence that all
+currently usable paths, or the only usable path, are affected. If that scope
+has not been established, keep the work visible and isolate the specific
+uncertain child path. A direct human instruction to keep the work unpublished
+remains authoritative.
+
 #### Three independent gates
+
+**用户可见性总优先级（覆盖其他流程 gate）**：对于已有已上传媒体的影视条目，
+只要仍有至少一条路径可以正常观看，就应尽量公开该路径并保持作品可见；资料、规格、
+质检、人工确认、账本、同步或 `Workflow Status` 的其他阻塞，只能暂停各自事项，不能
+连带阻止可观看内容上线。缺陷不影响观看，或影响尚未得到证实时，默认先放出、记录并
+继续修复；不得为了等待“完整/完美”而勾选工作级 `Hide from Website`。确有播放故障时
+只隐藏受影响的规格/集；只有全部可用路径均被证实无法正常观看，或用户明确要求整条
+暂不公开，才隐藏作品。这个裁决不等于把未上传的空子页面公开，也不替代发布后同步、
+Media Assets 和账本闭环。
+
+**最高优先级的可见性快判（先判断是否能看，不等流程全部做完）**：只要至少一条
+已上传路径没有证据表明会妨碍普通用户观看，就保持/改为公开。字幕、海报、简介、评分、
+人物、AI 检查、规格补齐、抽检未完成、状态不是“已完成”，都不是隐藏理由；能后补的
+缺陷记入后续工作，发布与修复并行。只有已复现且影响观看的故障覆盖唯一/全部可用路径，
+或用户明确要求暂不公开，才隐藏整个作品；局部故障只隔离对应规格/集。证据不确定时
+默认公开，不得把“保守起见”当作隐藏依据。每次操作 `Hide from Website=true` 前，必须
+记录故障证据及影响范围或明确的人类暂缓指令；否则不得勾选。
 
 Every handoff must classify these gates separately. Never copy a failure from
 one gate into another:
 
 | Gate | Question | Typical blockers | Default action |
 | --- | --- | --- | --- |
-| Website visibility | Can a normal user watch an exposed path? | no audio, decode failure, black/green picture, broken page/media relation, failed Media Assets readback, explicit human hold | Hide only the affected child; hide the parent only when the only/all exposed paths are unsafe |
+| Website visibility | Can a normal user watch an exposed path? | no audio, decode failure, black/green picture, page/media mapping that prevents opening the video, explicit human hold | Hide only the affected child; hide the parent only when the only/all exposed paths are unsafe |
 | Follow-up/review | Is there something worth repairing or confirming? | poster, score, People, AI advice, naming, missing optional variant, `Needs Review`, issue note, uncertain but currently watchable defect | Keep visible; record the exact follow-up and continue other lanes |
 | Final completion | Can this work be called `已完成`? | metadata not verified, unresolved issue fields, missing poster, open expansion decision | Keep visible if playback is usable; retain `AI 处理中`/`待人工确认` and requeue the missing work |
 
@@ -98,7 +216,8 @@ visibility block.
 
 - **Visibility decision order:** first ask whether a normal user can play at least
   one exact published spec/episode. If yes, publish the work unless there is a
-  concrete playback/structure/Media Assets defect or an explicit human hold.
+  concrete playback failure or a page/media mapping defect that prevents a
+  normal user from opening the intended video, or an explicit human hold.
   Do not turn a metadata, poster, rating, People, review, naming, optional-spec,
   or other repair task into `Hide from Website=true`. Those are follow-up queues,
   not viewing failures. If no playable path exists yet, keep the parent catalog
@@ -118,10 +237,19 @@ visibility block.
   `Hide from Website=false` by default, including source-only Media Assets rows
   that are not exposed as playable website variants. It may write `true` only
   when the manifest carries an explicit visibility hold or the same run records
-  a concrete playback/structure/Media Assets risk. Creating an empty
+  a concrete, current playback failure or a page/media mapping defect that
+  prevents normal viewing. Missing technical fields, index-sync errors, or
+  non-playback Media Assets mismatches are follow-up work, not visibility risks.
+  Creating an empty
   work/spec/episode page before upload may still start hidden; that provisional
   default must be cleared in the first bounded run that verifies a usable media
   path.
+- **Blocker scope is not visibility scope:** a paused encode, unresolved metadata,
+  missing optional subtitle/variant, pending review, or incomplete final
+  completion may stop that task or prevent `Workflow Status=已完成`; it must not
+  stop unrelated workflow lanes or hide a different path that remains watchable.
+  Report the blocked task and its next trigger separately from the website
+  visibility decision.
 - **Release evidence outranks stale notes:** after the exact release manifest
   independently verifies one usable playable path, `--release-visibility` must
   not be blocked by an old or child-scoped playback warning in `Workflow Note`.
@@ -135,14 +263,19 @@ visibility block.
   reason is absent or only describes metadata/review work, write the asset
   visible and keep the issue in `Workflow Note`/the relevant issue field.
 - Website visibility is a playback gate, not a metadata perfection gate. Once one
-  exact work/spec/episode path is playable and has passed structure, Media Assets,
-  ffprobe/QC, ledger, and publication readback, release the work-level
-  `Hide from Website` gate in that same publication run. Missing posters, ratings,
+  uploaded video block is confirmed on its exact work/spec/episode page and no
+  current evidence shows that normal users cannot watch it, release the work-level
+  `Hide from Website` gate in that same run. Do not wait for ffprobe/Media Assets
+  completion, final ledger state, or website readback; run those as publication
+  follow-up and report failures without re-hiding a watchable work. Missing posters, ratings,
   People, AI advice, `Needs Review`, `Human Issue`, `AI Issue`, or optional
   specification expansion become follow-up work and must not block viewing.
 - Keep the whole work hidden only when an exposed media path has a concrete
-  playback or structure risk, the Media Assets/readback is unsafe, or the human
-  explicitly requests a visibility hold. A metadata-only work, a work waiting
+  playback failure, a page/media structure that prevents users from opening
+  the video, or the human explicitly requests a visibility hold. Missing or
+  incomplete ffprobe/Media Assets fields are follow-up work, not a reason to
+  hide a path that is already known to play; hide only if the missing record
+  actually prevents the website from exposing that path. A metadata-only work, a work waiting
   for subtitles, and a work waiting for its first encode remain visible by
   default; hide only the affected empty or unsafe child spec/episode. A
   defective sibling specification may remain hidden without hiding the work.
@@ -184,7 +317,7 @@ visibility.
 - A verified `国配` source without Chinese subtitles may proceed through production, publication, and final completion. Record missing Chinese subtitles as a non-blocking future enhancement in the production manifest and the AI completion note; do not set `暂缓`, `Needs Review`, or `Hide from Website` for that reason alone. This exception applies only to the verified Mandarin branch; a separate foreign-original-audio branch still needs usable Chinese subtitles.
 - Dolby Vision Profile 5 is a normal-production blocker unless there is an explicit compatible color strategy; prefer a non-DV or HDR10-compatible source for full pipeline work.
 - When a worthwhile subtitle-dependent source has no verified Chinese subtitle, create or continue a bounded `wwp-subtitle-acquirer` task. Browser-backed providers require an explicit page refresh/capture in v0.1; record `waiting_user` or `deferred` rather than silently abandoning the source. Do not bypass login, CAPTCHA, copyright removal, download confirmation, or other access controls.
-- Skip sources with poor technical quality, serious color risk, unreliable subtitle timing, broken audio, or likely encode failure unless the user asks for an experiment.
+- **Production selection only:** skip a new encode from a source with poor technical quality, serious color risk, unreliable subtitle timing, broken audio, or likely encode failure unless the user asks for an experiment. This does not authorize hiding the work or any other already-published variant; apply the visibility gate above to each existing playback path independently.
 - Do not encode just because a file is present.
 
 ## Priority Signals

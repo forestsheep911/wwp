@@ -7,6 +7,7 @@ test("defines immutable identity, editorial locks, publication state, and proven
   const schema = peoplePropertySchema();
   assert.deepEqual(schema.Name, { title: {} });
   assert.deepEqual(schema["Person ID"], { rich_text: {} });
+  assert.deepEqual(schema["Douban Person ID"], { rich_text: {} });
   assert.ok(schema["Locked Fields"].multi_select.options.some((option) => option.name === "Chinese Name"));
   assert.deepEqual(schema["Biography ZH"], { rich_text: {} });
   assert.ok(schema["Biography ZH Status"].select.options.some((option) => option.name === "verified"));

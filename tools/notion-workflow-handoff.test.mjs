@@ -97,7 +97,11 @@ test("work-level hiding requires a concrete viewing or explicit human-hold reaso
   assert.match(cli, /Keeping Hide from Website=true requires --note with a concrete viewing/u);
   assert.match(cli, /uncertainty and metadata follow-up are not hiding reasons/u);
   assert.equal(visibilityHideReasonIsConcrete("资料还没补齐，Needs Review=true"), false);
-  assert.equal(visibilityHideReasonIsConcrete("Edge 播放无声音，暂不发布"), true);
+  assert.equal(visibilityHideReasonIsConcrete("Edge 播放无声音，暂不发布"), false);
+  assert.equal(visibilityHideReasonIsConcrete("实测 Edge 播放无声音，暂时隐藏该规格"), true);
+  assert.equal(visibilityHideReasonIsConcrete("实测 Media Assets 缺失，暂缓发布"), false);
+  assert.equal(visibilityHideReasonIsConcrete("实测 Media Assets 读回失败，ffprobe 待补"), false);
+  assert.equal(visibilityHideReasonIsConcrete("实测页面映射错误，导致网站无法打开视频"), true);
 });
 
 test("ordinary handoff writes include stale-visibility cleanup", () => {
@@ -115,9 +119,15 @@ test("visibility fails open for uncertain or child-scoped follow-up", () => {
   });
 
   assert.equal(workVisibilityHideReasonIsConcrete("资料未补齐，海报待修，Needs Review=true"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("画面有轻微瑕疵，但不影响正常观看，后续可以再修"), false);
   assert.equal(workVisibilityHideReasonIsConcrete("第 3 集播放无声音，其他规格正常"), false);
-  assert.equal(workVisibilityHideReasonIsConcrete("全片无法解码，唯一可播放版本不可用"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("全片无法解码，唯一可播放版本不可用"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测全片无法解码，唯一可播放版本不可用"), true);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测 Media Assets 缺失，但视频块可以正常播放"), false);
+  assert.equal(workVisibilityHideReasonIsConcrete("实测全部规格页面映射错误，导致网站无法打开视频"), true);
   assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("资料未补齐，后续补齐即可")), true);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("画面有轻微瑕疵，但不影响正常观看，后续可以再修")), true);
   assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("第 3 集播放无声音，先隔离这一集")), true);
-  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("全片无法播放，暂不发布")), false);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("【AI(^_^) 2026-09-24T00:00:00.000Z】 全片无法播放，暂不发布")), true);
+  assert.equal(shouldAutoReleaseWorkVisibility(hiddenPage("实测全片无法播放，暂不发布")), false);
 });

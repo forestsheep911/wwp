@@ -18,15 +18,17 @@ export type PersonIdentityDecision =
       sources: PersonExternalIdSource[];
     };
 
-const sources: PersonExternalIdSource[] = ["tmdb", "imdb", "wikidata"];
+const sources: PersonExternalIdSource[] = ["tmdb", "imdb", "douban", "wikidata"];
 
 export function normalizePersonExternalIds(value: PersonExternalIds | undefined): PersonExternalIds {
   const tmdb = normalizeTmdbPersonId(value?.tmdb);
   const imdb = normalizeImdbPersonId(value?.imdb);
+  const douban = normalizeDoubanPersonId(value?.douban);
   const wikidata = normalizeWikidataId(value?.wikidata);
   return {
     ...(tmdb ? { tmdb } : {}),
     ...(imdb ? { imdb } : {}),
+    ...(douban ? { douban } : {}),
     ...(wikidata ? { wikidata } : {})
   };
 }
@@ -88,6 +90,11 @@ export function normalizeTmdbPersonId(value?: string) {
 export function normalizeImdbPersonId(value?: string) {
   const normalized = value?.trim().toLowerCase();
   return normalized && /^nm\d+$/.test(normalized) ? normalized : undefined;
+}
+
+export function normalizeDoubanPersonId(value?: string) {
+  const normalized = value?.trim();
+  return normalized && /^\d{4,12}$/.test(normalized) ? normalized : undefined;
 }
 
 export function normalizeWikidataId(value?: string) {

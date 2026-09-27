@@ -563,6 +563,10 @@ function planUpdates(
 }
 
 async function main() {
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    console.log("Usage: npx tsx apps/api/src/notion-omdb-enrichment.ts [--page-id <id>] [--limit 25] [--max-updates 5] [--delay-ms 250] [--report <json>] [--apply]");
+    return;
+  }
   const options = parseArgs();
   const notionToken = options.apply
     ? process.env.NOTION_WRITE_TOKEN ?? process.env.NOTION_TOKEN

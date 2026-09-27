@@ -76,6 +76,16 @@ Douban page.
      `missingCoreFields`, sources attempted, concrete blocker, and
      `next_review_at`; never mark it `done` merely because all available fetches
      were attempted.
+15b. Optional ratings remain non-blocking, but a verified recently released
+     work must not lose its follow-up merely because the core gate passed. When
+     any of `豆瓣评分`, `IMDB评分`, `Metascore`, or `烂番茄新鲜度` is empty and an
+     exact `上映日期` is available, complete the current task with a bounded
+     ledger review: 7 days for release age 0-30 days, 14 days for 31-90 days,
+     and 30 days for 91-180 days. For an unreleased work, schedule seven days
+     after release. Do not keep polling for this reason after 180 days; a later
+     explicit audit may still requeue it. The task-sync readback owns this
+     scheduling so a manual metadata patch cannot permanently close a new
+     release before its optional score pass has had time to mature.
 16. If stronger sourced metadata resolves a low-confidence AI age check, refresh only the exact work page. Clear only the corresponding resolved AI issue; preserve all human text and unrelated AI findings.
 17. After a metadata-only pass, preserve `Workflow Status=已完成` only when the separate playable cycle has exact `sync_ready` evidence and the current exact metadata readback remains `verified` with usable poster/live-site evidence. Otherwise do not preserve or set `已完成`: keep a published-but-metadata-incomplete work `AI 处理中`, or set `暂缓` when playable production itself is blocked, and append an AI marker naming the exact blocker and recovery condition.
 
@@ -109,7 +119,7 @@ node tools/notion-metadata-backfill.mjs --page-id <page-id> --douban-subject <pa
 - `分级` is official/source rating. It is separate from AI age suggestion fields.
 - `Media Availability` is an operational media state and should not be inferred by this metadata skill unless a media workflow has verified the state.
 - A complete metadata page may remain hidden and non-playable. Do not treat lack of playable media as a reason to skip metadata enrichment.
-- `Hide from Website` is a narrow playback-safety gate, not a metadata-completeness or review gate. Metadata tools must not set it for missing fields, poster, ratings, People, `Needs Review`, naming, or optional follow-up. If an existing playable path is not affected, keep the work visible and record the repair in the follow-up fields. The publisher clears an inherited/automation-owned hide as soon as the exact usable path passes its playback, structure, Media Assets, and readback checks; only a concrete viewing/structure risk or an explicit human hold may keep it hidden.
+- `Hide from Website` is a narrow playback-safety gate, not a metadata-completeness or review gate. Metadata tools must not set it for missing fields, poster, ratings, People, `Needs Review`, naming, or optional follow-up. If an existing playable path is not affected, keep the work visible and record the repair in the follow-up fields. The publisher clears an inherited/automation-owned hide once the exact usable path is correctly mapped and there is no evidence it prevents normal viewing; ffprobe/Media Assets backfill and website readback continue in parallel/after release unless a missing field actually prevents the website from exposing or opening that video. Only an actual viewing failure or an explicit human hold may keep it hidden; identity/structure/Media Assets mismatches are not visibility reasons unless they cause the wrong video to play or prevent the intended one from opening.
 - `Needs Review` can be set by metadata conflicts, unmapped genres, ambiguous matching, low-confidence AI advisory, or unresolved manual decisions. Clear it only after the concrete review reason is resolved.
 - `Human Issue` preserves human-authored and migrated legacy issues. AI automation must treat it as read-only. `AI Issue` is limited to unresolved findings from AI inspections; do not use it as a run log or copy successfully resolved findings into it.
 - `Last AI Check Time` records a completed AI inspection, including no-change checks. Use it to avoid repeat work and schedule later rating refreshes; newly released or airing works, missing fields, and unresolved issues may be checked sooner than stable completed works.

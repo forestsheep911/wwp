@@ -489,7 +489,7 @@ function sameCreditIdentity(left: MovieCreditEntry, right: MovieCreditEntry, rev
 function creditIdentityScore(left: MovieCreditEntry, right: MovieCreditEntry, reviewedProfile?: PersonProfile) {
   const leftIds = normalizePersonExternalIds(left.externalIds);
   const rightIds = normalizePersonExternalIds(right.externalIds);
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     if (leftIds[source] && rightIds[source] && leftIds[source] === rightIds[source]) return 3;
   }
   const leftNames = [left.name, left.originalName].filter(Boolean).map((value) => normalizePersonNameSearchKey(value!));
@@ -615,7 +615,7 @@ function hasSharedStableExternalId(
   left: PersonExternalIds,
   right: PersonExternalIds
 ) {
-  return (["tmdb", "imdb", "wikidata"] as const).some((source) => (
+  return (["tmdb", "imdb", "douban", "wikidata"] as const).some((source) => (
     Boolean(left[source]) && left[source] === right[source]
   ));
 }
@@ -738,7 +738,7 @@ function assertNoDuplicateExternalIds(state: PersonCatalogState) {
   const seen = new Map<string, string>();
   for (const entry of Object.values(state.people)) {
     const ids = normalizePersonExternalIds(entry.profile.externalIds);
-    for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+    for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
       const value = ids[source];
       if (!value) continue;
       const key = `${source}:${value}`;

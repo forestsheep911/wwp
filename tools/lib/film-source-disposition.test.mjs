@@ -24,14 +24,15 @@ test("closed and eligible source is actionable cleanup work", () => {
   assert.equal(item.nextTrigger, "移动到同盘待人工删除目录");
 });
 
-test("a failed quarantine move becomes an explicit human-visible blocker", () => {
+test("a failed quarantine move is a visible local blocker, not actionable or human work", () => {
   const item = classifySourceDisposition({
     source,
     cleanupCandidate: { eligible: true, reasons: [] },
     events: [{ event_type: "source_quarantine_failed", payload_json: '{"errorCode":"EPERM"}' }]
   });
   assert.equal(item.disposition, "cleanup_move_failed");
-  assert.equal(item.needsHumanConfirmation, true);
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
   assert.match(item.nextTrigger, /文件占用/u);
 });
 
@@ -351,6 +352,19 @@ test("successful QC notes do not turn a released variant into a technical blocke
   assert.equal(item.reasons.includes("variant_failure"), false);
 });
 
+test("a prior quarantine move failure stays blocked even when its candidate is no longer eligible", () => {
+  const item = classifySourceDisposition({
+    source,
+    variants: [{ id: 16, production_state: "qc_passed", publication_state: "sync_ready" }],
+    cleanupCandidate: { eligible: false, reasons: ["previous_quarantine_move_failed"] },
+    events: [{ entity_type: "source", event_type: "source_quarantine_failed", payload_json: "{\"errorCode\":\"EBUSY\"}" }]
+  });
+  assert.equal(item.disposition, "cleanup_move_failed");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /解除文件占用/u);
+});
+
 test("a season placeholder superseded by episode targets does not block the closed episode set", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_note: "[规格扩展:CLOSED] 本季按 episode 独立交付" },
@@ -377,13 +391,13 @@ test("a source without its own variant stays closed when the work explicitly clo
 test("summary retains residue, human, cleanup, and scheduled counts", () => {
   const summary = summarizeSourceDispositions([
     { disposition: "cleanup_ready", actionableNow: true, needsHumanConfirmation: false },
-    { disposition: "cleanup_move_failed", actionableNow: true, needsHumanConfirmation: true },
+    { disposition: "cleanup_move_failed", actionableNow: false, needsHumanConfirmation: false },
     { disposition: "scheduled_review", actionableNow: false, needsHumanConfirmation: false }
   ]);
   assert.deepEqual(summary, {
     residualSourceCount: 3,
-    actionableNow: 2,
-    needsHumanConfirmation: 1,
+    actionableNow: 1,
+    needsHumanConfirmation: 0,
     cleanupReady: 1,
     cleanupMoveFailed: 1,
     scheduledReview: 1,

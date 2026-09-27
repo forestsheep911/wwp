@@ -19,7 +19,7 @@ import {
   pageTitle,
   pendingHumanWorkflowNoteFromPage,
   propertyText,
-  workVisibilityBlockers,
+  workVisibilityReleaseBlockers,
   workCompletionBlockers,
   workflowNoteFromPage,
   workVisibilityHideReasonIsConcrete,
@@ -190,11 +190,10 @@ async function applySet(notion, page, options) {
     throw new Error(`Final completion blocked: ${releaseBlockers.join(", ")}. This does not block website visibility; use --release-visibility after exact playable readback.`);
   }
   if (releaseVisibility) {
-    // The caller reaches this path only after exact playable evidence has
-    // been verified. A stale or child-scoped playback note must not block the
-    // whole work page; an explicit human work-level hold remains authoritative.
-    const visibilityBlockers = workVisibilityBlockers(page)
-      .filter((blocker) => blocker === "visibility_hold");
+    // Metadata/review/completion blockers are deliberately excluded. A current
+    // reproduced failure affecting every usable path or an explicit human hold
+    // still requires resolution before the work-level page is released.
+    const visibilityBlockers = workVisibilityReleaseBlockers(page);
     if (visibilityBlockers.length) {
       throw new Error(`Work visibility release blocked: ${visibilityBlockers.join(", ")}`);
     }

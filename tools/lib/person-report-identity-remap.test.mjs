@@ -56,6 +56,24 @@ test("allows one exact IMDb identity when the incoming profile carries reviewed 
   assert.equal(output.proposedCredits[0].credits[0].personId, "existing");
 });
 
+test("allows filling a missing existing provider ID when other stable IDs prove identity", () => {
+  const report = {
+    proposedProfiles: [{ personId: "incoming", externalIds: { imdb: "nm1", tmdb: "1", douban: "27224678" } }],
+    proposedCredits: [{ credits: [{ personId: "incoming" }] }]
+  };
+  const output = remapReportToExistingPeople(report, { conflicts: [{
+    incomingPersonId: "incoming",
+    existingPersonId: "existing",
+    pageId: "page-1",
+    externalIds: ["imdb:nm1", "tmdb:1"],
+    incomingExternalIds: { imdb: "nm1", tmdb: "1", douban: "27224678" },
+    existingExternalIds: { imdb: "nm1", tmdb: "1", douban: undefined }
+  }] });
+  assert.equal(output.proposedProfiles[0].personId, "existing");
+  assert.equal(output.proposedProfiles[0].externalIds.douban, "27224678");
+  assert.equal(output.proposedCredits[0].credits[0].personId, "existing");
+});
+
 test("rejects conflicts that point at multiple existing people", () => {
   assert.throws(() => remapReportToExistingPeople({ proposedProfiles: [] }, { conflicts: [
     { incomingPersonId: "person-new", existingPersonId: "person-a", pageId: "page-a", externalIds: ["imdb:nm1"], incomingExternalIds: { imdb: "nm1", tmdb: "1" }, existingExternalIds: { imdb: "nm1" } },

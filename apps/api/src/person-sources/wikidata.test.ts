@@ -18,6 +18,7 @@ test("maps multilingual labels and stable crosswalk ids", async () => {
           P31: [{ mainsnak: { datavalue: { value: { value: "Q5" } } } }],
           P345: [{ mainsnak: { datavalue: { value: "nm0000093" } } }],
           P4985: [{ mainsnak: { datavalue: { value: "287" } } }],
+          P12836: [{ mainsnak: { datavalue: { value: "1234567" } } }],
           P569: [{ mainsnak: { datavalue: { value: { time: "+1963-12-18T00:00:00Z" } } } }],
           P18: [{ mainsnak: { datavalue: { value: "Brad Pitt 2019.jpg" } } }]
         }
@@ -26,7 +27,7 @@ test("maps multilingual labels and stable crosswalk ids", async () => {
   });
 
   const evidence = await source.fetchPersonEvidence("q35332");
-  assert.deepEqual(evidence.externalIds, { tmdb: "287", imdb: "nm0000093", wikidata: "Q35332" });
+  assert.deepEqual(evidence.externalIds, { tmdb: "287", imdb: "nm0000093", douban: "1234567", wikidata: "Q35332" });
   assert.deepEqual(evidence.names.map((entry) => [entry.value, entry.language]), [
     ["布拉德·皮特", "zh-cn"],
     ["Brad Pitt", "en"],
@@ -38,6 +39,39 @@ test("maps multilingual labels and stable crosswalk ids", async () => {
     ["American actor", "en", "wikidata"]
   ]);
   assert.match(evidence.images?.[0].url ?? "", /Brad%20Pitt%202019\.jpg/);
+});
+
+test("falls back to the Douban movie celebrity ID when personage ID is absent", async () => {
+  const source = new WikidataPersonSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async () => Response.json({ entities: { Q42: {
+      labels: { en: { value: "A Voice Actor" } },
+      claims: {
+        P31: [{ mainsnak: { datavalue: { value: { value: "Q5" } } } }],
+        P5284: [{ mainsnak: { datavalue: { value: "1038095" } } }]
+      }
+    } } })
+  });
+
+  const evidence = await source.fetchPersonEvidence("Q42");
+  assert.equal(evidence.externalIds.douban, "1038095");
+});
+
+test("preserves the established Douban personage ID when both Douban identifiers exist", async () => {
+  const source = new WikidataPersonSource({
+    limiter: new ProviderRateLimiter(0),
+    fetchImpl: async () => Response.json({ entities: { Q42: {
+      labels: { en: { value: "A Voice Actor" } },
+      claims: {
+        P31: [{ mainsnak: { datavalue: { value: { value: "Q5" } } } }],
+        P12836: [{ mainsnak: { datavalue: { value: "27243846" } } }],
+        P5284: [{ mainsnak: { datavalue: { value: "1038095" } } }]
+      }
+    } } })
+  });
+
+  const evidence = await source.fetchPersonEvidence("Q42");
+  assert.equal(evidence.externalIds.douban, "27243846");
 });
 
 test("rejects malformed entity ids before making a request", async () => {

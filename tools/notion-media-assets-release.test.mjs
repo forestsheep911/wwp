@@ -90,14 +90,29 @@ test("accepts one-decimal display rounding for approximate size", () => {
   assert.equal(result.action, "release");
 });
 
-test("blocks release when technical evidence does not match", () => {
+test("technical metadata differences remain follow-up instead of blocking visibility", () => {
+  const changed = page(true);
+  changed.properties["Playback Verified"] = property("checkbox", false);
+  changed.properties.Resolution = property("select", "1080p");
+  changed.properties["Approx Size GB"] = property("number", 0.5);
+  const result = validateReleaseCandidate(changed, item);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "release");
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.followUps, [
+    "Playback Verified needs follow-up",
+    "Resolution needs backfill or review",
+    "Approx Size GB needs backfill or review"
+  ]);
+});
+
+test("blocks a playable asset mapped to the wrong media block", () => {
   const changed = page(true);
   changed.properties["Media Block ID"] = property("rich_text", "wrong-block");
-  changed.properties["Approx Size GB"] = property("number", 0.5);
   const result = validateReleaseCandidate(changed, item);
   assert.equal(result.ok, false);
   assert.equal(result.action, "blocked");
-  assert.deepEqual(result.failures, ["Media Block ID mismatch", "Approx Size GB mismatch"]);
+  assert.deepEqual(result.failures, ["Media Block ID mismatch"]);
 });
 
 test("releases a movie only when the manifest explicitly expects no episode", () => {
@@ -135,6 +150,15 @@ test("requires the manifest to state the movie or series episode expectation", (
     () => validateReleaseCandidate(page(true), incomplete),
     /requires expectedEpisodeNumber/
   );
+});
+
+test("visibility manifest does not require optional technical fields", () => {
+  const minimal = { ...item };
+  delete minimal.expectedResolution;
+  delete minimal.expectedVideoCodec;
+  delete minimal.expectedContainer;
+  delete minimal.expectedApproxSizeGb;
+  assert.equal(validateReleaseCandidate(page(true), minimal).ok, true);
 });
 
 test("asset release does not require metadata review to be closed", () => {

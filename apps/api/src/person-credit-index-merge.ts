@@ -46,7 +46,7 @@ function sameIdentity(left: MovieCreditEntry, right: MovieCreditEntry) {
   if (left.department !== right.department) return false;
   if (left.job && right.job && normalize(left.job) !== normalize(right.job)) return false;
   if (left.personId && right.personId) return left.personId === right.personId;
-  for (const source of ["tmdb", "imdb", "wikidata"] as const) {
+  for (const source of ["tmdb", "imdb", "douban", "wikidata"] as const) {
     const leftId = left.externalIds?.[source];
     const rightId = right.externalIds?.[source];
     if (leftId && rightId && leftId === rightId) return true;

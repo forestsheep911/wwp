@@ -60,6 +60,8 @@ function installNotionDnsOverride() {
 function plainText(property) {
   if (!property) return "";
   if (property.type === "checkbox") return property.checkbox ? "true" : "false";
+  if (property.type === "number") return typeof property.number === "number" ? String(property.number) : "";
+  if (property.type === "date") return property.date?.start ?? "";
   if (property.type === "select") return property.select?.name ?? "";
   if (property.type === "multi_select") return (property.multi_select ?? []).map((item) => item.name).join(",");
   return (property.title ?? property.rich_text ?? []).map((item) => item.plain_text ?? "").join("");
@@ -82,6 +84,36 @@ export function metadataReadbackDecision(page) {
     needsReview,
     humanIssue,
     aiIssue
+  };
+}
+
+const RATING_FIELDS = ["豆瓣评分", "IMDB评分", "Metascore", "烂番茄新鲜度"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function metadataRatingReviewPlan(page, { now = new Date() } = {}) {
+  const properties = page.properties ?? {};
+  const missingRatingFields = RATING_FIELDS.filter((name) => !plainText(properties[name]));
+  if (missingRatingFields.length === 0) return { missingRatingFields, nextReviewAt: null };
+
+  const releaseText = plainText(properties["上映日期"]);
+  const releaseAt = releaseText ? new Date(`${releaseText.slice(0, 10)}T00:00:00.000Z`) : null;
+  if (!releaseAt || Number.isNaN(releaseAt.getTime())) {
+    return { missingRatingFields, nextReviewAt: null };
+  }
+
+  const nowAt = now instanceof Date ? now : new Date(now);
+  const ageDays = Math.floor((nowAt.getTime() - releaseAt.getTime()) / DAY_MS);
+  let nextAt;
+  if (ageDays < 0) nextAt = new Date(releaseAt.getTime() + 7 * DAY_MS);
+  else if (ageDays <= 30) nextAt = new Date(nowAt.getTime() + 7 * DAY_MS);
+  else if (ageDays <= 90) nextAt = new Date(nowAt.getTime() + 14 * DAY_MS);
+  else if (ageDays <= 180) nextAt = new Date(nowAt.getTime() + 30 * DAY_MS);
+  else return { missingRatingFields, nextReviewAt: null };
+
+  return {
+    missingRatingFields,
+    nextReviewAt: nextAt.toISOString(),
+    reason: `Recent release is missing rating fields: ${missingRatingFields.join(", ")}`
   };
 }
 
@@ -133,10 +165,15 @@ async function main() {
     try {
       const page = await notion.pages.retrieve({ page_id: task.notion_work_page_id });
       const decision = metadataReadbackDecision(page);
+      const ratingReview = metadataRatingReviewPlan(page);
       Object.assign(row, decision);
+      Object.assign(row, ratingReview);
       if (decision.verified && options.apply) {
         repo.transitionWorkflowTask(task.id, "done", {
-          reason: "Exact Notion readback: Metadata Status=verified, Needs Review=false, Human Issue and AI Issue empty."
+          reason: ratingReview.reason
+            ? `Exact Notion readback is verified. ${ratingReview.reason}`
+            : "Exact Notion readback: Metadata Status=verified, Needs Review=false, Human Issue and AI Issue empty.",
+          nextRunAt: ratingReview.nextReviewAt ?? undefined
         });
         row.action = "completed";
       } else if (decision.verified) {

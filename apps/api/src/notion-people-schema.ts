@@ -15,6 +15,7 @@ export function peoplePropertySchema() {
     Aliases: { rich_text: {} },
     "TMDB Person ID": { rich_text: {} },
     "IMDb Name ID": { rich_text: {} },
+    "Douban Person ID": { rich_text: {} },
     "Wikidata QID": { rich_text: {} },
     "Primary Departments": { multi_select: { options: [] } },
     "Birth Date": { date: {} },

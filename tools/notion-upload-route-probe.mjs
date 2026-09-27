@@ -16,6 +16,11 @@ const DEFAULT_PART_MIB = 20;
 const MIN_PART_MIB = 5;
 const CLASH_PIPE = "\\\\.\\pipe\\verge-mihomo";
 
+export function clashAuthorizationHeaders(secret) {
+  const token = String(secret ?? "").trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function loadDotEnv() {
   if (!fs.existsSync(".env")) return;
   for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
@@ -126,7 +131,7 @@ async function clashRequest(method, requestPath) {
       path: encodeURI(requestPath),
       method,
       headers: {
-        Authorization: "Bearer set-your-secret",
+        ...clashAuthorizationHeaders(process.env.CLASH_CONTROLLER_SECRET),
         Connection: "close"
       }
     }, response => {

@@ -659,6 +659,7 @@ function CinemaApp() {
       tab: "library",
       browseChannel: nextChannel,
       browseView: nextBrowseView,
+      params: nextChannel === browseChannel ? locationRoute.params : undefined,
       query: "",
       detailAssetKey: undefined,
       playerAssetKey: undefined

@@ -81,6 +81,12 @@ function rowMatchesEnrichment(row, enrichmentRow) {
 
 function effectiveFilmLanes(cycle, enrichmentCampaign) {
   const lanes = cycle.lanes ?? {};
+  const sourceRows = lanes.sourceFollowup ?? [];
+  const failedSourceIds = new Set(sourceRows
+    .filter((row) => row.disposition === "cleanup_move_failed")
+    .map((row) => row.sourceId ?? row.source_id)
+    .filter((value) => value != null)
+    .map(String));
   const enrichmentRows = [
     ...(enrichmentCampaign?.waitingForHuman ?? []),
     ...(enrichmentCampaign?.blocked ?? []),
@@ -94,6 +100,15 @@ function effectiveFilmLanes(cycle, enrichmentCampaign) {
   );
   return {
     ...lanes,
+    cleanup: (lanes.cleanup ?? []).filter((row) => {
+      if (row.candidate_type !== "source_input") return true;
+      const sourceId = row.sourceId ?? row.source_id;
+      return sourceId == null || !failedSourceIds.has(String(sourceId));
+    }),
+    production: (lanes.production ?? []).filter((row) => {
+      const state = String(row.production_state ?? row.productionState ?? "").toLowerCase();
+      return !["deferred", "completed", "failed", "rejected", "retired", "cancelled"].includes(state);
+    }),
     catalogMaintenance: (lanes.catalogMaintenance ?? []).filter((row) => {
       const identifiers = [
         row.work_id ?? row.workId,
@@ -204,7 +219,9 @@ function firstAction(cycle, enrichmentCampaign, externalLaneRequired = null) {
   // Source disposition can remain actionable even when the corresponding
   // ledger lane is intentionally empty (for example, an unbound source or a
   // cleanup evidence repair). Keep the continuation contract routable.
-  const sourceRow = (lanes.sourceFollowup ?? []).find((row) => row.actionableNow);
+  const sourceRow = (lanes.sourceFollowup ?? []).find((row) =>
+    row.actionableNow && row.disposition !== "cleanup_move_failed"
+  );
   if (sourceRow) {
     return {
       lane: "sourceFollowup",
@@ -262,7 +279,10 @@ export function buildWorkflowContinuation({
     FILM_ACTION_LANES.map((lane) => [lane, countRows(lanes[lane])])
   );
   const filmLaneActions = Object.values(laneCounts).reduce((total, count) => total + count, 0);
-  const sourceActions = Number(sourceDisposition.actionableNow ?? 0);
+  const sourceRows = cycle.lanes?.sourceFollowup;
+  const sourceActions = Array.isArray(sourceRows)
+    ? sourceRows.filter((row) => row.actionableNow && row.disposition !== "cleanup_move_failed").length
+    : Number(sourceDisposition.actionableNow ?? 0);
   const enrichmentActions = Number(enrichment.actionableNow ?? 0);
   const waitingForHuman = Number(sourceDisposition.needsHumanConfirmation ?? 0)
     + Number(enrichment.waitingForHuman ?? 0);
