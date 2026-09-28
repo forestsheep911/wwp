@@ -9,7 +9,7 @@ const DEFAULT_OUTPUT_ROOT = "E:\\video_made";
 const DEFAULT_MANIFEST_DIR = path.resolve(".local-data");
 
 function parseArgs(args) {
-  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, manifestDir: DEFAULT_MANIFEST_DIR, json: false, apply: false, limit: null, candidateType: "all", variantId: null, sourceId: null };
+  const options = { db: DEFAULT_DB, outputRoot: DEFAULT_OUTPUT_ROOT, manifestDir: DEFAULT_MANIFEST_DIR, json: false, apply: false, limit: null, candidateType: "all", variantId: null, sourceId: null, retryFailedMove: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--db") options.db = path.resolve(args[++index]);
@@ -19,13 +19,14 @@ function parseArgs(args) {
     else if (arg === "--limit") options.limit = Number(args[++index]);
     else if (arg === "--variant-id") options.variantId = Number(args[++index]);
     else if (arg === "--source-id") options.sourceId = Number(args[++index]);
+    else if (arg === "--retry-failed-move") options.retryFailedMove = true;
     else if (arg === "--coverage-reason") options.coverageReason = args[++index];
     else if (arg === "--candidate-type") options.candidateType = args[++index];
     else if (arg === "--apply") options.apply = true;
     else if (arg === "--allow-reviewed-uncovered-media") options.allowReviewedUncoveredMedia = true;
     else if (arg === "--json") options.json = true;
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node tools/film-cleanup-candidates.mjs [--output-root E:\\video_made] [--manifest-dir .local-data] [--quarantine-dir <dir>] [--candidate-type all|playable_output|uploaded_output|source_input] [--variant-id <id>] [--source-id <id>] [--allow-reviewed-uncovered-media --coverage-reason <reason>] [--limit <n>] [--apply] [--json]");
+      console.log("Usage: node tools/film-cleanup-candidates.mjs [--output-root E:\\video_made] [--manifest-dir .local-data] [--quarantine-dir <dir>] [--candidate-type all|playable_output|uploaded_output|source_input] [--variant-id <id>] [--source-id <id>] [--retry-failed-move] [--allow-reviewed-uncovered-media --coverage-reason <reason>] [--limit <n>] [--apply] [--json]");
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -38,6 +39,9 @@ function parseArgs(args) {
   if (options.variantId != null && options.sourceId != null) throw new Error("--variant-id and --source-id are mutually exclusive");
   if (options.allowReviewedUncoveredMedia && options.sourceId == null) throw new Error("--allow-reviewed-uncovered-media requires --source-id");
   if (options.allowReviewedUncoveredMedia && !String(options.coverageReason ?? "").trim()) throw new Error("--allow-reviewed-uncovered-media requires --coverage-reason");
+  if (options.retryFailedMove && (options.candidateType !== "source_input" || options.sourceId == null || options.variantId != null)) {
+    throw new Error("--retry-failed-move requires --candidate-type source_input and one exact --source-id");
+  }
   if (options.coverageReason && !options.allowReviewedUncoveredMedia) throw new Error("--coverage-reason requires --allow-reviewed-uncovered-media");
   if (!["all", "playable_output", "uploaded_output", "source_input"].includes(options.candidateType)) {
     throw new Error("--candidate-type must be all|playable_output|uploaded_output|source_input");
@@ -232,6 +236,27 @@ export function applySourceCoverageOverride(candidates, { sourceId, reason } = {
   return candidates;
 }
 
+export function enableFailedMoveRetry(candidate, { sourceId } = {}) {
+  if (!candidate || candidate.candidate_type !== "source_input" || candidate.sourceId !== sourceId) {
+    throw new Error("failed-move retry requires the exact source_input candidate");
+  }
+  if (!candidate.previousMoveFailure) throw new Error(`source ${sourceId} has no recorded quarantine move failure`);
+  const errorCode = candidate.previousMoveFailure.errorCode;
+  if (!["EBUSY", "EPERM", "ETXTBSY"].includes(errorCode)) {
+    throw new Error(`source ${sourceId} failure ${errorCode ?? "unknown"} is not a retryable lock error`);
+  }
+  const failedPath = candidate.previousMoveFailure.path;
+  if (!failedPath || path.resolve(failedPath).toLowerCase() !== path.resolve(candidate.path).toLowerCase()) {
+    throw new Error(`source ${sourceId} failed path no longer matches the current source path`);
+  }
+  const blockers = candidate.reasons.filter((reason) => reason !== "previous_quarantine_move_failed");
+  if (blockers.length > 0) return false;
+  candidate.reasons = [];
+  candidate.eligible = true;
+  candidate.retryPreviousMoveFailure = { errorCode, path: failedPath };
+  return true;
+}
+
 export function selectCleanupCandidates(candidates, { candidateType = "all", variantId = null, sourceId = null, limit = null } = {}) {
   let filtered = candidateType === "all"
     ? candidates
@@ -249,7 +274,7 @@ export function cleanupReportSections(candidates) {
   };
 }
 
-export function collectManifestMatches(manifestDir, outputRoot) {
+export function collectManifestMatches(manifestDir, outputRoot, db = null) {
   if (!fs.existsSync(manifestDir)) return [];
   const root = path.resolve(outputRoot);
   const matches = [];
@@ -265,7 +290,7 @@ export function collectManifestMatches(manifestDir, outputRoot) {
       if (!item?.originalFileName || path.basename(item.originalFileName) !== item.originalFileName) continue;
       const filePath = path.resolve(root, item.originalFileName);
       if (!isInsideRoot(filePath, root) || !fs.existsSync(filePath)) continue;
-      matches.push({
+      const match = {
         path: filePath,
         actualBytes: fs.statSync(filePath).size,
         manifest: entry.name,
@@ -276,7 +301,23 @@ export function collectManifestMatches(manifestDir, outputRoot) {
         expectedApproxSizeGb: item.expectedApproxSizeGb ?? null,
         eligible: true,
         reasons: []
-      });
+      };
+      if (db) {
+        const linked = db.prepare(`SELECT variants.id AS variant_id, works.notion_work_page_id,
+            COALESCE(targets.episode_page_id, targets.spec_page_id) AS source_page_id,
+            targets.media_block_id, targets.media_asset_page_id, targets.assets_verified_at
+          FROM notion_targets AS targets
+          JOIN variants ON variants.id=targets.variant_id AND variants.publication_state='sync_ready'
+          JOIN works ON works.id=variants.work_id
+          WHERE targets.work_page_id=? AND COALESCE(targets.episode_page_id, targets.spec_page_id)=?
+            AND targets.media_asset_page_id=? AND targets.media_block_id=?`)
+          .all(match.workPageId, match.sourcePageId, match.mediaAssetPageId, match.mediaBlockId);
+        if (linked.length !== 1) {
+          match.eligible = false;
+          match.reasons.push("notion_target_not_verified");
+        }
+      }
+      matches.push(match);
     }
   }
   return matches;
@@ -292,7 +333,7 @@ function isSampleArtifact(filePath) {
 }
 
 export function latestExpansionDecision(workflowNote) {
-  const matches = [...String(workflowNote ?? "").matchAll(/\[规格扩展:(OPEN|CLOSED)\]/gu)];
+  const matches = [...String(workflowNote ?? "").matchAll(/(?:\[|【)\s*规格扩展\s*[:：]\s*(OPEN|CLOSED)\s*(?:\]|】)/gu)];
   return matches.at(-1)?.[1] ?? null;
 }
 
@@ -334,9 +375,12 @@ export function collectCleanupCandidates(db, outputRoot) {
   const root = outputRoot == null ? null : path.resolve(outputRoot);
   const rows = db.prepare(`
     SELECT variants.id AS variant_id, variants.output_path, variants.output_size_bytes,
-           variants.publication_state, works.canonical_title, works.workflow_status
+           variants.publication_state, works.canonical_title, works.workflow_status,
+           works.notion_work_page_id, targets.spec_page_id, targets.episode_page_id,
+           targets.media_block_id, targets.media_asset_page_id, targets.assets_verified_at
     FROM variants
     JOIN works ON works.id = variants.work_id
+    LEFT JOIN notion_targets AS targets ON targets.variant_id = variants.id
     WHERE variants.publication_state = 'sync_ready'
       AND variants.output_path IS NOT NULL
     ORDER BY variants.id
@@ -399,7 +443,6 @@ export function collectSourceCleanupCandidates(db) {
     LEFT JOIN works ON works.id=sources.work_id
     LEFT JOIN variants ON variants.source_id=sources.id
     WHERE sources.missing=0
-      AND sources.relative_path NOT LIKE '@flat/%'
     GROUP BY sources.id
     ORDER BY sources.id
   `).all();
@@ -454,9 +497,9 @@ export function collectSourceCleanupCandidates(db) {
       result.isDirectory = stats.isDirectory();
       if (result.isDirectory) {
         result.mediaFileCount = countMediaFiles(filePath, row.source_kind);
-        if (!zeroVariantDuplicate && result.mediaFileCount > row.linked_variant_count) {
-          result.reasons.push("source_media_not_fully_covered");
-        }
+      } else if (stats.isFile()) result.mediaFileCount = 1;
+      if (!zeroVariantDuplicate && result.mediaFileCount > row.linked_variant_count) {
+        result.reasons.push("source_media_not_fully_covered");
       }
     }
     result.eligible = result.reasons.length === 0;
@@ -469,13 +512,18 @@ export function main(args = process.argv.slice(2)) {
   const db = openLedger(options.db);
   try {
     const candidates = collectCleanupCandidates(db, options.outputRoot);
-    const manifestMatches = collectManifestMatches(options.manifestDir, options.outputRoot);
+    const manifestMatches = collectManifestMatches(options.manifestDir, options.outputRoot, db);
     const uniqueManifestMatches = [...new Map(manifestMatches.map((row) => [row.path.toLowerCase(), row])).values()];
     const cleanupCandidates = [
       ...candidates.map((row) => ({ candidate_type: "playable_output", ...row })),
       ...uniqueManifestMatches.map((row) => ({ candidate_type: "uploaded_output", ...row })),
       ...collectSourceCleanupCandidates(db).map((row) => ({ candidate_type: "source_input", ...row }))
     ];
+    if (options.retryFailedMove) {
+      const candidate = cleanupCandidates.find((item) => item.candidate_type === "source_input" && item.sourceId === options.sourceId);
+      if (!candidate) throw new Error(`source ${options.sourceId} is not an active source cleanup candidate`);
+      enableFailedMoveRetry(candidate, { sourceId: options.sourceId });
+    }
     if (options.allowReviewedUncoveredMedia) {
       applySourceCoverageOverride(cleanupCandidates, { sourceId: options.sourceId, reason: options.coverageReason });
     }

@@ -284,6 +284,34 @@ test("a completed collection container waits on its tracked members instead of r
   assert.equal(item.actionableNow, false);
 });
 
+test("missing Chinese subtitles on a tracked collection parent do not create a parent subtitle task", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      work_id: null,
+      canonical_title: null,
+      source_kind: "folder",
+      workflow_status: null,
+      workflow_note: null,
+      subtitle_evidence: JSON.stringify({
+        internalProbeState: "completed",
+        verifiedChinese: false,
+        streams: [{ hasChineseSubtitle: false }]
+      })
+    },
+    tasks: [{
+      task_type: "intake",
+      status: "done",
+      reason: "All 2 collection member sources have verified work identities"
+    }],
+    variants: []
+  });
+  assert.equal(item.disposition, "collection_container_active");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.match(item.nextTrigger, /成员源各自闭环/u);
+});
+
 test("a parent directory with bound descendant sources is recognized as a collection container", () => {
   const item = classifySourceDisposition({
     source: { ...source, canonical_title: null, workflow_status: null, workflow_note: null },
@@ -298,6 +326,18 @@ test("a tracked collection parent is not reopened by a stale pending intake task
     source: { ...source, work_id: 42, source_kind: "series_folder", canonical_title: "Tracked series", workflow_status: null, workflow_note: null },
     tasks: [{ task_type: "intake", status: "pending", reason: "Source contents changed" }],
     variants: [],
+    collectionMembersAlreadyTracked: true
+  });
+  assert.equal(item.disposition, "collection_container_active");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+});
+
+test("a tracked collection parent stays a container when it has placeholder variants", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, work_id: null, source_kind: "folder", canonical_title: null, workflow_status: null, workflow_note: null },
+    tasks: [{ task_type: "intake", status: "done", reason: "All collection member sources have verified work identities" }],
+    variants: [{ id: 91, production_state: "deferred", publication_state: "cancelled" }],
     collectionMembersAlreadyTracked: true
   });
   assert.equal(item.disposition, "collection_container_active");

@@ -57,10 +57,13 @@ route unless the user gives a more specific instruction:
 - `Workflow Status` and `Workflow Note` are the collaboration channel for
   upload handoff. Human text is the unmarked tail; AI acknowledges it with an
   `【AI(^_^) ...】` line. Do not infer completion from `last_edited_time`.
-- A playable item is not complete until the exact destination structure, media
-  block, ffprobe-backed Media Assets row, ledger `sync_ready`, parent release,
-  website sync, and live readback all pass. Only then may the local output move
-  to `E:\待人工删除`.
+- The active upload/asset lane is complete when the exact destination structure,
+  accepted media block, ffprobe-backed Media Assets row, and ledger
+  `sync_ready` are verified. Once the exact local path and byte size still match
+  that record, the output may move to same-volume `待人工删除`; this is a
+  reversible local cleanup, not deletion. Parent release, website index sync,
+  and live readback remain separate publication follow-ups and must not keep an
+  already-uploaded output on the production disk.
 - `sync_ready` is final playable completion, not release completion. A work or
   season may enter `Workflow Status=已完成` for the current release only when its exact work page also
   has `Metadata Status=verified`, no unresolved `Human Issue` or `AI Issue`, a
@@ -238,8 +241,11 @@ The following defaults are considered settled for the current plugin revision:
   are exceptional and require an explicit user instruction for that delivery.
 - Automatic Notion upload is attempted after a direct-route preflight. Manual
   upload is only a bounded fallback, and must use a page prepared in advance.
-- A production item exits only after Notion structure, media block, Media Assets,
-  ledger `sync_ready`, parent release, website sync, and live readback all pass.
+- A production item exits its upload/asset lane after Notion structure, accepted
+  media block, Media Assets, and ledger `sync_ready` pass. Exact byte-matched
+  local outputs may then be quarantined. Parent release, website sync, and live
+  readback continue as separate publication work; they are not local-output
+  retention gates.
 - A work or season exits the complete workflow only after that playable gate and
   the work-level metadata gate both pass. `Metadata Status=partial`, a generic
   "checked" task reason, or a successful backfill command is never metadata

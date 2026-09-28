@@ -76,11 +76,21 @@ test("bounded smoke samples fail closed on decoder errors", () => {
   assert.match(script, /strict smoke failed on decoder error/u);
 });
 
-test("full encodes rebuild non-monotonic source timestamps for MP4 delivery", () => {
+test("full encodes rebuild timestamps at the selected source frame rate", () => {
   assert.match(script, /"-fps_mode", "cfr"/u);
   assert.match(script, /non-monotonic.*PTS|duplicate DTS|monotonic.*timeline/iu);
-  assert.match(script, /setpts=N\/\(24000\/1001\*TB\)/u);
+  assert.match(script, /function probeVideoFrameRate\(/u);
+  assert.match(script, /const sourceFrameRate = probeVideoFrameRate\(input, options\.videoStream\)/u);
+  assert.match(script, /setpts=N\/\(\$\{sourceFrameRate\}\*TB\)/u);
+  assert.doesNotMatch(script, /setpts=N\/\(24000\/1001\*TB\)/u);
   assert.match(script, /\[0:s:\$\{options\.subtitleStream\}\]scale=/u);
+});
+
+test("final output must preserve source duration and audio/video synchronization", () => {
+  assert.match(script, /function assertDeliveryDurations\(/u);
+  assert.match(script, /output video duration mismatch/u);
+  assert.match(script, /output audio\/video duration mismatch/u);
+  assert.match(script, /assertDeliveryDurations\(input, part, options\.videoStream, options\.start, options\.duration\)/u);
 });
 
 test("encoding can explicitly fall back from NVENC to CPU libx265", () => {

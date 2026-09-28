@@ -11,6 +11,7 @@ import { probePlayableUpload } from "./lib/playable-upload-qc.mjs";
 import { withTransientNotionUploadRetry } from "./lib/notion-upload-retry.mjs";
 import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
 import { createNotionUploadSelectorGuard } from "./lib/notion-upload-selector-guard.mjs";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 
 const DEFAULT_PART_MIB = 20;
 
@@ -137,6 +138,7 @@ function createNotionClient(token, localAddress = "", noProxy = false) {
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
   }
+  options.fetch = createPacedFetch(options.fetch ?? globalThis.fetch, { minIntervalMs: 1000 });
   return new Client(options);
 }
 

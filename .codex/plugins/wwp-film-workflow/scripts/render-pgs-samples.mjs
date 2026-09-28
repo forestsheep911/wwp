@@ -59,6 +59,13 @@ export function distinctEventTimes(values, limit) {
   return output;
 }
 
+export function buildSubtitleExtractArgs(options, input, supPath) {
+  const seekArgs = options.start > 0
+    ? ["-copyts", "-ss", String(options.start)]
+    : [];
+  return ["-y", "-v", "error", ...seekArgs, "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath];
+}
+
 function sampleName(input, stream, index) {
   const stem = path.basename(input, path.extname(input)).replace(/[^A-Za-z0-9._-]+/g, "_");
   return `${stem}.pgs-s${stream}.event-${String(index + 1).padStart(2, "0")}.png`;
@@ -75,8 +82,7 @@ function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-pgs-"));
   const supPath = path.join(tempDir, "sample.sup");
   try {
-    const seekArgs = options.start > 0 ? ["-ss", String(options.start)] : [];
-    run(options.ffmpeg, ["-y", "-v", "error", ...seekArgs, "-i", input, "-map", `0:s:${options.subtitleStream}`, "-c:s", "copy", "-frames:s", String(Math.max(options.events * 3, 6)), supPath], options.timeoutMs);
+    run(options.ffmpeg, buildSubtitleExtractArgs(options, input, supPath), options.timeoutMs);
     const packetOutput = run(options.ffprobe, ["-v", "error", "-show_entries", "packet=pts_time", "-of", "csv=p=0", supPath], options.timeoutMs);
     const times = distinctEventTimes(packetOutput.split(/\r?\n/u), options.events);
     if (times.length === 0) throw new Error("No PGS subtitle events were extracted");

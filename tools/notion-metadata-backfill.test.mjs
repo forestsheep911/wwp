@@ -233,6 +233,32 @@ test("buildPatch fills structured Douban metadata fields", () => {
   assert.equal(patch["Metadata Updated At"].date.start, "2026-07-07");
 });
 
+test("buildPatch records an AI check without changing metadata update time", () => {
+  const page = { properties: {
+    "Metadata Updated At": { type: "date", date: { start: "2026-06-01" } },
+    "Last AI Check Time": emptyProperty("date")
+  } };
+
+  const patch = buildPatch(page, {}, undefined, undefined, { now: "2026-07-07" });
+
+  assert.deepEqual(patch["Last AI Check Time"], { date: { start: "2026-07-07" } });
+  assert.equal(Object.hasOwn(patch, "Metadata Updated At"), false);
+});
+
+test("review-only metadata changes do not advance Metadata Updated At", () => {
+  const page = { properties: {
+    "Metadata Updated At": { type: "date", date: { start: "2026-06-01" } },
+    "Last AI Check Time": emptyProperty("date"),
+    "Needs Review": { type: "checkbox", checkbox: false }
+  } };
+
+  const patch = buildPatch(page, { warnings: ["Needs manual review"] }, undefined, undefined, { now: "2026-07-07" });
+
+  assert.equal(patch["Needs Review"].checkbox, true);
+  assert.deepEqual(patch["Last AI Check Time"], { date: { start: "2026-07-07" } });
+  assert.equal(Object.hasOwn(patch, "Metadata Updated At"), false);
+});
+
 test("buildPatch maps Douban documentary genre to the catalog option", () => {
   const patch = buildPatch(
     pageWithProperties(),

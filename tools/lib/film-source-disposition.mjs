@@ -176,6 +176,12 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push(workflowStatus ? `workflow_status:${workflowStatus}` : "workflow_task_waiting_user");
     needsHumanConfirmation = true;
     nextTrigger = humanTask?.reason || "等待人工上传、确认或补充证据";
+  } else if (collectionMembersAlreadyTracked && variants.length === 0) {
+    // A split collection parent is only a container; subtitle gates apply to
+    // its bound media members, not to the parent directory itself.
+    disposition = "collection_container_active";
+    reasons.push("collection_members_tracked_separately");
+    nextTrigger = "等待全部成员源各自闭环后再关闭并移动合集容器";
   } else if (verifiedMissingChineseSubtitle && !verifiedMandarinAudio && subtitlePendingTask) {
     // A concrete subtitle task is more specific than a newly discovered or
     // requeued intake marker and must remain visible as the next action.
@@ -188,15 +194,6 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push("missing_chinese_subtitle");
     actionableNow = true;
     nextTrigger = "建立可恢复的字幕获取任务并采集候选；在取得可用中文字幕前不制作";
-  } else if (collectionMembersAlreadyTracked && variants.length === 0) {
-    // A split collection parent can still look newly discovered because the
-    // parent directory remains visible in the enabled input root. Once its
-    // leaf sources have been tracked/bound, the parent is a container record,
-    // not a fresh identity candidate. Keep it visible without reopening an
-    // old intake task; the child sources are the actual work items.
-    disposition = "collection_container_active";
-    reasons.push("collection_members_tracked_separately");
-    nextTrigger = "等待全部成员源各自闭环后再关闭并移动合集容器";
   } else if (pendingIntakeTask || (recentlyDiscoveredWithoutVariant && workflowStatus !== "暂缓")) {
     // A newly requeued source must not disappear behind the completed work's
     // long-term review date. The intake task or recent discovery is the
@@ -345,7 +342,7 @@ export function collectSourceDispositions(db, { now = new Date().toISOString(), 
     FROM sources
     JOIN input_roots ON input_roots.id=sources.input_root_id AND input_roots.enabled=1
     LEFT JOIN works ON works.id=sources.work_id
-    WHERE sources.missing=0 AND sources.relative_path NOT LIKE '@flat/%'
+    WHERE sources.missing=0
     ORDER BY input_roots.id, sources.relative_path, sources.id
   `).all().filter((source) => insideRoot(source.absolute_path, source.input_root_path) && pathExists(source.absolute_path));
   // Child sources may already be marked missing after their completed media

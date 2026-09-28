@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditWebsiteCoverage, liveSearchIndexDocument } from "./film-website-coverage-audit.mjs";
+import { auditWebsiteCoverage, liveSearchIndexDocument, recordWebsiteSyncEvidence } from "./film-website-coverage-audit.mjs";
 
 test("coverage audit distinguishes six full variants from a three-item list preview", () => {
   const pageId = "15f20ac1-2f0a-80a1-92ea-f7c8b4702329";
@@ -29,4 +29,40 @@ test("live search selects the exact work page instead of a same-title result", (
   assert.equal(report.status, "ok");
   assert.equal(report.title, "Target");
   assert.equal(report.fullVariantCount, 1);
+});
+
+test("only exact live work and media identities are recorded as website sync evidence", () => {
+  const pageId = "3da20ac1-2f0a-8164-9973-e86ce9bb3eb0";
+  const calls = [];
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM notion_targets")) {
+        return { all: () => [{
+          variant_id: 42,
+          notion_work_page_id: pageId,
+          source_page_id: "spec-page",
+          media_asset_page_id: "asset-page",
+          media_block_id: "block-1",
+          assets_verified_at: "2026-09-01T00:00:00.000Z"
+        }] };
+      }
+      return { run: (...args) => calls.push(args) };
+    }
+  };
+  const report = {
+    status: "ok",
+    pageId,
+    variants: [{
+      sourcePageId: "spec-page",
+      mediaAssetPageId: "asset-page",
+      mediaBlockId: "block-1"
+    }]
+  };
+  assert.deepEqual(recordWebsiteSyncEvidence(db, report, pageId, "2026-09-02T00:00:00.000Z"), {
+    recordedVariantIds: [42],
+    unmatched: []
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /"mediaBlockId":"block-1"/u);
+  assert.throws(() => recordWebsiteSyncEvidence(db, { ...report, status: "missing" }, pageId), /exact live page readback/u);
 });

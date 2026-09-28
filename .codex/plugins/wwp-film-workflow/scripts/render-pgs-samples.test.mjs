@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { distinctEventTimes, parseArgs } from "./render-pgs-samples.mjs";
+import { buildSubtitleExtractArgs, distinctEventTimes, parseArgs } from "./render-pgs-samples.mjs";
 
 test("parseArgs accepts a bounded positive subtitle sample start", () => {
   const options = parseArgs([
@@ -49,4 +49,11 @@ test("parseArgs rejects a negative subtitle sample start", () => {
 
 test("distinctEventTimes keeps separated events only", () => {
   assert.deepEqual(distinctEventTimes(["0", "0.1", "1.5", "2.0"], 3), [0, 1.5, 2]);
+});
+
+test("subtitle extraction preserves source timestamps when seeking", () => {
+  const args = buildSubtitleExtractArgs({ start: 1200, subtitleStream: 4, events: 3 }, "source.m2ts", "sample.sup");
+
+  assert.deepEqual(args.slice(3, 6), ["-copyts", "-ss", "1200"]);
+  assert.equal(args.includes("0:s:4"), true);
 });

@@ -33,6 +33,15 @@ const METADATA_CORE_FIELDS = [
   "内容风险标签",
   "AI年龄建议理由"
 ];
+const NON_CONTENT_METADATA_FIELDS = new Set([
+  "Metadata Updated At",
+  "Last AI Check Time",
+  "Metadata Status",
+  "Needs Review",
+  "Match Status",
+  "Metadata Source",
+  "Metadata Confidence"
+]);
 
 const genreOptions = new Set([
   "剧情",
@@ -1464,10 +1473,14 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
       patch.Title = { title: richText(cleanedTitle) };
     }
   }
+  const contentMetadataChanged = Object.keys(patch).some((name) => !NON_CONTENT_METADATA_FIELDS.has(name));
   if (!options.skipMetadataUpdatedAt
     && properties["Metadata Updated At"]?.type === "date"
-    && Object.keys(patch).length > 0) {
+    && contentMetadataChanged) {
     patch["Metadata Updated At"] = { date: { start: options.now ?? new Date().toISOString().slice(0, 10) } };
+  }
+  if (properties["Last AI Check Time"]?.type === "date") {
+    patch["Last AI Check Time"] = { date: { start: options.now ?? new Date().toISOString().slice(0, 10) } };
   }
 
   return patch;
@@ -1729,9 +1742,13 @@ async function processPage(notion, pageRef, options, cookie) {
         ? await uploadPoster(notion, metadata, title)
         : undefined;
   const patch = buildPatch(page, metadata, imdbRating, posterFile, options);
+  const unresolvedGenres = uniqueNonEmpty(
+    metadata.unmappedGenres?.length ? metadata.unmappedGenres : mapGenres(metadata.genres ?? []).unmapped
+  );
+  const projectedProperties = projectPropertyPatch(page.properties, patch);
+  const metadataGate = metadataGateSnapshot(projectedProperties, metadata, unresolvedGenres);
 
   if (Object.keys(patch).length === 0) {
-    const unresolvedGenres = uniqueNonEmpty(metadata.unmappedGenres ?? []);
     return {
       pageId: page.id,
       title,
@@ -1739,7 +1756,7 @@ async function processPage(notion, pageRef, options, cookie) {
       reason: "nothing_to_update",
       subjectId: metadata.subjectId,
       doubanIdentity: verifyDoubanIdentityReadback(page.properties, metadata),
-      metadataGate: metadataGateSnapshot(page.properties, metadata, unresolvedGenres)
+      metadataGate
     };
   }
 
@@ -1765,6 +1782,7 @@ async function processPage(notion, pageRef, options, cookie) {
     fields: Object.keys(patch),
     fieldTypes: Object.fromEntries(Object.keys(patch).map((field) => [field, page.properties?.[field]?.type ?? null])),
     updatedFieldSources: Object.fromEntries(Object.keys(patch).map((field) => [field, metadata.metadataSource ?? "douban"])),
+    metadataGate,
     ...(readback ? { readback } : {})
   };
 }

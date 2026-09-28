@@ -149,6 +149,60 @@ function probeVideoDimensions(input, videoStream) {
   return { width: stream.width, height: stream.height };
 }
 
+function probeVideoFrameRate(input, videoStream) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", `v:${videoStream}`,
+    "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+    "-of", "json",
+    input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe frame-rate probe failed with exit code ${result.status}`);
+  const stream = JSON.parse(result.stdout).streams?.[0];
+  for (const value of [stream?.avg_frame_rate, stream?.r_frame_rate]) {
+    const match = String(value ?? "").match(/^(\d+)\/(\d+)$/u);
+    if (match && Number(match[1]) > 0 && Number(match[2]) > 0) return `${match[1]}/${match[2]}`;
+  }
+  throw new Error("ffprobe could not determine the selected video's frame rate");
+}
+
+function probeMediaDurations(input, videoStream) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration:stream=codec_type,duration",
+    "-of", "json",
+    input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe duration probe failed with exit code ${result.status}`);
+  const probe = JSON.parse(result.stdout);
+  const videos = (probe.streams ?? []).filter((stream) => stream.codec_type === "video");
+  const audios = (probe.streams ?? []).filter((stream) => stream.codec_type === "audio");
+  const sourceVideo = videos[videoStream];
+  const videoDuration = Number(sourceVideo?.duration ?? probe.format?.duration);
+  const audioDurations = audios.map((stream) => Number(stream.duration)).filter(Number.isFinite);
+  if (!Number.isFinite(videoDuration) || videoDuration <= 0) {
+    throw new Error("ffprobe could not determine the media duration");
+  }
+  return { videoDuration, audioDurations };
+}
+
+function assertDeliveryDurations(input, output, videoStream, start, duration) {
+  const source = probeMediaDurations(input, videoStream);
+  const delivery = probeMediaDurations(output, 0);
+  const expected = duration ?? Math.max(0, source.videoDuration - (start ?? 0));
+  const toleranceSeconds = 2;
+  if (Math.abs(delivery.videoDuration - expected) > toleranceSeconds) {
+    throw new Error(`output video duration mismatch: expected about ${expected.toFixed(3)}s, got ${delivery.videoDuration.toFixed(3)}s`);
+  }
+  for (const audioDuration of delivery.audioDurations) {
+    if (Math.abs(delivery.videoDuration - audioDuration) > toleranceSeconds) {
+      throw new Error(`output audio/video duration mismatch: video=${delivery.videoDuration.toFixed(3)}s audio=${audioDuration.toFixed(3)}s`);
+    }
+  }
+}
+
 function probeSubtitleCodec(input, subtitleStream) {
   if (subtitleStream === null) return null;
   const result = spawnSync("ffprobe", [
@@ -232,6 +286,8 @@ function main() {
   const durationArgs = options.duration == null ? [] : ["-t", String(options.duration)];
   const sourceWindowArgs = [...seekArgs, ...durationArgs];
   const sourceDimensions = probeVideoDimensions(input, options.videoStream);
+  const sourceFrameRate = probeVideoFrameRate(input, options.videoStream);
+  const rebuildTimeline = `setpts=N/(${sourceFrameRate}*TB)`;
   const subtitleCodec = probeSubtitleCodec(input, options.subtitleStream);
   const embeddedTextSubtitle = options.subtitleStream !== null
     && new Set(["ass", "mov_text", "srt", "ssa", "subrip", "text", "webvtt"]).has(subtitleCodec);
@@ -257,10 +313,10 @@ function main() {
     ? `,pad=${options.scale.width}:${options.scale.height}:(ow-iw)/2:(oh-ih)/2:color=black`
     : "";
   const baseVideo = options.toneMapLibplacebo
-    ? `[0:v:${options.videoStream}]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p,setpts=N/(24000/1001*TB)[base]`
+    ? `[0:v:${options.videoStream}]format=yuv420p10le,hwupload,libplacebo=${libplaceboDimensions}:format=yuv420p10le:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=mobius:apply_dolbyvision=1,hwdownload,format=yuv420p10le,format=yuv420p,${rebuildTimeline}[base]`
     : options.toneMapSdr
-    ? `[0:v:${options.videoStream}]${hdrPreScale},zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,format=yuv420p${hdrPostScale},setpts=N/(24000/1001*TB)[base]`
-    : `[0:v:${options.videoStream}]${scaleFilter ?? "null"},setpts=N/(24000/1001*TB)[base]`;
+    ? `[0:v:${options.videoStream}]${hdrPreScale},zscale=transfer=linear:npl=100,format=gbrpf32le,tonemap=hable,zscale=primaries=bt709:transfer=bt709:matrix=bt709,format=yuv420p${hdrPostScale},${rebuildTimeline}[base]`
+    : `[0:v:${options.videoStream}]${scaleFilter ?? "null"},${rebuildTimeline}[base]`;
   const effectiveSubtitleFile = options.subtitleFile ?? (embeddedTextSubtitle ? extractedSubtitle : null);
   const subtitleFilePath = effectiveSubtitleFile == null ? null : escapedSubtitlePath(effectiveSubtitleFile);
   const rawSubtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}`;
@@ -364,6 +420,12 @@ function main() {
     fs.rmSync(part, { force: true });
     throw new Error(`output exceeds max-bytes: ${size} > ${options.maxBytes}`);
   }
+  try {
+    assertDeliveryDurations(input, part, options.videoStream, options.start, options.duration);
+  } catch (error) {
+    fs.rmSync(part, { force: true });
+    throw error;
+  }
   if (path.dirname(part).toLowerCase() === path.dirname(output).toLowerCase()) fs.renameSync(part, output);
   else {
     fs.copyFileSync(part, output);
@@ -373,7 +435,7 @@ function main() {
   fs.rmSync(audioWork, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, videoStream: options.videoStream, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoEncoder: options.videoEncoder, allowDecoderRecovery: options.allowDecoderRecovery, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo, cpuToneMap: options.cpuToneMap }));
+  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, videoStream: options.videoStream, sourceFrameRate, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoEncoder: options.videoEncoder, allowDecoderRecovery: options.allowDecoderRecovery, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo, cpuToneMap: options.cpuToneMap }));
 }
 
 try {

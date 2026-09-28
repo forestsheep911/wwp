@@ -4,9 +4,11 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { openLedger } from "./lib/film-ledger-schema.mjs";
 
 const DEFAULT_PREVIEW_LIMIT = 3;
 const DEFAULT_INDEX = path.resolve(".local-data/home-site/search-index.json");
+const DEFAULT_LEDGER = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
 function parseArgs(args) {
   const options = { index: DEFAULT_INDEX, previewLimit: DEFAULT_PREVIEW_LIMIT };
@@ -18,12 +20,15 @@ function parseArgs(args) {
     else if (arg === "--live") options.live = true;
     else if (arg === "--title") options.title = args[++index];
     else if (arg === "--origin") options.origin = args[++index];
+    else if (arg === "--db") options.db = path.resolve(args[++index]);
+    else if (arg === "--record-ledger") options.recordLedger = true;
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pageId?.trim()) throw new Error("--page-id is required.");
   if (!Number.isInteger(options.previewLimit) || options.previewLimit < 1) throw new Error("--preview-limit must be a positive integer.");
   if (options.live && !options.title?.trim()) throw new Error("--live requires --title for a bounded website search.");
+  if (options.recordLedger && !options.live) throw new Error("--record-ledger requires --live; local index evidence is not publication proof.");
   return options;
 }
 
@@ -92,6 +97,42 @@ export function auditWebsiteCoverage(indexDocument, pageId, previewLimit = DEFAU
   };
 }
 
+export function recordWebsiteSyncEvidence(db, report, pageId, verifiedAt = new Date().toISOString()) {
+  if (report.status !== "ok" || normalizedPageId(report.pageId) !== normalizedPageId(pageId)) {
+    throw new Error("Cannot record website evidence without an exact live page readback.");
+  }
+  const insert = db.prepare(`INSERT INTO events
+    (entity_type, entity_id, event_type, payload_json, created_at)
+    VALUES ('variant', ?, 'website_sync_verified', ?, ?)`);
+  const recorded = [];
+  const unmatched = [];
+  for (const variant of report.variants) {
+    const rows = db.prepare(`SELECT variants.id AS variant_id, works.notion_work_page_id,
+        COALESCE(targets.episode_page_id, targets.spec_page_id) AS source_page_id,
+        targets.media_asset_page_id, targets.media_block_id, targets.assets_verified_at
+      FROM notion_targets AS targets
+      JOIN variants ON variants.id=targets.variant_id AND variants.publication_state='sync_ready'
+      JOIN works ON works.id=variants.work_id
+      WHERE targets.work_page_id=? AND COALESCE(targets.episode_page_id, targets.spec_page_id)=?
+        AND targets.media_asset_page_id=? AND targets.media_block_id=?`)
+      .all(pageId, variant.sourcePageId, variant.mediaAssetPageId, variant.mediaBlockId);
+    if (rows.length !== 1) {
+      unmatched.push({ sourcePageId: variant.sourcePageId, mediaAssetPageId: variant.mediaAssetPageId, reason: "ledger_target_not_unique" });
+      continue;
+    }
+    const target = rows[0];
+    insert.run(target.variant_id, JSON.stringify({
+      workPageId: target.notion_work_page_id,
+      sourcePageId: variant.sourcePageId,
+      mediaAssetPageId: variant.mediaAssetPageId,
+      mediaBlockId: variant.mediaBlockId,
+      verifiedAt
+    }), verifiedAt);
+    recorded.push(target.variant_id);
+  }
+  return { recordedVariantIds: recorded, unmatched };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   let indexDocument;
@@ -108,6 +149,14 @@ async function main() {
     ...auditWebsiteCoverage(indexDocument, options.pageId, options.previewLimit),
     index: indexDescription
   };
+  if (options.recordLedger) {
+    const db = openLedger(options.db ?? DEFAULT_LEDGER);
+    try {
+      report.ledgerEvidence = recordWebsiteSyncEvidence(db, report, options.pageId);
+    } finally {
+      db.close();
+    }
+  }
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));
     return;

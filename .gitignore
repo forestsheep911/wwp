@@ -11,6 +11,10 @@ artifacts/
 .local-data/
 ref/
 
+# Local resumable Notion upload state and generated audit deliverables.
+/.notion-file-sharing/
+/outputs/
+
 node_modules/
 dist/
 build/
