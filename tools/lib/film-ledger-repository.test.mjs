@@ -1105,6 +1105,34 @@ test("confirmed subtitle absence creates and later resolves a durable acquisitio
   } finally { f.close(); }
 });
 
+test("confirmed incomplete subtitles stay actionable even when a playable variant is already sync-ready", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Incomplete subtitle coverage", year: 2025, priorityScore: 80 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "incomplete-subs", absolutePath: "X:\\queue\\incomplete-subs",
+      fingerprint: "incomplete-subs", sourceKind: "folder", qualityState: "subtitle_missing",
+      subtitleEvidence: { hardGate: "missing_chinese_subtitle", state: "confirmed_missing", verifiedChinese: false },
+      audioEvidence: { languages: ["Japanese"] }
+    });
+    const variant = f.repo.ensureVariant({ workId: work.id, sourceId: source.id, specKey: "jpn-partial-chs", displayTitle: "Incomplete subtitle coverage 日语 简" });
+    for (const state of ["evaluated", "selected", "encoding"]) f.repo.transitionProduction(variant.id, state);
+    f.repo.transitionProduction(variant.id, "qc_passed", { outputPath: "E:\\video_made\\incomplete.mp4", outputSizeBytes: 100 });
+    f.repo.transitionPublication(variant.id, "structure_pending");
+    f.repo.transitionPublication(variant.id, "upload_pending");
+    f.repo.transitionPublication(variant.id, "upload_seen");
+    f.repo.transitionPublication(variant.id, "assets_pending");
+    f.repo.transitionPublication(variant.id, "verification_pending");
+    f.repo.transitionPublication(variant.id, "sync_ready");
+
+    const result = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(result.candidates.map((row) => row.source_id), [source.id]);
+    assert.equal(result.created.length, 1);
+    assert.equal(f.repo.listWorkflowTasks({ taskType: "subtitle_acquisition", limit: 5 })[0].source_id, source.id);
+  } finally { f.close(); }
+});
+
 test("subtitle task sync does not starve untracked sources behind existing open tasks", () => {
   const f = fixture();
   try {

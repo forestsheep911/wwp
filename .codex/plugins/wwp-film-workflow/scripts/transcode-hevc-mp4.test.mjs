@@ -51,12 +51,25 @@ test("remux maps the filtered work video instead of the source video ordinal", (
   assert.match(script, /"-map", "0:v:0", "-map", options\.splitAudio \? "1:a:0" : "0:a:0"/u);
 });
 
+test("full bitmap-subtitle encodes rebase subtitle PTS to the rebuilt video timeline", () => {
+  assert.match(script, /function probeVideoStartTime\(input, videoStream\)/u);
+  assert.match(script, /options\.start == null && options\.subtitleStream !== null && !embeddedTextSubtitle/u);
+  assert.match(script, /setpts=PTS-\$\{bitmapSubtitleOffset\}\/TB,scale=/u);
+});
+
 test("slow source audio can be encoded separately without truncating copied video", () => {
   assert.match(script, /--split-audio/u);
   assert.match(script, /"encode-video-mkv"/u);
   assert.match(script, /"encode-audio-m4a"/u);
   assert.match(script, /options\.splitAudio \? "1:a:0" : "0:a:0"/u);
   assert.doesNotMatch(script.match(/if \(options\.splitAudio\)[\s\S]*?\} else \{/u)?.[0] ?? "", /-shortest/u);
+});
+
+test("AAC bitrate scales with the selected channel count and probes unspecified layouts", () => {
+  assert.match(script, /function probeAudioChannels\(input, audioStream\)/u);
+  assert.match(script, /function audioBitrateForChannels\(channels\)[\s\S]*?channels >= 7\) return "768k"[\s\S]*?channels >= 3\) return "512k"[\s\S]*?return "256k"/u);
+  assert.match(script, /audioBitrateForChannels\(options\.audioChannels \?\? sourceAudioChannels\)/u);
+  assert.doesNotMatch(script, /"-c:a", "aac", "-b:a", "256k"/u);
 });
 
 test("bitmap subtitles ending before the feature do not truncate the video", () => {
@@ -83,7 +96,7 @@ test("full encodes rebuild timestamps at the selected source frame rate", () => 
   assert.match(script, /const sourceFrameRate = probeVideoFrameRate\(input, options\.videoStream\)/u);
   assert.match(script, /setpts=N\/\(\$\{sourceFrameRate\}\*TB\)/u);
   assert.doesNotMatch(script, /setpts=N\/\(24000\/1001\*TB\)/u);
-  assert.match(script, /\[0:s:\$\{options\.subtitleStream\}\]scale=/u);
+  assert.match(script, /\[0:s:\$\{options\.subtitleStream\}\]setpts=PTS-\$\{bitmapSubtitleOffset\}\/TB,scale=/u);
 });
 
 test("final output must preserve source duration and audio/video synchronization", () => {

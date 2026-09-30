@@ -989,12 +989,6 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         AND sources.relative_path NOT LIKE '@flat/episode %'
         AND sources.quality_state NOT IN ('unacceptable', 'rejected')
         AND NOT EXISTS (
-          SELECT 1 FROM variants WHERE variants.source_id=sources.id
-            AND NOT (variants.production_state='deferred'
-              AND variants.publication_state='not_ready'
-              AND variants.failure_code IN ('missing_chinese_subtitle','no_verified_chinese_subtitle'))
-        )
-        AND NOT EXISTS (
           SELECT 1 FROM sources AS canonical_sources
           WHERE canonical_sources.id <> sources.id
             AND canonical_sources.input_root_id=sources.input_root_id

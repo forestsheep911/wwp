@@ -7,6 +7,7 @@ import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 import { createNotionUploadSelectorGuard } from "./lib/notion-upload-selector-guard.mjs";
 
 const DEFAULT_PART_MIB = 20;
@@ -144,13 +145,11 @@ function installNotionDnsOverride(notionApiIp) {
 
 function createNotionClient(token, localAddress = "", noProxy = false) {
   const proxyUrl = noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
-  const options = { auth: token, timeoutMs: 600000 };
+  const options = { auth: token, timeoutMs: 600000, fetch: createPacedFetch(nodeFetch, { minIntervalMs: 1000 }) };
   if (localAddress) {
-    options.fetch = nodeFetch;
     options.agent = new https.Agent({ keepAlive: true, localAddress });
     console.log(`direct local address: ${localAddress}`);
   } else if (proxyUrl) {
-    options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
   }

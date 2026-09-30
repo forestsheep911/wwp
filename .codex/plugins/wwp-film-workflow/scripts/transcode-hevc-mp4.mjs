@@ -167,6 +167,43 @@ function probeVideoFrameRate(input, videoStream) {
   throw new Error("ffprobe could not determine the selected video's frame rate");
 }
 
+function probeVideoStartTime(input, videoStream) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", `v:${videoStream}`,
+    "-show_entries", "stream=start_time",
+    "-of", "json",
+    input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe video start-time probe failed with exit code ${result.status}`);
+  const startTime = Number(JSON.parse(result.stdout).streams?.[0]?.start_time);
+  return Number.isFinite(startTime) ? startTime : 0;
+}
+
+function probeAudioChannels(input, audioStream) {
+  const result = spawnSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", `a:${audioStream}`,
+    "-show_entries", "stream=channels",
+    "-of", "json",
+    input
+  ], { encoding: "utf8", windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`ffprobe audio-channel probe failed with exit code ${result.status}`);
+  const channels = Number(JSON.parse(result.stdout).streams?.[0]?.channels);
+  if (!Number.isInteger(channels) || channels < 1 || channels > 8) {
+    throw new Error("ffprobe could not determine the selected audio channel count");
+  }
+  return channels;
+}
+
+function audioBitrateForChannels(channels) {
+  if (channels >= 7) return "768k";
+  if (channels >= 3) return "512k";
+  return "256k";
+}
+
 function probeMediaDurations(input, videoStream) {
   const result = spawnSync("ffprobe", [
     "-v", "error",
@@ -287,10 +324,17 @@ function main() {
   const sourceWindowArgs = [...seekArgs, ...durationArgs];
   const sourceDimensions = probeVideoDimensions(input, options.videoStream);
   const sourceFrameRate = probeVideoFrameRate(input, options.videoStream);
+  const sourceAudioChannels = probeAudioChannels(input, options.audioStream);
+  const audioBitrate = audioBitrateForChannels(options.audioChannels ?? sourceAudioChannels);
   const rebuildTimeline = `setpts=N/(${sourceFrameRate}*TB)`;
   const subtitleCodec = probeSubtitleCodec(input, options.subtitleStream);
   const embeddedTextSubtitle = options.subtitleStream !== null
     && new Set(["ass", "mov_text", "srt", "ssa", "subrip", "text", "webvtt"]).has(subtitleCodec);
+  // Full encodes rebuild video PTS from frame order; PGS keeps the source
+  // stream offset. Input-seek smoke samples are already rebased by FFmpeg.
+  const bitmapSubtitleOffset = options.start == null && options.subtitleStream !== null && !embeddedTextSubtitle
+    ? probeVideoStartTime(input, options.videoStream)
+    : 0;
   if (embeddedTextSubtitle) {
     // A bounded smoke test must not extract subtitles for the entire episode first.
     run(options.ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostats", ...smokeFailureArgs(options.duration, options.allowDecoderRecovery), "-y", ...seekArgs, "-i", input, ...durationArgs, "-map", `0:s:${options.subtitleStream}`, "-f", "srt", extractedSubtitle], "extract-text-subtitle");
@@ -334,7 +378,7 @@ function main() {
   // while the video itself must keep its original aspect ratio.
   const bitmapSubtitleFilter = options.subtitleStream === null || embeddedTextSubtitle
     ? null
-    : `[0:s:${options.subtitleStream}]scale=${options.scale?.width ?? sourceDimensions.width}:${options.scale?.height ?? sourceDimensions.height}[subs]`;
+    : `[0:s:${options.subtitleStream}]setpts=PTS-${bitmapSubtitleOffset}/TB,scale=${options.scale?.width ?? sourceDimensions.width}:${options.scale?.height ?? sourceDimensions.height}[subs]`;
   const videoArgs = subtitleFileFilter != null && !options.toneMapSdr && scaleFilter === null
     ? ["-vf", subtitleFileFilter, "-map", `0:v:${options.videoStream}`]
     : subtitleFileFilter != null
@@ -389,14 +433,14 @@ function main() {
     run(options.ffmpeg, [
       "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y",
       ...seekArgs, "-i", input, ...durationArgs, "-map", `0:a:${options.audioStream}`, "-vn",
-      "-c:a", "aac", "-b:a", "256k", ...audioArgs,
+      "-c:a", "aac", "-b:a", audioBitrate, ...audioArgs,
       ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
       audioWork
     ], "encode-audio-m4a");
   } else {
     run(options.ffmpeg, [
       ...videoEncodeArgs, "-map", `0:a:${options.audioStream}`,
-      "-c:a", "aac", "-b:a", "256k", ...audioArgs,
+      "-c:a", "aac", "-b:a", audioBitrate, ...audioArgs,
       ...(options.audioLanguage == null ? [] : ["-metadata:s:a:0", `language=${options.audioLanguage}`]),
       work
     ], "encode-mkv");
@@ -435,7 +479,7 @@ function main() {
   fs.rmSync(audioWork, { force: true });
   fs.rmSync(extractedSubtitle, { force: true });
   assertBrowserPlayableMp4(output);
-  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, videoStream: options.videoStream, sourceFrameRate, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoEncoder: options.videoEncoder, allowDecoderRecovery: options.allowDecoderRecovery, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo, cpuToneMap: options.cpuToneMap }));
+  console.log(JSON.stringify({ output, tempDir, bytes: size, maxBytes: options.maxBytes, start: options.start, duration: options.duration, videoStream: options.videoStream, sourceFrameRate, subtitleStream: options.subtitleStream, subtitleFile: options.subtitleFile, audioStream: options.audioStream, audioChannels: options.audioChannels ?? sourceAudioChannels, audioBitrate, audioLanguage: options.audioLanguage, audioLoudnorm: options.audioLoudnorm, splitAudio: options.splitAudio, scale: options.scale, videoEncoder: options.videoEncoder, allowDecoderRecovery: options.allowDecoderRecovery, videoBitrate: options.videoBitrate, toneMapSdr: options.toneMapSdr, toneMapLibplacebo: options.toneMapLibplacebo, cpuToneMap: options.cpuToneMap }));
 }
 
 try {
