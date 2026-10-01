@@ -20,6 +20,7 @@ COPY apps/api ./apps/api
 COPY apps/web/src/cinema ./apps/web/src/cinema
 COPY packages/cache-store ./packages/cache-store
 COPY packages/shared ./packages/shared
+COPY tools/lib/project-secrets.mjs tools/lib/project-env.mjs ./tools/lib/
 
 EXPOSE 8787
 CMD ["node", "--import", "tsx", "apps/api/src/server.ts"]

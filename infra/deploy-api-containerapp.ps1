@@ -188,7 +188,9 @@ if (-not $AliyunOssSignedUrlMinutes) {
     $AliyunOssSignedUrlMinutes = Get-DotEnvValue -Names @("ALIYUN_OSS_SIGNED_URL_MINUTES")
 }
 
-$OmdbApiKey = Get-DotEnvValue -Names @("OMDB_API_KEY")
+$OmdbSecretUri = "https://$KeyVaultName.vault.azure.net/secrets/OMDB-API-KEY"
+$omdbSecretId = & $AzCli keyvault secret show --vault-name $KeyVaultName --name "OMDB-API-KEY" --query id --output tsv
+if ($LASTEXITCODE -ne 0 -or -not $omdbSecretId) { throw "OMDB-API-KEY must exist in Key Vault before deployment." }
 
 $workerJob = & $AzCli containerapp job show `
     --name $WorkerJobName `
@@ -290,9 +292,7 @@ if ($NotionMediaAssetsDataSourceId) {
     $envVars += "NOTION_MEDIA_ASSETS_DATA_SOURCE_ID=$NotionMediaAssetsDataSourceId"
 }
 
-if ($OmdbApiKey) {
-    $envVars += "OMDB_API_KEY=$OmdbApiKey"
-}
+$envVars += "OMDB_API_KEY=secretref:omdb-api-key"
 
 if (-not $AllowedWebOrigins) {
     $staticAppHostname = & $AzCli staticwebapp show `
@@ -428,6 +428,7 @@ if (-not $exists) {
         --cpu 0.5 `
         --memory 1.0Gi `
         --env-vars $envVars `
+        --secrets "omdb-api-key=keyvaultref:$OmdbSecretUri,identityref:$($identity.id)" `
         --tags project=ww-player-cache env=dev managedBy=infra-script component=api `
         --output none
 } else {
@@ -444,6 +445,9 @@ if (-not $exists) {
         --server $loginServer `
         --identity $identity.id `
         --output none
+
+    & $AzCli containerapp secret set --name $ApiAppName --resource-group $ResourceGroup --secrets "omdb-api-key=keyvaultref:$OmdbSecretUri,identityref:$($identity.id)" --output none
+    if ($LASTEXITCODE -ne 0) { throw "Failed to configure OMDb Key Vault reference." }
 
     & $AzCli containerapp update `
         --name $ApiAppName `

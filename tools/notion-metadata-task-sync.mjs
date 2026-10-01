@@ -1,3 +1,4 @@
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import dns from "node:dns";
 import https from "node:https";
@@ -10,13 +11,7 @@ import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 
 const DEFAULT_DB = ".local-data/wwp-film-workflow.sqlite";
 
-function loadDotEnv() {
-  if (!fs.existsSync(".env")) return;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && process.env[match[1]] == null) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadDotEnv() { config(); }
 
 function parseArgs(argv) {
   const options = { db: DEFAULT_DB, limit: 3, apply: false, json: false, delayMs: 1000, pageIds: [] };

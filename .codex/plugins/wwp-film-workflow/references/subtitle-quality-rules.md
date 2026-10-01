@@ -16,8 +16,14 @@ Require the strongest available agreement across:
 
 Reject or defer a candidate when the underlying cut differs, episodes are
 misaligned, the subtitle is incomplete, or timing drifts materially across the
-work. A simple constant offset may be corrected and recorded; progressive drift
-or scene-dependent discontinuities require a different subtitle or manual work.
+work. A constant offset or uniform frame-rate scaling may be corrected only
+with independent dialogue anchors near the beginning, middle, and end, recorded
+residual errors, a preserved original, and checked burned subtitle samples.
+Speech recognition segment boundaries are supporting evidence, not exact timing
+anchors. Unexplained drift or scene-dependent discontinuities require a different
+subtitle or further alignment work. PGS timestamps can include a container start
+offset; convert them to the source playback clock before comparing. Blank PGS
+renders cannot establish subtitle presence or language.
 
 ## Quality Preference
 
@@ -38,6 +44,14 @@ Chinese when otherwise comparable, following the playable encoder defaults.
 
 - Preserve the downloaded original, calculate SHA-256, and work from a staged
   copy. Do not execute archive contents.
+- Detect the actual subtitle encoding before rendering. A UTF-16 ASS may parse
+  as text yet fail in libass; stage a UTF-8 copy, record both hashes, and verify
+  rendered dialogue. Terminal line wrapping is not evidence of malformed ASS.
+- For large Matroska sources with text subtitles, extract bounded dialogue
+  windows at the beginning, middle, and end rather than scanning the entire
+  movie for initial timing QC. Record the seek offset and add it back to each
+  extracted cue timestamp; a cue clipped at a window boundary is not an exact
+  onset anchor. Include post-credit dialogue when present.
 - Allow expected subtitle formats such as ASS, SSA, SRT, SUP, and SUB only after
   format inspection. Reject executables, scripts, shortcuts, links, absolute
   paths, and archive traversal.

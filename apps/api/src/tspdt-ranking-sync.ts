@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./../../../tools/lib/project-env.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

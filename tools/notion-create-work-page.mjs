@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 
 import fs from "node:fs";
 import { createHash } from "node:crypto";
@@ -86,15 +87,7 @@ function linkLedgerWorkPage(options, work, pageId) {
   }
 }
 
-function env(name) {
-  if (process.env[name]) return process.env[name];
-  if (!fs.existsSync(".env")) return undefined;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match?.[1] === name) return match[2].trim().replace(/^['"]|['"]$/gu, "");
-  }
-  return undefined;
-}
+function env(name) { return projectEnv(name); }
 
 function installDnsOverride() {
   if (env("NOTION_API_DISABLE_DNS_OVERRIDE") === "1") return;

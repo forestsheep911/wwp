@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config } from "./lib/project-secrets.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,13 +30,7 @@ import {
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
-function loadDotEnv() {
-  if (!existsSync(".env")) return;
-  for (const line of readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadDotEnv() { config(); }
 
 function parse(argv) {
   const values = new Set(["--page-id", "--expected-title", "--status", "--note", "--actor", "--limit", "--db", "--local-address", "--hide-from-website"]);
@@ -321,10 +316,11 @@ async function main() {
     }
 
     if (!options.apply) throw new Error("claim requires --apply because it changes Workflow Status");
-    const pages = await queryActionable(notion, library.id, options.limit);
+    const pages = await claimCandidates(notion, library.id, options);
     const results = [];
     for (const candidate of pages) {
       const current = await notion.pages.retrieve({ page_id: candidate.id });
+      if (options.expected_title) assertExpectedPageTitle(current, options.expected_title);
       const status = workflowStateFromPage(current);
       if (!AI_ACTIONABLE_WORKFLOW_STATES.includes(status)) continue;
       const result = await applySet(notion, current, {
@@ -341,6 +337,15 @@ async function main() {
   } finally {
     repository?.db.close();
   }
+}
+
+export async function claimCandidates(notion, libraryId, options) {
+  if (!options.page_id?.length) return queryActionable(notion, libraryId, options.limit);
+  const requestedPageIds = options.page_id.map(extractId);
+  if (requestedPageIds.some((id) => !id)) throw new Error("claim requires valid explicit page IDs");
+  const pages = [];
+  for (const pageId of new Set(requestedPageIds)) pages.push(await notion.pages.retrieve({ page_id: pageId }));
+  return pages;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

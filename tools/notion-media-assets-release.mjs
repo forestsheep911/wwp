@@ -1,3 +1,4 @@
+import { projectEnv } from "./lib/project-secrets.mjs";
 import dns from "node:dns";
 import fs from "node:fs";
 import https from "node:https";
@@ -64,15 +65,7 @@ Network workaround:
  hidden still blocks the work release.`);
 }
 
-function dotenv(name) {
-  if (process.env[name]) return process.env[name];
-  if (!fs.existsSync(".env")) return undefined;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match?.[1] === name) return match[2].trim();
-  }
-  return undefined;
-}
+function dotenv(name) { return projectEnv(name); }
 
 function installNotionDnsOverride(resolveIp) {
   const notionApiIp = resolveIp || dotenv("NOTION_API_RESOLVE_IP");

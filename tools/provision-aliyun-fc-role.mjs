@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
+import { config } from "./lib/project-secrets.mjs";
 
 const require = createRequire(import.meta.url);
 const RamClient = require("@alicloud/ram20150501").default;
@@ -20,6 +21,7 @@ const objectPrefix = "wwpdw/prepared";
 const accountId = "1812145568680204";
 
 async function readLocalEnvironment() {
+  config();
   const values = new Map();
   const contents = await readFile(new URL("../.env", import.meta.url), "utf8").catch(() => "");
   for (const rawLine of contents.split(/\r?\n/)) {

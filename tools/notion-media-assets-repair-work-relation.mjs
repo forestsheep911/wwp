@@ -1,19 +1,12 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 
 import fs from "node:fs";
 import dns from "node:dns";
 import https from "node:https";
 import { Client } from "@notionhq/client";
 
-function envFile() {
-  const env = { ...process.env };
-  if (!fs.existsSync(".env")) return env;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (match) env[match[1]] = match[2].trim();
-  }
-  return env;
-}
+function envFile() { config(); return { ...process.env }; }
 
 function args(argv) {
   const result = {};

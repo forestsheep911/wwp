@@ -1,17 +1,12 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 
 import fs from "node:fs";
 import dns from "node:dns";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@notionhq/client";
 
-function loadEnv() {
-  if (!fs.existsSync(".env")) return;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadEnv() { config(); }
 
 function parseArgs() {
   const args = process.argv.slice(2);

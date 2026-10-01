@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import "dotenv/config";
+import "./lib/project-env.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createPersonCatalogStore } from "@wwpdw/cache-store";

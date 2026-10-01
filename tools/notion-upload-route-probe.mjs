@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -21,13 +22,7 @@ export function clashAuthorizationHeaders(secret) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function loadDotEnv() {
-  if (!fs.existsSync(".env")) return;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadDotEnv() { config(); }
 
 function parseArgs(argv) {
   const options = {

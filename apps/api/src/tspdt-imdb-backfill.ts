@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./../../../tools/lib/project-env.mjs";
 import { createWriteStream } from "node:fs";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";

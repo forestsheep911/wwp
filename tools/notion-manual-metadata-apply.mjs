@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 import dns from "node:dns";
 import fs from "node:fs";
 import https from "node:https";
@@ -19,15 +20,7 @@ const ALLOWED_FIELDS = new Set([
   "Metadata Status", "Metadata Updated At", "Last AI Check Time", "Needs Review", "Developer Memo", "AI Issue"
 ]);
 
-function loadEnv() {
-  const env = { ...process.env };
-  if (!fs.existsSync(".env")) return env;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match) env[match[1]] = match[2].trim();
-  }
-  return env;
-}
+function loadEnv() { config(); return { ...process.env }; }
 
 function installDnsOverride(address) {
   if (!address) return;

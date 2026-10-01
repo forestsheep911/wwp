@@ -5,6 +5,10 @@ const NOTION_SELECTOR = "Notion";
 const DIRECT_MEMBER = "国内直连";
 const JMS_SELECTOR = "JMS London 节点";
 
+export function resolveControllerPipe(options = {}, env = process.env) {
+  return options.socketPath || env.CLASH_CONTROLLER_PIPE || DEFAULT_PIPE;
+}
+
 function requestJson({ socketPath, controllerUrl, secret }, method, pathname, body) {
   return new Promise((resolve, reject) => {
     const payload = body == null ? "" : JSON.stringify(body);
@@ -12,7 +16,7 @@ function requestJson({ socketPath, controllerUrl, secret }, method, pathname, bo
     const request = http.request({
       ...(url
         ? { hostname: url.hostname, port: url.port, path: url.pathname + url.search }
-        : { socketPath: socketPath || DEFAULT_PIPE, path: pathname }),
+        : { socketPath: resolveControllerPipe({ socketPath }), path: pathname }),
       method,
       headers: {
         Accept: "application/json",

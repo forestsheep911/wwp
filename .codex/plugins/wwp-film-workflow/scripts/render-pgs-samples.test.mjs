@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSubtitleExtractArgs, distinctEventTimes, parseArgs } from "./render-pgs-samples.mjs";
+import { buildSubtitleExtractArgs, distinctEventTimes, parseArgs, visiblePgsEvents, isUniformSubtitleImage } from "./render-pgs-samples.mjs";
+
+test("blank rendered subtitle images cannot count as visible subtitle samples", () => {
+  assert.equal(isUniformSubtitleImage('lavfi.signalstats.YMIN=16\nlavfi.signalstats.YMAX=16'), true);
+  assert.equal(isUniformSubtitleImage('lavfi.signalstats.YMIN=16\nlavfi.signalstats.YMAX=235'), false);
+  assert.throws(() => isUniformSubtitleImage(''), /Missing/);
+});
+
+function pcs(time, objects) {
+  const segment = Buffer.alloc(24);
+  segment.write("PG"); segment.writeUInt32BE(Math.round(time * 90000), 2);
+  segment[10] = 0x16; segment.writeUInt16BE(11, 11); segment[23] = objects;
+  return segment;
+}
+
+test("visible PGS samples exclude clear events and retain short display intervals", () => {
+  const bytes = Buffer.concat([pcs(600, 1), pcs(600.2, 0), pcs(610, 1), pcs(612, 0)]);
+  assert.deepEqual(visiblePgsEvents(bytes, 3), [{ time: 600, end: 600.2 }, { time: 610, end: 612 }]);
+});
+
+test("truncated SUP segments cannot become samples", () => {
+  assert.throws(() => visiblePgsEvents(pcs(10, 1).subarray(0, 20), 3), /Truncated/);
+});
 
 test("parseArgs accepts a bounded positive subtitle sample start", () => {
   const options = parseArgs([

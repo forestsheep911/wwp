@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./lib/project-env.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@notionhq/client";

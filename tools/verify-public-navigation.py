@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import unquote
 from playwright.sync_api import sync_playwright, expect
 base = os.environ.get("WWP_VERIFY_ORIGIN", "https://www888eee.synology.me:38443")
-key = subprocess.check_output(["node","--input-type=module","-e","import {config} from 'dotenv'; config({quiet:true}); process.stdout.write(process.env.WWPDW_ADMIN_KEY ?? '');"], text=True).strip()
+key = subprocess.check_output(["node","--input-type=module","-e","import {config} from './tools/lib/project-secrets.mjs'; config(); process.stdout.write(process.env.WWPDW_ADMIN_KEY ?? '');"], text=True).strip()
 assert key, "Configured admin credential is missing"
 out = Path(".local-data/navigation-review"); out.mkdir(parents=True, exist_ok=True)
 with sync_playwright() as p:

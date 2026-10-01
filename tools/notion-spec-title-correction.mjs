@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 
 import dns from "node:dns";
 import fs from "node:fs";
@@ -11,13 +12,7 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function loadEnv() {
-  if (!fs.existsSync(".env")) return;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadEnv() { config(); }
 
 function installDnsOverride(ip) {
   if (!ip) return;

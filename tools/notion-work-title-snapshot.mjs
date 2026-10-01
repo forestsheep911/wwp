@@ -1,17 +1,10 @@
+import { config } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
 import { Client } from "@notionhq/client";
 
-function readEnv() {
-  const env = { ...process.env };
-  if (!fs.existsSync(".env")) return env;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (match) env[match[1]] = match[2].trim();
-  }
-  return env;
-}
+function readEnv() { config(); return { ...process.env }; }
 
 function installDnsOverride(ip) {
   if (!ip) return;

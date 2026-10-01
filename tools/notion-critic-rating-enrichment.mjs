@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { projectEnv } from "./lib/project-secrets.mjs";
 
 import fs from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -121,18 +122,7 @@ function normalizeImdbId(value) {
   return match ? match[1].toLowerCase() : undefined;
 }
 
-function dotenv(name) {
-  if (process.env[name]) return process.env[name];
-  if (!fs.existsSync(".env")) return undefined;
-  const raw = fs.readFileSync(".env", "utf8");
-  for (const line of raw.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (match?.[1] === name) {
-      return match[2].trim().replace(/^["']|["']$/g, "");
-    }
-  }
-  return undefined;
-}
+function dotenv(name) { return projectEnv(name); }
 
 function installNotionDnsOverride(resolveIp) {
   const notionApiIp = resolveIp || dotenv("NOTION_API_RESOLVE_IP");

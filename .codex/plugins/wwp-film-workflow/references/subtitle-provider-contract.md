@@ -66,3 +66,7 @@ before automated artifact download. A later adapter revision may send a small
 authorized subtitle artifact back to the Bridge, but must keep download notices,
 verification, safe archive extraction, and provenance recording visible.
 
+The separate `scripts/subtitle_subhd.py` CLI uses SubHD's public search and
+single-artifact download flow directly. It does not claim Bridge tasks or
+complete ledger tasks. It retains the original archive with a SHA-256 record;
+archive inspection, selection, and QC remain local workflow gates.

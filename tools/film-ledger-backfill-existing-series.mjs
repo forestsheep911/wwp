@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./lib/project-secrets.mjs";
 
 import fs from "node:fs";
 import path from "node:path";
@@ -40,15 +41,7 @@ function optionsFromArgs(args = process.argv.slice(2)) {
   return options;
 }
 
-function envValues() {
-  const env = { ...process.env };
-  if (!fs.existsSync(".env")) return env;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match) env[match[1]] = match[2].trim();
-  }
-  return env;
-}
+function envValues() { config(); return { ...process.env }; }
 
 function installDnsOverride(env) {
   if (!env.NOTION_API_RESOLVE_IP) return;

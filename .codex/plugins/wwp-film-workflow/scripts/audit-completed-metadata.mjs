@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config, projectEnv } from "./../../../../tools/lib/project-secrets.mjs";
 
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -31,13 +32,7 @@ const CORE_FIELDS = [
   "AI年龄建议理由"
 ];
 
-function loadDotEnv() {
-  if (!existsSync(".env")) return;
-  for (const line of readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadDotEnv() { config(); }
 
 function parseArgs(argv) {
   const options = {

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./lib/project-env.mjs";
 import { runPeopleNotionSyncFromEnvironment } from "../apps/api/src/person-notion-sync-runtime.ts";
 import { acquireProductionLock } from "./lib/wwp-production-lock.mjs";
 

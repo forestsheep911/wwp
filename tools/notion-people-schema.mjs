@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./lib/project-env.mjs";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 

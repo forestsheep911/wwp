@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { config } from "./lib/project-secrets.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import https from "node:https";
 import path from "node:path";
@@ -17,13 +18,7 @@ import { collectSourceDispositions } from "./lib/film-source-disposition.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
-function loadDotEnv() {
-  if (!existsSync(".env")) return;
-  for (const line of readFileSync(".env", "utf8").split(/\r?\n/u)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/u);
-    if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
-  }
-}
+function loadDotEnv() { config(); }
 
 function parse(argv) {
   const options = { db: DEFAULT_DB, json: false };
@@ -483,6 +478,9 @@ async function main() {
     } else if (command === "wait-task") {
       const id = asId(requireOption(options, "task", "--task"), "--task");
       output(repo.transitionWorkflowTask(id, "waiting_user", { reason: requireOption(options, "failure_detail", "--failure-detail") }), options.json, `workflow task ${id} is waiting for user input`);
+    } else if (command === "start-task") {
+      const id = asId(requireOption(options, "task", "--task"), "--task");
+      output(repo.transitionWorkflowTask(id, "in_progress", { reason: requireOption(options, "failure_detail", "--failure-detail") }), options.json, `workflow task ${id} is in progress`);
     } else if (command === "handoff") {
       const rows = repo.listManualUploadHandoffs({ limit: options.limit }).map((row) => ({
         variantId: row.variant_id, workTitle: row.work_title, year: row.year, specTitle: row.spec_title,

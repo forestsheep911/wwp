@@ -227,6 +227,33 @@ test("source cleanup treats a cancelled planned variant as closed", () => {
   }
 });
 
+test("source cleanup is blocked while a changed-source intake task remains open", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-open-intake-"));
+  const sourcePath = path.join(root, "source.mkv");
+  fs.writeFileSync(sourcePath, "source");
+  try {
+    const [candidate] = collectSourceCleanupCandidates(mockDb([{
+      source_id: 130,
+      absolute_path: sourcePath,
+      relative_path: "source.mkv",
+      source_kind: "folder",
+      canonical_title: "Changed source",
+      workflow_status: "已完成",
+      workflow_note: "[规格扩展:CLOSED] 已完成",
+      linked_variant_count: 1,
+      sync_ready_count: 1,
+      closed_variant_count: 1,
+      active_variant_count: 0,
+      open_intake_task_count: 1
+    }]));
+    assert.equal(candidate.eligible, false);
+    assert.equal(candidate.openIntakeTaskCount, 1);
+    assert.deepEqual(candidate.reasons, ["source_intake_task_open"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("flat single-file sources enter cleanup classification with exact media coverage", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-flat-source-cleanup-"));
   const sourcePath = path.join(root, "movie.mkv");

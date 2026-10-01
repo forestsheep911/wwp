@@ -1,3 +1,4 @@
+import { config } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import dns from "node:dns";
 import { pathToFileURL } from "node:url";
@@ -27,15 +28,7 @@ function parseArgs(args = process.argv.slice(2)) {
   return options;
 }
 
-function readEnv() {
-  const values = { ...process.env };
-  if (!fs.existsSync(".env")) return values;
-  for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (match) values[match[1]] = match[2].trim();
-  }
-  return values;
-}
+function readEnv() { config(); return { ...process.env }; }
 
 function installDnsOverride(env) {
   if (!env.NOTION_API_RESOLVE_IP) return;

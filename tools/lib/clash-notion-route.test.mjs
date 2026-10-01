@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectNotionRouteTopology, withTemporaryNotionRoute } from "./clash-notion-route.mjs";
+import { inspectNotionRouteTopology, resolveControllerPipe, withTemporaryNotionRoute } from "./clash-notion-route.mjs";
 
 function fakeController({ s801 = ["JMS London s801 - Reality"], omitJms = false } = {}) {
   const state = { Notion: "国内直连", "JMS London 节点": "JMS London s1 - SS" };
@@ -24,6 +24,11 @@ test("discovers one configured s801 member without a dedicated route group", asy
   const topology = inspectNotionRouteTopology(await fakeController().proxies());
   assert.equal(topology.s801Member, "JMS London s801 - Reality");
   assert.equal(topology.selectors.Notion, "国内直连");
+});
+
+test("uses an injected active controller pipe before the stale default", () => {
+  assert.equal(resolveControllerPipe({}, { CLASH_CONTROLLER_PIPE: "\\\\.\\pipe\\verge-mihomo-production-test" }), "\\\\.\\pipe\\verge-mihomo-production-test");
+  assert.equal(resolveControllerPipe({ socketPath: "explicit-pipe" }, { CLASH_CONTROLLER_PIPE: "environment-pipe" }), "explicit-pipe");
 });
 
 test("selects the nested s801 chain and restores both selectors", async () => {

@@ -170,7 +170,12 @@ test("cycle creates and exposes a durable subtitle-acquisition lane", async () =
 
     const queued = run(["--db", dbPath, "queue", "--stage", "subtitle", "--limit", "3", "--json"], dir);
     assert.equal(queued.status, 0, queued.stderr);
-    assert.equal(JSON.parse(queued.stdout)[0].task_type, "subtitle_acquisition");
+    const task = JSON.parse(queued.stdout)[0];
+    assert.equal(task.task_type, "subtitle_acquisition");
+    const started = run(["--db", dbPath, "start-task", "--task", String(task.id),
+      "--failure-detail", "Selected subtitle acquired; production handoff remains", "--json"], dir);
+    assert.equal(started.status, 0, started.stderr);
+    assert.equal(JSON.parse(started.stdout).status, "in_progress");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

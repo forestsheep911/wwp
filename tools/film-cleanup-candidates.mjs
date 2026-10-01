@@ -426,6 +426,10 @@ export function collectSourceCleanupCandidates(db) {
              WHERE events.entity_type='source' AND events.entity_id=sources.id
                AND events.event_type='source_quarantine_failed'
              ORDER BY events.created_at DESC, events.id DESC LIMIT 1) AS quarantine_failure_json,
+           (SELECT COUNT(*) FROM workflow_tasks
+             WHERE workflow_tasks.source_id=sources.id
+               AND workflow_tasks.task_type='intake'
+               AND workflow_tasks.status NOT IN ('done','cancelled')) AS open_intake_task_count,
            SUM(CASE WHEN variants.id IS NOT NULL
              AND (variants.failure_code IS NULL OR variants.failure_code <> 'superseded_by_episode_targets') THEN 1 ELSE 0 END) AS linked_variant_count,
            SUM(CASE WHEN variants.id IS NOT NULL
@@ -457,6 +461,7 @@ export function collectSourceCleanupCandidates(db) {
       linkedVariantCount: row.linked_variant_count,
       syncReadyCount: row.sync_ready_count ?? 0,
       closedVariantCount: row.closed_variant_count ?? 0,
+      openIntakeTaskCount: row.open_intake_task_count ?? 0,
       actualBytes: null,
       isDirectory: null,
       mediaFileCount: null,
@@ -464,6 +469,7 @@ export function collectSourceCleanupCandidates(db) {
       reasons: []
     };
     let quarantineFailure = null;
+    if (result.openIntakeTaskCount > 0) result.reasons.push("source_intake_task_open");
     if (row.quarantine_failure_json) {
       try { quarantineFailure = JSON.parse(row.quarantine_failure_json); }
       catch { quarantineFailure = { error: row.quarantine_failure_json }; }

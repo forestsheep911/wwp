@@ -1,3 +1,4 @@
+import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
@@ -198,16 +199,7 @@ export function parseArgs(args = process.argv.slice(2)) {
   return options;
 }
 
-function dotenv(name) {
-  const raw = fs.readFileSync(".env", "utf8");
-  for (const line of raw.split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-    if (match?.[1] === name) {
-      return match[2].trim();
-    }
-  }
-  return process.env[name];
-}
+function dotenv(name) { return projectEnv(name); }
 
 function installNotionDnsOverride(address) {
   if (dotenv("NOTION_API_DISABLE_DNS_OVERRIDE") === "1") return;

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./../../../tools/lib/project-env.mjs";
 import {
   buildMovieCatalogFromResults,
   createMovieCatalogStore,

@@ -52,6 +52,15 @@ function runChild(command, env) {
   });
 }
 
+export function childEnvironment(options, baseEnv = process.env) {
+  return {
+    ...baseEnv,
+    ...(options.controllerPipe ? { CLASH_CONTROLLER_PIPE: options.controllerPipe } : {}),
+    NOTION_UPLOAD_EXPECTED_ROUTE: options.route,
+    NOTION_UPLOAD_ROUTE_REASON: options.reason?.trim() || ""
+  };
+}
+
 export function validateRunOptions(options) {
   if (!options.apply) throw new Error("--apply is required before changing Clash selectors");
   if (options.command.length === 0) throw new Error("A child command is required after --");
@@ -79,11 +88,7 @@ async function main() {
     console.log(`temporary Notion route: ${options.route}`);
     console.log(`saved selectors: Notion=${saved.Notion}; ${topology.jmsSelector}=${saved[topology.jmsSelector]}`);
     if (options.reason) console.log(`temporary route reason: ${options.reason.trim()}`);
-    exitCode = await runChild(options.command, {
-      ...process.env,
-      NOTION_UPLOAD_EXPECTED_ROUTE: options.route,
-      NOTION_UPLOAD_ROUTE_REASON: options.reason?.trim() || ""
-    });
+    exitCode = await runChild(options.command, childEnvironment(options));
   });
   console.log("Clash selectors restored and verified");
   process.exitCode = exitCode;

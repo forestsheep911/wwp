@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./lib/project-env.mjs";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

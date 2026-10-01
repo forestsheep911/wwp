@@ -23,5 +23,6 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/worker ./apps/worker
 COPY packages/cache-store ./packages/cache-store
 COPY packages/shared ./packages/shared
+COPY tools/lib/project-secrets.mjs tools/lib/project-env.mjs ./tools/lib/
 
 CMD ["node", "--import", "tsx", "apps/worker/src/worker.ts"]

@@ -1,3 +1,4 @@
+import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
@@ -76,17 +77,7 @@ Network workaround:
 `);
 }
 
-function dotenv(name) {
-  if (fs.existsSync(".env")) {
-    for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
-      const match = line.match(/^([A-Za-z0-9_]+)=(.*)$/);
-      if (match?.[1] === name) {
-        return match[2].trim();
-      }
-    }
-  }
-  return process.env[name];
-}
+function dotenv(name) { return projectEnv(name); }
 
 function installNotionDnsOverride(resolveIp) {
   const notionApiIp = resolveIp || dotenv("NOTION_API_RESOLVE_IP");
@@ -122,7 +113,6 @@ function createNotionClient(token, localAddress = "", noProxy = false) {
     options.agent = new https.Agent({ keepAlive: true, localAddress });
     console.log(`direct local address: ${localAddress}`);
   } else if (proxyUrl) {
-    options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
   }

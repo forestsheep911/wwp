@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./../../../tools/lib/project-env.mjs";
 import { createPersonCatalogStore, createSearchIndexStore } from "@wwpdw/cache-store";
 import { runPeopleNotionSyncFromEnvironment } from "./person-notion-sync-runtime.js";
 import { applyPersonCreditNameSync, planPersonCreditNameSync } from "./person-credit-name-sync.js";

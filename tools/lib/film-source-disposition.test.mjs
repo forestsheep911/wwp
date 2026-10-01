@@ -405,6 +405,20 @@ test("a prior quarantine move failure stays blocked even when its candidate is n
   assert.match(item.nextTrigger, /解除文件占用/u);
 });
 
+test("a pending source reinspection supersedes the stale quarantine-lock trigger", () => {
+  const item = classifySourceDisposition({
+    source,
+    tasks: [{ task_type: "intake", status: "pending", reason: "Inspect newly discovered long BDMV streams" }],
+    cleanupCandidate: { eligible: false, reasons: ["source_intake_task_open", "previous_quarantine_move_failed"] },
+    events: [{ entity_type: "source", event_type: "source_quarantine_failed", payload_json: "{\"errorCode\":\"EBUSY\"}" }]
+  });
+  assert.equal(item.disposition, "ai_action_pending");
+  assert.equal(item.actionableNow, true);
+  assert.equal(item.nextTrigger, "Inspect newly discovered long BDMV streams");
+  assert.ok(item.reasons.includes("previous_quarantine_move_failed"));
+  assert.ok(item.evidence.some((entry) => entry.type === "quarantine_failure"));
+});
+
 test("a season placeholder superseded by episode targets does not block the closed episode set", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_note: "[规格扩展:CLOSED] 本季按 episode 独立交付" },

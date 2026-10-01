@@ -35,10 +35,38 @@ will not create the durable acquisition task.
 
 The film ledger is the integration boundary. A normal film cycle creates or
 reuses one durable `subtitle_acquisition` workflow task only for an explicit
-`confirmed_missing` state. The current v0.1 Companion can collect provider
-candidates, but the automatic task-to-Bridge request, artifact download,
-ranking, and task completion path remain future work; until then, keep the
-ledger task pending/deferred/waiting_user instead of treating it as completed.
+`confirmed_missing` state. The SubHD CLI below can search and download one
+selected artifact without Computer Use. Automatic task-to-provider routing,
+cross-provider ranking, archive ingestion, QC, and ledger completion remain
+future work; keep the ledger task open until the full completion gate passes.
+
+## Programmatic SubHD Route
+
+Use the provider CLI first when SubHD is reachable. It searches public result
+pages and downloads one explicitly selected candidate through SubHD's current
+detail -> prepare-download -> temporary page -> download API sequence. It
+stores no login cookie; the short-lived site session stays in process memory.
+Python `requests` is required. Keep searches bounded to one work and compare
+the returned release text with the actual source before downloading.
+
+```powershell
+python .codex/plugins/wwp-film-workflow/scripts/subtitle_subhd.py search "Intouchables"
+python .codex/plugins/wwp-film-workflow/scripts/subtitle_subhd.py download <subtitle-id> `
+  --dest .local-data/subtitle-acquisition/<work-key>
+```
+
+The CLI saves the original artifact and a SHA-256/provenance JSON, and safely
+reuses an identical retained artifact. Treat the archive as untrusted: inspect
+members and sizes before extracting only expected subtitle files to staging.
+Provider page or API changes must fail visibly; do not infer success from a
+search result or a prepared download page.
+
+When narration matches but timing drifts, follow the beginning/middle/end
+anchor checks in `../../references/subtitle-workflow.md`. Use
+`../../scripts/subtitle_retime.py` only with an evidenced scale and offset;
+retain original subtitles and repeat burned-frame/audio QC. An edition-specific
+opening quotation needs a separate source-backed text correction. A timing
+failure alone is not a request for human review when these checks can resolve it.
 
 ## Initial Route
 
@@ -85,8 +113,8 @@ Install the local userscript from:
 The initial Companion supports SubHD as a provider adapter. It discovers only
 `127.0.0.1:8818..8838`, verifies the Bridge identity, requires an explicit task
 refresh and page-capture click, claims a task with a browser client ID, and sends
-normalized candidates back to the workspace. It does not yet download subtitle
-artifacts; downloading and artifact handoff remain a visible human step in v0.1.
+normalized candidates back to the workspace. It does not download subtitle
+artifacts; use the programmatic SubHD route above or a visible human handoff.
 After the Bridge starts, open the `installUrl` returned by `/health` in a browser
 that has Tampermonkey and confirm the userscript installation there.
 
