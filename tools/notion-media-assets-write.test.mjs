@@ -17,6 +17,19 @@ test("target-only spec pages retain their title when direct media is audited", (
   assert.match(source, /auditPlayableSpecPage\(\{ id: page\.id, type: "child_page", child_page: \{ title \} \}\)/);
 });
 
+test("an exact media block binding uses its manifest filename instead of the Notion caption", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /mediaBlock\.id === target\.mediaBlockId \? target\.expectedFilename : ""/);
+  assert.match(source, /appendPlayableCandidate\(mediaBlock, specPage\.id, "", filenameOverride\)/);
+});
+
+test("an exact episode media block binding accepts an opaque Notion video URL", () => {
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /explicitlyBoundEpisodeMedia = episodeChildren\.filter/);
+  assert.match(source, /block\.id === target\.mediaBlockId/);
+  assert.match(source, /appendPlayableCandidate\(mediaBlock, episodePage\.id, blockTitle\(episodePage\), target\.expectedFilename\)/);
+});
+
 test("media assets writer serializes Notion requests at one-second intervals", () => {
   const source = fs.readFileSync(scriptPath, "utf8");
   assert.match(source, /let requestQueue = Promise\.resolve\(\)/);

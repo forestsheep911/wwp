@@ -6,6 +6,7 @@ import https from "node:https";
 import { Client } from "@notionhq/client";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 
 function parseArgs() {
   const options = {
@@ -100,10 +101,13 @@ function installNotionDnsOverride(resolveIp) {
 
 function createNotionClient(token, clientOptions = {}) {
   const proxyUrl = clientOptions.noProxy ? "" : (dotenv("NOTION_PROXY_URL") || dotenv("HTTPS_PROXY") || dotenv("HTTP_PROXY"));
-  const options = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  const options = {
+    auth: token,
+    timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000),
+    fetch: createPacedFetch(nodeFetch, { minIntervalMs: 1000 })
+  };
   if (clientOptions.localAddress) options.agent = new https.Agent({ keepAlive: true, localAddress: clientOptions.localAddress });
   if (proxyUrl) {
-    options.fetch = nodeFetch;
     options.agent = new HttpsProxyAgent(proxyUrl);
     console.log(`proxy: ${proxyUrl}`);
   }

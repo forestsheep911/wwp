@@ -378,6 +378,24 @@ test("a failed-move retry rejects mismatched paths and non-lock errors", () => {
   }, { sourceId: 120 }), /not a retryable lock error/u);
 });
 
+test("a failed-move retry accepts only the known partial-directory conflict for hash-checked resume", () => {
+  const candidate = {
+    candidate_type: "source_input",
+    sourceId: 120,
+    path: "I:\\queue\\source",
+    eligible: false,
+    reasons: ["previous_quarantine_move_failed"],
+    previousMoveFailure: {
+      path: "I:\\queue\\source",
+      errorCode: "rename_failed",
+      error: "partial quarantine has conflicting entries: BDMV\\index.bdmv"
+    }
+  };
+  assert.equal(enableFailedMoveRetry(candidate, { sourceId: 120 }), true);
+  assert.equal(candidate.eligible, true);
+  assert.deepEqual(candidate.reasons, []);
+});
+
 test("source coverage count ignores sample media files", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-source-sample-count-"));
   const sourcePath = path.join(root, "source");
@@ -747,6 +765,36 @@ test("cleanup move resumes a non-conflicting partially moved source directory", 
     assert.equal(fs.existsSync(source), false);
     assert.equal(fs.readFileSync(path.join(partial, "movie.mkv"), "utf8"), "video");
     assert.equal(fs.readFileSync(path.join(partial, "cover.jpg"), "utf8"), "cover");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cleanup move resumes a partial directory by deduplicating only byte-identical files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wwp-cleanup-identical-partial-"));
+  const source = path.join(root, "input", "source");
+  const quarantine = path.join(root, "quarantine");
+  const partial = path.join(quarantine, "source.source-44");
+  fs.mkdirSync(source, { recursive: true });
+  fs.mkdirSync(partial, { recursive: true });
+  fs.mkdirSync(path.join(source, "BDMV", "STREAM"), { recursive: true });
+  fs.mkdirSync(path.join(partial, "BDMV", "STREAM"), { recursive: true });
+  fs.writeFileSync(path.join(source, "BDMV", "STREAM", "same.m2ts"), "identical media");
+  fs.writeFileSync(path.join(partial, "BDMV", "STREAM", "same.m2ts"), "identical media");
+  fs.writeFileSync(path.join(source, "BDMV", "STREAM", "remaining.m2ts"), "not yet moved");
+  try {
+    const result = moveCleanupCandidates([{
+      candidate_type: "source_input",
+      sourceId: 44,
+      path: source,
+      isDirectory: true,
+      eligible: true
+    }], { quarantineDir: quarantine });
+    assert.equal(result.failed.length, 0);
+    assert.equal(result.moved.length, 1);
+    assert.equal(fs.existsSync(source), false);
+    assert.equal(fs.readFileSync(path.join(partial, "BDMV", "STREAM", "same.m2ts"), "utf8"), "identical media");
+    assert.equal(fs.readFileSync(path.join(partial, "BDMV", "STREAM", "remaining.m2ts"), "utf8"), "not yet moved");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

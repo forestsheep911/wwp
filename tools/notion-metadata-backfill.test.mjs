@@ -272,6 +272,14 @@ test("buildPatch maps Douban documentary genre to the catalog option", () => {
   assert.equal(patch["未映射类型"], undefined);
 });
 
+test("buildPatch maps noir genre labels to the catalog black genre", () => {
+  const patch = buildPatch(pageWithProperties(), {
+    genres: ["悬疑", "惊悚", "黑色电影", "Film-Noir"]
+  });
+  assert.deepEqual(patch["旨趣"].multi_select.map((item) => item.name), ["悬疑", "惊悚", "黑色"]);
+  assert.equal(patch["未映射类型"], undefined);
+});
+
 test("forceDoubanFields replaces legacy non-Douban description and basic info", () => {
   const page = pageWithProperties({
     "简介": filledRichText("Legacy OMDb English plot"),

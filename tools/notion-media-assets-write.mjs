@@ -410,14 +410,29 @@ async function auditPage(notion, page, maxSpecsPerPage, sourcePageId = "", targe
       });
     };
 
-    for (const mediaBlock of media) appendPlayableCandidate(mediaBlock, specPage.id);
+    for (const mediaBlock of media) {
+      const filenameOverride = mediaBlock.id === target.mediaBlockId ? target.expectedFilename : "";
+      appendPlayableCandidate(mediaBlock, specPage.id, "", filenameOverride);
+    }
     for (const mediaBlock of explicitlyBoundMedia) appendPlayableCandidate(mediaBlock, specPage.id, "", target.expectedFilename);
 
     const episodePages = specChildren.filter((block) => block.type === "child_page");
     for (const episodePage of episodePages) {
-      const episodeMedia = (await listChildren(notion, episodePage.id).catch(() => [])).filter(isPlayableMedia);
+      const episodeChildren = await listChildren(notion, episodePage.id).catch(() => []);
+      const episodeMedia = episodeChildren.filter(isPlayableMedia);
+      const explicitlyBoundEpisodeMedia = episodeChildren.filter((block) =>
+        (block.type === "video" || block.type === "file")
+        && block.id === target.mediaBlockId
+        && Boolean(target.expectedFilename)
+        && /\.(mp4|m4v|mov|webm|mkv)$/i.test(target.expectedFilename)
+        && !episodeMedia.some((candidate) => candidate.id === block.id)
+      );
       for (const mediaBlock of episodeMedia) {
-        appendPlayableCandidate(mediaBlock, episodePage.id, blockTitle(episodePage));
+        const filenameOverride = mediaBlock.id === target.mediaBlockId ? target.expectedFilename : "";
+        appendPlayableCandidate(mediaBlock, episodePage.id, blockTitle(episodePage), filenameOverride);
+      }
+      for (const mediaBlock of explicitlyBoundEpisodeMedia) {
+        appendPlayableCandidate(mediaBlock, episodePage.id, blockTitle(episodePage), target.expectedFilename);
       }
     }
 

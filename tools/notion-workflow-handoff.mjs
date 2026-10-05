@@ -30,7 +30,9 @@ import {
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
-function loadDotEnv() { config(); }
+function loadDotEnv() {
+  config({ resolveSecrets: ["NOTION_TOKEN", "NOTION_READ_ONLY_TOKEN", "NOTION_WRITE_TOKEN"] });
+}
 
 function parse(argv) {
   const values = new Set(["--page-id", "--expected-title", "--status", "--note", "--actor", "--limit", "--db", "--local-address", "--hide-from-website"]);

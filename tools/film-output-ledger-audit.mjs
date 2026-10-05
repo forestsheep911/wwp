@@ -55,6 +55,7 @@ export function classifyLocalMedia(relativePath) {
   if (normalized.startsWith("_qc/")
     || /(?:^|[._-])sample(?:[._-]|$)/u.test(basename)
     || /(?:^|[._-])(?:diagnostic|smoke)(?:[a-z0-9]+)?(?:[-_.][a-z0-9]+)*(?:\.(?:mp4|m4v|mov|mkv))$/u.test(basename)
+    || /subtitle[-_.]sync[-_.]check(?:[-_.][a-z0-9]+)*\.(?:mp4|m4v|mov|mkv)$/u.test(basename)
     || /(?:overlay|thread|threads|tonemap)[a-z0-9]*(?:[-_.][a-z0-9]+)*\.(?:mp4|m4v|mov|mkv)$/u.test(basename)
     || /proper[-_.]no[-_.]sub\.(?:mp4|m4v|mov|mkv)$/u.test(basename)) return "qc_artifact";
   if (/\.work\.mkv$/u.test(normalized)) return "work_intermediate";

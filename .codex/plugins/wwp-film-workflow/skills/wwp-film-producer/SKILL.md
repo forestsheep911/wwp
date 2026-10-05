@@ -51,6 +51,12 @@ route unless the user gives a more specific instruction:
   related but independent lanes.
 - Automatic Notion upload is the default after a route probe. Manual upload is
   a bounded fallback for a slow or failed route, or an explicit user choice.
+- A missing Clash controller pipe is a local endpoint-discovery failure. Follow
+  the publisher skill's generated-config and running-pipe diagnostic before
+  treating it as Notion failure or a workflow-wide blocker. A production core
+  may use a different endpoint from both the old fixed name and the generated
+  sidecar name. Read back the active controller and route; continue independent
+  local work while the affected network step is being repaired.
 - Series delivery is one playable file per Episode page. Do not build a
   multi-episode collection merely to reduce upload count; collections require
   explicit opt-in.

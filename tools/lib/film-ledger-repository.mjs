@@ -892,6 +892,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       JOIN input_roots ON input_roots.id=sources.input_root_id
       WHERE sources.missing=0
         AND sources.work_id IS NOT NULL
+        AND sources.source_kind <> 'duplicate_source'
         AND input_roots.enabled=1
         -- Root-level flat-file groups can be real movie sources (for example
         -- "Z (1969)"). Only the synthetic per-episode groups are excluded;
@@ -986,6 +987,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         AND sources.work_id IS NOT NULL
         AND input_roots.enabled=1
         AND COALESCE(works.scope_state, 'candidate') <> 'closed'
+        AND sources.source_kind <> 'duplicate_source'
         AND sources.relative_path NOT LIKE '@flat/episode %'
         AND sources.quality_state NOT IN ('unacceptable', 'rejected')
         AND NOT EXISTS (
@@ -1043,7 +1045,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
 
     const resolved = [];
     const openTasks = db.prepare(`SELECT workflow_tasks.*, sources.subtitle_evidence, sources.quality_state,
-        sources.audio_evidence, sources.missing, works.scope_state
+        sources.audio_evidence, sources.missing, sources.source_kind, works.scope_state
       FROM workflow_tasks JOIN sources ON sources.id=workflow_tasks.source_id
         JOIN works ON works.id=sources.work_id
       WHERE workflow_tasks.task_type='subtitle_acquisition'
@@ -1053,7 +1055,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         subtitleEvidence: task.subtitle_evidence,
         qualityState: task.quality_state
       });
-      if (task.scope_state === "closed" || task.missing || state !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
+      if (task.scope_state === "closed" || task.missing || task.source_kind === "duplicate_source"
         || hasVerifiedMandarinAudio(task.audio_evidence)) {
         resolved.push(completeWorkflowTaskByKey(task.task_key, {
           sourceId: task.source_id,
@@ -1062,8 +1064,48 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
             ? "Work expansion is closed; do not reacquire subtitles or reopen the task"
             : task.missing
             ? "Source is no longer present"
-            : "Subtitle evidence no longer confirms a blocking Chinese-subtitle absence"
+            : task.source_kind === "duplicate_source"
+              ? "Source is explicitly marked duplicate; subtitle acquisition follows the canonical source only"
+            : "A verified Mandarin audio branch does not require Chinese subtitles"
         }));
+        continue;
+      }
+
+      if (state === CHINESE_SUBTITLE_STATES.VERIFIED) {
+        const variants = db.prepare(`SELECT COUNT(*) AS total,
+            SUM(CASE WHEN production_state='rejected' OR publication_state IN ('cancelled','sync_ready') THEN 0 ELSE 1 END) AS open
+          FROM variants WHERE source_id=?`).get(task.source_id);
+        if (variants.total > 0 && variants.open === 0) {
+          resolved.push(completeWorkflowTaskByKey(task.task_key, {
+            sourceId: task.source_id,
+            workId: task.work_id,
+            reason: "Verified subtitles have passed through all registered production/publication targets"
+          }));
+        } else {
+          const reason = "Chinese subtitles are verified; keep this task open until the source's registered variants finish production and publication";
+          if (task.status !== "in_progress" || task.reason !== reason) {
+            const at = timestamp();
+            db.prepare(`UPDATE workflow_tasks SET status='in_progress', reason=?, next_run_at=NULL, updated_at=? WHERE id=?`)
+              .run(reason, at, task.id);
+            insertEvent.run("workflow_task", task.id, "subtitle_acquisition_production_pending", stableJson({
+              sourceId: task.source_id,
+              workId: task.work_id,
+              registeredVariantCount: variants.total,
+              openVariantCount: variants.open ?? 0,
+              reason
+            }), at);
+          }
+        }
+      } else if (state !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING && task.status !== "waiting_user") {
+        const reason = "Subtitle evidence is unknown; keep the acquisition task open until evidence or an explicit disposition is recorded";
+        const at = timestamp();
+        db.prepare(`UPDATE workflow_tasks SET status='waiting_user', reason=?, next_run_at=NULL, updated_at=? WHERE id=?`)
+          .run(reason, at, task.id);
+        insertEvent.run("workflow_task", task.id, "subtitle_acquisition_evidence_unknown", stableJson({
+          sourceId: task.source_id,
+          workId: task.work_id,
+          reason
+        }), at);
       }
     }
     return { candidates, created, reopened, resolved };

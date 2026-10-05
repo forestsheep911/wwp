@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
@@ -74,6 +75,7 @@ function baseQuarantinePath(sourcePath, quarantineDir, prefix, sourceIsDirectory
 
 function mergeDirectoryIntoExisting(source, destination) {
   const conflicts = [];
+  const duplicateFiles = [];
   const pending = [[source, destination]];
   while (pending.length > 0) {
     const [sourceDir, destinationDir] = pending.pop();
@@ -83,10 +85,18 @@ function mergeDirectoryIntoExisting(source, destination) {
       if (!fs.existsSync(destinationEntry)) continue;
       const destinationStat = fs.statSync(destinationEntry);
       if (entry.isDirectory() && destinationStat.isDirectory()) pending.push([sourceEntry, destinationEntry]);
+      else if (entry.isFile() && destinationStat.isFile()
+        && fs.statSync(sourceEntry).size === destinationStat.size
+        && hashFile(sourceEntry) === hashFile(destinationEntry)) duplicateFiles.push(sourceEntry);
       else conflicts.push(path.relative(source, sourceEntry));
     }
   }
   if (conflicts.length > 0) throw new Error(`partial quarantine has conflicting entries: ${conflicts.join(", ")}`);
+
+  // A previous interrupted quarantine may have copied identical files before
+  // failing. Keep the already-quarantined copy and remove only the proven
+  // duplicate from the source before resuming the move.
+  for (const duplicateFile of duplicateFiles) fs.unlinkSync(duplicateFile);
 
   function moveContents(sourceDir, destinationDir) {
     fs.mkdirSync(destinationDir, { recursive: true });
@@ -104,6 +114,22 @@ function mergeDirectoryIntoExisting(source, destination) {
 
   moveContents(source, destination);
   fs.rmdirSync(source);
+}
+
+function hashFile(filePath) {
+  const hash = crypto.createHash("sha256");
+  const fd = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest("hex");
 }
 
 export function moveCleanupCandidates(candidates, { quarantineDir } = {}) {
@@ -242,7 +268,9 @@ export function enableFailedMoveRetry(candidate, { sourceId } = {}) {
   }
   if (!candidate.previousMoveFailure) throw new Error(`source ${sourceId} has no recorded quarantine move failure`);
   const errorCode = candidate.previousMoveFailure.errorCode;
-  if (!["EBUSY", "EPERM", "ETXTBSY"].includes(errorCode)) {
+  const identicalPartialConflict = errorCode === "rename_failed"
+    && /partial quarantine has conflicting entries/u.test(candidate.previousMoveFailure.error ?? "");
+  if (!["EBUSY", "EPERM", "ETXTBSY"].includes(errorCode) && !identicalPartialConflict) {
     throw new Error(`source ${sourceId} failure ${errorCode ?? "unknown"} is not a retryable lock error`);
   }
   const failedPath = candidate.previousMoveFailure.path;

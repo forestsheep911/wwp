@@ -7,9 +7,9 @@ import { spawnSync } from "node:child_process";
 function usage() {
   console.log(`Usage:
   node scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --video-stream <ordinal> --subtitle-stream <ordinal|none>
-    [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-language <code>] [--audio-loudnorm]
+    [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--subtitle-margin-v <pixels>] [--audio-stream <ordinal>] [--audio-channels <count>] [--audio-language <code>] [--audio-loudnorm]
     [--split-audio]
-    [--start <seconds>] [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>]
+    [--start <seconds>] [--duration <seconds>] [--cq <value>] [--video-bitrate <rate>] [--video-frame-rate <numerator/denominator>]
     [--video-encoder <hevc_nvenc|libx265>]
     [--allow-decoder-recovery]
     [--max-bytes <bytes>] [--temp-dir <directory>] [--scale <width>x<height>] [--tone-map-sdr]
@@ -18,7 +18,9 @@ function usage() {
 The subtitle ordinal is relative to subtitle streams (0:s:0, 0:s:1, ...), not the
 absolute ffprobe stream index. Use "none" when subtitles are already burned into
 the source video. Use --subtitle-file for ASS/SSA/SRT text subtitles; this routes through
-the text-subtitle filter instead of the bitmap-subtitle overlay path. The encoder writes an MKV work
+  the text-subtitle filter instead of the bitmap-subtitle overlay path. Use
+--subtitle-margin-v only when verified source graphics/subtitles overlap the
+default subtitle position, and inspect a dialogue sample afterward. The encoder writes an MKV work
 file first, then stream-copy remuxes it to MP4 with hvc1 after the encode succeeds.
 Use --split-audio when decoding the selected source audio in the video pipeline
 causes severe slowdown. It encodes the complete video and audio independently,
@@ -34,7 +36,7 @@ BT.709 tone-map path but performs the HDR resize on the CPU.
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", videoStream: 0, subtitleStream: null, subtitleFile: null, subtitleCharenc: null, audioStream: 0, audioChannels: null, audioLanguage: null, audioLoudnorm: false, splitAudio: false, videoEncoder: "hevc_nvenc", allowDecoderRecovery: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false, cpuToneMap: false };
+  const options = { ffmpeg: "ffmpeg", videoStream: 0, subtitleStream: null, subtitleFile: null, subtitleCharenc: null, subtitleMarginV: null, audioStream: 0, audioChannels: null, audioLanguage: null, audioLoudnorm: false, splitAudio: false, videoEncoder: "hevc_nvenc", videoFrameRate: null, allowDecoderRecovery: false, cq: 26, videoBitrate: null, maxBytes: 5_000_000_000, tempDir: null, scale: null, start: null, toneMapSdr: false, toneMapLibplacebo: false, cpuToneMap: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
@@ -50,7 +52,7 @@ function parseArgs(argv) {
       options.toneMapSdr = true;
     }
     else if (arg === "--allow-decoder-recovery") options.allowDecoderRecovery = true;
-    else if (["--input", "--output", "--video-stream", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--video-encoder", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
+    else if (["--input", "--output", "--video-stream", "--subtitle-stream", "--subtitle-file", "--subtitle-charenc", "--subtitle-margin-v", "--audio-stream", "--audio-channels", "--audio-language", "--start", "--duration", "--cq", "--video-bitrate", "--video-frame-rate", "--video-encoder", "--max-bytes", "--temp-dir", "--scale", "--ffmpeg"].includes(arg)) {
       const value = argv[++i];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       const key = arg.slice(2).replaceAll("-", "_");
@@ -66,6 +68,7 @@ function parseArgs(argv) {
     : Number(options.subtitle_stream);
   options.subtitleFile = options.subtitle_file == null ? null : path.resolve(options.subtitle_file);
   options.subtitleCharenc = options.subtitle_charenc == null ? null : String(options.subtitle_charenc);
+  options.subtitleMarginV = options.subtitle_margin_v == null ? null : Number(options.subtitle_margin_v);
   options.tempDir = options.temp_dir == null ? null : path.resolve(options.temp_dir);
   options.audioStream = options.audio_stream == null ? 0 : Number(options.audio_stream);
   options.videoStream = options.video_stream == null ? 0 : Number(options.video_stream);
@@ -75,6 +78,7 @@ function parseArgs(argv) {
   options.duration = options.duration == null ? null : Number(options.duration);
   options.cq = options.cq == null ? 26 : Number(options.cq);
   options.videoBitrate = options.video_bitrate == null ? null : String(options.video_bitrate);
+  options.videoFrameRate = options.video_frame_rate == null ? null : String(options.video_frame_rate);
   options.videoEncoder = options.video_encoder == null ? "hevc_nvenc" : String(options.video_encoder);
   if (!["hevc_nvenc", "libx265"].includes(options.videoEncoder)) {
     throw new Error("--video-encoder must be hevc_nvenc or libx265");
@@ -94,6 +98,15 @@ function parseArgs(argv) {
   }
   if (options.videoBitrate != null && !/^\d+(?:\.\d+)?[kKmMgG]$/.test(options.videoBitrate)) {
     throw new Error("--video-bitrate must be a value such as 3700k or 4M");
+  }
+  if (options.videoFrameRate != null && !/^\d+\/\d+$/.test(options.videoFrameRate)) {
+    throw new Error("--video-frame-rate must be a rational value such as 24000/1001");
+  }
+  if (options.videoFrameRate != null && options.videoFrameRate.split("/").some((part) => Number(part) <= 0)) {
+    throw new Error("--video-frame-rate numerator and denominator must be positive");
+  }
+  if (options.subtitleMarginV != null && (!Number.isInteger(options.subtitleMarginV) || options.subtitleMarginV < 0 || options.subtitleMarginV > 1000)) {
+    throw new Error("--subtitle-margin-v must be an integer from 0 to 1000 pixels");
   }
   if (options.audioLanguage != null && !/^[a-z]{3}$/u.test(options.audioLanguage)) {
     throw new Error("--audio-language must be a three-letter ISO 639-2 code such as eng or zho");
@@ -323,7 +336,7 @@ function main() {
   const durationArgs = options.duration == null ? [] : ["-t", String(options.duration)];
   const sourceWindowArgs = [...seekArgs, ...durationArgs];
   const sourceDimensions = probeVideoDimensions(input, options.videoStream);
-  const sourceFrameRate = probeVideoFrameRate(input, options.videoStream);
+  const sourceFrameRate = options.videoFrameRate ?? probeVideoFrameRate(input, options.videoStream);
   const sourceAudioChannels = probeAudioChannels(input, options.audioStream);
   const audioBitrate = audioBitrateForChannels(options.audioChannels ?? sourceAudioChannels);
   const rebuildTimeline = `setpts=N/(${sourceFrameRate}*TB)`;
@@ -363,7 +376,11 @@ function main() {
     : `[0:v:${options.videoStream}]${scaleFilter ?? "null"},${rebuildTimeline}[base]`;
   const effectiveSubtitleFile = options.subtitleFile ?? (embeddedTextSubtitle ? extractedSubtitle : null);
   const subtitleFilePath = effectiveSubtitleFile == null ? null : escapedSubtitlePath(effectiveSubtitleFile);
-  const rawSubtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}`;
+  if (options.subtitleMarginV != null && subtitleFilePath == null) {
+    throw new Error("--subtitle-margin-v requires a text subtitle file or embedded text subtitle stream");
+  }
+  const subtitleStyle = options.subtitleMarginV == null ? "" : `:force_style=MarginV=${options.subtitleMarginV}`;
+  const rawSubtitleFileFilter = subtitleFilePath == null ? null : `subtitles='${subtitleFilePath}'${options.subtitleCharenc == null ? "" : `:charenc=${options.subtitleCharenc}`}${subtitleStyle}`;
   // Input seeking resets the encoded clip to a zero-based timeline, while an
   // external subtitle file still carries full-feature timestamps. Temporarily
   // restore the source timeline around libass so bounded smoke tests render the

@@ -1,12 +1,55 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
 
 const DEFAULT_PIPE = "\\\\.\\pipe\\verge-mihomo";
 const NOTION_SELECTOR = "Notion";
 const DIRECT_MEMBER = "国内直连";
 const JMS_SELECTOR = "JMS London 节点";
 
+function runningControllerPipe(configuredPipe, options) {
+  if (process.platform !== "win32" && options.pipeNames == null) return configuredPipe;
+  const names = options.pipeNames ?? fs.readdirSync("\\\\.\\pipe\\");
+  if (names.includes(path.win32.basename(configuredPipe))) return configuredPipe;
+  const candidates = names.filter((name) => /^verge-mihomo(?:-|$)/u.test(name));
+  if (candidates.length !== 1) {
+    throw new Error(`Clash configured controller pipe is absent; discovered ${candidates.length} running core pipes. Specify CLASH_CONTROLLER_PIPE after identifying the active core.`);
+  }
+  return `\\\\.\\pipe\\${candidates[0]}`;
+}
+
+export function resolveControllerConnection(options = {}, env = process.env) {
+  const explicitPipe = options.socketPath || (!options.controllerUrl && !env.CLASH_CONTROLLER_URL ? env.CLASH_CONTROLLER_PIPE : "");
+  const explicitUrl = options.controllerUrl || (!options.socketPath ? env.CLASH_CONTROLLER_URL : "");
+  if (explicitPipe || explicitUrl) {
+    return { socketPath: explicitUrl ? undefined : explicitPipe, controllerUrl: explicitUrl || undefined,
+      secret: options.secret || env.CLASH_CONTROLLER_SECRET || "", source: "explicit" };
+  }
+  const configPath = env.CLASH_CONTROLLER_CONFIG || (env.APPDATA
+    ? path.join(env.APPDATA, "io.github.clash-verge-rev.clash-verge-rev", "clash-verge.yaml") : "");
+  if (configPath && fs.existsSync(configPath)) {
+    let config;
+    try { config = YAML.parse(fs.readFileSync(configPath, "utf8")); }
+    catch { throw new Error("Cannot parse active Clash controller configuration; configuration contents are withheld"); }
+    const socketPath = config?.["external-controller-pipe"];
+    const address = config?.["external-controller"];
+    if (socketPath || address) {
+      if (address && !socketPath && !/^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/u.test(address)) {
+        throw new Error("Discovered Clash HTTP controller must be loopback-only");
+      }
+      return { socketPath: socketPath ? runningControllerPipe(socketPath, options) : undefined,
+        controllerUrl: socketPath ? undefined : `http://${address}`,
+        secret: options.secret || env.CLASH_CONTROLLER_SECRET || config.secret || "",
+        source: "active_generated_config" };
+    }
+    throw new Error("Active Clash generated configuration contains no controller endpoint");
+  }
+  return { socketPath: runningControllerPipe(DEFAULT_PIPE, options), secret: options.secret || env.CLASH_CONTROLLER_SECRET || "", source: "runtime_discovery" };
+}
+
 export function resolveControllerPipe(options = {}, env = process.env) {
-  return options.socketPath || env.CLASH_CONTROLLER_PIPE || DEFAULT_PIPE;
+  return resolveControllerConnection(options, env).socketPath;
 }
 
 function requestJson({ socketPath, controllerUrl, secret }, method, pathname, body) {
@@ -44,19 +87,22 @@ function requestJson({ socketPath, controllerUrl, secret }, method, pathname, bo
       });
     });
     request.on("error", reject);
+    request.setTimeout(5000, () => request.destroy(new Error("Clash controller request timed out")));
     if (payload) request.write(payload);
     request.end();
   });
 }
 
 export function createClashController(options = {}) {
+  const connection = resolveControllerConnection(options);
   return {
+    endpoint: { source: connection.source, socketPath: connection.socketPath, controllerUrl: connection.controllerUrl },
     async proxies() {
-      const payload = await requestJson(options, "GET", "/proxies");
+      const payload = await requestJson(connection, "GET", "/proxies");
       return payload?.proxies ?? {};
     },
     async select(group, member) {
-      await requestJson(options, "PUT", `/proxies/${encodeURIComponent(group)}`, { name: member });
+      await requestJson(connection, "PUT", `/proxies/${encodeURIComponent(group)}`, { name: member });
     }
   };
 }

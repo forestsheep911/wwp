@@ -12,10 +12,12 @@ import nodeFetch from "node-fetch";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { createVpnTrafficMonitor } from "./lib/vpn-traffic-monitor.mjs";
 import { requireNotionUploadRoute, supportedNotionUploadRoutes } from "./lib/notion-upload-route-policy.mjs";
+import { resolveControllerConnection } from "./lib/clash-notion-route.mjs";
 
 const DEFAULT_PART_MIB = 20;
 const MIN_PART_MIB = 5;
-const CLASH_PIPE = "\\\\.\\pipe\\verge-mihomo";
+let clashPipe;
+let clashConnection;
 
 export function clashAuthorizationHeaders(secret) {
   const token = String(secret ?? "").trim();
@@ -24,7 +26,7 @@ export function clashAuthorizationHeaders(secret) {
 
 function loadDotEnv() { config(); }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     file: "",
     parts: 3,
@@ -37,10 +39,11 @@ function parseArgs(argv) {
     noResolveOverride: false,
     resolveIp: "",
     localAddress: "",
+    clashPipe: "",
     expectedRoute: "direct"
   };
   const valueArgs = new Set([
-    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report", "--resolve-ip", "--local-address", "--expected-route"
+    "--file", "--parts", "--part-mib", "--slow-seconds", "--max-restarts", "--report", "--resolve-ip", "--local-address", "--clash-pipe", "--expected-route"
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -55,6 +58,7 @@ function parseArgs(argv) {
       else if (arg === "--report") options.report = path.resolve(value);
       else if (arg === "--resolve-ip") options.resolveIp = value;
       else if (arg === "--local-address") options.localAddress = value;
+      else if (arg === "--clash-pipe") options.clashPipe = value;
       else if (arg === "--expected-route") options.expectedRoute = value;
     } else if (arg === "--complete") {
       options.complete = true;
@@ -76,6 +80,7 @@ Options:
                         Keep api.notion.com as a hostname so Clash domain rules can match
   --resolve-ip <ip>     Override api.notion.com DNS for a direct-route probe
   --local-address <ip>  Bind the direct probe to a physical local interface
+  --clash-pipe <path>   Clash controller named pipe (default: explicit environment or active runtime discovery)
   --expected-route <direct|jms-s801>
                         Required exact Clash route (default: direct)
   --complete           Complete the unattached FileUpload after all parts are sent
@@ -121,12 +126,13 @@ function installNotionDnsOverride(ip) {
 
 async function clashRequest(method, requestPath) {
   return await new Promise((resolve, reject) => {
+    const target = clashConnection?.controllerUrl ? new URL(requestPath, clashConnection.controllerUrl) : null;
     const request = http.request({
-      socketPath: CLASH_PIPE,
-      path: encodeURI(requestPath),
+      ...(target ? { hostname: target.hostname, port: target.port, path: target.pathname + target.search }
+        : { socketPath: clashPipe, path: encodeURI(requestPath) }),
       method,
       headers: {
-        ...clashAuthorizationHeaders(process.env.CLASH_CONTROLLER_SECRET),
+        ...clashAuthorizationHeaders(clashConnection?.secret ?? process.env.CLASH_CONTROLLER_SECRET),
         Connection: "close"
       }
     }, response => {
@@ -136,27 +142,39 @@ async function clashRequest(method, requestPath) {
       response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
     });
     request.on("error", reject);
+    request.setTimeout(5000, () => request.destroy(new Error("Clash controller request timed out")));
     request.end();
   });
 }
 
-async function notionConnections(startedAfter) {
+async function notionConnections() {
   const response = await clashRequest("GET", "/connections");
   if (response.status !== 200) throw new Error(`Clash connections query failed: HTTP ${response.status}`);
   const payload = JSON.parse(response.body);
   return (payload.connections ?? []).filter(connection => {
     const metadata = connection.metadata ?? {};
-    const startedAt = Date.parse(connection.start ?? "");
     const isNotionTarget = metadata.host === "api.notion.com"
       || metadata.destinationIP === process.env.NOTION_API_RESOLVE_IP;
     return isNotionTarget
-      && String(metadata.process ?? "").toLowerCase() === "node.exe"
-      && (!Number.isFinite(startedAt) || startedAt >= startedAfter - 2000);
+      && String(metadata.process ?? "").toLowerCase() === "node.exe";
   });
 }
 
-async function closeNotionConnections(startedAfter) {
-  const connections = await notionConnections(startedAfter);
+export function filterTransferConnections(connections, baseline, startedAfter) {
+  return connections.filter(connection => {
+    const previousUpload = baseline.get(connection.id);
+    const currentUpload = Number(connection.uploadedBytes ?? 0);
+    const startedAt = Date.parse(connection.start ?? "");
+    return !baseline.has(connection.id)
+      || currentUpload > previousUpload
+      || (Number.isFinite(startedAt) && startedAt >= startedAfter - 2000);
+  });
+}
+
+async function closeNotionConnections(startedAfter, baseline) {
+  const connections = filterTransferConnections(
+    await notionConnections(), baseline, startedAfter
+  );
   const closed = [];
   for (const connection of connections) {
     const response = await clashRequest("DELETE", `/connections/${connection.id}`);
@@ -172,12 +190,13 @@ async function closeNotionConnections(startedAfter) {
   return closed;
 }
 
-async function connectionSnapshot(startedAfter) {
-  const connections = await notionConnections(startedAfter);
+async function connectionSnapshot() {
+  const connections = await notionConnections();
   return connections.map(connection => ({
     id: connection.id,
     chains: connection.chains ?? [],
     uploadedBytes: connection.upload ?? 0,
+    start: connection.start ?? "",
     destination: connection.metadata?.remoteDestination ?? connection.metadata?.destinationIP ?? ""
   }));
 }
@@ -207,6 +226,11 @@ async function readChunk(filePath, offset, length) {
 }
 
 async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, allowRestart) {
+  const baselineConnections = await connectionSnapshot();
+  const baseline = new Map(baselineConnections.map(connection => [
+    connection.id,
+    Number(connection.uploadedBytes ?? 0)
+  ]));
   const startedAt = Date.now();
   let restartTimer;
   let closed = [];
@@ -217,7 +241,7 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
       try {
         observedConnections = mergeConnectionSnapshots(
           observedConnections,
-          await connectionSnapshot(startedAt)
+          filterTransferConnections(await connectionSnapshot(), baseline, startedAt)
         );
       } catch {
         // Missing route evidence still fails closed after the upload attempt.
@@ -228,7 +252,7 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
   if (allowRestart && slowSeconds > 0) {
     restartTimer = setTimeout(async () => {
       try {
-        closed = await closeNotionConnections(startedAt);
+        closed = await closeNotionConnections(startedAt, baseline);
       } catch (error) {
         closed = [{ error: error.message }];
       }
@@ -254,7 +278,7 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
   const seconds = (Date.now() - startedAt) / 1000;
   observedConnections = mergeConnectionSnapshots(
     observedConnections,
-    await connectionSnapshot(startedAt).catch(() => [])
+    filterTransferConnections(await connectionSnapshot().catch(() => []), baseline, startedAt)
   );
   return {
     seconds: Number(seconds.toFixed(3)),
@@ -266,8 +290,10 @@ async function sendAttempt(notion, uploadId, fileName, part, data, slowSeconds, 
 }
 
 async function main() {
-  loadDotEnv();
   const options = parseArgs(process.argv.slice(2));
+  loadDotEnv();
+  clashConnection = resolveControllerConnection({ socketPath: options.clashPipe });
+  clashPipe = clashConnection.socketPath;
   const token = process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN;
   if (!token) throw new Error("NOTION_WRITE_TOKEN or NOTION_TOKEN is required");
   if (!fs.existsSync(options.file)) throw new Error(`File not found: ${options.file}`);

@@ -18,7 +18,7 @@ import { collectSourceDispositions } from "./lib/film-source-disposition.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
 
-function loadDotEnv() { config(); }
+function loadDotEnv(secretNames = []) { config({ resolveSecrets: secretNames }); }
 
 function parse(argv) {
   const options = { db: DEFAULT_DB, json: false };
@@ -114,11 +114,13 @@ async function loadNotionAdapter(options = {}) {
 }
 
 async function main() {
-  loadDotEnv();
   let parsed;
   try { parsed = parse(process.argv.slice(2)); }
   catch (error) { console.error(error.message); process.exitCode = 2; return; }
   const { command, options } = parsed;
+  loadDotEnv(command === "reconcile-notion"
+    ? ["NOTION_READ_ONLY_TOKEN", "NOTION_API_KEY", "NOTION_TOKEN"]
+    : []);
   let db;
   try {
     db = openLedger(path.resolve(options.db));
@@ -436,11 +438,13 @@ async function main() {
       if (sampleFiles.length > 0) evidence.sampleFiles = sampleFiles;
       if (state === "verified") {
         evidence.verifiedChinese = true;
+        evidence.verifiedChineseSubtitle = true;
         evidence.hasChineseSubtitle = true;
         delete evidence.noChineseSubtitles;
         delete evidence.hardGate;
       } else if (state === "confirmed_missing") {
         evidence.verifiedChinese = false;
+        evidence.verifiedChineseSubtitle = false;
         evidence.hasChineseSubtitle = false;
         evidence.noChineseSubtitles = true;
         evidence.hardGate = "missing_chinese_subtitle";
@@ -449,6 +453,7 @@ async function main() {
         delete evidence.noChineseSubtitles;
         delete evidence.hasChineseSubtitle;
         delete evidence.verifiedChinese;
+        delete evidence.verifiedChineseSubtitle;
       }
       const sourceRow = repo.updateSourceEvidence(sourceId, {
         qualityState: state === "confirmed_missing" ? "subtitle_missing" : state === "verified" ? "subtitle_verified" : "unknown",

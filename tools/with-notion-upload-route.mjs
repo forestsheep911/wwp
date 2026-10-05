@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-import { createClashController, inspectNotionRouteTopology, withTemporaryNotionRoute } from "./lib/clash-notion-route.mjs";
+import { createClashController, inspectNotionRouteTopology, resolveControllerConnection, withTemporaryNotionRoute } from "./lib/clash-notion-route.mjs";
 
 function usage() {
   console.log(`Usage:
@@ -53,9 +53,12 @@ function runChild(command, env) {
 }
 
 export function childEnvironment(options, baseEnv = process.env) {
+  const connection = resolveControllerConnection({ socketPath: options.controllerPipe, controllerUrl: options.controllerUrl }, baseEnv);
   return {
     ...baseEnv,
-    ...(options.controllerPipe ? { CLASH_CONTROLLER_PIPE: options.controllerPipe } : {}),
+    CLASH_CONTROLLER_PIPE: connection.socketPath || "",
+    CLASH_CONTROLLER_URL: connection.controllerUrl || "",
+    CLASH_CONTROLLER_SECRET: connection.secret,
     NOTION_UPLOAD_EXPECTED_ROUTE: options.route,
     NOTION_UPLOAD_ROUTE_REASON: options.reason?.trim() || ""
   };
@@ -78,7 +81,7 @@ async function main() {
     secret: process.env.CLASH_CONTROLLER_SECRET || ""
   });
   if (options.inspect) {
-    console.log(JSON.stringify(inspectNotionRouteTopology(await controller.proxies()), null, 2));
+    console.log(JSON.stringify({ controller: controller.endpoint, ...inspectNotionRouteTopology(await controller.proxies()) }, null, 2));
     return;
   }
   validateRunOptions(options);

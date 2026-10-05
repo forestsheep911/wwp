@@ -1060,7 +1060,7 @@ test("legacy verifiedChinese false remains selectable until absence is explicitl
   } finally { f.close(); }
 });
 
-test("confirmed subtitle absence creates and later resolves a durable acquisition task", () => {
+test("subtitle acquisition stays open after subtitle verification until production and publication close", () => {
   const f = fixture();
   try {
     const root = f.repo.upsertInputRoot("X:\\queue");
@@ -1091,8 +1091,13 @@ test("confirmed subtitle absence creates and later resolves a durable acquisitio
       qualityState: "acceptable",
       subtitleEvidence: { internalProbeState: "completed", verifiedChinese: true }
     });
-    const resolved = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
-    assert.deepEqual(resolved.resolved.map((row) => row.id), [task.id]);
+    const subtitleVerified = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(subtitleVerified.resolved, []);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "in_progress");
+
+    f.db.prepare("UPDATE variants SET production_state='qc_passed', publication_state='sync_ready' WHERE id=?").run(deferredVariant.id);
+    const published = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(published.resolved.map((row) => row.id), [task.id]);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "done");
 
     f.repo.updateSourceEvidence(source.id, {
@@ -1102,6 +1107,72 @@ test("confirmed subtitle absence creates and later resolves a durable acquisitio
     const reopened = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
     assert.deepEqual(reopened.reopened.map((row) => row.id), [task.id]);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("verified Mandarin original audio clears a subtitle-only blocker", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Mainland Mandarin original", year: 2026, priorityScore: 80 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "mainland-original", absolutePath: "X:\\queue\\mainland-original",
+      fingerprint: "mainland-mandarin-original", sourceKind: "file", qualityState: "subtitle_missing",
+      subtitleEvidence: { internalProbeState: "probed", chineseStreams: [] },
+      audioEvidence: { streams: [{ language: "und" }] }
+    });
+
+    const waiting = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(waiting.created.map((task) => task.source_id), [source.id]);
+    const task = waiting.created[0];
+    f.repo.transitionWorkflowTask(task.id, "waiting_user", { reason: "Incorrectly requested Chinese subtitles" });
+
+    f.repo.updateSourceEvidence(source.id, {
+      qualityState: "acceptable",
+      audioEvidence: {
+        streams: [{ language: "und" }],
+        originalLanguage: "Mandarin",
+        verifiedOriginalLanguage: true,
+        evidence: "Verified Mainland Chinese-language original; Chinese subtitles are not required for this branch"
+      },
+      reason: "Corrected subtitle gate for a Mandarin-original Mainland film"
+    });
+    const resolved = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(resolved.resolved.map((row) => row.id), [task.id]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "done");
+    assert.deepEqual(f.repo.listSubtitleAcquisitionCandidates({ limit: 5 }), []);
+  } finally { f.close(); }
+});
+
+test("duplicate source subtitle tasks close and do not reopen", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Duplicate subtitle source", year: 2025, priorityScore: 80 });
+    const canonical = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "canonical", absolutePath: "X:\\queue\\canonical",
+      fingerprint: "subtitle-canonical", sourceKind: "folder", qualityState: "unknown",
+      subtitleEvidence: { internalProbeState: "complete" }, audioEvidence: { languages: ["English"] }
+    });
+    const duplicate = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "duplicate", absolutePath: "X:\\queue\\duplicate",
+      fingerprint: "subtitle-duplicate", sourceKind: "folder", qualityState: "subtitle_missing",
+      subtitleEvidence: { state: "confirmed_missing", hasChineseSubtitle: false }, audioEvidence: { languages: ["English"] }
+    });
+
+    const created = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(created.created.map((task) => task.source_id), [duplicate.id]);
+    const duplicateTask = created.created[0];
+
+    f.repo.markDuplicateSource(duplicate.id, canonical.id, { reason: "Same physical release" });
+    const reconciled = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(reconciled.candidates.map((row) => row.source_id), []);
+    assert.deepEqual(reconciled.resolved.map((task) => task.id), [duplicateTask.id]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(duplicateTask.id).status, "done");
+
+    const nextCycle = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(nextCycle.created, []);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(duplicateTask.id).status, "done");
   } finally { f.close(); }
 });
 

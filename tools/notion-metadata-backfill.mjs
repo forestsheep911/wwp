@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 import { parseDoubanSubjectId, maintainedDoubanSubjectId } from "./lib/douban-identity.mjs";
 
 const VIEW_ID = "22920ac1-2f0a-801d-bcf4-000cc6950264";
@@ -81,6 +82,9 @@ const genreOptions = new Set([
 const genreAliases = new Map([
   ["爱情", "浪漫"],
   ["纪录片", "记录"],
+  ["黑色电影", "黑色"],
+  ["Film-Noir", "黑色"],
+  ["Film Noir", "黑色"],
   ["Action", "动作"],
   ["Adventure", "冒险"],
   ["Animation", "动画"],
@@ -1783,9 +1787,12 @@ async function main() {
   ensureLocalData();
   const options = parseArgs();
   installNotionDnsOverride(options.notionApiResolveIp);
-  const clientOptions = { auth: dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN"), timeoutMs: 120000 };
+  const clientOptions = {
+    auth: dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN"),
+    timeoutMs: 120000,
+    fetch: createPacedFetch(nodeFetch)
+  };
   if (options.localAddress) {
-    clientOptions.fetch = nodeFetch;
     clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
     console.log(`direct local address: ${options.localAddress}`);
   }

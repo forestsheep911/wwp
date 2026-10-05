@@ -22,6 +22,20 @@ test("CLI initializes and reports a clean JSON status", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("local CLI commands do not resolve unrelated Key Vault secrets", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-ledger-vault-"));
+  try {
+    const db = path.join(dir, "ledger.sqlite");
+    const envFile = path.join(dir, ".env");
+    writeFileSync(envFile, "UNUSED_SECRET__KEY_VAULT=missing-vault/MISSING-SECRET\n");
+    const env = { DOTENV_CONFIG_PATH: envFile };
+    const init = run(["--db", db, "init"], dir, env);
+    assert.equal(init.status, 0, init.stderr);
+    const status = run(["--db", db, "status", "--json"], dir, env);
+    assert.equal(status.status, 0, status.stderr);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("CLI discovery imports scan JSON and rejects invalid contracts", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-"));
   try {
@@ -245,6 +259,50 @@ test("CLI attaches a legacy variant to a verified source", async () => {
     ], dir);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).source_id, source.id);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI subtitle review keeps all Chinese-subtitle evidence flags consistent", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-subtitle-review-"));
+  try {
+    const dbPath = path.join(dir, "ledger.sqlite");
+    const { openLedger } = await import("./lib/film-ledger-schema.mjs");
+    const { createLedgerRepository } = await import("./lib/film-ledger-repository.mjs");
+    const db = openLedger(dbPath);
+    const repo = createLedgerRepository(db);
+    const root = repo.upsertInputRoot("X:\\queue");
+    const source = repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      relativePath: "Film.mkv",
+      absolutePath: "X:\\queue\\Film.mkv",
+      fingerprint: "subtitle-review",
+      sourceKind: "folder",
+      subtitleEvidence: { verifiedChineseSubtitle: false, hasChineseSubtitle: false }
+    });
+    db.close();
+
+    const readEvidence = () => {
+      const current = openLedger(dbPath);
+      const row = current.prepare("SELECT subtitle_evidence FROM sources WHERE id=?").get(source.id);
+      current.close();
+      return JSON.parse(row.subtitle_evidence);
+    };
+    const review = (state) => run([
+      "--db", dbPath, "review-subtitles", "--source-id", String(source.id),
+      "--subtitle-state", state, "--json"
+    ], dir);
+
+    assert.equal(review("verified").status, 0);
+    assert.equal(readEvidence().verifiedChineseSubtitle, true);
+    assert.equal(readEvidence().hasChineseSubtitle, true);
+
+    assert.equal(review("confirmed_missing").status, 0);
+    assert.equal(readEvidence().verifiedChineseSubtitle, false);
+    assert.equal(readEvidence().hasChineseSubtitle, false);
+
+    assert.equal(review("unknown").status, 0);
+    assert.equal(Object.hasOwn(readEvidence(), "verifiedChineseSubtitle"), false);
+    assert.equal(Object.hasOwn(readEvidence(), "hasChineseSubtitle"), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

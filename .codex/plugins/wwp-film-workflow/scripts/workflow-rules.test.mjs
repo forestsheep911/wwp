@@ -49,6 +49,14 @@ test("the exception does not waive subtitles for foreign-original-audio playback
   assert.match(acquirer, /foreign-\s*original-audio branch/u);
 });
 
+test("Mainland Mandarin-original films do not require Chinese subtitles", () => {
+  const intake = read("skills/wwp-film-intake/SKILL.md");
+  const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+
+  assert.match(intake, /Mainland Chinese-language film with verified Mandarin original audio does not require Chinese subtitles/u);
+  assert.match(encoder, /Mandarin-language films and verified Mandarin-dubbed/u);
+});
+
 test("foreign films prioritize original audio before dubbed expansion", () => {
   const decisionRules = read("references/decision-rules.md");
   const selector = read("skills/wwp-film-candidate-selector/SKILL.md");

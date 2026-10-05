@@ -33,6 +33,15 @@ test("passes the live controller pipe to the wrapped upload process", () => {
   assert.equal(env.EXISTING, "preserved");
 });
 
+test("passes the runtime controller authentication to the child without changing its route", () => {
+  const env = childEnvironment({ route: "direct" }, {
+    CLASH_CONTROLLER_PIPE: "\\\\.\\pipe\\verge-mihomo-production-test", CLASH_CONTROLLER_SECRET: "test-only-secret"
+  });
+  assert.equal(env.CLASH_CONTROLLER_PIPE, "\\\\.\\pipe\\verge-mihomo-production-test");
+  assert.equal(env.CLASH_CONTROLLER_SECRET, "test-only-secret");
+  assert.equal(env.NOTION_UPLOAD_EXPECTED_ROUTE, "direct");
+});
+
 test("rejects an s801 batch without a concrete route reason", () => {
   const options = parseArgs(["--route", "jms-s801", "--apply", "--", "node", "upload.mjs"]);
   assert.throws(() => validateRunOptions(options), /--reason <text> is required/u);

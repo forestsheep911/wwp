@@ -2,10 +2,11 @@ import { execFileSync } from "node:child_process";
 import { config as loadDotenv } from "dotenv";
 
 // References contain only vault/name metadata. Values live in process memory.
-export function resolveSecretReferences(env = process.env, readSecret = readAzureSecret) {
+export function resolveSecretReferences(env = process.env, readSecret = readAzureSecret, onlyNames = null) {
   for (const [name, reference] of Object.entries(env)) {
     if (!name.endsWith("__KEY_VAULT") || !reference) continue;
     const destination = name.slice(0, -11);
+    if (onlyNames && !onlyNames.has(destination)) continue;
     if (env[destination]) continue;
     const match = reference.match(/^([a-zA-Z0-9-]+)\/([a-zA-Z0-9-]+)$/u);
     if (!match) throw new Error(`Invalid Key Vault reference for ${destination}`);
@@ -30,12 +31,17 @@ function readAzureSecret(vault, name) {
 }
 
 export function config(options = {}) {
-  const result = loadDotenv({ quiet: true, ...(process.env.DOTENV_CONFIG_PATH ? { path: process.env.DOTENV_CONFIG_PATH } : {}), ...options });
-  resolveSecretReferences();
+  const { resolveSecrets = true, ...dotenvOptions } = options;
+  const result = loadDotenv({ quiet: true, ...(process.env.DOTENV_CONFIG_PATH ? { path: process.env.DOTENV_CONFIG_PATH } : {}), ...dotenvOptions });
+  if (resolveSecrets === true) resolveSecretReferences();
+  else if (Array.isArray(resolveSecrets)) resolveSecretReferences(process.env, readAzureSecret, new Set(resolveSecrets));
   return result;
 }
 
 export function projectEnv(name) {
-  config();
+  config({ resolveSecrets: [] });
+  if (!process.env[name]) {
+    resolveSecretReferences(process.env, readAzureSecret, new Set([name]));
+  }
   return process.env[name];
 }

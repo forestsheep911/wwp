@@ -45,5 +45,6 @@ test("contradictory evidence returns to review", () => {
 
 test("verified Mandarin audio is a non-blocking subtitle exception", () => {
   assert.equal(hasVerifiedMandarinAudio('{"language":"Mandarin"}'), true);
+  assert.equal(hasVerifiedMandarinAudio('{"originalLanguage":"Mandarin","verifiedOriginalLanguage":true}'), true);
   assert.equal(hasVerifiedMandarinAudio('{"language":"English"}'), false);
 });

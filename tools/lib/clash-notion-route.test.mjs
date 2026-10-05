@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectNotionRouteTopology, resolveControllerPipe, withTemporaryNotionRoute } from "./clash-notion-route.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { inspectNotionRouteTopology, resolveControllerConnection, resolveControllerPipe, withTemporaryNotionRoute } from "./clash-notion-route.mjs";
+
+test("discovers the unique production core when generated sidecar pipe is stale", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clash-controller-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, "clash-verge.yaml");
+  fs.writeFileSync(configPath, "external-controller-pipe: \\\\.\\pipe\\verge-mihomo-sidecar-release-test\nsecret: test-runtime-secret\n");
+  const env = { CLASH_CONTROLLER_CONFIG: configPath };
+  const connection = resolveControllerConnection({ pipeNames: ["clash-verge-service", "verge-mihomo-production-test"] }, env);
+  assert.equal(connection.socketPath, "\\\\.\\pipe\\verge-mihomo-production-test");
+  assert.equal(connection.secret, "test-runtime-secret");
+  assert.throws(() => resolveControllerConnection({ pipeNames: ["verge-mihomo-one", "verge-mihomo-two"] }, env), /discovered 2/u);
+  assert.throws(() => resolveControllerConnection({ pipeNames: [] }, env), /discovered 0/u);
+  const configured = resolveControllerConnection({ pipeNames: ["verge-mihomo-sidecar-release-test", "verge-mihomo-production-test"] }, env);
+  assert.equal(configured.socketPath, "\\\\.\\pipe\\verge-mihomo-sidecar-release-test");
+  fs.writeFileSync(configPath, "secret: [test-runtime-secret\n");
+  assert.throws(() => resolveControllerConnection({}, env), (error) => {
+    assert.match(error.message, /configuration contents are withheld/u);
+    assert.doesNotMatch(error.message, /test-runtime-secret/u);
+    return true;
+  });
+});
+
+test("an explicit pipe is honored without falling through to another running core", () => {
+  const connection = resolveControllerConnection({ socketPath: "explicit-pipe", pipeNames: ["verge-mihomo-other"] }, {
+    CLASH_CONTROLLER_URL: "http://127.0.0.1:9097", CLASH_CONTROLLER_SECRET: "runtime-only"
+  });
+  assert.equal(connection.socketPath, "explicit-pipe");
+  assert.equal(connection.controllerUrl, undefined);
+  assert.equal(connection.secret, "runtime-only");
+});
 
 function fakeController({ s801 = ["JMS London s801 - Reality"], omitJms = false } = {}) {
   const state = { Notion: "国内直连", "JMS London 节点": "JMS London s1 - SS" };

@@ -14,6 +14,13 @@ test("external subtitle files can declare their source character encoding", () =
   assert.match(script, /charenc=\$\{options\.subtitleCharenc\}/u);
 });
 
+test("text subtitles can be raised above conflicting hardcoded source captions", () => {
+  assert.match(script, /--subtitle-margin-v <pixels>/u);
+  assert.match(script, /options\.subtitleMarginV < 0 \|\| options\.subtitleMarginV > 1000/u);
+  assert.match(script, /force_style=MarginV=\$\{options\.subtitleMarginV\}/u);
+  assert.match(script, /subtitleMarginV != null && subtitleFilePath == null/u);
+});
+
 test("bounded external-subtitle smoke tests preserve the source subtitle timeline", () => {
   assert.match(script, /options\.subtitleFile != null && options\.start != null && options\.start > 0/u);
   assert.match(script, /setpts=PTS\+\$\{options\.start\}\/TB,\$\{rawSubtitleFileFilter\},setpts=PTS-\$\{options\.start\}\/TB/u);
@@ -93,10 +100,16 @@ test("full encodes rebuild timestamps at the selected source frame rate", () => 
   assert.match(script, /"-fps_mode", "cfr"/u);
   assert.match(script, /non-monotonic.*PTS|duplicate DTS|monotonic.*timeline/iu);
   assert.match(script, /function probeVideoFrameRate\(/u);
-  assert.match(script, /const sourceFrameRate = probeVideoFrameRate\(input, options\.videoStream\)/u);
+  assert.match(script, /const sourceFrameRate = options\.videoFrameRate \?\? probeVideoFrameRate\(input, options\.videoStream\)/u);
   assert.match(script, /setpts=N\/\(\$\{sourceFrameRate\}\*TB\)/u);
   assert.doesNotMatch(script, /setpts=N\/\(24000\/1001\*TB\)/u);
   assert.match(script, /\[0:s:\$\{options\.subtitleStream\}\]setpts=PTS-\$\{bitmapSubtitleOffset\}\/TB,scale=/u);
+});
+
+test("a measured rational frame rate can override misleading stream metadata", () => {
+  assert.match(script, /--video-frame-rate <numerator\/denominator>/u);
+  assert.match(script, /options\.videoFrameRate \?\? probeVideoFrameRate\(input, options\.videoStream\)/u);
+  assert.match(script, /video-frame-rate must be a rational value such as 24000\/1001/u);
 });
 
 test("final output must preserve source duration and audio/video synchronization", () => {

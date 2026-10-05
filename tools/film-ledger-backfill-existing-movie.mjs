@@ -5,6 +5,7 @@ import path from "node:path";
 import dns from "node:dns";
 import { pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
 
@@ -97,7 +98,11 @@ async function main() {
   const options = optionsFromArgs(); const env = envValues(); installDnsOverride(env);
   const token = env.NOTION_READ_ONLY_TOKEN || env.NOTION_TOKEN || env.NOTION_WRITE_TOKEN;
   if (!token || !env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID) throw new Error("Notion token and NOTION_MEDIA_ASSETS_DATA_SOURCE_ID are required");
-  const notion = new Client({ auth: token, timeoutMs: 120000 });
+  const notion = new Client({
+    auth: token,
+    timeoutMs: 120000,
+    fetch: createPacedFetch(globalThis.fetch.bind(globalThis), { minIntervalMs: 1000 })
+  });
   const [pages, assets] = await Promise.all([specPages(notion, options.workPageId), mediaAssetsForWork(notion, env.NOTION_MEDIA_ASSETS_DATA_SOURCE_ID, options.workPageId)]);
   const candidates = assets.map((asset) => movieCandidate(asset, pages, options.outputRoot, {
     allowUploadedOnly: options.allowUploadedOnly

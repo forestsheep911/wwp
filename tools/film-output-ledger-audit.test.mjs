@@ -8,6 +8,7 @@ test("local output audit classifies playable, QC, and work artifacts", () => {
   assert.equal(classifyLocalMedia("Film.sample.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("Film.sample.eng.chs.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("The.Wire.S03E09.diagnostic-60s.mp4"), "qc_artifact");
+  assert.equal(classifyLocalMedia("xiheyidainv.1952.subtitle-sync-check-680s.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("Thor.2013.smoke.s19.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("_workflow_tmp/smoke.mp4"), "qc_artifact");
   assert.equal(classifyLocalMedia("shadow-chronicles.2006.smoke2.720p.h265.eng.chseng.mp4"), "qc_artifact");
