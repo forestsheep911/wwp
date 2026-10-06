@@ -11,8 +11,10 @@ Use plugin helper scripts for generic media mechanics and existing repository to
 
 ## Plugin Helpers
 
-  - `node .codex/plugins/wwp-film-workflow/scripts/transcode-hevc-mp4.mjs --input <media> --output E:\\video_made\\<name>.mp4 --temp-dir I:\\MAKE\\transcode-temp --subtitle-stream <ordinal|none>`
-  - `--temp-dir` is optional. When supplied, only the encode work MKV, temporary remux, and extracted subtitle are placed there; the final MP4 remains at `--output`. Use it when the default output volume cannot hold both the work file and final file. The temp directory must have enough free space for the full encode, and it must not be confused with the permanent output directory.
+- macOS runtime configuration and verified smoke-test recipe: `mac-transcoding.md`. Windows drive-letter examples below must be replaced by the configured mounted paths on Mac. All media helpers resolve the same FFmpeg/ffprobe pair.
+
+- `node .codex/plugins/wwp-film-workflow/scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --temp-dir <work-directory> --subtitle-stream <ordinal|none>`
+  - `--temp-dir` is optional. When supplied, the encode work MKV, temporary remux, extracted subtitle/fonts, state and logs are placed in a dedicated job directory there; the final MP4 remains at `--output`. Use it when the default output volume cannot hold both the work file and final file. The temp directory must have enough free space for the full encode, and it must not be confused with the permanent output directory.
 
 - `node tools/film-workflow-cycle.mjs --limit 3 --json`
   - Explicit `开始制作影视库`, manual-upload completion, Workflow Status/Note change, and user-requested continuation must add `--force`; this forces the bounded Notion handoff read even when the filesystem fingerprint is unchanged. Automatic continuations may omit it and use the unchanged-scan cooldown.
@@ -48,7 +50,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
   - Persists the post-inspection subtitle decision as canonical ledger evidence. Use `confirmed_missing` only after rendered multi-point samples establish that no usable Chinese subtitle exists; it creates or reopens the durable subtitle-acquisition route on the next cycle.
 - `node .codex/plugins/wwp-film-workflow/scripts/transcode-hevc-mp4.mjs --input <media> --output <mp4> --video-stream <ordinal> --subtitle-stream <ordinal|none> [--subtitle-file <ass|ssa|srt>] [--subtitle-charenc <encoding>] [--audio-channels <count>]`
   - Use `--audio-channels 6` when a TrueHD/Atmos 7.1 source should be delivered as broadly compatible AAC 5.1. Omitting it preserves the previous automatic channel-layout behavior.
-- `pwsh -File tools/goat-postprocess-watch.ps1 -ProcessId <encode-pid>`
+- `node .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.mjs --input <final-media> --output-dir <qc-dir> --wait-pid <encode-pid>`
   - One-shot post-encode handoff for a long-running local job. It waits for the exact encoder process, generates ffprobe metadata and a bounded QC contact sheet, then writes `qc_ready`. It never records `qc_passed`, uploads, changes website visibility, or releases a work page automatically.
 - `node .codex/plugins/wwp-film-workflow/scripts/build-series-collections.mjs --manifest <json> [--apply]`
   - Optional collection-only path. Do not run it for normal series production; one file per episode is the default. Use it only after an explicit user instruction, then upload with `--allow-collections`.
@@ -58,7 +60,7 @@ Use plugin helper scripts for generic media mechanics and existing repository to
   - Burns a selected PGS subtitle with `--subtitle-stream`, uses `none` when the source already has a verified hard subtitle, or burns extracted ASS/SSA/SRT text subtitles through libass with `--subtitle-file`. Use `--subtitle-charenc` for a verified non-UTF-8 sidecar such as GBK. Use `--video-stream` when a source provides a compatible alternate video stream; do not assume the first video stream is the best delivery stream. Writes an MKV work file first, then remuxes to MP4 with `hvc1`. Supports `--duration` for bounded subtitle/color smoke tests, `--scale WIDTHxHEIGHT` for an explicit delivery resolution, `--video-bitrate RATE` for size-oriented outputs, and `--tone-map-sdr` for validated HDR/Dolby Vision to BT.709 conversion. PGS overlay EOF passes through the remaining base video and full encodes never use `-shortest`, because subtitles or audio may end before the picture. Use `--split-audio` when TrueHD or another source audio decoder makes the combined video pipeline abnormally slow. Refuses outputs over the 5GB workflow cap.
 - `node .codex/plugins/wwp-film-workflow/scripts/remux-hevc-hvc1.mjs --input <hev1-mp4> --output <hvc1-mp4>`
   - Losslessly remuxes an existing HEVC `hev1` MP4 for browser delivery. It preserves every stream, forces the video sample entry to `hvc1`, verifies the final probe, enforces the byte cap, writes atomically, and never overwrites the source. Use this instead of a full re-encode when codec-tag compatibility is the only defect.
-- `powershell -NoProfile -ExecutionPolicy Bypass -File .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.ps1 -InputPath <media> -Output <png>`
+- `node .codex/plugins/wwp-film-workflow/scripts/make-qc-contact-sheet.mjs --input <media> --output-dir <qc-dir>`
   - Runs `ffmpeg` to create a contact sheet from evenly spaced timestamps.
 - `node .codex/plugins/wwp-film-workflow/scripts/plan-stream-variants.mjs --matrix <json>`
   - Explains which planned variants need video encode, audio encode, remux, or cannot reuse streams.

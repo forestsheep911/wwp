@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+const runtime = fs.readFileSync(new URL("../../../../tools/lib/film-media-runtime.mjs", import.meta.url), "utf8");
+const job = fs.readFileSync(new URL("../../../../tools/lib/film-encode-job.mjs", import.meta.url), "utf8");
 const script = fs.readFileSync(path.join(import.meta.dirname, "transcode-hevc-mp4.mjs"), "utf8");
 
 test("bounded text-subtitle smoke tests bound subtitle extraction too", () => {
@@ -17,7 +19,7 @@ test("external subtitle files can declare their source character encoding", () =
 test("text subtitles can be raised above conflicting hardcoded source captions", () => {
   assert.match(script, /--subtitle-margin-v <pixels>/u);
   assert.match(script, /options\.subtitleMarginV < 0 \|\| options\.subtitleMarginV > 1000/u);
-  assert.match(script, /force_style=MarginV=\$\{options\.subtitleMarginV\}/u);
+  assert.match(script, /MarginV=\$\{options\.subtitleMarginV\}/u);
   assert.match(script, /subtitleMarginV != null && subtitleFilePath == null/u);
 });
 
@@ -38,8 +40,8 @@ test("CPU tone-map mode also enables the HDR-to-SDR filter", () => {
 
 test("full encodes can place intermediate files on a separate temp volume", () => {
   assert.match(script, /--temp-dir/u);
-  assert.match(script, /const tempDir = options\.tempDir/u);
-  assert.match(script, /copyFileSync\(part, output\)/u);
+  assert.match(script, /const tempDir = assertStoragePath\(options\.tempDir/u);
+  assert.match(job, /promises\.copyFile\(part, staged/u);
 });
 
 test("playable outputs can retain an explicit audio language", () => {
@@ -92,8 +94,8 @@ test("bounded smoke samples fail closed on decoder errors", () => {
   assert.match(script, /function smokeFailureArgs\(duration(?:, allowDecoderRecovery = false)?\)/u);
   assert.match(script, /duration == null \|\| allowDecoderRecovery \? \[\] : \["-xerror"\]/u);
   assert.match(script, /\.\.\.smokeFailureArgs\(options\.duration, options\.allowDecoderRecovery\)/gu);
-  assert.match(script, /Could not find ref with POC/u);
-  assert.match(script, /strict smoke failed on decoder error/u);
+  assert.match(job, /Could not find ref with POC/u);
+  assert.match(job, /strict smoke failed on decoder error/u);
 });
 
 test("full encodes rebuild timestamps at the selected source frame rate", () => {
@@ -120,10 +122,10 @@ test("final output must preserve source duration and audio/video synchronization
 });
 
 test("encoding can explicitly fall back from NVENC to CPU libx265", () => {
-  assert.match(script, /--video-encoder <hevc_nvenc\|libx265>/u);
-  assert.match(script, /options\.videoEncoder === "libx265"/u);
-  assert.match(script, /\["-c:v", "libx265", "-preset", "medium"\]/u);
-  assert.match(script, /options\.videoEncoder === "hevc_nvenc"/u);
+  assert.match(script, /--video-encoder <auto\|hevc_nvenc\|hevc_videotoolbox\|libx265>/u);
+  assert.match(runtime, /encoder === "libx265"/u);
+  assert.match(runtime, /"-preset", encoder === "libx265" \? "medium" : "p5"/u);
+  assert.match(runtime, /"hevc_nvenc", "libx265"/u);
 });
 
 test("decoder recovery is explicit and does not weaken the default smoke gate", () => {

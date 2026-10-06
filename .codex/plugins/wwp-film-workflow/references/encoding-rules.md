@@ -6,7 +6,7 @@
 - When writing to a temporary path that does not end in `.mp4`, pass `-f mp4` explicitly or use a temp name that preserves the `.mp4` extension.
 - Codec direction: HEVC first unless the user or compatibility requirement says otherwise.
 - For HEVC in MP4, write the video sample entry as `hvc1`, not `hev1`. In ffmpeg commands, set `-tag:v hvc1` explicitly; do not assume the encoder or muxer default is Android-browser compatible.
-- Playable output directory: user-specified, otherwise `E:\video_made`.
+- Playable output directory: explicit path or `WWP_OUTPUT_ROOT`; the legacy `E:\video_made` fallback is Windows-only. On Mac read `mac-transcoding.md` and `storage-rules.md`.
 - Subtitle-dependent versions: burn the selected Chinese subtitle into the video by default.
 - Mandarin-language films and verified Mandarin-dubbed (`国配`) variants: prefer no hard subtitles unless the source already has unavoidable hard subtitles. Missing Chinese subtitles are a non-blocking enhancement for a verified `国配` output, not an encode or completion failure.
 - Notion playable uploads must stay below the workflow cap of 5,000,000,000 bytes unless the user explicitly changes it. Official Notion wording may use 5 GiB, but keep the lower decimal-byte cap as upload safety margin. Target about 4.7-4.9GB when making a high-bitrate version; do not plan 6GB as a Notion upload candidate.

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { defaultOutputRoot, requireOutputRoot } from "./lib/film-media-runtime.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import { comparablePath, pathIsWithin, isWindowsPath } from "./lib/film-paths.mjs";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 
-const DEFAULT_ROOT = "E:\\video_made";
+const DEFAULT_ROOT = defaultOutputRoot();
 const DEFAULT_DB = ".local-data/wwp-film-workflow.sqlite";
 const MEDIA_EXTENSION = /\.(?:mp4|m4v|mov|mkv)$/iu;
 
@@ -29,14 +31,10 @@ function parseArgs(argv) {
   return options;
 }
 
-function normalizePath(value) {
-  return path.resolve(value).replaceAll("/", "\\").toLowerCase();
-}
+function normalizePath(value) { return comparablePath(isWindowsPath(value) ? value : path.resolve(value)); }
 
 export function isPathWithinRoot(filePath, root) {
-  const normalizedFile = normalizePath(filePath);
-  const normalizedRoot = normalizePath(root).replace(/[\\]+$/u, "");
-  return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}\\`);
+  return pathIsWithin(isWindowsPath(filePath) ? filePath : path.resolve(filePath), isWindowsPath(root) ? root : path.resolve(root));
 }
 
 function listMediaFiles(root) {
@@ -63,9 +61,10 @@ export function classifyLocalMedia(relativePath) {
 }
 
 export function pendingDeletionPath(outputRoot, variant) {
-  const extension = path.extname(variant.output_path);
-  const basename = path.basename(variant.output_path, extension);
-  return path.join(path.dirname(outputRoot), "待人工删除", `${basename}.variant-${variant.id}${extension}`);
+  const dialect = isWindowsPath(variant.output_path) ? path.win32 : path;
+  const extension = dialect.extname(variant.output_path);
+  const basename = dialect.basename(variant.output_path, extension);
+  return dialect.join(dialect.dirname(outputRoot), "待人工删除", `${basename}.variant-${variant.id}${extension}`);
 }
 
 export function flatSourceSlug(relativePath) {
@@ -75,7 +74,8 @@ export function flatSourceSlug(relativePath) {
 }
 
 export function relatedFlatSources(filePath, flatSources) {
-  const filename = path.basename(filePath, path.extname(filePath)).toLowerCase();
+  const dialect = isWindowsPath(filePath) ? path.win32 : path;
+  const filename = dialect.basename(filePath, dialect.extname(filePath)).toLowerCase();
   return flatSources.filter((source) => filename.startsWith(source.slug) || source.slug.startsWith(filename));
 }
 
@@ -88,7 +88,7 @@ export function isDeferredRetainedCandidate(item) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
-  const root = path.resolve(options.root);
+  const root = requireOutputRoot(options.root);
   if (!fs.existsSync(root)) throw new Error(`Output root does not exist: ${root}`);
   const db = openLedger(path.resolve(options.db));
   try {

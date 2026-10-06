@@ -4,12 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
-import { createLedgerRepository } from "./lib/film-ledger-repository.mjs";
+import { createLedgerRepository, normalizeLedgerPath } from "./lib/film-ledger-repository.mjs";
 import { collectRelocationCandidates, parseArgs, pendingDeletionPath, relocateFinishedOutputs } from "./film-relocate-finished-outputs.mjs";
 
 test("rejects a same-root relocation before touching the ledger", () => {
   assert.throws(
-    () => parseArgs(["--from-root", "E:\\video_made", "--to-root", "E:\\video_made"]),
+    () => parseArgs(["--from-root", os.tmpdir(), "--to-root", os.tmpdir()]),
     /must be different directories/u
   );
 });
@@ -54,7 +54,7 @@ test("relocation copies, verifies, removes source, and updates ledger", () => {
   const destination = result.moved[0].destination;
   assert.equal(fs.existsSync(f.file), false);
   assert.equal(fs.statSync(destination).size, 128);
-  assert.equal(f.db.prepare("SELECT output_path FROM variants WHERE id=?").get(f.variant.id).output_path, destination.replaceAll("/", "\\"));
+  assert.equal(f.db.prepare("SELECT output_path FROM variants WHERE id=?").get(f.variant.id).output_path, normalizeLedgerPath(destination));
   assert.equal(f.db.prepare("SELECT event_type FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 1").get(f.variant.id).event_type, "output_relocated");
   f.db.close();
 });
@@ -70,7 +70,7 @@ test("reconciles a manually moved output without copying or deleting it", () => 
   const result = relocateFinishedOutputs(f.db, candidates, { apply: true });
   assert.equal(result.reconciled.length, 1, JSON.stringify(result));
   assert.equal(fs.existsSync(destination), true);
-  assert.equal(f.db.prepare("SELECT output_path FROM variants WHERE id=?").get(f.variant.id).output_path, destination.replaceAll("/", "\\"));
+  assert.equal(f.db.prepare("SELECT output_path FROM variants WHERE id=?").get(f.variant.id).output_path, normalizeLedgerPath(destination));
   assert.equal(f.db.prepare("SELECT event_type FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 1").get(f.variant.id).event_type, "output_reconciled");
   f.db.close();
 });

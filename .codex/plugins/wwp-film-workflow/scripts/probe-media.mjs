@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveMediaTools } from "../../../../tools/lib/film-media-runtime.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -13,7 +14,7 @@ For a BDMV stream, it also reads matching CLPI PGS language descriptors when ava
 }
 
 function parseArgs(argv) {
-  const options = { ffprobe: "ffprobe" };
+  const options = { ffprobe: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") options.help = true;
@@ -89,6 +90,7 @@ function main() {
     usage();
     return;
   }
+  Object.assign(options, resolveMediaTools(options));
   if (!options.input) {
     usage();
     process.exitCode = 2;

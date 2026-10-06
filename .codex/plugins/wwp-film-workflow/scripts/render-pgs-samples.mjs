@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveMediaTools } from "../../../../tools/lib/film-media-runtime.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,7 @@ production branch.
 }
 
 export function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", events: 3, start: 0, timeout_ms: 180000 };
+  const options = { ffmpeg: null, ffprobe: null, events: 3, start: 0, timeout_ms: 180000 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
@@ -98,6 +99,7 @@ function sampleName(input, stream, index) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
+  Object.assign(options, resolveMediaTools(options));
   const input = path.resolve(options.input);
   const outputDir = path.resolve(options.output_dir);
   if (!fs.existsSync(input)) throw new Error(`Input does not exist: ${input}`);

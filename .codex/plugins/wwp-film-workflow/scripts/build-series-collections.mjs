@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { resolveMediaTools } from "../../../../tools/lib/film-media-runtime.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -43,8 +44,8 @@ to make one upload asset per range. Dry-run is the default.
 function parseArgs(argv) {
   const options = {
     apply: false,
-    ffmpeg: "ffmpeg",
-    ffprobe: "ffprobe",
+    ffmpeg: null,
+    ffprobe: null,
     targetBytes: DEFAULT_TARGET_BYTES,
     maxBytes: DEFAULT_MAX_BYTES
   };
@@ -233,6 +234,7 @@ function main() {
     usage();
     return;
   }
+  Object.assign(options, resolveMediaTools(options));
 
   const manifestPath = path.resolve(options.manifest);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));

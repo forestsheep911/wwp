@@ -1,5 +1,14 @@
 # WWP Storage and External-Disk Rules
 
+## Platform Configuration
+
+Windows drive letters in the sections below are Windows examples only. macOS must use the actual mounted POSIX paths from the current machine; configure `WWP_OUTPUT_ROOT` / `WWP_TEMP_ROOT` or pass explicit CLI paths. Do not create an `E:\video_made` directory in the repository. Output audit and relocation require a configured/explicit root on Mac; cleanup without an output-root filter inspects exact ledger paths and skips root-specific legacy manifest discovery. Keep the SQLite ledger and active code on the local filesystem.
+
+On this Mac, verify `mount` to map each NAS export to its current `/Volumes` directory and verify `df` before using it. Never infer a NAS share from its mount suffix. Prefer the larger volume 2 for new bulky data when its purpose/free space is suitable. `/Volumes/Taliban2T` is optional USB ExFAT storage: verify `diskutil info` and free space, preserve existing contents and use a new task subdirectory. NFS/USB paths must be mounted before creating descendants; media helpers refuse an unmounted `/Volumes/...` fallback and the encoder records/rechecks mount identity.
+
+On POSIX, preserve case and slashes in stored paths. Quarantine goes to the current external volume's `待人工删除` directory, or a same-volume parent directory for internal paths, never the macOS filesystem root. Cleanup remains a separate authorized operation; compatibility tests do not change production ledger state or move source media.
+
+
 ## Storage Roles
 
 - The input root is always supplied by the current request or enabled in the

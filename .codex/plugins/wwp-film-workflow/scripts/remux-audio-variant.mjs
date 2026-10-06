@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { assertStoragePath, resolveMediaTools } from "../../../../tools/lib/film-media-runtime.mjs";
 import fs from "node:fs";
+import { claimEncodeJob, runMedia, publishEncodedFile } from "../../../../tools/lib/film-encode-job.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -9,7 +11,7 @@ function usage() {
   console.log(`Usage:
   node scripts/remux-audio-variant.mjs --video-source <qc-passed-mp4> --audio-source <media>
     --audio-stream <ordinal> --output <mp4> [--audio-channels <count>] [--audio-loudnorm]
-    [--audio-bitrate <rate>] [--max-bytes <bytes>] [--ffmpeg <path>]
+    [--audio-bitrate <rate>] [--restart-work] [--recover-lock] [--max-bytes <bytes>] [--ffmpeg <path>] [--ffprobe <path>]
 
 The video stream is copied without re-encoding and tagged hvc1. The selected audio
 ordinal is relative to audio streams in --audio-source (1:a:0, 1:a:1, ...), then
@@ -20,7 +22,7 @@ variants. Different hard-subtitle variants require separate video encodes.
 
 function parseArgs(argv) {
   const options = {
-    ffmpeg: "ffmpeg",
+    ffmpeg: null,
     audioChannels: null,
     audioLoudnorm: false,
     audioBitrate: "256k",
@@ -34,12 +36,15 @@ function parseArgs(argv) {
     "--audio-channels",
     "--audio-bitrate",
     "--max-bytes",
-    "--ffmpeg"
+    "--ffmpeg",
+    "--ffprobe"
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--audio-loudnorm") options.audioLoudnorm = true;
+    else if (arg === "--restart-work") options.restart = true;
+    else if (arg === "--recover-lock") options.recoverLock = true;
     else if (values.has(arg)) {
       const value = argv[++index];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
@@ -77,19 +82,12 @@ function parseArgs(argv) {
   return options;
 }
 
-function run(ffmpeg, args) {
-  console.log(`remux-audio-variant: ${ffmpeg} ${args.map(value => JSON.stringify(value)).join(" ")}`);
-  const result = spawnSync(ffmpeg, args, { stdio: "inherit", windowsHide: true });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`ffmpeg failed with exit code ${result.status}`);
-}
-
-function assertBrowserPlayableMp4(output) {
-  const result = spawnSync("ffprobe", [
+function assertBrowserPlayableMp4(output, ffprobe) {
+  const result = spawnSync(ffprobe, [
     "-v", "error", "-show_entries",
-    "stream=codec_type,codec_name,codec_tag_string,channels,channel_layout",
+    "stream=codec_type,codec_name,codec_tag_string,channels,channel_layout,duration",
     "-of", "json", output
-  ], { encoding: "utf8", windowsHide: true });
+  ], { encoding: "utf8", windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`ffprobe final output failed with exit code ${result.status}`);
   const streams = JSON.parse(result.stdout).streams ?? [];
@@ -98,6 +96,14 @@ function assertBrowserPlayableMp4(output) {
     throw new Error(`final MP4 contains unexpected stream types: ${unexpected.map((stream) => stream.codec_type).join(", ")}`);
   }
   const video = streams.find((stream) => stream.codec_type === "video");
+  const audioStreams = streams.filter(stream => stream.codec_type === "audio");
+  if (video?.codec_name !== "hevc" || audioStreams.length !== 1 || audioStreams[0].codec_name !== "aac") {
+    throw new Error("audio variant must contain HEVC video and one AAC audio stream");
+  }
+  if (!Number.isFinite(Number(video.duration)) || !Number.isFinite(Number(audioStreams[0].duration))
+    || Math.abs(Number(video.duration) - Number(audioStreams[0].duration)) > 2) {
+    throw new Error("audio variant video/audio durations differ or are unavailable; verify matching source timelines");
+  }
   if (video?.codec_name === "hevc" && video.codec_tag_string !== "hvc1") {
     throw new Error("final HEVC MP4 is missing the required hvc1 sample entry");
   }
@@ -136,15 +142,16 @@ export function buildFfmpegArgs(options, videoSource, audioSource, part) {
   ];
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     usage();
     return;
   }
-  const videoSource = path.resolve(options.video_source);
-  const audioSource = path.resolve(options.audio_source);
-  const output = path.resolve(options.output);
+  Object.assign(options, resolveMediaTools(options));
+  const videoSource = assertStoragePath(options.video_source);
+  const audioSource = assertStoragePath(options.audio_source);
+  const output = assertStoragePath(options.output);
   if (!fs.existsSync(videoSource)) throw new Error(`video source not found: ${videoSource}`);
   if (!fs.existsSync(audioSource)) throw new Error(`audio source not found: ${audioSource}`);
   if (path.extname(videoSource).toLowerCase() !== ".mp4") throw new Error("--video-source must be an .mp4 file");
@@ -152,19 +159,20 @@ function main() {
   if (videoSource.toLowerCase() === output.toLowerCase()) throw new Error("--output must differ from --video-source");
 
   fs.mkdirSync(path.dirname(output), { recursive: true });
-  if (availableBytes(path.dirname(output)) < options.maxBytes + 512 * 1024 * 1024) {
+  if (availableBytes(path.dirname(output)) < 2 * options.maxBytes + 512 * 1024 * 1024) {
     throw new Error("insufficient output disk space for the remuxed audio variant");
   }
-  const part = `${output.slice(0, -4)}.part.mp4`;
-  fs.rmSync(part, { force: true });
-  run(options.ffmpeg, buildFfmpegArgs(options, videoSource, audioSource, part));
+  const job = claimEncodeJob(output, path.dirname(output), { sources: [videoSource, audioSource].map(file => ({ file, size: fs.statSync(file).size, mtime: fs.statSync(file).mtimeMs })), options: Object.fromEntries(Object.entries(options).filter(([key]) => !["restart", "recoverLock"].includes(key))) }, options);
+  try {
+  const part = path.join(job.directory, "delivery.part.mp4");
+  await runMedia(options.ffmpeg, ["-progress", "pipe:1", ...buildFfmpegArgs(options, videoSource, audioSource, part)], "remux-audio-variant", job);
   const size = fs.statSync(part).size;
   if (size > options.maxBytes) {
-    fs.rmSync(part, { force: true });
     throw new Error(`output exceeds max-bytes: ${size} > ${options.maxBytes}`);
   }
-  fs.renameSync(part, output);
-  assertBrowserPlayableMp4(output);
+  assertBrowserPlayableMp4(part, options.ffprobe);
+  await publishEncodedFile(part, output, size);
+  job.save("published");
   console.log(JSON.stringify({
     output,
     bytes: size,
@@ -176,11 +184,12 @@ function main() {
     audioLoudnorm: options.audioLoudnorm,
     audioBitrate: options.audioBitrate
   }));
+  } finally { job.release(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
