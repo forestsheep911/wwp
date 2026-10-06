@@ -65,6 +65,7 @@ function walkFiles(rootDir) {
       continue;
     }
     for (const child of children) {
+      if (child.name === ".DS_Store" || child.name.startsWith("._")) continue;
       const fullPath = path.join(current, child.name);
       if (child.isDirectory()) {
         stack.push(fullPath);
@@ -206,11 +207,11 @@ function main() {
 
   const rootEntries = readdirSync(root, { withFileTypes: true });
   const entries = rootEntries
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name !== ".DS_Store" && !entry.name.startsWith("._"))
     .map((entry) => summarizeEntry(path.join(root, entry.name), root, options.maxSamples));
 
   const rootFiles = rootEntries
-    .filter((entry) => entry.isFile())
+    .filter((entry) => entry.isFile() && entry.name !== ".DS_Store" && !entry.name.startsWith("._"))
     .map((entry) => path.join(root, entry.name));
   const rootMediaGroups = new Map();
   for (const mediaFile of rootFiles.filter((file) => mediaExt.has(path.extname(file).toLowerCase()))) {

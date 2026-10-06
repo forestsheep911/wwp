@@ -9,14 +9,14 @@ export const coreMetadataFields = [
   "Runtime Minutes",
   "Directors",
   "Cast",
-  "Poster URL",
-  "AI建议最低年龄",
-  "AI年龄建议置信度",
-  "内容风险标签",
-  "AI年龄建议理由"
+  "Poster URL"
 ] as const;
 
 export const optionalMetadataFields = [
+  "AI建议最低年龄",
+  "AI年龄建议置信度",
+  "内容风险标签",
+  "AI年龄建议理由",
   "Douban Subject ID",
   "TMDB ID",
   "Traditional Chinese Title (Taiwan)",
@@ -39,7 +39,14 @@ export function deriveMetadataCompleteness(input: {
   values: Record<string, string>;
 }) {
   const missingCoreFields = coreMetadataFields.filter((field) => !input.values[field]?.trim());
-  const unresolvedIssues = ["Human Issue", "AI Issue"].filter((field) => input.values[field]?.trim());
+  // Legacy age-only findings are advisory, never a publication review gate.
+  const unresolvedIssues = ["Human Issue", "AI Issue"].filter((field) => {
+    const issue = input.values[field]?.trim();
+    const isAgeOnlyLegacyIssue = field === "AI Issue"
+      && issue?.startsWith("AI 年龄建议待复核：")
+      && !issue.includes("\n");
+    return Boolean(issue) && !isAgeOnlyLegacyIssue;
+  });
   const status = input.conflicts.length > 0
     ? "conflict"
     : input.hasExternalId && missingCoreFields.length === 0 && unresolvedIssues.length === 0

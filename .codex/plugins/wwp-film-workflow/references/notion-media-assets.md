@@ -84,7 +84,7 @@ Title QA is bounded: after a current production, rename, structure-preparation, 
 - A matching Media Assets row may exist while `Needs Review=true` or issue fields remain non-empty. Treat that as visible follow-up work when the uploaded block is mapped to the intended title and can be opened by the site. Missing or incomplete ffprobe fields, a failed index refresh, or a non-playback metadata mismatch is follow-up work, not a visibility hold; only a demonstrated inability to expose/open the intended video, an observed playback failure affecting all usable paths, or an explicit visibility hold may keep the work hidden.
 - Every media-assets writer/backfiller must default a newly recorded row to `Hide from Website=false`, including source-only rows. The only exceptions are an explicit manifest/human visibility hold or a concrete viewing-affecting risk recorded in the same operation. A provisional hidden value is valid for an empty page before upload, but must not survive a successful playable-media readback merely because other work remains.
 - `Hide from Website` is not part of local-retention proof. A correctly traced, upload-backed playable asset may allow deletion of its local output even when it remains hidden; visibility is controlled separately and automation must not infer why the flag is true.
-- Use `Needs Review` for fixable uncertainty rather than visibility alone: ambiguous work/spec matching, Media Assets mismatch, duplicate or missing episode/spec links, missing ffprobe evidence, subtitle/audio uncertainty, metadata conflict, low-confidence AI advisory, or any condition where a human should inspect before relying on the row.
+- Use `Needs Review` for fixable uncertainty rather than visibility alone: ambiguous work/spec matching, Media Assets mismatch, duplicate or missing episode/spec links, missing ffprobe evidence, subtitle/audio uncertainty, metadata conflict, or any condition where a human should inspect before relying on the row.
 - Clearing `Needs Review` requires the named issue to be resolved and read back. Clearing it should not automatically clear `Hide from Website`.
 - After exact upload, Media Assets, QC, and ledger reconciliation reach
   `sync_ready`, treat the playable gate as complete but do not yet transition
@@ -122,3 +122,7 @@ Use these states consistently in notes/reports when exact schema fields vary:
 - `unknown`
 
 Source-only availability never means the work is playable.
+
+## AI Age Advisory and Website Publication
+
+AI age suggestions are nonblocking reference information. Missing suggestions, low confidence, a recommended minimum age, or `需人工复核` must not set `Needs Review`, set `Hide from Website`, block website publication, or keep a verified publication pending in the Ledger. Keep the suggestion, confidence, reason, and risk tags in the family-age fields for later review. Do not put age-only advisory findings in `AI Issue`. Core metadata completeness does not require AI family-age fields. Existing age-only `AI 年龄建议待复核：` findings may be retired; preserve unrelated AI findings, `Human Issue`, and other concrete review reasons. Apply normal publication readiness rules after retiring an age-only gate; preserve user-set hide decisions and media/QC/identity gates.

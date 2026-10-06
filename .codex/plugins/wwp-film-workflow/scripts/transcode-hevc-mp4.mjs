@@ -26,7 +26,7 @@ Use --split-audio when decoding the selected source audio in the video pipeline
 causes severe slowdown. It encodes the complete video and audio independently,
 then muxes both without -shortest so the video stream is never truncated.
 Use --tone-map-sdr only for a source confirmed to be HDR or Dolby Vision. It converts
-the video to BT.709 before NVENC encoding; ordinary SDR sources must not use it.
+the video to BT.709 before encoding; ordinary SDR sources must not use it.
 Use --tone-map-libplacebo with a libplacebo-enabled FFmpeg build for Dolby Vision
 Profile 5 or faster GPU tone mapping. It implies --tone-map-sdr.
 Use --cpu-tone-map when CUDA pre-scaling or Vulkan/libplacebo is unavailable, or

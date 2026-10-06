@@ -47,3 +47,7 @@ Process only a small batch per run. The local task record is the memory of what 
   independently produced gates, but current-release completion is their conjunction.
   Completing one must not imply the others, and `sync_ready` alone must not set
   `Workflow Status=已完成`.
+
+## AI Age Advisory and Website Publication
+
+AI age suggestions are nonblocking reference information. Missing suggestions, low confidence, a recommended minimum age, or `需人工复核` must not set `Needs Review`, set `Hide from Website`, block website publication, or keep a verified publication pending in the Ledger. Keep the suggestion, confidence, reason, and risk tags in the family-age fields for later review. Do not put age-only advisory findings in `AI Issue`. Core metadata completeness does not require AI family-age fields. Existing age-only `AI 年龄建议待复核：` findings may be retired; preserve unrelated AI findings, `Human Issue`, and other concrete review reasons. Apply normal publication readiness rules after retiring an age-only gate; preserve user-set hide decisions and media/QC/identity gates.
