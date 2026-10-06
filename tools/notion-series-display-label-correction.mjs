@@ -6,6 +6,7 @@ import dns from "node:dns";
 import https from "node:https";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
+import { createPacedFetch } from "./lib/notion-request-limiter.mjs";
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = { workPage: "", fromPrefix: "", toPrefix: "", expectedCount: 0, report: ".local-data/notion-series-display-label-correction.json", resolveIp: "", localAddress: "", apply: false };
@@ -77,9 +78,12 @@ async function main() {
   const token = dotenv("NOTION_WRITE_TOKEN") || dotenv("NOTION_TOKEN");
   const dataSourceId = dotenv("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID");
   if (!token || !dataSourceId) throw new Error("NOTION_WRITE_TOKEN/NOTION_TOKEN and NOTION_MEDIA_ASSETS_DATA_SOURCE_ID are required.");
-  const clientOptions = { auth: token, timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000) };
+  const clientOptions = {
+    auth: token,
+    timeoutMs: Number(dotenv("NOTION_REQUEST_TIMEOUT_MS") || 30000),
+    fetch: createPacedFetch(nodeFetch, { minIntervalMs: 1000 })
+  };
   if (options.localAddress) {
-    clientOptions.fetch = nodeFetch;
     clientOptions.agent = new https.Agent({ keepAlive: true, localAddress: options.localAddress });
   }
   const notion = new Client(clientOptions);
@@ -91,7 +95,6 @@ async function main() {
       await notion.pages.update({ page_id: action.pageId, properties: { "Display Label": { rich_text: [{ type: "text", text: { content: action.after } }] } } });
       const readback = await notion.pages.retrieve({ page_id: action.pageId });
       if (richText(readback.properties?.["Display Label"]) !== action.after) throw new Error(`Display Label readback failed for ${action.pageId}.`);
-      await new Promise((resolve) => setTimeout(resolve, 350));
     }
   }
   const report = { generatedAt: new Date().toISOString(), apply: options.apply, workPageId: options.workPage, fromPrefix: options.fromPrefix, toPrefix: options.toPrefix, actions };

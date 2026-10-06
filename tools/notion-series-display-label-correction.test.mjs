@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { correctionActions } from "./notion-series-display-label-correction.mjs";
 
@@ -19,4 +20,11 @@ test("display-label correction fails closed on missing expected episodes", () =>
   assert.throws(() => correctionActions([page("asset-1", 1, "Old Spec / Episode 01")], {
     fromPrefix: "Old Spec", toPrefix: "New Spec", expectedCount: 2
   }), /Expected 2 exact Display Label matches/);
+});
+
+test("display-label correction keeps the shared limiter when binding a local interface", () => {
+  const source = fs.readFileSync(new URL("./notion-series-display-label-correction.mjs", import.meta.url), "utf8");
+  assert.match(source, /fetch: createPacedFetch\(nodeFetch, \{ minIntervalMs: 1000 \}\)/u);
+  assert.match(source, /clientOptions\.agent = new https\.Agent\(\{ keepAlive: true, localAddress: options\.localAddress \}\)/u);
+  assert.doesNotMatch(source, /clientOptions\.fetch = nodeFetch/u);
 });
