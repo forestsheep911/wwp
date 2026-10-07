@@ -1,12 +1,15 @@
 #!/usr/bin/env node
+import { defaultOutputRoot, requireOutputRoot } from "./lib/film-media-runtime.mjs";
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { normalizeLedgerPath } from "./lib/film-ledger-repository.mjs";
 import { openLedger, withTransaction } from "./lib/film-ledger-schema.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
-const DEFAULT_DESTINATION = "E:\\video_made";
+const DEFAULT_DESTINATION = defaultOutputRoot();
 
 export function parseArgs(args) {
   const options = { db: DEFAULT_DB, fromRoot: null, toRoot: DEFAULT_DESTINATION, apply: false, json: false };
@@ -19,6 +22,7 @@ export function parseArgs(args) {
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
+  options.toRoot = requireOutputRoot(options.toRoot);
   if (!options.fromRoot) throw new Error("--from-root is required");
   if (path.resolve(options.fromRoot) === path.resolve(options.toRoot)) {
     throw new Error("--from-root and --to-root must be different directories; use E:\\待人工删除 when quarantining finished outputs");
@@ -42,12 +46,19 @@ export function pendingDeletionPath(outputRoot, variant) {
   return path.join(path.dirname(path.resolve(outputRoot)), "待人工删除", `${basename}.variant-${variantId}${extension}`);
 }
 
+function hashFile(file) {
+  const hash = createHash("sha256"), buffer = Buffer.alloc(1024 * 1024);
+  const fd = fs.openSync(file, "r");
+  try { let bytes; while ((bytes = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, bytes)); }
+  finally { fs.closeSync(fd); }
+  return hash.digest("hex");
+}
+
 function destinationPath(toRoot, sourcePath, variantId) {
   const extension = path.extname(sourcePath);
   const base = path.basename(sourcePath, extension);
   const normal = path.join(path.resolve(toRoot), `${base}${extension}`);
   if (!fs.existsSync(normal)) return normal;
-  if (fs.statSync(normal).size === fs.statSync(sourcePath).size) return normal;
   return path.join(path.resolve(toRoot), `${base}.variant-${variantId}${extension}`);
 }
 
@@ -113,12 +124,13 @@ export function relocateFinishedOutputs(db, candidates, { apply = false } = {}) 
   const result = { planned: candidates.filter(item => item.eligible), moved: [], reconciled: [], failed: [] };
   if (!apply) return result;
   for (const candidate of result.planned) {
+    let ownedLock;
     try {
       if (candidate.alreadyAtDestination) {
         const at = new Date().toISOString();
         withTransaction(db, () => {
           db.prepare("UPDATE variants SET output_path=?, updated_at=? WHERE id=?")
-            .run(candidate.destination.replaceAll("/", "\\"), at, candidate.variantId);
+            .run(normalizeLedgerPath(candidate.destination), at, candidate.variantId);
           db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
             .run("variant", candidate.variantId, "output_reconciled", JSON.stringify({ previousPath: candidate.source, nextPath: candidate.destination }), at);
         });
@@ -126,13 +138,24 @@ export function relocateFinishedOutputs(db, candidates, { apply = false } = {}) 
         continue;
       }
       fs.mkdirSync(path.dirname(candidate.destination), { recursive: true });
-      fs.copyFileSync(candidate.source, candidate.destination, fs.constants.COPYFILE_EXCL);
-      const copiedBytes = fs.statSync(candidate.destination).size;
-      if (copiedBytes !== candidate.actualBytes) throw new Error(`copy size mismatch: ${copiedBytes} != ${candidate.actualBytes}`);
+      const lock = `${candidate.destination}.wwp-lock`;
+      const fd = fs.openSync(lock, "wx");
+      ownedLock = lock;
+      try { fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, purpose: "relocation" })); }
+      finally { fs.closeSync(fd); }
+      const staged = `${candidate.destination}.publishing-${process.pid}`;
+      if (fs.existsSync(candidate.destination)) throw new Error(`destination already exists: ${candidate.destination}`);
+      fs.copyFileSync(candidate.source, staged, fs.constants.COPYFILE_EXCL);
+      const copiedBytes = fs.statSync(staged).size;
+      if (copiedBytes !== candidate.actualBytes || hashFile(staged) !== hashFile(candidate.source)) {
+        throw new Error(`copy verification failed: ${staged}`);
+      }
+      if (fs.existsSync(candidate.destination)) throw new Error(`destination appeared during copy: ${candidate.destination}`);
+      fs.renameSync(staged, candidate.destination);
       const at = new Date().toISOString();
       withTransaction(db, () => {
         db.prepare("UPDATE variants SET output_path=?, updated_at=? WHERE id=?")
-          .run(candidate.destination.replaceAll("/", "\\"), at, candidate.variantId);
+          .run(normalizeLedgerPath(candidate.destination), at, candidate.variantId);
         db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
           .run("variant", candidate.variantId, "output_relocated", JSON.stringify({ previousPath: candidate.source, nextPath: candidate.destination }), at);
       });
@@ -140,7 +163,7 @@ export function relocateFinishedOutputs(db, candidates, { apply = false } = {}) 
       result.moved.push(candidate);
     } catch (error) {
       result.failed.push({ ...candidate, error: error?.message ?? String(error) });
-    }
+    } finally { if (ownedLock) fs.rmSync(ownedLock, { force: true }); }
   }
   return result;
 }

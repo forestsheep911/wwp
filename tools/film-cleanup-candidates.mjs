@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+import { defaultOutputRoot, requireOutputRoot } from "./lib/film-media-runtime.mjs";
 import fs from "node:fs";
+import { isWindowsPath } from "./lib/film-paths.mjs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openLedger } from "./lib/film-ledger-schema.mjs";
 
 const DEFAULT_DB = path.resolve(".local-data/wwp-film-workflow.sqlite");
-const DEFAULT_OUTPUT_ROOT = "E:\\video_made";
+const DEFAULT_OUTPUT_ROOT = defaultOutputRoot();
 const DEFAULT_MANIFEST_DIR = path.resolve(".local-data");
 
 function parseArgs(args) {
@@ -52,7 +54,10 @@ function parseArgs(args) {
 
 function quarantineDirectory(filePath, override) {
   if (override) return override;
-  return path.join(path.parse(path.resolve(filePath)).root, "待人工删除");
+  const absolute = path.resolve(filePath);
+  const volumeRoot = process.platform === "win32" ? path.parse(absolute).root
+    : absolute.startsWith("/Volumes/") ? absolute.split("/").slice(0, 3).join("/") : path.dirname(absolute);
+  return path.join(volumeRoot, "待人工删除");
 }
 
 function uniqueQuarantinePath(sourcePath, quarantineDir, prefix, sourceIsDirectory = false) {
@@ -195,9 +200,9 @@ export function recordMovedVariantPath(db, moved, at = new Date().toISOString())
   for (const item of moved) {
     if (item.candidateType !== "playable_output" || item.variantId == null) continue;
     const previousPath = item.path;
-    const nextPath = path.resolve(item.destination);
+    const nextPath = isWindowsPath(item.destination) ? path.win32.normalize(item.destination) : path.resolve(item.destination);
     db.prepare("UPDATE variants SET output_path=?, updated_at=? WHERE id=?")
-      .run(nextPath.replaceAll("/", "\\"), at, item.variantId);
+      .run(nextPath, at, item.variantId);
     db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
       .run("variant", item.variantId, "output_quarantined", JSON.stringify({ previousPath, nextPath, reason: "Moved after publication and retained for human deletion" }), at);
     item.ledgerUpdated = true;
@@ -209,15 +214,16 @@ export function recordMovedSourcePath(db, moved, at = new Date().toISOString()) 
   for (const item of moved) {
     if (item.candidateType !== "source_input" || item.sourceId == null) continue;
     const previousPath = item.path;
-    const nextPath = path.resolve(item.destination);
+    const nextPath = isWindowsPath(item.destination) ? path.win32.normalize(item.destination) : path.resolve(item.destination);
     // A split source can have multiple ledger rows pointing to one physical
     // directory. Move the path for every alias so the ledger stays coherent.
-    const aliases = db.prepare(`SELECT id FROM sources
-      WHERE lower(replace(absolute_path, '/', '\\')) = lower(replace(?, '/', '\\'))`).all(previousPath);
+    const aliases = isWindowsPath(previousPath)
+      ? db.prepare(`SELECT id FROM sources WHERE lower(replace(absolute_path, '/', '\\')) = lower(replace(?, '/', '\\'))`).all(previousPath)
+      : db.prepare("SELECT id FROM sources WHERE absolute_path = ?").all(previousPath);
     const sourceIds = aliases.length > 0 ? aliases.map((row) => row.id) : [item.sourceId];
     for (const sourceId of sourceIds) {
       db.prepare("UPDATE sources SET absolute_path=?, updated_at=? WHERE id=?")
-        .run(nextPath.replaceAll("/", "\\"), at, sourceId);
+        .run(nextPath, at, sourceId);
       db.prepare("INSERT INTO events (entity_type, entity_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
         .run("source", sourceId, "source_quarantined", JSON.stringify({
           previousPath,
@@ -304,7 +310,8 @@ export function cleanupReportSections(candidates) {
 
 export function collectManifestMatches(manifestDir, outputRoot, db = null) {
   if (!fs.existsSync(manifestDir)) return [];
-  const root = path.resolve(outputRoot);
+  if (outputRoot == null) return [];
+  const root = requireOutputRoot(outputRoot);
   const matches = [];
   for (const entry of fs.readdirSync(manifestDir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith("-release-manifest.json")) continue;
@@ -543,6 +550,7 @@ export function collectSourceCleanupCandidates(db) {
 
 export function main(args = process.argv.slice(2)) {
   const options = parseArgs(args);
+  if (options.outputRoot != null) options.outputRoot = requireOutputRoot(options.outputRoot);
   const db = openLedger(options.db);
   try {
     const candidates = collectCleanupCandidates(db, options.outputRoot);
@@ -570,7 +578,7 @@ export function main(args = process.argv.slice(2)) {
     const sections = cleanupReportSections(scopedCandidates);
     const report = {
       generatedAt: new Date().toISOString(),
-      outputRoot: path.resolve(options.outputRoot),
+      outputRoot: options.outputRoot == null ? null : requireOutputRoot(options.outputRoot),
       deletePerformed: false,
       movePerformed: false,
       candidates: sections.candidates,

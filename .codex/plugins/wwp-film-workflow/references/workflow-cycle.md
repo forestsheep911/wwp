@@ -25,7 +25,7 @@ child path instead of hiding its playable siblings. Unknown impact defaults to
 visible. Never treat `AI 处理中`, `待人工确认`, `暂缓`, or the word “blocked”
 as a visibility decision.
 
-## Stable Contract (0.1.119)
+## Stable Contract (0.1.121)
 
 This revision records the currently accepted operating model. The workflow is
 metadata-first and ledger-driven, with production and catalog maintenance as

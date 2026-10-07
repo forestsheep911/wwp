@@ -153,6 +153,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     pageSize: DEFAULT_PAGE_SIZE,
     imdbTimeoutMs: 4000,
     dryRun: false,
+    skipPosterUpload: false,
     noExternal: false,
     forceProcessed: false,
     forcePoster: false,
@@ -171,6 +172,8 @@ export function parseArgs(args = process.argv.slice(2)) {
       options.doubanSubjects.set(pageId, subjectId);
     } else if (arg === "--dry-run") {
       options.dryRun = true;
+    } else if (arg === "--skip-poster-upload") {
+      options.skipPosterUpload = true;
     } else if (arg === "--no-external") {
       options.noExternal = true;
     } else if (arg === "--force-processed") {
@@ -1455,12 +1458,13 @@ function buildPatch(page, metadata, imdbRating, posterFile, options = {}) {
   if (metadata.subjectId) {
     const currentTitle = propText(properties.Title);
     const cleanedTitle = cleanTitle(currentTitle);
+    const titleProperties = projectPropertyPatch(properties, patch);
     const canonicalTitle = preserveSeasonIdentity(
       cleanedTitle,
-      canonicalTitleFromStructuredIdentity(properties, metadata)
+      canonicalTitleFromStructuredIdentity(titleProperties, metadata)
     );
     if (canonicalTitle && titleKey(cleanedTitle) !== titleKey(canonicalTitle)) {
-      if (canSafelyCompleteStructuredTitle(cleanedTitle, properties, metadata)) {
+      if (canSafelyCompleteStructuredTitle(cleanedTitle, titleProperties, metadata)) {
         patch.Title = { title: richText(canonicalTitle) };
       } else if (propertyExists(properties, "Needs Review")) {
         patch["Needs Review"] = { checkbox: true };
@@ -1572,7 +1576,7 @@ async function processOmdbFallback(notion, page, options, title, existingImdbId,
     return { pageId: page.id, title, status: "skipped", reason: "metadata_identity_conflict", identityConflict };
   }
   const imdbRating = await fetchImdbRating(existingImdbId, options.imdbTimeoutMs).catch(() => undefined);
-  const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && omdbMetadata.posterUrl;
+  const needsPosterUpload = !options.skipPosterUpload && (options.forcePoster || !hasValue(page.properties, "海报")) && omdbMetadata.posterUrl;
   const posterFile = needsPosterUpload && options.dryRun
     ? { name: notionFileName(`${cleanTitle(title)} poster - OMDb.jpg`), type: "file_upload", file_upload: { id: "dry-run" } }
     : needsPosterUpload
@@ -1724,7 +1728,7 @@ async function processPage(notion, pageRef, options, cookie) {
     ? undefined
     : await fetchImdbRating(ratingImdbId, options.imdbTimeoutMs).catch(() => undefined);
   await sleep(options.delayMs);
-  const needsPosterUpload = (options.forcePoster || !hasValue(page.properties, "海报")) && metadata.posterUrl;
+  const needsPosterUpload = !options.skipPosterUpload && (options.forcePoster || !hasValue(page.properties, "海报")) && metadata.posterUrl;
   const posterFile =
     needsPosterUpload && options.dryRun
       ? {

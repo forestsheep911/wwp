@@ -12,11 +12,12 @@ export function buildResolvedAiIssueUpdates(options: {
   existingAiIssue: string;
   humanIssue: string;
   resolvedPrefix: string;
+  clearNeedsReview?: boolean;
 }): Record<string, unknown> {
-  if (!options.existingAiIssue.trim().startsWith(options.resolvedPrefix)) return {};
+  if (!options.existingAiIssue.trim().startsWith(options.resolvedPrefix) || options.existingAiIssue.trim().includes("\n")) return {};
   return {
     "AI Issue": { rich_text: [] },
-    ...(options.humanIssue.trim() ? {} : { "Needs Review": { checkbox: false } })
+    ...(options.clearNeedsReview !== false && !options.humanIssue.trim() ? { "Needs Review": { checkbox: false } } : {})
   };
 }
 
@@ -27,7 +28,8 @@ export function buildAiCheckUpdates(options: AiCheckUpdateOptions): Record<strin
   const issue = options.unresolvedIssue?.trim();
   if (issue) {
     updates["AI Issue"] = { rich_text: richText(issue) };
-    updates["Needs Review"] = { checkbox: true };
+    const isAgeOnlyAdvisory = issue.startsWith("AI 年龄建议待复核：") && !issue.includes("\n");
+    if (!isAgeOnlyAdvisory) updates["Needs Review"] = { checkbox: true };
   }
   return updates;
 }

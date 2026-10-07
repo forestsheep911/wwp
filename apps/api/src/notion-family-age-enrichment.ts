@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@notionhq/client";
 import nodeFetch from "node-fetch";
 import { buildAiCheckUpdates, buildResolvedAiIssueUpdates } from "./notion-ai-check-state.js";
+import { deriveMetadataCompleteness } from "./notion-metadata-completeness.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -558,8 +559,49 @@ async function planPage(page: JsonRecord, refresh = false, aiPlan = new Map<stri
   const properties = asRecord(page.properties) ?? {};
   const title = titleFromProperties(properties);
   const pageId = asString(page.id);
+  const currentAiIssue = propertyText(properties["AI Issue"]);
+  const ageOnlyAiIssue = currentAiIssue.trim().startsWith("AI 年龄建议待复核：") && !currentAiIssue.trim().includes("\n");
+  const metadataValues = Object.fromEntries(Object.entries(properties).map(([name, property]) => [name, propertyText(property)]));
+  const hasExternalId = ["IMDb ID", "Douban Subject ID", "TMDB ID"].some((name) => Boolean(propertyText(properties[name]).trim()));
+  const hasIdentityConflict = ["Match Status", "Metadata Status"].some((name) => propertyText(properties[name]) === "conflict");
+  const completeness = deriveMetadataCompleteness({
+    hasExternalId,
+    conflicts: hasIdentityConflict ? ["existing_identity_conflict"] : [],
+    values: metadataValues
+  });
+  const clearStaleReview = !propertyText(properties["Human Issue"]).trim()
+    && (!currentAiIssue.trim() || ageOnlyAiIssue)
+    && completeness.status === "verified"
+    && propertyText(properties["Metadata Status"]) === "verified";
+  const canRetireAgeGate = !propertyText(properties["Human Issue"]).trim()
+    && (ageOnlyAiIssue || !currentAiIssue.trim())
+    && completeness.status === "verified";
   if (!refresh && !pageNeedsFamilyAge(properties)) {
-    return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
+    if (!canRetireAgeGate) {
+      return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
+    }
+    const cleanupUpdates = {
+      ...buildResolvedAiIssueUpdates({
+        existingAiIssue: currentAiIssue,
+        humanIssue: propertyText(properties["Human Issue"]),
+        resolvedPrefix: "AI 年龄建议待复核：",
+        clearNeedsReview: false
+      }),
+      ...(clearStaleReview && propertyText(properties["Needs Review"]) === "true"
+        ? { "Needs Review": { checkbox: false } }
+        : {})
+    };
+    const cleanUpdates = Object.fromEntries(Object.entries(cleanupUpdates).filter(([, value]) => Boolean(value)));
+    if (Object.keys(cleanUpdates).length === 0) {
+      return { pageId, title, url: asString(page.url), updates: {}, updateFields: [], skipped: "already_has_age" };
+    }
+    return {
+      pageId,
+      title,
+      url: asString(page.url),
+      updates: cleanUpdates,
+      updateFields: Object.keys(cleanUpdates)
+    };
   }
   const plannedAi = aiPlan.get(pageId);
   if (aiPlan.size > 0 && !plannedAi) {
@@ -572,15 +614,16 @@ async function planPage(page: JsonRecord, refresh = false, aiPlan = new Map<stri
     "内容风险标签": pagePropertyValue("内容风险标签", ai.riskTags),
     "AI年龄建议理由": pagePropertyValue("AI年龄建议理由", ai.reason),
     ...buildAiCheckUpdates({
-      checkedAt: new Date().toISOString(),
-      unresolvedIssue: ai.needsReview ? `AI 年龄建议待复核：${ai.reason}` : undefined
+      checkedAt: new Date().toISOString()
     }),
-    ...(!ai.needsReview
-      ? buildResolvedAiIssueUpdates({
-          existingAiIssue: propertyText(properties["AI Issue"]),
-          humanIssue: propertyText(properties["Human Issue"]),
-          resolvedPrefix: "AI 年龄建议待复核："
-        })
+    ...buildResolvedAiIssueUpdates({
+      existingAiIssue: propertyText(properties["AI Issue"]),
+      humanIssue: propertyText(properties["Human Issue"]),
+      resolvedPrefix: "AI 年龄建议待复核：",
+      clearNeedsReview: false
+    }),
+    ...(clearStaleReview && propertyText(properties["Needs Review"]) === "true"
+      ? { "Needs Review": { checkbox: false } }
       : {})
   };
   const cleanUpdates = Object.fromEntries(Object.entries(updates).filter(([, value]) => Boolean(value)));

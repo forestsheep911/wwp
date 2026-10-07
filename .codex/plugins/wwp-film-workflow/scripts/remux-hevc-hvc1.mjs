@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { assertStoragePath, resolveMediaTools } from "../../../../tools/lib/film-media-runtime.mjs";
 import fs from "node:fs";
+import { claimEncodeJob, runMedia, publishEncodedFile } from "../../../../tools/lib/film-encode-job.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -8,18 +10,20 @@ import { pathToFileURL } from "node:url";
 function usage() {
   console.log(`Usage:
   node scripts/remux-hevc-hvc1.mjs --input <hev1-mp4> --output <hvc1-mp4>
-    [--max-bytes <bytes>] [--ffmpeg <path>] [--ffprobe <path>]
+    [--restart-work] [--recover-lock] [--max-bytes <bytes>] [--ffmpeg <path>] [--ffprobe <path>]
 
 Copies every stream without re-encoding, changes an HEVC MP4 video sample entry
 from hev1 to hvc1, and writes atomically. The source is never modified.`);
 }
 
 function parseArgs(argv) {
-  const options = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", maxBytes: 5_000_000_000 };
+  const options = { ffmpeg: null, ffprobe: null, maxBytes: 5_000_000_000 };
   const valueOptions = new Set(["--input", "--output", "--max-bytes", "--ffmpeg", "--ffprobe"]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") options.help = true;
+    else if (arg === "--restart-work") options.restart = true;
+    else if (arg === "--recover-lock") options.recoverLock = true;
     else if (valueOptions.has(arg)) {
       const value = argv[++index];
       if (value == null || value.startsWith("--")) throw new Error(`${arg} requires a value`);
@@ -37,7 +41,7 @@ function parseArgs(argv) {
 
 function run(command, args, label) {
   console.log(`${label}: ${command} ${args.map(value => JSON.stringify(value)).join(" ")}`);
-  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true });
+  const result = spawnSync(command, args, { encoding: "utf8", windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status}: ${result.stderr.trim()}`);
   return result.stdout;
@@ -70,42 +74,44 @@ export function buildFfmpegArgs(input, part) {
   ];
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
-  const input = path.resolve(options.input);
-  const output = path.resolve(options.output);
+  Object.assign(options, resolveMediaTools(options));
+  const input = assertStoragePath(options.input);
+  const output = assertStoragePath(options.output);
   if (!fs.existsSync(input)) throw new Error(`input not found: ${input}`);
   if (path.extname(input).toLowerCase() !== ".mp4" || path.extname(output).toLowerCase() !== ".mp4") {
     throw new Error("input and output must be .mp4 files");
   }
   if (input.toLowerCase() === output.toLowerCase()) throw new Error("output must differ from input");
   fs.mkdirSync(path.dirname(output), { recursive: true });
-  if (availableBytes(path.dirname(output)) < fs.statSync(input).size + 512 * 1024 * 1024) {
+  if (availableBytes(path.dirname(output)) < 2 * fs.statSync(input).size + 512 * 1024 * 1024) {
     throw new Error("insufficient output disk space for lossless remux");
   }
   assertHev1Mp4Probe(probe(options.ffprobe, input), input);
-  const part = `${output.slice(0, -4)}.part.mp4`;
-  fs.rmSync(part, { force: true });
-  run(options.ffmpeg, buildFfmpegArgs(input, part), "remux-hvc1");
+  const job = claimEncodeJob(output, path.dirname(output), { sources: [input].map(file => ({ file, size: fs.statSync(file).size, mtime: fs.statSync(file).mtimeMs })), options: Object.fromEntries(Object.entries(options).filter(([key]) => !["restart", "recoverLock"].includes(key))) }, options);
+  try {
+  const part = path.join(job.directory, "delivery.part.mp4");
+  await runMedia(options.ffmpeg, ["-progress", "pipe:1", ...buildFfmpegArgs(input, part)], "remux-hvc1", job);
   const size = fs.statSync(part).size;
   if (size > options.maxBytes) {
-    fs.rmSync(part, { force: true });
     throw new Error(`output exceeds max-bytes: ${size} > ${options.maxBytes}`);
   }
   const outputProbe = probe(options.ffprobe, part);
   const outputVideo = (outputProbe.streams ?? []).find(stream => stream.codec_type === "video");
   if (outputVideo?.codec_name !== "hevc" || outputVideo.codec_tag_string !== "hvc1") {
-    fs.rmSync(part, { force: true });
     throw new Error(`remux did not produce HEVC hvc1 output: ${output}`);
   }
-  fs.renameSync(part, output);
+  await publishEncodedFile(part, output, size);
+  job.save("published");
   console.log(JSON.stringify({ input, output, bytes: size, maxBytes: options.maxBytes, videoCodec: outputVideo.codec_name, codecTag: outputVideo.codec_tag_string }));
+  } finally { job.release(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

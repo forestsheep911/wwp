@@ -1,3 +1,4 @@
+import { sourceIsDescendant } from "./film-paths.mjs";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -99,20 +100,9 @@ function isQuarantineRoot(rootPath) {
 }
 
 function isResolvedCollectionShrink(repo, inputRootId, parentSource) {
-  const relativePrefix = `${parentSource.relative_path}\\`.toLowerCase();
-  const parentAbsolute = normalizeLedgerPath(parentSource.absolute_path).replace(/[\\/]+$/u, "").toLowerCase();
-  const absolutePrefix = `${parentAbsolute}\\`;
-  const isDescendant = (source) => {
-    const relative = source.relative_path.toLowerCase();
-    const absolute = normalizeLedgerPath(source.absolute_path).toLowerCase();
-    return relative.startsWith(relativePrefix) || absolute.startsWith(absolutePrefix);
-  };
   const descendants = repo.listSourcesForRoot(inputRootId)
-    .filter((source) => source.id !== parentSource.id
-      && isDescendant(source));
-  const leaves = descendants.filter((source) => !descendants.some((other) => other.id !== source.id
-    && (other.relative_path.toLowerCase().startsWith(`${source.relative_path}\\`.toLowerCase())
-      || normalizeLedgerPath(other.absolute_path).toLowerCase().startsWith(`${normalizeLedgerPath(source.absolute_path).replace(/[\\/]+$/u, "").toLowerCase()}\\`))));
+    .filter(source => sourceIsDescendant(source, parentSource));
+  const leaves = descendants.filter(source => !descendants.some(other => sourceIsDescendant(other, source)));
 
   return leaves.length > 0
     && leaves.every((source) => source.work_id != null)

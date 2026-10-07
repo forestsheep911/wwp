@@ -1,3 +1,4 @@
+import { sourceIsDescendant } from "./film-paths.mjs";
 import { withTransaction } from "./film-ledger-schema.mjs";
 import {
   AI_ACTIONABLE_WORKFLOW_STATES,
@@ -558,18 +559,9 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         AND workflow_tasks.status IN ('pending', 'in_progress', 'waiting_user', 'deferred')
         AND sources.input_root_id=?`).all(inputRootId);
     for (const parent of parents) {
-      const prefix = `${parent.relative_path}\\`.toLowerCase();
-      const parentSource = db.prepare("SELECT absolute_path FROM sources WHERE id=?").get(parent.source_id);
-      const absolutePrefix = `${normalizeLedgerPath(parentSource?.absolute_path ?? "").replace(/[\\/]+$/u, "")}\\`.toLowerCase();
-      const isDescendant = (source, ancestor) => source.id !== ancestor.id && (
-        source.relative_path.toLowerCase().startsWith(`${ancestor.relative_path}\\`.toLowerCase())
-        || normalizeLedgerPath(source.absolute_path).toLowerCase().startsWith(
-          `${normalizeLedgerPath(ancestor.absolute_path).replace(/[\\/]+$/u, "")}\\`.toLowerCase()
-        )
-      );
-      const descendants = allSources.filter((source) => source.id !== parent.source_id
-        && (source.relative_path.toLowerCase().startsWith(prefix)
-          || normalizeLedgerPath(source.absolute_path).toLowerCase().startsWith(absolutePrefix)));
+      const parentSource = db.prepare("SELECT id, relative_path, absolute_path FROM sources WHERE id=?").get(parent.source_id);
+      const isDescendant = sourceIsDescendant;
+      const descendants = allSources.filter(source => isDescendant(source, parentSource));
       const leaves = descendants.filter((source) => !descendants.some((other) => isDescendant(other, source)));
       // Explicit duplicate/companion classifications are terminal leaves even
       // when they have no work binding, so they cannot keep reopening the
@@ -613,7 +605,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       ...member,
       inputRootId: parent.input_root_id,
       sourceKind: member.sourceKind ?? "collection_member",
-      relativePath: member.relativePath ?? `${parent.relative_path}\\${path.win32.basename(member.absolutePath ?? "member")}`,
+      relativePath: member.relativePath ?? `${parent.relative_path}/${path.basename(member.absolutePath ?? "member")}`,
       qualityState: member.qualityState ?? "unknown",
       colorRisk: member.colorRisk ?? "unknown"
     }));
