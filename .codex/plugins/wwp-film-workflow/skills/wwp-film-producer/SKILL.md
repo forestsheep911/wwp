@@ -5,6 +5,10 @@ description: Use when coordinating WWP film or series production, choosing the n
 
 # WWP Film Producer
 
+## Temporary ISO mounts
+
+Follow the encoder skill's **ISO mount lifecycle** for every disc-image source on Windows and macOS. Track the exact image path, platform, device/mount points, and mount ownership before production. Release workflow-owned mounts after the last source reader finishes, including failure/interruption cleanup; pending uploads or metadata alone do not justify keeping a disc mounted. At each cycle close, check retained mounts from prior production, verify successful release using Windows `Get-DiskImage` or macOS `hdiutil info -plist`, and report any still mounted with their active reader or cleanup failure and next action. Do not eject unrelated drives or delete source images.
+
 ## Visibility Is Not a Workflow Blocker
 
 **Default: publish and keep visible; repair afterward.** `Hide from Website`

@@ -1,5 +1,12 @@
 # WWP Project Instructions
 
+## Windows and macOS compatibility
+
+- Consider both Windows and macOS for every workflow, script, tool choice, and change. Identify platform-specific dependencies and provide equivalent behavior on both platforms when applicable.
+- Detect the host platform before choosing commands. Do not assume drive letters, PowerShell, Windows executable names, fixed mount points, or a particular hardware encoder are portable. Use platform-aware paths and arguments, configurable roots, and explicit capability checks.
+- Cover resource ownership, background-process lifetime, failure/interruption cleanup, and verification on both platforms. For disc images, follow the film encoder skill's platform-specific ISO mount lifecycle.
+- Validate on available platforms and state which platforms were actually tested. Documentation or mocked checks do not constitute a live macOS/Windows test; record unavailable-platform verification as pending.
+
 ## Film Workflow Plugin
 
 - For WWP film or series production tasks, use the repo-local Codex plugin at `.codex/plugins/wwp-film-workflow/`.
