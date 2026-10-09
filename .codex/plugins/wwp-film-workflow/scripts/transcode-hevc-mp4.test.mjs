@@ -60,9 +60,9 @@ test("remux maps the filtered work video instead of the source video ordinal", (
   assert.match(script, /"-map", "0:v:0", "-map", options\.splitAudio \? "1:a:0" : "0:a:0"/u);
 });
 
-test("full bitmap-subtitle encodes rebase subtitle PTS to the rebuilt video timeline", () => {
-  assert.match(script, /function probeVideoStartTime\(input, videoStream\)/u);
-  assert.match(script, /options\.start == null && options\.subtitleStream !== null && !embeddedTextSubtitle/u);
+test("bitmap subtitle PTS follow FFmpeg's zero-based input timeline", () => {
+  assert.match(script, /FFmpeg rebases input timestamps by default because this command does not/u);
+  assert.match(script, /const bitmapSubtitleOffset = 0/u);
   assert.match(script, /setpts=PTS-\$\{bitmapSubtitleOffset\}\/TB,scale=/u);
 });
 

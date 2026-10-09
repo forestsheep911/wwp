@@ -1093,7 +1093,9 @@ test("subtitle acquisition stays open after subtitle verification until producti
     });
     const subtitleVerified = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
     assert.deepEqual(subtitleVerified.resolved, []);
-    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "in_progress");
+    const inProgress = f.db.prepare("SELECT status, payload_json FROM workflow_tasks WHERE id=?").get(task.id);
+    assert.equal(inProgress.status, "in_progress");
+    assert.deepEqual(JSON.parse(inProgress.payload_json), { chineseSubtitleState: "verified" });
 
     f.db.prepare("UPDATE variants SET production_state='qc_passed', publication_state='sync_ready' WHERE id=?").run(deferredVariant.id);
     const published = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
@@ -1107,6 +1109,51 @@ test("subtitle acquisition stays open after subtitle verification until producti
     const reopened = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
     assert.deepEqual(reopened.reopened.map((row) => row.id), [task.id]);
     assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "pending");
+  } finally { f.close(); }
+});
+
+test("verified subtitle acquisition defers until a production variant is registered", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Subtitle complete, production not selected", year: 2025 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id,
+      workId: work.id,
+      relativePath: "verified-subtitle-source",
+      absolutePath: "X:\\queue\\verified-subtitle-source",
+      fingerprint: "verified-subtitle-source",
+      sourceKind: "folder",
+      qualityState: "subtitle_missing",
+      subtitleEvidence: { internalProbeState: "completed", verifiedChinese: false },
+      audioEvidence: { languages: ["English"] }
+    });
+
+    const created = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    const task = created.created[0];
+    assert.equal(task.source_id, source.id);
+
+    f.repo.updateSourceEvidence(source.id, {
+      qualityState: "acceptable",
+      subtitleEvidence: { internalProbeState: "completed", verifiedChinese: true }
+    });
+    f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    const deferred = f.db.prepare("SELECT status, reason FROM workflow_tasks WHERE id=?").get(task.id);
+    assert.equal(deferred.status, "deferred");
+    assert.match(deferred.reason, /defer this task until a production variant is registered/u);
+
+    const variant = f.repo.ensureVariant({
+      workId: work.id,
+      sourceId: source.id,
+      specKey: "main",
+      displayTitle: "Subtitle complete, production variant"
+    });
+    f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "in_progress");
+
+    f.db.prepare("UPDATE variants SET production_state='qc_passed', publication_state='sync_ready' WHERE id=?").run(variant.id);
+    f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(task.id).status, "done");
   } finally { f.close(); }
 });
 

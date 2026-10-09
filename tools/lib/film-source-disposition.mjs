@@ -31,6 +31,10 @@ function workflowRecoveryTrigger(note) {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean);
+  const explicitTrigger = lines.findLast((line) => /(?:触发条件|下一触发条件|恢复条件|recovery trigger)[:：]/iu.test(line));
+  if (explicitTrigger) {
+    return explicitTrigger.match(/(?:触发条件|下一触发条件|恢复条件|recovery trigger)[:：]\s*(.*)$/iu)?.[1]?.trim() || explicitTrigger;
+  }
   return lines.at(-1) ?? null;
 }
 
@@ -249,6 +253,14 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     reasons.push("variant_review_due");
     actionableNow = true;
     nextTrigger = "AI 重新评估延期规格";
+  } else if (workflowStatus === "暂缓"
+    && variants.some((variant) => !supersededPlaceholder(variant))
+    && variants.filter((variant) => !supersededPlaceholder(variant))
+      .every((variant) => variant.production_state === "qc_passed" && variant.publication_state === "sync_ready")
+    && /(?:触发条件|下一触发条件|恢复条件|recovery trigger)[:：]/iu.test(source.workflow_note ?? "")) {
+    disposition = "deferred_without_review_time";
+    reasons.push("work_deferred_until_explicit_recovery_trigger");
+    nextTrigger = workflowRecoveryTrigger(source.workflow_note) || "等待明确恢复条件";
   } else if (openVariants.length > 0) {
     const publicationPending = openVariants.some((variant) => variant.production_state === "qc_passed" || !["not_ready", "cancelled"].includes(variant.publication_state));
     disposition = publicationPending ? "publication_pending" : "production_pending";

@@ -1,3 +1,4 @@
+import { uploadProjectAttachment } from "./lib/notion-attachment-transport.mjs";
 import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -320,114 +321,7 @@ async function readChunk(filePath, offset, length) {
 }
 
 async function uploadVideo(notion, file, options, manifest, manifestPath, trafficMonitor, routeGuard) {
-  const partBytes = Math.max(1, Math.floor(options.partMiB)) * 1024 * 1024;
-  const partCount = Math.ceil(file.size / partBytes);
-  const mode = partCount === 1 ? "single_part" : "multi_part";
-  const contentType = "video/mp4";
-  let record = manifest.uploads[file.name] ?? {
-    filename: file.name,
-    size: file.size,
-    mode,
-    partCount,
-    sentParts: 0
-  };
-
-  if (record.status === "uploaded" && record.fileUploadId) {
-    console.log(`reuse uploaded ${file.name} ${record.fileUploadId}`);
-    return record.fileUploadId;
-  }
-
-  if (record.fileUploadId && record.expiryTime && Date.parse(record.expiryTime) <= Date.now()) {
-    console.warn(`discard expired upload session ${record.fileUploadId} for ${file.name}`);
-    record = {
-      filename: file.name,
-      size: file.size,
-      mode,
-      partCount,
-      sentParts: 0
-    };
-    manifest.uploads[file.name] = record;
-    writeManifest(manifestPath, manifest);
-  }
-
-  if (!record.fileUploadId) {
-    console.log(`create upload ${file.name}: ${mode}, ${partCount} part(s)`);
-    const upload = await notion.fileUploads.create({
-      mode,
-      filename: file.name,
-      content_type: contentType,
-      ...(mode === "multi_part" ? { number_of_parts: partCount } : {})
-    });
-    record.fileUploadId = upload.id;
-    record.expiryTime = upload.expiry_time;
-    record.sentParts = 0;
-    manifest.uploads[file.name] = record;
-    writeManifest(manifestPath, manifest);
-  }
-
-  if (record.mode === "single_part") {
-    const data = await readChunk(file.path, 0, file.size);
-    await routeGuard.assert(`${file.name} part 1/1`);
-    await withTransientNotionUploadRetry(() => notion.fileUploads.send({
-        file_upload_id: record.fileUploadId,
-        file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-      }), {
-        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
-          `retry ${file.name} single part attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
-        )
-      });
-    record.sentParts = 1;
-    await trafficMonitor.noteUploaded(data.length, { file: file.name, part: 1, partCount: 1 });
-  } else {
-    const concurrency = Math.min(options.uploadConcurrency, record.partCount);
-    for (let firstPart = (record.sentParts ?? 0) + 1; firstPart <= record.partCount; firstPart += concurrency) {
-      const parts = Array.from(
-        { length: Math.min(concurrency, record.partCount - firstPart + 1) },
-        (_, index) => firstPart + index
-      );
-      const startedAt = Date.now();
-      await Promise.all(parts.map(async (part) => {
-        const offset = (part - 1) * partBytes;
-        const length = Math.min(partBytes, file.size - offset);
-        const data = await readChunk(file.path, offset, length);
-        console.log(`send ${file.name} part ${part}/${record.partCount}`);
-        await routeGuard.assert(`${file.name} part ${part}/${record.partCount}`);
-        await withTransientNotionUploadRetry(() => notion.fileUploads.send({
-            file_upload_id: record.fileUploadId,
-            part_number: String(part),
-            file: { filename: file.name, data: new Blob([data], { type: contentType }) }
-          }), {
-            onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
-              `retry ${file.name} part ${part}/${record.partCount} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
-            )
-          });
-      }));
-      record.sentParts = parts.at(-1);
-      record.lastBatchSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(3));
-      record.updatedAt = new Date().toISOString();
-      writeManifest(manifestPath, manifest);
-      const batchBytes = parts.reduce((sum, part) => {
-        const offset = (part - 1) * partBytes;
-        return sum + Math.min(partBytes, file.size - offset);
-      }, 0);
-      await trafficMonitor.noteUploaded(batchBytes, { file: file.name, parts, partCount: record.partCount });
-      await sleep(250);
-    }
-    console.log(`complete ${file.name}`);
-    await withTransientNotionUploadRetry(
-      () => notion.fileUploads.complete({ file_upload_id: record.fileUploadId }),
-      {
-        onRetry: ({ nextAttempt, delayMs, error }) => console.warn(
-          `retry complete ${file.name} attempt ${nextAttempt} after ${delayMs}ms: ${error.message}`
-        )
-      }
-    );
-  }
-
-  record.status = "uploaded";
-  record.completedAt = new Date().toISOString();
-  writeManifest(manifestPath, manifest);
-  return record.fileUploadId;
+  return uploadProjectAttachment({ file, options, manifest, manifestPath, token: process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN, contentType: "video/mp4", trafficMonitor });
 }
 
 async function appendVideo(notion, targetPageId, fileName, fileUploadId, apply) {

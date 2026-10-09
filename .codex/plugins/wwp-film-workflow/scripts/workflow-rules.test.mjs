@@ -50,11 +50,15 @@ test("the exception does not waive subtitles for foreign-original-audio playback
 });
 
 test("Mainland Mandarin-original films do not require Chinese subtitles", () => {
+  const producer = read("skills/wwp-film-producer/SKILL.md");
   const intake = read("skills/wwp-film-intake/SKILL.md");
   const encoder = read("skills/wwp-playable-encoder/SKILL.md");
+  const acquirer = read("skills/wwp-subtitle-acquirer/SKILL.md");
 
+  assert.match(producer, /subtitle gate only to subtitle-dependent variants[\s\S]*missing Chinese\s+subtitles is not a blocker/u);
   assert.match(intake, /Mainland Chinese-language film with verified Mandarin original audio does not require Chinese subtitles/u);
   assert.match(encoder, /Mandarin-language films and verified Mandarin-dubbed/u);
+  assert.match(acquirer, /establish the work's production region and the actual\s+original-audio language[\s\S]*Missing or undetermined audio language tags are not\s+proof/u);
 });
 
 test("foreign films prioritize original audio before dubbed expansion", () => {
@@ -532,6 +536,7 @@ test("large uploads stop before paid proxy fallback and bind fixed-IP retries to
   const scriptMap = read("references/script-map.md");
   const routeProbe = read("../../../tools/notion-upload-route-probe.mjs");
   const routeWrapper = read("../../../tools/with-notion-upload-route.mjs");
+  const transportAdapter = read("../../../tools/lib/notion-attachment-transport.mjs");
   const trafficMonitor = read("../../../tools/lib/vpn-traffic-monitor.mjs");
   const uploadEntrypoints = [
     read("../../../tools/notion-upload-movie-video.mjs"),
@@ -541,47 +546,49 @@ test("large uploads stop before paid proxy fallback and bind fixed-IP retries to
 
   assert.match(publisher, /A non-`DIRECT` route is a hard stop unless the exact controlled Freedom s801 exception/u);
   assert.match(publisher, /Never pass `--resolve-ip` by itself/u);
-  assert.match(publisher, /retry the same resumable manifest with `--resolve-ip <api-ip> --local-address <physical-lan-ip> --no-proxy`/u);
+  assert.match(publisher, /A single `ECONNRESET` or failed first A record is not evidence of an API-wide outage/u);
+  assert.match(publisher, /test fresh A records serially with TLS SNI `api\.notion\.com`, bound to the physical LAN address/u);
+  assert.match(publisher, /active generated Mihomo pipe name can change between runs/u);
+  assert.match(publisher, /retry the same resumable manifest with `--resolve-ip <verified-api-ip> --local-address <physical-lan-ip> --no-proxy`/u);
   assert.match(publisher, /Previously accepted multipart parts must be reused/u);
   assert.match(publisher, /resume the same `file_upload_id` from the last accepted `part_number`/u);
   assert.match(publisher, /bounded number of fresh DIRECT connections[\s\S]*before considering s801/u);
   assert.match(publisher, /retain concurrency 1/u);
-  assert.match(routeProbe, /HttpsProxyAgent/u);
-  assert.match(routeProbe, /production uploader/u);
-  assert.match(routeProbe, /local Clash proxy[\s\S]*api\.notion\.com as DIRECT/u);
+  assert.match(routeProbe, /transportUrl\("notion-upload-route-probe\.mjs"\)/u);
+  assert.match(transportAdapter, /transportUrl\("lib\/project-upload\.mjs"\)/u);
+  assert.match(transportAdapter, /uploadProjectFile\(input\)/u);
   for (const entrypoint of uploadEntrypoints) {
-    assert.match(entrypoint, /--resolve-ip requires --local-address <physical-lan-ip> and --no-proxy/u);
+    assert.match(entrypoint, /uploadProjectAttachment/u);
+    assert.match(entrypoint, /from "\.\/lib\/notion-attachment-transport\.mjs"/u);
     assert.match(entrypoint, /createVpnTrafficMonitor/u);
   }
-  assert.match(routeProbe, /createVpnTrafficMonitor/u);
-  assert.match(publisher, /Traffic-counter growth is corroborating evidence, not a route verdict/u);
-  assert.match(publisher, /sustained growth projects exhaustion before the provider reset/u);
+  assert.match(publisher, /Counters are corroborating evidence, not a route verdict/u);
+  assert.match(publisher, /Alert about sustained growth only when it projects exhaustion before the provider reset/u);
   assert.match(publisher, /Notion -> JMS London 节点 -> JMS London s801 - Reality/u);
   assert.match(publisher, /--expected-route jms-s801/u);
-  assert.match(routeProbe, /requireNotionUploadRoute/u);
-  assert.match(routeProbe, /--expected-route <direct\|jms-s801>/u);
+  assert.match(routeProbe, /transfer\.main\(\)/u);
   assert.match(publisher, /Never assume a multiplier of 10/u);
-  assert.match(publisher, /proactively when a large transfer is unavoidable/u);
-  assert.match(publisher, /never infer upload accounting solely from that download example/u);
-  assert.match(publisher, /multiplier as unknown rather than infinite/u);
+  assert.match(publisher, /proactively use the exact s801 exception when a large transfer is unavoidable/u);
+  assert.match(publisher, /Never assume a multiplier of 10 or infer upload accounting solely from the provider's download example/u);
+  assert.match(publisher, /record accounting as unknown rather than infinite/u);
   assert.match(cycle, /unavoidable large traffic makes protection of the normal allowance/u);
   assert.match(scriptMap, /existing `Notion` and `JMS London 节点` nested selectors plus their selectable s801 member are sufficient/u);
   assert.match(publisher, /selectable s801 member inside the existing node group is sufficient/u);
   assert.match(cycle, /do not require or create a permanent dedicated routing rule or group/u);
-  assert.match(publisher, /Do not require or create a dedicated permanent s801 route/u);
-  assert.match(publisher, /stop when it is missing or ambiguous instead of guessing/u);
-  assert.match(publisher, /Restore and read back both saved selector values in a `finally`-style cleanup/u);
-  assert.match(publisher, /with-notion-upload-route\.mjs --route jms-s801 --reason <estimated-batch-size-or-direct-failure> --apply/u);
-  assert.match(publisher, /The s801 wrapper requires `--reason <text>`/u);
-  assert.match(publisher, /read the relevant selectors back before every file part/u);
+  assert.match(publisher, /no permanent dedicated routing rule or group is needed/u);
+  assert.match(cycle, /accept only a uniquely discovered `s801` member/u);
+  assert.match(cycle, /restore plus read back both saved choices on success, failure, or interruption/u);
+  assert.match(scriptMap, /--route jms-s801 --reason <estimated-batch-size-or-direct-failure> --apply/u);
+  assert.match(scriptMap, /requires one unique selectable s801 member and a concrete audit reason/u);
+  assert.match(scriptMap, /read the current Clash selectors before every file part/u);
   for (const entrypoint of uploadEntrypoints) {
     assert.match(entrypoint, /createNotionUploadSelectorGuard/u);
-    assert.match(entrypoint, /routeGuard\.assert/u);
+    assert.match(entrypoint, /const routeGuard = createNotionUploadSelectorGuard/u);
   }
-  assert.match(routeWrapper, /withTemporaryNotionRoute/u);
-  assert.match(routeWrapper, /NOTION_UPLOAD_EXPECTED_ROUTE/u);
+  assert.match(routeWrapper, /transportUrl\("with-notion-upload-route\.mjs"\)/u);
+  assert.match(routeWrapper, /transportUrl\("with-notion-upload-route\.mjs"\)/u);
   assert.match(cycle, /restore plus read back both saved choices on success, failure, or interruption/u);
-  assert.match(publisher, /courtesy Freedom server[\s\S]*taken offline at any time/u);
+  assert.match(scriptMap, /s801 as a courtesy service that may be taken offline without notice/u);
   assert.match(sourceOperator, /only non-DIRECT exception is a deliberately wrapped, probed, and traffic-monitored JMS Freedom `s801` batch/u);
   assert.match(sourceOperator, /without a dedicated routing rule/u);
   assert.match(sourceRules, /JMS Freedom `s801` is the sole controlled non-DIRECT exception/u);

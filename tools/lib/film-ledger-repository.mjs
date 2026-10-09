@@ -1073,12 +1073,31 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
             workId: task.work_id,
             reason: "Verified subtitles have passed through all registered production/publication targets"
           }));
+        } else if (variants.total === 0) {
+          const reason = "Chinese subtitle acquisition and QC are complete; defer this task until a production variant is registered, then track that variant through publication";
+          let payload = {};
+          try { payload = JSON.parse(task.payload_json ?? "{}"); } catch { payload = {}; }
+          const nextPayload = stableJson({ ...payload, chineseSubtitleState: state });
+          if (task.status !== "deferred" || task.reason !== reason || task.payload_json !== nextPayload) {
+            const at = timestamp();
+            db.prepare(`UPDATE workflow_tasks SET status='deferred', reason=?, payload_json=?, next_run_at=NULL, updated_at=? WHERE id=?`)
+              .run(reason, nextPayload, at, task.id);
+            insertEvent.run("workflow_task", task.id, "subtitle_acquisition_waiting_for_production", stableJson({
+              sourceId: task.source_id,
+              workId: task.work_id,
+              registeredVariantCount: 0,
+              reason
+            }), at);
+          }
         } else {
           const reason = "Chinese subtitles are verified; keep this task open until the source's registered variants finish production and publication";
-          if (task.status !== "in_progress" || task.reason !== reason) {
+          let payload = {};
+          try { payload = JSON.parse(task.payload_json ?? "{}"); } catch { payload = {}; }
+          const nextPayload = stableJson({ ...payload, chineseSubtitleState: state });
+          if (task.status !== "in_progress" || task.reason !== reason || task.payload_json !== nextPayload) {
             const at = timestamp();
-            db.prepare(`UPDATE workflow_tasks SET status='in_progress', reason=?, next_run_at=NULL, updated_at=? WHERE id=?`)
-              .run(reason, at, task.id);
+            db.prepare(`UPDATE workflow_tasks SET status='in_progress', reason=?, payload_json=?, next_run_at=NULL, updated_at=? WHERE id=?`)
+              .run(reason, nextPayload, at, task.id);
             insertEvent.run("workflow_task", task.id, "subtitle_acquisition_production_pending", stableJson({
               sourceId: task.source_id,
               workId: task.work_id,
@@ -1091,8 +1110,11 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       } else if (state !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING && task.status !== "waiting_user") {
         const reason = "Subtitle evidence is unknown; keep the acquisition task open until evidence or an explicit disposition is recorded";
         const at = timestamp();
-        db.prepare(`UPDATE workflow_tasks SET status='waiting_user', reason=?, next_run_at=NULL, updated_at=? WHERE id=?`)
-          .run(reason, at, task.id);
+        let payload = {};
+        try { payload = JSON.parse(task.payload_json ?? "{}"); } catch { payload = {}; }
+        const nextPayload = stableJson({ ...payload, chineseSubtitleState: state });
+        db.prepare(`UPDATE workflow_tasks SET status='waiting_user', reason=?, payload_json=?, next_run_at=NULL, updated_at=? WHERE id=?`)
+          .run(reason, nextPayload, at, task.id);
         insertEvent.run("workflow_task", task.id, "subtitle_acquisition_evidence_unknown", stableJson({
           sourceId: task.source_id,
           workId: task.work_id,

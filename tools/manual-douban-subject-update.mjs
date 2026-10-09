@@ -1,3 +1,4 @@
+import { uploadPosterAttachment } from "./lib/notion-attachment-transport.mjs";
 import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import { Client } from "@notionhq/client";
@@ -165,18 +166,7 @@ async function updateOne(notion, cookie, item) {
   const image = await fetchImage(ld.image);
   const title = item.title || ld.name.split(/\s{2,}/)[0] || ld.name;
   const filename = `${title} poster - Douban.jpg`.replace(/[\\/:*?"<>|]/g, "_");
-  const upload = await notion.fileUploads.create({
-    mode: "single_part",
-    filename,
-    content_type: image.contentType
-  });
-  const sent = await notion.fileUploads.send({
-    file_upload_id: upload.id,
-    file: {
-      filename,
-      data: new Blob([image.bytes], { type: image.contentType })
-    }
-  });
+  const sent = await uploadPosterAttachment({ filename, bytes: image.bytes, contentType: image.contentType });
 
   const properties = {
     Title: { title: richText(title) },

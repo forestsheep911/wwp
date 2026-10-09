@@ -2452,6 +2452,13 @@ export class NotionSearchSource {
       if (!rawUrl) {
         return undefined;
       }
+      // API-uploaded files can return an attachment: reference here rather
+      // than an HTTP URL. Fall back to the official block API to resolve it;
+      // wrapping that reference also produces an invalid workspace ID.
+      const parsedUrl = new URL(rawUrl);
+      if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+        return undefined;
+      }
       const fileName = asString(payload.fileName);
       return {
         url: notionSignedFileUrl(rawUrl, { blockId, fileName, download: true }),

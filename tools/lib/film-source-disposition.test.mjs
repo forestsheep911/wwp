@@ -170,6 +170,32 @@ test("a deferred source exposes the latest Workflow Note as its recovery trigger
   assert.equal(item.nextTrigger, "【AI(^_^) 2026-09-17】待补中文字幕证据后再评估");
 });
 
+test("a paused completed episode source waits for its explicit new-episode trigger", () => {
+  const item = classifySourceDisposition({
+    source: {
+      ...source,
+      workflow_status: "暂缓",
+      workflow_note: "已有E05并完成发布。\n触发条件：新集片源进入启用输入目录时继续制作"
+    },
+    variants: [{ id: 41, production_state: "qc_passed", publication_state: "sync_ready" }],
+    cleanupCandidate: { eligible: false, reasons: ["source_expansion_open", "source_media_not_fully_covered"] }
+  });
+  assert.equal(item.disposition, "deferred_without_review_time");
+  assert.equal(item.actionableNow, false);
+  assert.equal(item.needsHumanConfirmation, false);
+  assert.equal(item.nextTrigger, "新集片源进入启用输入目录时继续制作");
+});
+
+test("a paused source without an explicit recovery trigger remains reviewable", () => {
+  const item = classifySourceDisposition({
+    source: { ...source, workflow_status: "暂缓", workflow_note: "目前已有一集，剩余覆盖待评估" },
+    variants: [{ id: 42, production_state: "qc_passed", publication_state: "sync_ready" }],
+    cleanupCandidate: { eligible: false, reasons: ["source_media_not_fully_covered"] }
+  });
+  assert.equal(item.disposition, "source_coverage_review");
+  assert.equal(item.actionableNow, true);
+});
+
 test("an open expansion marker retains a source without creating a phantom task", () => {
   const item = classifySourceDisposition({
     source: { ...source, workflow_note: "[规格扩展:OPEN] 未来有新音轨时再评估" },

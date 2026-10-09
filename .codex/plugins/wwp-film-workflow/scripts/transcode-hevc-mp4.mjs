@@ -181,11 +181,6 @@ function probeVideoFrameRate(input, videoStream) {
   throw new Error("ffprobe could not determine the selected video's frame rate");
 }
 
-function probeVideoStartTime(input, videoStream) {
-  const startTime = Number(selectedStream(input, "video", videoStream)?.start_time);
-  return Number.isFinite(startTime) ? startTime : 0;
-}
-
 function probeAudioChannels(input, audioStream) {
   const channels = Number(selectedStream(input, "audio", audioStream)?.channels);
   if (!Number.isInteger(channels) || channels < 1 || channels > 8) {
@@ -380,11 +375,10 @@ async function main() {
   const audioBitrate = audioBitrateForChannels(options.audioChannels ?? sourceAudioChannels);
   const rebuildTimeline = `setpts=N/(${sourceFrameRate}*TB)`;
 
-  // Full encodes rebuild video PTS from frame order; PGS keeps the source
-  // stream offset. Input-seek smoke samples are already rebased by FFmpeg.
-  const bitmapSubtitleOffset = options.start == null && options.subtitleStream !== null && !embeddedTextSubtitle
-    ? probeVideoStartTime(input, options.videoStream)
-    : 0;
+  // FFmpeg rebases input timestamps by default because this command does not
+  // use -copyts. The bitmap subtitle filter must stay on that same zero-based
+  // timeline as the video rebuilt below.
+  const bitmapSubtitleOffset = 0;
   if (embeddedTextSubtitle && !options.resume) {
     // A bounded smoke test must not extract subtitles for the entire episode first.
     await run(options.ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostats", ...smokeFailureArgs(options.duration, options.allowDecoderRecovery), "-y", ...seekArgs, "-i", input, ...durationArgs, "-map", `0:s:${options.subtitleStream}`, "-c:s", ["ass", "ssa"].includes(subtitleCodec) ? "ass" : "srt", extractedSubtitle], "extract-text-subtitle");

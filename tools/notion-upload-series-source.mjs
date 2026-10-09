@@ -1,3 +1,4 @@
+import { uploadProjectAttachment } from "./lib/notion-attachment-transport.mjs";
 import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -333,69 +334,7 @@ async function readChunk(filePath, offset, length) {
 }
 
 async function uploadFile(notion, file, options, manifest, manifestPath) {
-  const contentType = "application/x-7z-compressed";
-  const uploadFilename = uploadFilenameFor(file.name);
-  const partBytes = Math.max(1, Math.floor(options.partMiB)) * 1024 * 1024;
-  const partCount = Math.ceil(file.size / partBytes);
-  const record = manifest.uploads[file.name] ?? {
-    filename: file.name,
-    uploadFilename,
-    size: file.size,
-    sentParts: 0
-  };
-
-  if (record.status === "uploaded" && record.fileUploadId) {
-    console.log(`reuse uploaded ${file.name} ${record.fileUploadId}`);
-    return record.fileUploadId;
-  }
-
-  if (!record.fileUploadId) {
-    const mode = partCount === 1 ? "single_part" : "multi_part";
-    console.log(`create upload ${file.name}: ${mode}, ${partCount} part(s)`);
-    const upload = await notion.fileUploads.create({
-      mode,
-      filename: uploadFilename,
-      content_type: contentType,
-      ...(mode === "multi_part" ? { number_of_parts: partCount } : {})
-    });
-    record.fileUploadId = upload.id;
-    record.mode = mode;
-    record.partCount = partCount;
-    record.sentParts = 0;
-    manifest.uploads[file.name] = record;
-    writeManifest(manifestPath, manifest);
-  }
-
-  if (record.mode === "single_part") {
-    const data = await readChunk(file.path, 0, file.size);
-    await notion.fileUploads.send({
-      file_upload_id: record.fileUploadId,
-      file: { filename: uploadFilename, data: new Blob([data], { type: contentType }) }
-    });
-    record.sentParts = 1;
-  } else {
-    for (let part = (record.sentParts ?? 0) + 1; part <= partCount; part += 1) {
-      const offset = (part - 1) * partBytes;
-      const length = Math.min(partBytes, file.size - offset);
-      const data = await readChunk(file.path, offset, length);
-      console.log(`send ${file.name} part ${part}/${partCount}`);
-      await notion.fileUploads.send({
-        file_upload_id: record.fileUploadId,
-        part_number: String(part),
-        file: { filename: uploadFilename, data: new Blob([data], { type: contentType }) }
-      });
-      record.sentParts = part;
-      writeManifest(manifestPath, manifest);
-      await sleep(250);
-    }
-    console.log(`complete ${file.name}`);
-    await notion.fileUploads.complete({ file_upload_id: record.fileUploadId });
-  }
-
-  record.status = "uploaded";
-  record.completedAt = new Date().toISOString();
-  writeManifest(manifestPath, manifest);
-  return record.fileUploadId;
+  return uploadProjectAttachment({ file, options, manifest, manifestPath, token: process.env.NOTION_WRITE_TOKEN || process.env.NOTION_TOKEN, contentType: "application/x-7z-compressed", uploadFilename: uploadFilenameFor(file.name) });
 }
 
 async function appendUploadedFiles(notion, sizePageId, files, uploadedIds, apply) {

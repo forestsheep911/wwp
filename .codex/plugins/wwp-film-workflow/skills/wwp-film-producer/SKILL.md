@@ -53,6 +53,11 @@ route unless the user gives a more specific instruction:
 - Work-level metadata is worth doing even when the source is unsuitable for
   playback or encoding is still running. Metadata and playable production are
   related but independent lanes.
+- Apply the subtitle gate only to subtitle-dependent variants. For a Mainland
+  Chinese-language film with verified Mandarin original audio, missing Chinese
+  subtitles is not a blocker; proceed without added subtitles unless the source
+  already has unavoidable burned-in subtitles. Keep the normal Chinese-subtitle
+  gate for a separate foreign-original-audio variant.
 - Automatic Notion upload is the default after a route probe. Manual upload is
   a bounded fallback for a slow or failed route, or an explicit user choice.
 - A missing Clash controller pipe is a local endpoint-discovery failure. One

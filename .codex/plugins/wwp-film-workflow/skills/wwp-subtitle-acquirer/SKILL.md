@@ -19,6 +19,15 @@ original-audio branch. Do not route a verified Mandarin-dubbed (`国配`) branch
 here merely because it lacks Chinese subtitles: that branch may complete now,
 with subtitle acquisition retained only as optional later enrichment.
 
+Before creating a task, establish the work's production region and the actual
+original-audio language. A Mainland Chinese-language film with Mandarin
+original audio does not need Chinese subtitles; record `subtitle treatment:
+none` and do not search, defer production, or label subtitles as verified.
+Missing or undetermined audio language tags are not proof that the source is a
+foreign-language work: use reliable metadata or a short audio listen to resolve
+the language first. Only confirmed missing subtitles on a subtitle-dependent
+foreign-original-audio branch may enter acquisition.
+
 After inspecting rendered PGS samples, persist the decision before creating or
 resuming provider work:
 

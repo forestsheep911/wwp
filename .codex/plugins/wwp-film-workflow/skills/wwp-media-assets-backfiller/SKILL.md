@@ -53,3 +53,8 @@ The parent page `last_edited_time` is not authoritative for manual uploads. Medi
 ## Reference
 
 Read `../../references/notion-media-assets.md`, `../../references/workflow-handoff.md`, and `../../references/source-archive-rules.md`.
+
+## Production Website Sync
+
+- Production publication must explicitly run `node --import tsx tools/notion-index-refresh.mjs --home --page-id <work-page-id> [--title <exact-title>]`. The production website reads the home-site local index; an Azure-index refresh does not publish to this site.
+- Follow with `tools/film-website-coverage-audit.mjs --page-id <work-page-id> --title "<exact-title>" --live --record-ledger --json` for the exact work page. Compare the complete expected spec/Episode set and each Media Asset page ID and media block ID. If live coverage is briefly stale after a home-site refresh, wait about 60 seconds and repeat this exact bounded read once. If it still omits an asset, keep the output and report the persistent mismatch; `sync_ready` and an Azure-index refresh do not authorize cleanup or final completion.

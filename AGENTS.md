@@ -13,3 +13,7 @@
 - Treat the user command `开始制作影视库` as an explicit request to start the plugin's complete end-to-end workflow. Use enabled ledger input roots when available; ask for an input directory only when neither the request nor the ledger provides one.
 - The plugin owns workflow routing, selection rules, encoding defaults, Notion publishing handoff, Media Assets backfill, source archive handling, and film metadata backfill.
 - Review drafts under `.local-data/reviews/` are discussion artifacts only. Do not treat them as plugin source or ingest them into production docs unless the user explicitly asks.
+
+## Notion attachment transport
+
+- Use the global `notion-attachment-transfer` skill and implementation for attachment upload/download, route changes, probes and traffic evidence. Project tools are compatibility/business adapters. Do not add independent transport implementations. Film/spec/Media Assets/ledger and release gates stay in this project.

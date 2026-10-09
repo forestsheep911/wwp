@@ -1,3 +1,4 @@
+import { uploadPosterAttachment } from "./lib/notion-attachment-transport.mjs";
 import { projectEnv } from "./lib/project-secrets.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -1258,18 +1259,7 @@ async function uploadPoster(notion, metadata, title) {
   }
   const { bytes, contentType } = image;
   const filename = notionFileName(`${cleanTitle(title)} poster - Douban.jpg`);
-  const upload = await notion.fileUploads.create({
-    mode: "single_part",
-    filename,
-    content_type: contentType
-  });
-  const sent = await notion.fileUploads.send({
-    file_upload_id: upload.id,
-    file: {
-      filename,
-      data: new Blob([bytes], { type: contentType })
-    }
-  });
+  const sent = await uploadPosterAttachment({ filename, bytes: bytes, contentType });
   return {
     name: filename,
     type: "file_upload",
