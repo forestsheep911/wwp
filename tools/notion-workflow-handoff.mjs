@@ -157,7 +157,7 @@ async function queryActionable(notion, dataSourceId, limit) {
   return response.results ?? [];
 }
 
-async function applySet(notion, page, options) {
+export async function applySet(notion, page, options) {
   const releaseWork = options.release_work === true;
   const releaseVisibility = options.release_visibility === true;
   const visibilityRequested = typeof options.hide_from_website === "boolean";
@@ -195,14 +195,17 @@ async function applySet(notion, page, options) {
       throw new Error(`Work visibility release blocked: ${visibilityBlockers.join(", ")}`);
     }
   }
-  const nextStatus = options.status || workflowStateFromPage(page);
-  const update = buildWorkflowUpdate(page, {
-    status: nextStatus,
-    note: options.note,
-    actor: options.actor ?? "ai",
-    at: new Date().toISOString(),
-    enforceTransition: !releaseWork
-  });
+  const currentStatus = workflowStateFromPage(page);
+  const nextStatus = options.status || currentStatus;
+  const update = releaseVisibility && !nextStatus
+    ? { currentStatus: "", nextStatus: "", properties: {} }
+    : buildWorkflowUpdate(page, {
+      status: nextStatus,
+      note: options.note,
+      actor: options.actor ?? "ai",
+      at: new Date().toISOString(),
+      enforceTransition: !releaseWork
+    });
   if (releaseWork) update.properties["Hide from Website"] = { checkbox: false };
   else if (visibilityRequested) update.properties["Hide from Website"] = { checkbox: options.hide_from_website };
   else if (shouldAutoReleaseWorkVisibility(page)) {
