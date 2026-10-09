@@ -82,3 +82,26 @@ export function classifyChineseSubtitleState({ subtitleEvidence, qualityState } 
 export function hasVerifiedMandarinAudio(audioEvidence) {
   return /(?:mandarin|cmn|国语|普通话)/iu.test(String(audioEvidence ?? ""));
 }
+
+export function hasVerifiedJapaneseOriginalAudio(audioEvidence) {
+  const parsed = parseEvidence(audioEvidence);
+  const entries = evidenceEntries(parsed);
+  const verifiedOriginal = trueValue(entries, new Set([
+    "verifiedoriginal",
+    "verifiedoriginalaudio",
+    "verifiedoriginallanguage"
+  ]));
+  const originalLanguage = entries.some(([key, value]) =>
+    ["originalaudio", "originallanguage"].includes(key)
+      && /(?:japanese|jpn|日语|日本语)/iu.test(String(value ?? ""))
+  );
+  const japaneseTrack = entries.some(([key, value]) =>
+    ["language", "languages", "audio", "audiotracks", "tracks"].includes(key)
+      && /(?:japanese|jpn|日语|日本语)/iu.test(JSON.stringify(value ?? ""))
+  );
+  return originalLanguage || (verifiedOriginal && japaneseTrack);
+}
+
+export function hasSubtitleExemptAudio(audioEvidence) {
+  return hasVerifiedMandarinAudio(audioEvidence) || hasVerifiedJapaneseOriginalAudio(audioEvidence);
+}

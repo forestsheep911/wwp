@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   CHINESE_SUBTITLE_STATES,
   classifyChineseSubtitleState,
-  hasVerifiedMandarinAudio
+  hasVerifiedMandarinAudio,
+  hasVerifiedJapaneseOriginalAudio,
+  hasSubtitleExemptAudio
 } from "./film-subtitle-state.mjs";
 
 test("verified Chinese evidence is production-ready", () => {
@@ -47,4 +49,11 @@ test("verified Mandarin audio is a non-blocking subtitle exception", () => {
   assert.equal(hasVerifiedMandarinAudio('{"language":"Mandarin"}'), true);
   assert.equal(hasVerifiedMandarinAudio('{"originalLanguage":"Mandarin","verifiedOriginalLanguage":true}'), true);
   assert.equal(hasVerifiedMandarinAudio('{"language":"English"}'), false);
+});
+
+test("only verified Japanese original audio is a non-blocking subtitle exception", () => {
+  assert.equal(hasVerifiedJapaneseOriginalAudio('{"language":"jpn","verifiedOriginal":true}'), true);
+  assert.equal(hasVerifiedJapaneseOriginalAudio('{"originalLanguage":"Japanese"}'), true);
+  assert.equal(hasVerifiedJapaneseOriginalAudio('{"language":"jpn"}'), false);
+  assert.equal(hasSubtitleExemptAudio('{"originalAudio":"日本语"}'), true);
 });

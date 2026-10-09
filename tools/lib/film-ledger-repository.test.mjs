@@ -1191,6 +1191,30 @@ test("verified Mandarin original audio clears a subtitle-only blocker", () => {
   } finally { f.close(); }
 });
 
+test("verified Japanese original audio clears subtitle acquisition without requiring Chinese tracks", () => {
+  const f = fixture();
+  try {
+    const root = f.repo.upsertInputRoot("X:\\queue");
+    const work = f.repo.ensureWork({ canonicalTitle: "Japanese original", year: 2026, priorityScore: 80 });
+    const source = f.repo.upsertDiscoveredSource({
+      inputRootId: root.id, workId: work.id, relativePath: "japanese-original", absolutePath: "X:\\queue\\japanese-original",
+      fingerprint: "japanese-original", sourceKind: "file", qualityState: "subtitle_missing",
+      subtitleEvidence: { state: "confirmed_missing", hasChineseSubtitle: false },
+      audioEvidence: { language: "jpn", verifiedOriginal: true }
+    });
+    const waitingTask = f.repo.ensureWorkflowTask({
+      taskKey: `subtitle:source:${source.id}`, taskType: "subtitle_acquisition", sourceId: source.id, workId: work.id,
+      status: "waiting_user", reason: "Incorrectly waiting for Chinese subtitles"
+    });
+
+    const result = f.repo.syncSubtitleAcquisitionTasks({ limit: 5 });
+    assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.created, []);
+    assert.deepEqual(result.resolved.map((task) => task.id), [waitingTask.id]);
+    assert.equal(f.db.prepare("SELECT status FROM workflow_tasks WHERE id=?").get(waitingTask.id).status, "done");
+  } finally { f.close(); }
+});
+
 test("duplicate source subtitle tasks close and do not reopen", () => {
   const f = fixture();
   try {

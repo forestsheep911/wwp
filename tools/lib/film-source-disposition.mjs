@@ -4,7 +4,7 @@ import { collectSourceCleanupCandidates, latestExpansionDecision } from "../film
 import {
   CHINESE_SUBTITLE_STATES,
   classifyChineseSubtitleState,
-  hasVerifiedMandarinAudio
+  hasSubtitleExemptAudio
 } from "./film-subtitle-state.mjs";
 
 const HUMAN_WORKFLOW_STATES = new Set(["待人工上传", "人工上传中", "待人工确认"]);
@@ -105,7 +105,7 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     qualityState: source.quality_state
   });
   const verifiedMissingChineseSubtitle = chineseSubtitleState === CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING;
-  const verifiedMandarinAudio = hasVerifiedMandarinAudio(source.audio_evidence);
+  const subtitleExemptAudio = hasSubtitleExemptAudio(source.audio_evidence);
 
   if (source.workflow_note) evidence.push({ type: "workflow_note", value: source.workflow_note });
   for (const task of tasks) {
@@ -192,14 +192,14 @@ export function classifySourceDisposition({ source, variants = [], tasks = [], c
     disposition = "collection_container_active";
     reasons.push("collection_members_tracked_separately");
     nextTrigger = "等待全部成员源各自闭环后再关闭并移动合集容器";
-  } else if (verifiedMissingChineseSubtitle && !verifiedMandarinAudio && subtitlePendingTask) {
+  } else if (verifiedMissingChineseSubtitle && !subtitleExemptAudio && subtitlePendingTask) {
     // A concrete subtitle task is more specific than a newly discovered or
     // requeued intake marker and must remain visible as the next action.
     disposition = "subtitle_acquisition_pending";
     reasons.push(`subtitle_acquisition:${subtitlePendingTask.status}`);
     actionableNow = true;
     nextTrigger = "继续可恢复的字幕获取任务；候选站点需要登录或验证时再转人工确认";
-  } else if (verifiedMissingChineseSubtitle && !verifiedMandarinAudio) {
+  } else if (verifiedMissingChineseSubtitle && !subtitleExemptAudio) {
     disposition = "subtitle_acquisition_required";
     reasons.push("missing_chinese_subtitle");
     actionableNow = true;

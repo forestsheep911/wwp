@@ -13,7 +13,7 @@ import { analyzeSeriesVariantCoverage } from "./film-series-coverage.mjs";
 import {
   CHINESE_SUBTITLE_STATES,
   classifyChineseSubtitleState,
-  hasVerifiedMandarinAudio
+  hasSubtitleExemptAudio
 } from "./film-subtitle-state.mjs";
 
 const INCOMPLETE_SOURCE_INTAKE_REASON = "Source download is incomplete; wait for a later scan with a complete readable media file";
@@ -960,7 +960,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         qualityState: row.quality_state
       });
       return subtitleState !== CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
-        || hasVerifiedMandarinAudio(row.audio_evidence);
+        || hasSubtitleExemptAudio(row.audio_evidence);
     }).slice(0, capped);
   }
 
@@ -1002,7 +1002,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
       subtitleEvidence: row.subtitle_evidence,
       qualityState: row.quality_state
     }) === CHINESE_SUBTITLE_STATES.CONFIRMED_MISSING
-      && !hasVerifiedMandarinAudio(row.audio_evidence))
+      && !hasSubtitleExemptAudio(row.audio_evidence))
       .slice(0, normalizeLimit(limit, 5, 50));
   }
 
@@ -1048,7 +1048,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
         qualityState: task.quality_state
       });
       if (task.scope_state === "closed" || task.missing || task.source_kind === "duplicate_source"
-        || hasVerifiedMandarinAudio(task.audio_evidence)) {
+        || hasSubtitleExemptAudio(task.audio_evidence)) {
         resolved.push(completeWorkflowTaskByKey(task.task_key, {
           sourceId: task.source_id,
           workId: task.work_id,
@@ -1058,7 +1058,7 @@ export function createLedgerRepository(db, { now = () => new Date().toISOString(
             ? "Source is no longer present"
             : task.source_kind === "duplicate_source"
               ? "Source is explicitly marked duplicate; subtitle acquisition follows the canonical source only"
-            : "A verified Mandarin audio branch does not require Chinese subtitles"
+            : "A verified Mandarin or Japanese original-audio branch does not require Chinese subtitles"
         }));
         continue;
       }
