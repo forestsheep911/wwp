@@ -60,4 +60,4 @@ async function main() {
  try {console.log(JSON.stringify(await execute(name,values,contract,io,cloud,process.env),null,2));}
  finally {io.close();}
 }
-if(process.argv[1]&&pathToFileURL(fs.realpathSync(process.argv[1])).href===import.meta.url)main().catch(error=>{console.error(error.message);process.exitCode=1;});
+if(process.argv[1]&&fs.existsSync(process.argv[1])&&pathToFileURL(fs.realpathSync(process.argv[1])).href===import.meta.url)main().catch(error=>{console.error(error.message);process.exitCode=1;});

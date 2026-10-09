@@ -101,3 +101,7 @@ test('Azure failures abort API revisions before any environment replacement',asy
  await assert.rejects(execute('deploy-api-containerapp',values,contract,io),/Forbidden/);
  assert.ok(!calls.some(c=>c.includes('--replace-env-vars')));
 });
+
+test('native modules can be imported from Node stdin without starting a deployment',()=>{
+ execFileSync(process.execPath,['--input-type=module','-'],{input:'await import("./infra/native-cli.mjs"); await import("./infra/deploy-web-staticapp.mjs");',cwd:new URL('../',import.meta.url),stdio:['pipe','pipe','pipe']});
+});

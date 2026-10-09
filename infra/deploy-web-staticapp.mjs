@@ -124,4 +124,4 @@ async function main() {
   });
   console.log(JSON.stringify(result, null, 2));
 }
-if (process.argv[1] && pathToFileURL(fs.realpathSync(process.argv[1])).href === import.meta.url) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && fs.existsSync(process.argv[1]) && pathToFileURL(fs.realpathSync(process.argv[1])).href === import.meta.url) main().catch(error => { console.error(error.message); process.exitCode = 1; });
