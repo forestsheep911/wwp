@@ -76,11 +76,13 @@ failure alone is not a request for human review when these checks can resolve it
 2. Create or reuse the content-addressed task with
    `../../scripts/subtitle_companion_bridge.py create-task`. The command starts
    or reuses the short-lived loopback Bridge by default.
-3. For a browser-backed provider, ask the user to open the provider in the real
-   signed-in browser, refresh the local Companion task list, search, and capture
-   the current results/detail page. The Companion may collect evidence, but it
-   must not bypass login, CAPTCHA, download confirmation, copyright removal, or
-   another access-control decision.
+3. For a browser-backed provider, use an available public/API route first. A
+   task marked as requiring browser capture is not itself a reason to stop when
+   the user has authorized direct production; collect available candidate
+   evidence through the provider CLI or public pages and proceed. Ask the user
+   to open a signed-in browser only when the provider genuinely requires their
+   session, CAPTCHA, or an explicit download confirmation. Never bypass those
+   access controls.
    After creating the Companion task, record the ledger handoff with
    `node tools/film-ledger.mjs wait-task --task <id> --failure-detail <exact action>`
    so the source is classified as waiting for a named human action instead of
@@ -164,6 +166,16 @@ python .codex/plugins/wwp-film-workflow/scripts/subtitle_companion_bridge.py lis
   artifact-download implementation.
 - Do not automatically publish or re-upload a subtitle. Respect provider and
   subtitle-specific usage/copyright notices.
+- If the user explicitly authorizes a particular candidate carrying a
+  language-learning or rights-holder notice, compare additional editions first;
+  only use that candidate when no better compatible subtitle is found, and
+  preserve the notice and user authorization in provenance. This exception is
+  task-specific and does not authorize bypassing access controls or redistributing
+  the subtitle file.
+- Japanese-original audio is permitted without Chinese subtitles. A verified
+  Japanese subtitle is also an acceptable subtitle treatment. For all other
+  foreign-original-audio branches without a verified Mandarin dub, Chinese
+  subtitles remain a production gate unless the user explicitly overrides it.
 - A downloaded file is untrusted input. Extract only subtitle/text files into a
   bounded staging directory; reject executables, links, path traversal, and
   unexpected archive members.

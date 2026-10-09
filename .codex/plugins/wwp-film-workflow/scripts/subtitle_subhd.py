@@ -17,7 +17,9 @@ from urllib.parse import quote, urljoin, urlparse
 import requests
 
 
-BASE = "https://subhd.tv"
+# .tv intermittently fails TLS from the production host; .me is an official
+# alternate domain listed by SubHD and serves the same search/download API.
+BASE = "https://subhd.me"
 MAX_BYTES = 10 * 1024 * 1024
 SID = re.compile(r"^[A-Za-z0-9]{4,16}$")
 LINK = re.compile(r'<a\b[^>]*href=["\'](/a/([A-Za-z0-9]{4,16}))["\'][^>]*>(.*?)</a>', re.I | re.S)
