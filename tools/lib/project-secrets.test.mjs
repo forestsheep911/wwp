@@ -19,6 +19,12 @@ test("invalid references fail before invoking Azure", () => {
   assert.throws(() => resolveSecretReferences({ TOKEN__KEY_VAULT: "vault/token;evil" }, () => assert.fail()), /Invalid Key Vault reference/);
 });
 
+test("explicit empty environment values disable a Vault binding", () => {
+  const env = { TOKEN: "", TOKEN__KEY_VAULT: "vault/token" };
+  resolveSecretReferences(env, () => assert.fail("explicit empty value must win"));
+  assert.equal(env.TOKEN, "");
+});
+
 test("selective resolution ignores unrelated vault references", () => {
   const env = {
     NOTION_TOKEN__KEY_VAULT: "vault/notion",

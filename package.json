@@ -9,6 +9,11 @@
     "packages/*"
   ],
   "scripts": {
+    "config:check": "node tools/cloud-config.mjs check",
+    "config:refresh": "node tools/cloud-config.mjs refresh",
+    "config:secrets": "node tools/cloud-config.mjs secret-check",
+    "config:run": "node tools/cloud-config.mjs run",
+    "config:smoke": "node tools/verify-cloud-startup.mjs",
     "dev:web": "npm run dev --workspace @wwpdw/web",
     "dev:api": "npm run dev --workspace @wwpdw/api",
     "dev:worker": "npm run dev --workspace @wwpdw/worker",

@@ -52,7 +52,7 @@ Production web routing follows these rules:
 Static administrator key bootstrap/rotation:
 
 ```powershell
-# Reads WWPDW_ADMIN_KEY from .env or the current process environment.
+# Reads WWPDW_ADMIN_KEY from cloud configuration / Key Vault or an explicit environment override.
 .\infra\set-admin-key.ps1
 
 # Or pass a value explicitly.

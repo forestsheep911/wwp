@@ -56,40 +56,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 $DefaultNotionLibraryDatabaseId = "f47ef878-8acb-4e12-b604-011e95fb1738"
 $DefaultNotionMediaAssetsDatabaseId = "9bacb469-eff7-4c92-80bd-8db16838f2e2"
 
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
-}
-function Get-DotEnvValue {
-    param(
-        [string[]]$Names
-    )
-
-    $envPath = Join-Path (Get-Location) ".env"
-    if (-not (Test-Path $envPath)) {
-        return $null
-    }
-
-    $result = $null
-    foreach ($line in Get-Content $envPath) {
-        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
-            continue
-        }
-
-        $name = $matches[1]
-        if ($Names -notcontains $name) {
-            continue
-        }
-
-        $value = $matches[2].Trim().Trim('"').Trim("'")
-        if ($value) {
-            $result = $value
-        }
-    }
-
-    return $result
 }
 
 $subscriptionId = & $AzCli account show --query id --output tsv
@@ -109,23 +83,23 @@ if (-not $NotionLibraryRootPageId -and $env:PAGE_ID) {
 }
 
 if (-not $NotionLibraryRootPageId) {
-    $NotionLibraryRootPageId = Get-DotEnvValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
+    $NotionLibraryRootPageId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
 }
 
 if (-not $NotionLibraryDatabaseId) {
-    $NotionLibraryDatabaseId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
+    $NotionLibraryDatabaseId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
 }
 
 if (-not $NotionLibraryDataSourceId) {
-    $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
+    $NotionLibraryDataSourceId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
 if (-not $NotionMediaAssetsDatabaseId) {
-    $NotionMediaAssetsDatabaseId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
+    $NotionMediaAssetsDatabaseId = Get-CloudConfigValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
 }
 
 if (-not $NotionMediaAssetsDataSourceId) {
-    $NotionMediaAssetsDataSourceId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
+    $NotionMediaAssetsDataSourceId = Get-CloudConfigValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
 }
 
 if (-not $NotionLibraryDatabaseId -and -not $NotionLibraryDataSourceId) {
@@ -137,55 +111,55 @@ if (-not $NotionMediaAssetsDatabaseId -and -not $NotionMediaAssetsDataSourceId) 
 }
 
 if (-not $AdminKey) {
-    $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
+    $AdminKey = Get-CloudConfigValue -Names @("WWPDW_ADMIN_KEY")
 }
 
 if (-not $BailianApiKey) {
-    $BailianApiKey = Get-DotEnvValue -Names @("BAILIAN_API_KEY", "DASHSCOPE_API_KEY")
+    $BailianApiKey = Get-CloudConfigValue -Names @("BAILIAN_API_KEY", "DASHSCOPE_API_KEY")
 }
 
 if (-not $AiSummaryModelPreset) {
-    $AiSummaryModelPreset = Get-DotEnvValue -Names @("WWPDW_AI_SUMMARY_MODEL_PRESET")
+    $AiSummaryModelPreset = Get-CloudConfigValue -Names @("WWPDW_AI_SUMMARY_MODEL_PRESET")
 }
 
 if (-not $AiSummaryModel) {
-    $AiSummaryModel = Get-DotEnvValue -Names @("WWPDW_AI_SUMMARY_MODEL")
+    $AiSummaryModel = Get-CloudConfigValue -Names @("WWPDW_AI_SUMMARY_MODEL")
 }
 
 if (-not $BailianBaseUrl) {
-    $BailianBaseUrl = Get-DotEnvValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
+    $BailianBaseUrl = Get-CloudConfigValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
 }
 
 if (-not $AliyunAccessKeyId) {
-    $AliyunAccessKeyId = Get-DotEnvValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_ID")
+    $AliyunAccessKeyId = Get-CloudConfigValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_ID")
 }
 
 if (-not $AliyunAccessKeySecret) {
-    $AliyunAccessKeySecret = Get-DotEnvValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+    $AliyunAccessKeySecret = Get-CloudConfigValue -Names @("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
 }
 
 if (-not $AliyunOssPocEnabled) {
-    $AliyunOssPocEnabled = Get-DotEnvValue -Names @("ALIYUN_OSS_POC_ENABLED")
+    $AliyunOssPocEnabled = Get-CloudConfigValue -Names @("ALIYUN_OSS_POC_ENABLED")
 }
 
 if (-not $AliyunOssRegion) {
-    $AliyunOssRegion = Get-DotEnvValue -Names @("ALIYUN_OSS_REGION")
+    $AliyunOssRegion = Get-CloudConfigValue -Names @("ALIYUN_OSS_REGION")
 }
 
 if (-not $AliyunOssBucket) {
-    $AliyunOssBucket = Get-DotEnvValue -Names @("ALIYUN_OSS_BUCKET")
+    $AliyunOssBucket = Get-CloudConfigValue -Names @("ALIYUN_OSS_BUCKET")
 }
 
 if (-not $AliyunOssEndpoint) {
-    $AliyunOssEndpoint = Get-DotEnvValue -Names @("ALIYUN_OSS_ENDPOINT")
+    $AliyunOssEndpoint = Get-CloudConfigValue -Names @("ALIYUN_OSS_ENDPOINT")
 }
 
 if (-not $AliyunOssPocObjectKey) {
-    $AliyunOssPocObjectKey = Get-DotEnvValue -Names @("ALIYUN_OSS_POC_OBJECT_KEY")
+    $AliyunOssPocObjectKey = Get-CloudConfigValue -Names @("ALIYUN_OSS_POC_OBJECT_KEY")
 }
 
 if (-not $AliyunOssSignedUrlMinutes) {
-    $AliyunOssSignedUrlMinutes = Get-DotEnvValue -Names @("ALIYUN_OSS_SIGNED_URL_MINUTES")
+    $AliyunOssSignedUrlMinutes = Get-CloudConfigValue -Names @("ALIYUN_OSS_SIGNED_URL_MINUTES")
 }
 
 $OmdbSecretUri = "https://$KeyVaultName.vault.azure.net/secrets/OMDB-API-KEY"

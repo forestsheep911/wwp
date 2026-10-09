@@ -1,5 +1,4 @@
 import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
 import { config } from "./lib/project-secrets.mjs";
 
 const require = createRequire(import.meta.url);
@@ -22,22 +21,9 @@ const accountId = "1812145568680204";
 
 async function readLocalEnvironment() {
   config();
-  const values = new Map();
-  const contents = await readFile(new URL("../.env", import.meta.url), "utf8").catch(() => "");
-  for (const rawLine of contents.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const equals = line.indexOf("=");
-    if (equals <= 0) continue;
-    const name = line.slice(0, equals).trim();
-    const value = line.slice(equals + 1).trim().replace(/^(['"])(.*)\1$/, "$2");
-    if (value) values.set(name, value);
-  }
   return {
-    accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID?.trim()
-      || values.get("ALIBABA_CLOUD_ACCESS_KEY_ID"),
+    accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID?.trim(),
     accessKeySecret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET?.trim()
-      || values.get("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
   };
 }
 
@@ -74,7 +60,7 @@ const permissionPolicy = JSON.stringify({
 async function main() {
   const credentials = await readLocalEnvironment();
   if (!credentials.accessKeyId || !credentials.accessKeySecret) {
-    throw new Error("Alibaba Cloud access key is missing from process environment or .env.");
+    throw new Error("Alibaba Cloud access key is missing from App Configuration / Key Vault.");
   }
   const client = new RamClient(new OpenApi.Config({
     accessKeyId: credentials.accessKeyId,

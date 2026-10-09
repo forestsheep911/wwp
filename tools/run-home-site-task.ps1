@@ -20,7 +20,7 @@ foreach ($logPath in @($stdoutPath, $stderrPath)) {
   }
 }
 
-$nodePath = (Get-Command node.exe -ErrorAction Stop).Source
+$nodePath = (Get-Command node -ErrorAction Stop).Source
 Set-Location -LiteralPath $repositoryRoot
 
 & $nodePath --import tsx tools/start-home-site.mjs 1>> $stdoutPath 2>> $stderrPath

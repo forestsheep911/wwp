@@ -26,8 +26,13 @@ For handoff, operations, data flow, and troubleshooting, start with:
 
 ## Local Development
 
+Configuration is loaded from Azure App Configuration and Key Vault; no `.env`
+file is required. Start with [cloud configuration and machine handoff](docs/cloud-configuration.md).
+
 ```powershell
 npm install
+az login
+npm run config:check
 npm run dev:api
 npm run dev:worker
 npm run dev:web
@@ -79,9 +84,9 @@ Cloud metadata sync jobs:
 ## Cache Backend
 
 - Local: `CACHE_BACKEND=local`
-- Azure: `CACHE_BACKEND=azure` plus the `AZURE_STORAGE_*` values from `.env.example`
+- Azure: `CACHE_BACKEND=azure` plus the cloud-managed `AZURE_STORAGE_*` values
 
-For local Azure auth without a connection string, sign in with Azure CLI (`az login`) and make sure the active account can access the configured storage resources. If you use a non-default Azure CLI profile directory on your machine, set `AZURE_CONFIG_DIR` in your local shell or `.env` only; do not commit machine-specific profile paths or command aliases.
+For local Azure auth without a connection string, sign in with Azure CLI (`az login`) and make sure the active account can access the configured storage resources. Set a non-default `AZURE_CONFIG_DIR` in the launching shell before login and configuration loading; do not commit machine-specific profile paths or command aliases.
 
 The Azure backend uses:
 

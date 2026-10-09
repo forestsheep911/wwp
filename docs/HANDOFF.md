@@ -1,5 +1,10 @@
 # WWPDW Web Cache Handoff
 
+Development-machine configuration now comes from shared Azure App Configuration
+and project Key Vault, without automatic `.env` loading. Follow
+[cloud configuration and machine handoff](cloud-configuration.md) first. Its
+secret inventory and naming rules supersede the abbreviated historical list below.
+
 This document captures the current web-cache MVP so a future maintainer does not need the chat history.
 
 ## Current State

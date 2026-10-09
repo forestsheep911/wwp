@@ -62,7 +62,10 @@ non-local source addresses directly through Windows Firewall.
 
 ## Configuration
 
-Place machine-specific values in the ignored repository `.env`:
+Manage these keys in App Configuration under `wwp:`. Shared values use `dev`;
+machine paths, proxy and the public origin use `dev:machine:<lowercase-hostname>`.
+See [cloud configuration](cloud-configuration.md). The following is a key/value
+reference, not a local file to create:
 
 ```dotenv
 WWPDW_HOME_PORT=43187
@@ -117,7 +120,7 @@ metadata is not read from Azure Tables. Video bytes and the local poster cache
 stay on `F:\wwp_storage`.
 
 Run `az login` again if the user credential is explicitly revoked or the Azure
-CLI cache is removed. No storage account key is stored in `.env`.
+CLI cache is removed. Storage access uses identity; no local secret file is required.
 
 ## NAS Reverse Proxy
 

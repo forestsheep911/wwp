@@ -1,25 +1,14 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$envPath = Join-Path $repoRoot ".env"
+. (Join-Path $repoRoot "infra/cloud-config.ps1")
 $templatePath = Join-Path $repoRoot "infra\aliyun-oss-prepare\s.yaml"
 $aliasName = "wwpdw-fc-deploy"
 
-function Read-LastNonEmptyEnvValue([string]$Name) {
-  $value = [Environment]::GetEnvironmentVariable($Name)
-  if ($value) { return $value.Trim() }
-  if (-not (Test-Path -LiteralPath $envPath)) { return $null }
-  $match = Get-Content -LiteralPath $envPath |
-    Where-Object { $_ -match "^\s*$([regex]::Escape($Name))\s*=\s*(.+?)\s*$" } |
-    Select-Object -Last 1
-  if (-not $match) { return $null }
-  return (($match -split "=", 2)[1].Trim() -replace '^([''"])(.*)\1$', '$2')
-}
-
-$accessKeyId = Read-LastNonEmptyEnvValue "ALIBABA_CLOUD_ACCESS_KEY_ID"
-$accessKeySecret = Read-LastNonEmptyEnvValue "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+$accessKeyId = Get-CloudSecretValue -Name "ALIBABA_CLOUD_ACCESS_KEY_ID"
+$accessKeySecret = Get-CloudSecretValue -Name "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
 if (-not $accessKeyId -or -not $accessKeySecret) {
-  throw "Alibaba Cloud access key is missing from the process environment or .env."
+  throw "Alibaba Cloud access key is missing from App Configuration / Key Vault."
 }
 
 Push-Location $repoRoot

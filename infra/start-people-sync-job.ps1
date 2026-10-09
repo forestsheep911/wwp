@@ -6,6 +6,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 $execution = & $AzCli containerapp job start `
     --name $JobName `
     --resource-group $ResourceGroup `

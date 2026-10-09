@@ -35,36 +35,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 $DefaultNotionLibraryDatabaseId = "f47ef878-8acb-4e12-b604-011e95fb1738"
 $DefaultNotionMediaAssetsDatabaseId = "9bacb469-eff7-4c92-80bd-8db16838f2e2"
 
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
-}
-function Get-DotEnvValue {
-    param(
-        [string[]]$Names
-    )
-
-    $envPath = Join-Path (Get-Location) ".env"
-    if (-not (Test-Path $envPath)) {
-        return $null
-    }
-
-    foreach ($line in Get-Content $envPath) {
-        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
-            continue
-        }
-
-        $name = $matches[1]
-        if ($Names -notcontains $name) {
-            continue
-        }
-
-        return $matches[2].Trim().Trim('"').Trim("'")
-    }
-
-    return $null
 }
 
 if (-not $JobName) {
@@ -95,23 +73,23 @@ if (-not $NotionLibraryRootPageId -and $env:PAGE_ID) {
 }
 
 if (-not $NotionLibraryRootPageId) {
-    $NotionLibraryRootPageId = Get-DotEnvValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
+    $NotionLibraryRootPageId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_ROOT_PAGE_ID", "PAGE_ID")
 }
 
 if (-not $NotionLibraryDatabaseId) {
-    $NotionLibraryDatabaseId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
+    $NotionLibraryDatabaseId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_DATABASE_ID", "NOTION_MEDIA_DATABASE_ID")
 }
 
 if (-not $NotionLibraryDataSourceId) {
-    $NotionLibraryDataSourceId = Get-DotEnvValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
+    $NotionLibraryDataSourceId = Get-CloudConfigValue -Names @("NOTION_LIBRARY_DATA_SOURCE_ID", "NOTION_DATA_SOURCE_ID")
 }
 
 if (-not $NotionMediaAssetsDatabaseId) {
-    $NotionMediaAssetsDatabaseId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
+    $NotionMediaAssetsDatabaseId = Get-CloudConfigValue -Names @("NOTION_MEDIA_ASSETS_DATABASE_ID")
 }
 
 if (-not $NotionMediaAssetsDataSourceId) {
-    $NotionMediaAssetsDataSourceId = Get-DotEnvValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
+    $NotionMediaAssetsDataSourceId = Get-CloudConfigValue -Names @("NOTION_MEDIA_ASSETS_DATA_SOURCE_ID")
 }
 
 if (-not $NotionLibraryDatabaseId -and -not $NotionLibraryDataSourceId) {

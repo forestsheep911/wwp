@@ -4,13 +4,13 @@ import { config } from "./lib/project-secrets.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "..");
-config({ path: path.join(repositoryRoot, ".env"), override: false, quiet: true });
+config();
 
 process.env.WWPDW_LOCAL_DATA_DIR = path.resolve(
   process.env.WWPDW_HOME_DATA_DIR ?? path.join(repositoryRoot, ".local-data", "home-site")
 );
 process.env.CACHE_BACKEND = process.env.WWPDW_HOME_CACHE_BACKEND ?? "filesystem";
-process.env.WWPDW_MEDIA_ROOT ??= "F:\\wwp_storage";
+process.env.WWPDW_MEDIA_ROOT ??= path.join(repositoryRoot, ".local-data", "media");
 process.env.SEARCH_INDEX_BACKEND = "local";
 process.env.TSPDT_BROWSE_BACKEND = "local";
 process.env.SEARCH_INDEX_WRITE_THROUGH = "false";

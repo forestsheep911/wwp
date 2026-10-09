@@ -30,69 +30,47 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }
-function Get-DotEnvValue {
-    param(
-        [string[]]$Names
-    )
-
-    $envPath = Join-Path (Get-Location) ".env"
-    if (-not (Test-Path $envPath)) {
-        return $null
-    }
-
-    foreach ($line in Get-Content $envPath) {
-        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
-            continue
-        }
-
-        $name = $matches[1]
-        if ($Names -notcontains $name) {
-            continue
-        }
-
-        return $matches[2].Trim().Trim('"').Trim("'")
-    }
-
-    return $null
-}
 
 if (-not $OpenAiApiKey) {
-    $OpenAiApiKey = Get-DotEnvValue -Names @("OPENAI_API_KEY")
+    $OpenAiApiKey = Get-CloudConfigValue -Names @("OPENAI_API_KEY")
 }
 
 if (-not $BailianApiKey) {
-    $BailianApiKey = Get-DotEnvValue -Names @("BAILIAN_API_KEY", "DASHSCOPE_API_KEY")
+    $BailianApiKey = Get-CloudConfigValue -Names @("BAILIAN_API_KEY", "DASHSCOPE_API_KEY")
 }
 
 if (-not $AiResolverModel) {
-    $AiResolverModel = Get-DotEnvValue -Names @("WWPDW_AI_RESOLVER_MODEL", "OPENAI_MODEL", "BAILIAN_MODEL", "DASHSCOPE_MODEL")
+    $AiResolverModel = Get-CloudConfigValue -Names @("WWPDW_AI_RESOLVER_MODEL", "OPENAI_MODEL", "BAILIAN_MODEL", "DASHSCOPE_MODEL")
 }
 
 if (-not $AiResolverModelPreset) {
-    $AiResolverModelPreset = Get-DotEnvValue -Names @("WWPDW_AI_RESOLVER_MODEL_PRESET")
+    $AiResolverModelPreset = Get-CloudConfigValue -Names @("WWPDW_AI_RESOLVER_MODEL_PRESET")
 }
 
 if (-not $AiResolverApiKind) {
-    $AiResolverApiKind = Get-DotEnvValue -Names @("WWPDW_AI_RESOLVER_API_KIND")
+    $AiResolverApiKind = Get-CloudConfigValue -Names @("WWPDW_AI_RESOLVER_API_KIND")
 }
 
 if (-not $OpenAiBaseUrl) {
-    $OpenAiBaseUrl = Get-DotEnvValue -Names @("OPENAI_BASE_URL")
+    $OpenAiBaseUrl = Get-CloudConfigValue -Names @("OPENAI_BASE_URL")
 }
 
 if (-not $BailianBaseUrl) {
-    $BailianBaseUrl = Get-DotEnvValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
+    $BailianBaseUrl = Get-CloudConfigValue -Names @("BAILIAN_BASE_URL", "DASHSCOPE_BASE_URL")
 }
 
 if (-not $AiResolverApiUrl) {
-    $AiResolverApiUrl = Get-DotEnvValue -Names @("WWPDW_AI_RESOLVER_API_URL")
+    $AiResolverApiUrl = Get-CloudConfigValue -Names @("WWPDW_AI_RESOLVER_API_URL")
 }
 
 if (-not $AiResolverAuthHeader) {
-    $AiResolverAuthHeader = Get-DotEnvValue -Names @("WWPDW_AI_RESOLVER_AUTH_HEADER")
+    $AiResolverAuthHeader = Get-CloudConfigValue -Names @("WWPDW_AI_RESOLVER_AUTH_HEADER")
 }
 
 $loginServer = & $AzCli acr show `

@@ -770,7 +770,7 @@ test("CLI reconcile-notion enforces a maximum of three before loading an adapter
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("CLI reconcile-notion loads a Notion token from the repository .env", async () => {
+test("CLI reconcile-notion uses injected credentials and ignores ambient .env", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "wwp-cli-dotenv-"));
   try {
     const dbPath = path.join(dir, "ledger.sqlite");
@@ -794,12 +794,12 @@ export function createAdapter() {
     db.close();
 
     const result = run(["--db", dbPath, "reconcile-notion", "--json"], dir, {
-      NOTION_TOKEN: undefined,
+      NOTION_TOKEN: "injected-test-token",
       WWP_FILM_LEDGER_NOTION_ADAPTER_MODULE: adapterPath,
       WWP_LEDGER_DOTENV_MARKER: markerPath
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(markerPath, "utf8"), "dotenv-test-token");
+    assert.equal(readFileSync(markerPath, "utf8"), "injected-test-token");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

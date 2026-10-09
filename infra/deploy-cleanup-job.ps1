@@ -29,6 +29,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }

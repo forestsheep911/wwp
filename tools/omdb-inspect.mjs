@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(moduleDir, "..");
+import { projectEnv } from "./lib/project-secrets.mjs";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -29,23 +24,8 @@ function parseArgs() {
 
   return {
     ids: ids.length ? ids : ["tt0080684"],
-    envPath: parsed.get("env") ?? path.join(repoRoot, ".env"),
     plot: parsed.get("plot") ?? "short"
   };
-}
-
-async function readEnvValue(envPath, name) {
-  const raw = await readFile(envPath, "utf8");
-  for (const line of raw.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match || match[1] !== name) {
-      continue;
-    }
-
-    return match[2].trim().replace(/^["']|["']$/g, "");
-  }
-
-  return process.env[name];
 }
 
 function selectFields(payload) {
@@ -76,10 +56,10 @@ function selectFields(payload) {
 }
 
 const options = parseArgs();
-const apiKey = await readEnvValue(options.envPath, "OMDB_API_KEY");
+const apiKey = projectEnv("OMDB_API_KEY");
 
 if (!apiKey) {
-  throw new Error(`OMDB_API_KEY was not found in ${options.envPath} or process env.`);
+  throw new Error("OMDB_API_KEY was not found in App Configuration / Key Vault.");
 }
 
 for (const id of options.ids) {

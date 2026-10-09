@@ -23,27 +23,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }
 
-function Get-DotEnvValue {
-    param([string]$Name)
-
-    $envPath = Join-Path (Get-Location) ".env"
-    if (-not (Test-Path -LiteralPath $envPath)) {
-        return $null
-    }
-    foreach ($line in Get-Content -LiteralPath $envPath) {
-        if ($line -match "^\s*$([regex]::Escape($Name))\s*=\s*(.*)\s*$") {
-            return $matches[1].Trim().Trim('"').Trim("'")
-        }
-    }
-    return $null
-}
 
 if (-not $NotionPeopleDataSourceId) {
-    $NotionPeopleDataSourceId = Get-DotEnvValue -Name "NOTION_PEOPLE_DATA_SOURCE_ID"
+    $NotionPeopleDataSourceId = Get-CloudConfigValue -Names @("NOTION_PEOPLE_DATA_SOURCE_ID")
 }
 if (-not $NotionPeopleDataSourceId) {
     throw "NOTION_PEOPLE_DATA_SOURCE_ID is required to deploy the People sync job."

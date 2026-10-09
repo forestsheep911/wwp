@@ -1,3 +1,11 @@
+# Configuration key reference
+
+This is the former `.env.example` catalogue, retained as documentation. Do not
+create a dotenv file from it. Current effective values live in App Configuration;
+these historical defaults are descriptive and may differ from the cloud values.
+See [cloud configuration](cloud-configuration.md) for labels, priorities and commands.
+
+```text
 API_PORT=8787
 WWPDW_LOCAL_DATA_DIR=.local-data
 VITE_API_BASE_URL=
@@ -250,3 +258,4 @@ POSTER_CACHE_REQUEST_TIMEOUT_MS=30000
 VPN_TRAFFIC_CHECK_LABEL_2=London temporary
 # Baseline, every five minutes during transfer, and final sample by default.
 VPN_TRAFFIC_CHECK_INTERVAL_SECONDS=300
+```

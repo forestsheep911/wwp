@@ -1,0 +1,9 @@
+{
+  "store": "appcs-boccaro-dev-e9219",
+  "endpoint": "https://appcs-boccaro-dev-e9219.azconfig.io",
+  "resourceGroup": "rg-shared-services",
+  "location": "eastasia",
+  "prefix": "wwp:",
+  "label": "dev",
+  "cacheSeconds": 900
+}

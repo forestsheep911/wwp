@@ -11,6 +11,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "cloud-config.ps1")
+Initialize-CloudParameters -ScriptName $PSCommandPath -BoundParameters $PSBoundParameters
+
 if (-not (Get-Command $AzCli -ErrorAction SilentlyContinue)) {
     throw "Azure CLI command was not found on PATH: $AzCli"
 }
@@ -27,38 +30,13 @@ function Invoke-AzCli {
     return $output
 }
 
-function Get-DotEnvValue {
-    param(
-        [string[]]$Names
-    )
 
-    $envPath = Join-Path (Get-Location) ".env"
-    if (-not (Test-Path $envPath)) {
-        return $null
-    }
-
-    foreach ($line in Get-Content $envPath) {
-        if ($line -notmatch "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$") {
-            continue
-        }
-
-        $name = $matches[1]
-        if ($Names -notcontains $name) {
-            continue
-        }
-
-        return $matches[2].Trim().Trim('"').Trim("'")
-    }
-
-    return $null
+if (-not $AdminKey) {
+    $AdminKey = Get-CloudSecretValue -Name "WWPDW_ADMIN_KEY"
 }
 
 if (-not $AdminKey) {
-    $AdminKey = Get-DotEnvValue -Names @("WWPDW_ADMIN_KEY")
-}
-
-if (-not $AdminKey) {
-    throw "WWPDW_ADMIN_KEY is not set. Pass -AdminKey or add WWPDW_ADMIN_KEY to .env."
+    throw "WWPDW_ADMIN_KEY is not set. Pass -AdminKey or configure a Vault reference in App Configuration."
 }
 
 $app = (Invoke-AzCli -Arguments @(

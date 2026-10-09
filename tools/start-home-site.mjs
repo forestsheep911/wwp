@@ -6,7 +6,7 @@ import { config } from "./lib/project-secrets.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "..");
-config({ path: path.join(repositoryRoot, ".env"), override: false, quiet: true });
+config();
 
 const port = String(process.env.WWPDW_HOME_PORT ?? "43187");
 const webDistDirectory = path.resolve(
@@ -30,7 +30,7 @@ process.env.API_PORT = port;
 process.env.WWPDW_WEB_DIST_DIR = webDistDirectory;
 process.env.WWPDW_LOCAL_DATA_DIR = localDataDirectory;
 process.env.CACHE_BACKEND = process.env.WWPDW_HOME_CACHE_BACKEND ?? "filesystem";
-process.env.WWPDW_MEDIA_ROOT ??= "F:\\wwp_storage";
+process.env.WWPDW_MEDIA_ROOT ??= path.join(repositoryRoot, ".local-data", "media");
 process.env.WWPDW_AUTH_BACKEND ??= "azure";
 process.env.WWPDW_SESSION_BACKEND ??= "local";
 process.env.SEARCH_INDEX_BACKEND = "local";

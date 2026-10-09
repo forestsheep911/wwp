@@ -11,6 +11,7 @@ RUN npm ci
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV WWP_CONFIG_MODE=injected
 ENV API_PORT=8787
 ENV CACHE_BACKEND=azure
 
@@ -20,7 +21,8 @@ COPY apps/api ./apps/api
 COPY apps/web/src/cinema ./apps/web/src/cinema
 COPY packages/cache-store ./packages/cache-store
 COPY packages/shared ./packages/shared
-COPY tools/lib/project-secrets.mjs tools/lib/project-env.mjs ./tools/lib/
+COPY tools/lib/project-secrets.mjs tools/lib/project-env.mjs tools/lib/cloud-config.mjs tools/lib/azure-cli.mjs ./tools/lib/
+COPY config/cloud.json ./config/cloud.json
 
 EXPOSE 8787
 CMD ["node", "--import", "tsx", "apps/api/src/server.ts"]
