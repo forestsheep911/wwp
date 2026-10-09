@@ -8,7 +8,6 @@ import { Play } from "lucide-react";
 import { explicitBrowseKind } from "../browse-channel";
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
 import { loadingGridCount, remainingLoadingCount } from "../loading-grid";
-import { createPortal } from "react-dom";
 import {
   CalendarDays,
   CheckCircle2,
@@ -77,7 +76,6 @@ import { genreBadgeClass } from "../genre-style";
 import { latestVariantAsset, pendingCacheStatusLabel } from "../cache-flow";
 import { shouldOpenDetailInCurrentTab } from "../detail-link";
 import { resultMatchesBrowseChannel } from "../browse-channel";
-import { moviePreviewCredits } from "../movie-credits";
 import {
   browseFilterActive,
   browseFilterGenres,
@@ -2593,192 +2591,50 @@ function DesktopMovieCard({
   const tags = genreTags(result);
   const posterTags = tags.slice(0, 2);
   const compositeRating = compositeRatingForResult(result);
-  const work = result.metadata?.work;
-  const year = work?.release?.year ?? result.metadata?.release?.year ?? result.metadata?.year;
-  const countries = (work?.release?.countries ?? work?.countries ?? []).slice(0, 2).join(" / ");
-  const hoverMetadata = [year, countries].filter(Boolean).join(" · ");
-  const summary = bestSummary(result);
-  const previewCredits = moviePreviewCredits(result);
-  const hasPreviewCredits = previewCredits.directors.length > 0 || previewCredits.writers.length > 0 || previewCredits.cast.length > 0;
-  const previewTimerRef = useRef<number | undefined>(undefined);
-  const cardRef = useRef<HTMLAnchorElement>(null);
-  const [previewPosition, setPreviewPosition] = useState<{
-    left: number;
-    top: number;
-    side: "left" | "right";
-  }>();
-
-  function showPreview(delay = 180) {
-    window.clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = window.setTimeout(() => {
-      const card = cardRef.current;
-      if (!card) {
-        return;
-      }
-
-      const rect = card.getBoundingClientRect();
-      const viewportPadding = 16;
-      const panelGap = 14;
-      const panelWidth = Math.min(420, window.innerWidth - viewportPadding * 2);
-      const hasRoomOnRight = window.innerWidth - rect.right >= panelWidth + panelGap + viewportPadding;
-      const side = hasRoomOnRight ? "right" : "left";
-      const left = side === "right"
-        ? rect.right + panelGap
-        : Math.max(viewportPadding, rect.left - panelWidth - panelGap);
-      const estimatedPanelHeight = 520;
-      const top = Math.max(
-        viewportPadding,
-        Math.min(rect.top - 24, window.innerHeight - estimatedPanelHeight - viewportPadding)
-      );
-
-      setPreviewPosition({ left, top, side });
-    }, delay);
-  }
-
-  function hidePreview() {
-    window.clearTimeout(previewTimerRef.current);
-    setPreviewPosition(undefined);
-  }
-
-  useEffect(() => {
-    if (!previewPosition) {
-      return;
-    }
-
-    const closePreview = () => hidePreview();
-    window.addEventListener("scroll", closePreview, true);
-    window.addEventListener("resize", closePreview);
-    return () => {
-      window.removeEventListener("scroll", closePreview, true);
-      window.removeEventListener("resize", closePreview);
-    };
-  }, [previewPosition]);
-
-  useEffect(() => () => window.clearTimeout(previewTimerRef.current), []);
-
   return (
-    <>
-      <a
-        ref={cardRef}
-        className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 md:grid"
-        data-gallery-card
-        href={getDetailHref(result)}
-        onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
-        onMouseEnter={() => showPreview()}
-        onMouseLeave={hidePreview}
-        onFocus={() => showPreview(0)}
-        onBlur={hidePreview}
-        title={copy.library.viewDetails}
-        aria-label={`${result.title}，${compositeRating ? `评分 ${compositeRating.score}` : "暂无评分"}`}
-      >
-        <div className="relative overflow-hidden rounded-lg border border-slate-800 bg-slate-950 shadow-xl shadow-black/20 transition duration-200 group-hover:-translate-y-1 group-hover:scale-[1.015] group-hover:border-slate-600 group-hover:shadow-2xl group-focus-visible:border-emerald-400">
-          <MoviePoster priority={priority} result={result} />
-          <span className="absolute right-2 top-2 z-20 inline-flex items-baseline gap-1 rounded-md border border-white/10 bg-slate-950/82 px-2 py-1 text-[10px] font-bold tracking-wide text-slate-300 shadow-lg shadow-black/30 backdrop-blur">
-            {compositeRating ? (
-              <span className="text-sm leading-none text-amber-200">{compositeRating.score}</span>
-            ) : (
-              <span>暂无评分</span>
-            )}
-          </span>
-        </div>
-
-        <div className="grid min-w-0 gap-2 px-0.5">
-          <h2 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 text-slate-100 transition-colors group-hover:text-emerald-100">
-            {result.title}
-          </h2>
-          {showUpdatedAt ? (
-            <span className="text-[11px] font-medium text-slate-400" title={formatDateTime(result.updatedAt)}>
-              片库更新 {formatLongDate(result.updatedAt)}
-            </span>
-          ) : null}
-          {posterTags.length ? (
-            <div className="flex min-w-0 flex-wrap gap-1.5">
-              {posterTags.map((tag) => (
-                <span
-                  className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-4 ${tag.className}`}
-                  key={tag.key}
-                >
-                  {tag.tag}
-                </span>
-              ))}
-            </div>
+    <a
+      className="group hidden min-w-0 content-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 md:grid"
+      data-gallery-card
+      href={getDetailHref(result)}
+      onClick={(event) => openDetailFromLink(event, result, onOpenDetail)}
+      aria-label={`${result.title}，${compositeRating ? `评分 ${compositeRating.score}` : "暂无评分"}`}
+    >
+      <div className="relative overflow-hidden rounded-lg border border-slate-800 bg-slate-950 shadow-xl shadow-black/20 group-focus-visible:border-emerald-400">
+        <MoviePoster priority={priority} result={result} />
+        <span className="absolute right-2 top-2 z-20 inline-flex items-baseline gap-1 rounded-md border border-white/10 bg-slate-950/82 px-2 py-1 text-[10px] font-bold tracking-wide text-slate-300 shadow-lg shadow-black/30 backdrop-blur">
+          {compositeRating ? (
+            <span className="text-sm leading-none text-amber-200">{compositeRating.score}</span>
           ) : (
-            <span className="text-[11px] text-slate-600">未分类</span>
+            <span>暂无评分</span>
           )}
-        </div>
-      </a>
+        </span>
+      </div>
 
-      {previewPosition && typeof document !== "undefined"
-        ? createPortal(
-            <aside
-              className="pointer-events-none fixed z-[90] w-[min(420px,calc(100vw-32px))] animate-in fade-in zoom-in-95 duration-150"
-              style={{ left: previewPosition.left, top: previewPosition.top }}
-              aria-hidden="true"
-              data-gallery-preview={result.assetKey}
-            >
-              <div className="relative overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/98 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.72)] ring-1 ring-white/5 backdrop-blur-xl">
-                <span
-                  className={`absolute top-16 h-8 w-1 rounded-full bg-emerald-300 ${
-                    previewPosition.side === "right" ? "left-0" : "right-0"
-                  }`}
-                />
-                <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    {hoverMetadata ? (
-                      <p className="text-[11px] font-bold tracking-[0.12em] text-emerald-300">
-                        {hoverMetadata}
-                      </p>
-                    ) : null}
-                    <div className="flex items-start justify-between gap-4">
-                      <h3 className="text-xl font-semibold leading-7 text-white">{result.title}</h3>
-                      <span className="flex-none rounded-md border border-amber-200/20 bg-amber-300/10 px-2.5 py-1 text-base font-bold text-amber-200">
-                        {compositeRating?.score ?? "暂无评分"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {tags.length ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {tags.map((tag) => (
-                        <span
-                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold leading-5 ${tag.className}`}
-                          key={tag.key}
-                        >
-                          {tag.tag}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {hasPreviewCredits ? (
-                    <div className="grid gap-2 border-y border-slate-800/80 py-3">
-                      <PreviewCreditRow label="导演" names={previewCredits.directors} />
-                      <PreviewCreditRow label="编剧" names={previewCredits.writers} />
-                      <PreviewCreditRow label="主演" names={previewCredits.cast} />
-                    </div>
-                  ) : null}
-
-                  <p className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{summary}</p>
-                </div>
-              </div>
-            </aside>,
-            document.body
-          )
-        : null}
-    </>
-  );
-}
-
-function PreviewCreditRow({ label, names }: { label: string; names: string[] }) {
-  if (names.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-3 text-xs leading-5">
-      <span className="font-bold text-slate-500">{label}</span>
-      <span className="text-slate-300">{names.join(" / ")}</span>
-    </div>
+      <div className="grid min-w-0 gap-2 px-0.5">
+        <h2 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 text-slate-100">
+          {result.title}
+        </h2>
+        {showUpdatedAt ? (
+          <span className="text-[11px] font-medium text-slate-400" title={formatDateTime(result.updatedAt)}>
+            片库更新 {formatLongDate(result.updatedAt)}
+          </span>
+        ) : null}
+        {posterTags.length ? (
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {posterTags.map((tag) => (
+              <span
+                className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-4 ${tag.className}`}
+                key={tag.key}
+              >
+                {tag.tag}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[11px] text-slate-600">未分类</span>
+        )}
+      </div>
+    </a>
   );
 }
 
