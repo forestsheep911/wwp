@@ -127,3 +127,14 @@ The Admin tab has a dedicated ready cached-video list, can retry failed cache jo
 The Static Web App is deployed from the local `apps/web/dist` build by the Azure Static Web Apps CLI.
 
 See [`docs/HANDOFF.md`](../docs/HANDOFF.md) for resource names, log commands, secrets, and troubleshooting.
+
+## Native macOS/zsh entrypoints
+
+Every operational `.ps1` entrypoint also has a `.zsh` version. These use Node.js
+and Azure CLI directly, without PowerShell. See [native infra commands](../docs/native-infra.md)
+for the complete mapping, option syntax, configuration, safety behavior, and tests.
+For a frontend-only rollout:
+
+```zsh
+zsh infra/deploy-web-staticapp.zsh
+```

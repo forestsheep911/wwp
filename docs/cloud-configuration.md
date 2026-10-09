@@ -35,8 +35,9 @@ high-frequency runtime lookup service.
 
 ## New Windows or macOS machine
 
-Install Git, Node.js 24, Azure CLI, and PowerShell 7 (`pwsh`) for infrastructure
-scripts. Clone the repository, then run these same commands on either OS:
+Install Git, Node.js 24, and Azure CLI. Windows infrastructure scripts use
+PowerShell 7 (`pwsh`); macOS can use the native zsh entrypoints without PowerShell.
+Clone the repository, then run these same commands on either OS:
 
 ```text
 az login
@@ -143,5 +144,19 @@ started with no `.env` and returned `/health` HTTP 200. The owned smoke process 
 stopped and temporary data removed. Typecheck, build, 167 ledger tests, 16 focused
 configuration/deployment tests and 6 home tests passed. The old reference-only file
 is recoverable at `.local-data/config-migration/2026-10-09-env.references.txt`.
-macOS: platform-aware Node `az` invocation and PowerShell
-7 entrypoints are implemented; live macOS verification is pending availability of a Mac.
+macOS: live App Configuration access was verified on 2026-10-09. All infra
+operations now have native zsh entrypoints; argument/help, failure handling and
+mocked Azure operation tests pass. Live provisioning/API/job changes and Windows
+validation of the native implementation remain pending; use the PowerShell
+entrypoints on Windows.
+
+## Native macOS deployment
+
+All `infra` operations also have native `.zsh` entrypoints using Node.js and Azure
+CLI, without a PowerShell runtime. They load this same cloud configuration and
+preserve explicit parameter overrides. See [native infra commands](native-infra.md)
+for the complete command list and verification limits. For frontend and BFF:
+
+```zsh
+zsh infra/deploy-web-staticapp.zsh
+```
